@@ -722,7 +722,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
                                                                                 # its breakdowns (v2; v1 rows kept)
     Kind("reading", "ent-v5", "post", READING_V5_SCHEMA),           # 0212: read, read3 and entities in one reading
     Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),   # 0245: a track's kinds and fields
-    Kind("track_things", "track-things-v1", "post_track", TRACK_THINGS_SCHEMA),   # 0245: the things of a post
+    Kind("track_things", "track-things-v2", "post_track", TRACK_THINGS_SCHEMA),   # 0245: the things of a post; 0261: v2
     Kind("track_same", "track-same-v1", "thing_thing", TRACK_SAME_SCHEMA),   # 0245: two practices, one claim?
 )}
 
@@ -823,6 +823,7 @@ GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
 # checked under it. A guide change asks new questions only, never the history again.
 EARLIER_GUIDES: Dict[str, Tuple[Tuple[str, ...], Dict[str, Any]]] = {
     "judge-read-v1": (("join", "pair"), JUDGE_SCHEMA),   # before 0258's post quote
+    "track-things-v1": (("track_things",), TRACK_THINGS_SCHEMA),   # 0261: before v2 (values only from their quote, the subject's own results)
 }
 
 

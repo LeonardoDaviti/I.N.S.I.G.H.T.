@@ -138,7 +138,7 @@ def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
     """The digest planner's part (tasks.PLANNERS["digest"]): a digest-v2 question for each week of each topic track
     with BRIEF_MIN+ rows whose rows differ from its last question's (the week in progress at most every BRIEF_EVERY;
     none while one is waiting): how many were added."""
-    from insight_core.markx import repo, schemas, tracks
+    from insight_core.markx import schemas, tracks
     if not TT.on():
         return 0
     now = now or datetime.now(timezone.utc)
@@ -158,16 +158,36 @@ def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
             was = last.get(w)
             if was is not None and (was[2] in ("open", "leased") or (w == this and now - was[1] < BRIEF_EVERY)):
                 continue
-            rows, rs = rows_between(cur, tid, *bounds(w))
-            if len(rows) < BRIEF_MIN:
-                continue
-            text, ids = brief_input(t, kinds, _period(w), rows, rs)   # the same rows: the same task (one ask)
-            task_id, new = repo.add_task(cur, kind=DIGEST_KIND, guide=BRIEF_GUIDE, subject_kind="track", input=text,
-                                         a=tid)
-            cur.execute("""INSERT INTO mx_track_brief_asks (task_id, track_id, week, thing_ids)
-                           VALUES (%s, %s, %s, %s::uuid[]) ON CONFLICT DO NOTHING""", (task_id, tid, w, ids))
-            added += new
+            added += _ask(cur, t, kinds, w, _period(w), *rows_between(cur, tid, *bounds(w)))
     return added
+
+
+def _ask(cur: Any, t: Dict[str, Any], kinds: Dict[str, Dict[str, Any]], week: date, period: str,
+         rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]) -> int:
+    """One digest-v3 question over `rows` (BRIEF_MIN at least), kept with its week and rows: 1 when new."""
+    from insight_core.markx import repo
+    if len(rows) < BRIEF_MIN:
+        return 0
+    text, ids = brief_input(t, kinds, period, rows, rs)   # the same rows: the same task (one ask)
+    task_id, new = repo.add_task(cur, kind=DIGEST_KIND, guide=BRIEF_GUIDE, subject_kind="track", input=text,
+                                 a=t["folder_id"])
+    cur.execute("""INSERT INTO mx_track_brief_asks (task_id, track_id, week, thing_ids)
+                   VALUES (%s, %s, %s, %s::uuid[]) ON CONFLICT DO NOTHING""", (task_id, t["folder_id"], week, ids))
+    return new
+
+
+def plan_subject(cur: Any, t: Dict[str, Any], *, now: datetime, period: str) -> int:
+    """0261: one "what changed" over every row of a subject that is not a week's (an entity: entity_brief), asked
+    again when its rows change, at most every BRIEF_EVERY, none while one waits (the asks keyed by this week)."""
+    from insight_core.markx import schemas
+    schemas.ensure_guides(cur)
+    cur.execute("""SELECT a.created_at, k.status FROM mx_track_brief_asks a JOIN mx_tasks k ON k.id = a.task_id
+                    WHERE a.track_id = %s ORDER BY a.created_at DESC LIMIT 1""", (t["folder_id"],))
+    was = cur.fetchone()
+    if was is not None and (was[1] in ("open", "leased") or now - was[0] < BRIEF_EVERY):
+        return 0
+    return _ask(cur, t, TT._kinds(cur, t["folder_id"]), monday(now), period,
+                *rows_between(cur, t["folder_id"], None, None))
 
 
 def points(cur: Any, track_id: str, week: Optional[date] = None) -> Optional[Dict[str, Any]]:

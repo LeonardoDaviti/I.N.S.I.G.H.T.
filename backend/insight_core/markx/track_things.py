@@ -13,7 +13,7 @@ PRACTICE ("practice or claim": what, result, evidence). Stored with the track, o
 a description change (the track's version) proposes again; the owner may replace it (`set_schema`, PUT .../schema),
 a version of its own. A new schema version re-reads every post in the track (its questions name the version).
 
-**The things** (`plan_things`, kind `track_things`, guide track-things-v1): asked only for the posts in the track
+**The things** (`plan_things`, kind `track_things`, guide track-things-v2; 0261: v1 before): asked only for the posts in the track
 (judged in, joined, or the owner's ✓: track_subtopics.in_track), newest first. A long post is read in windows
 (tasks.text_windows, WINDOW_CHARS each, MAX_WINDOWS at most; its links listed in each), merged per post (the reports
 of one post join by any key, a practice by its exact `what`). The post's own address is never offered: its links
@@ -23,6 +23,7 @@ leave it out and its text shows it as OWN. Haiku answers each value as {value, q
   - number / money: the digits of `number` (and `range_to`) are a figure of the quote (thousands groups, a decimal
     comma or point, a K/M/B-like multiplier after it), the unit (when given) and the currency are shown by the quote;
   - link: an http(s) URL inside its own quote; enum: one of the field's values; text: at most TEXT_CAP characters;
+    0261: every figure a text value gives is one of its own quote's (`figures_read`: read in its quote, not beside it);
   - a thing whose first field (its name; a practice's `what`) is not kept is not a thing.
 A value that fails is dropped with its reason, kept on the call (the answer's "dropped"); the rest of the answer stays.
 
@@ -56,13 +57,15 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 log = logging.getLogger(__name__)
 
 SCHEMA_KIND, SCHEMA_GUIDE = "track_schema", "track-schema-v1"
-THINGS_KIND, THINGS_GUIDE = "track_things", "track-things-v1"
+THINGS_KIND, THINGS_GUIDE = "track_things", "track-things-v2"   # 0261: v2; a post asked under v1 is not asked again
 SAME_KIND, SAME_GUIDE = "track_same", "track-same-v1"
 PRACTICE_KIND = "practice_or_claim"
 PRACTICE = {"kind": PRACTICE_KIND, "about": "a method, habit, finding or opinion a post states",
             "fields": [{"name": "what", "type": "text", "key": True, "about": "the method or claim, in a few words"},
                        {"name": "result", "type": "text", "key": False, "about": "what it gave or what is claimed"},
-                       {"name": "evidence", "type": "text", "key": False, "about": "numbers, test or example given"}]}
+                       {"name": "evidence", "type": "text", "key": False, "about": "numbers, test or example given"},
+                       {"name": "by", "type": "text", "key": False,
+                        "about": "who measured, tested or found it, when the post names them (a company, a lab, a person)"}]}   # 0261
 TEXT_CAP = 120          # characters of a text value at most
 WINDOW_CHARS = 3500     # characters of a post one question shows (round 2's window)
 MAX_WINDOWS = 6         # windows a long post is read in at most
@@ -235,7 +238,17 @@ def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optio
         return allowed[fold(value)], None
     if len(value) > TEXT_CAP:
         return None, f"text over {TEXT_CAP} characters"
+    if not figures_read(value, quote):
+        return None, "a figure not in its quote"
     return value, None
+
+
+def figures_read(value: str, quote: str) -> bool:
+    """0261: every figure a text value gives is a figure of its own quote (the value is read in its quote, not taken
+    from the post around it: "32 users on a 12 GB phone" quoted from "max users 32"). Language-free: figures only;
+    the words are the guide's to keep (track-things-v2: a value says only what its quote says)."""
+    have = figures(quote)
+    return all(_same_number(float(x), have) for x in re.findall(r"\d+(?:\.\d+)?", value or ""))
 
 
 _RAW_GITHUB = re.compile(r"^https?://raw\.githubusercontent\.com/([^/\s]+)/([^/\s]+)/([^/\s]+)(/[^\s]*)?$", re.I)
@@ -403,11 +416,12 @@ def schema_at(cur: Any, folder_id: Any, version: int) -> Optional[Dict[str, Any]
 
 
 def _put_schema(cur: Any, folder_id: str, schema: Dict[str, Any], *, by: str, track_version: int,
-                task_id: Any = None) -> int:
-    cur.execute("""INSERT INTO mx_track_schemas (track_id, version, schema, by, track_version, task_id)
-                   SELECT %s, COALESCE(max(version), 0) + 1, %s::jsonb, %s, %s, %s FROM mx_track_schemas
+                task_id: Any = None, subject: str = "track") -> int:
+    """A schema version stored; `subject` 'entity' (0261, by 'code'): the "track" is an entity's root (entity_brief)."""
+    cur.execute("""INSERT INTO mx_track_schemas (track_id, version, schema, by, track_version, task_id, subject)
+                   SELECT %s, COALESCE(max(version), 0) + 1, %s::jsonb, %s, %s, %s, %s FROM mx_track_schemas
                     WHERE track_id = %s RETURNING version""",
-                (folder_id, json.dumps(schema), by, track_version, task_id, folder_id))
+                (folder_id, json.dumps(schema), by, track_version, task_id, subject, folder_id))
     return cur.fetchone()[0]
 
 
@@ -610,17 +624,20 @@ def things_inputs(track: Dict[str, Any], schema: Dict[str, Any], version: int, p
 
 
 def _asked(cur: Any, track_id: str, version: int, ids: Sequence[str]) -> Set[str]:
-    """The posts already asked under this schema version (their questions' first line names it)."""
-    cur.execute("""SELECT DISTINCT a::text FROM mx_tasks WHERE kind = %s AND guide = %s AND a = ANY(%s::uuid[])
+    """The posts already asked under this schema version (their questions' first line names it), under any guide of
+    the kind (0261: a new guide asks new posts only, never the history again)."""
+    from insight_core.markx import schemas
+    cur.execute("""SELECT DISTINCT a::text FROM mx_tasks WHERE kind = %s AND guide = ANY(%s) AND a = ANY(%s::uuid[])
                       AND b = %s AND input LIKE %s""",
-                (THINGS_KIND, THINGS_GUIDE, list(ids), track_id, f"SCHEMA: {track_id} v{version}\n%"))
+                (THINGS_KIND, list(schemas.answer_guides(THINGS_KIND)), list(ids), track_id,
+                 f"SCHEMA: {track_id} v{version}\n%"))
     return {r[0] for r in cur.fetchall()}
 
 
 def plan_things(cur: Any, **_kw: Any) -> int:
     """`track_things` questions for each topic track with a schema: its posts in the track not yet asked under that
     schema's version, newest first, every window of each, THINGS_OPEN waiting at most a track: how many were added."""
-    from insight_core.markx import repo, schemas, tasks, track_subtopics, tracks
+    from insight_core.markx import schemas, track_subtopics, tracks
     if not on():
         return 0
     schemas.ensure_guides(cur)
@@ -636,23 +653,33 @@ def plan_things(cur: Any, **_kw: Any) -> int:
             continue
         epoch = datetime.min.replace(tzinfo=timezone.utc)
         items = sorted(track_subtopics.in_track(cur, t), key=lambda it: (it["at"] or epoch, it["post_id"]), reverse=True)
-        ids = [it["post_id"] for it in items]
-        done = _asked(cur, t["folder_id"], s["version"], ids) if ids else set()
-        todo = [i for i in ids if i not in done][:room]
-        posts = tasks.load_posts(cur, todo)
-        own = _own(cur, todo)
-        pages = maker_pages(cur, posts, own) if linked_on() else {}
-        for pid in todo:
-            if pid not in posts:
-                continue
-            for text in things_inputs(t, s["schema"], s["version"], posts[pid], own.get(pid, []), pages.get(pid, ())):
-                task_id, new = repo.add_task(cur, kind=THINGS_KIND, guide=THINGS_GUIDE, subject_kind="post_track",
-                                             input=text, a=pid, b=t["folder_id"])
-                added += new
-                if not new:
-                    got = _valid_answer(cur, task_id)
-                    if got is not None:
-                        apply_things(cur, repo.get_task(cur, task_id), None, got)
+        added += ask_posts(cur, t, s, [it["post_id"] for it in items], room=room)
+    return added
+
+
+def ask_posts(cur: Any, track: Dict[str, Any], s: Dict[str, Any], ids: Sequence[str], *, room: int) -> int:
+    """The things questions of `ids` (in their order) not yet asked under schema `s`'s version, `room` posts at most,
+    every window of each (and its maker's linked pages): how many were added. A question already answered is applied
+    again (its reports, once). A track's posts (plan_things) and an entity's (entity_brief: the entity as the track)
+    are asked by this one path."""
+    from insight_core.markx import repo, tasks
+    done = _asked(cur, track["folder_id"], s["version"], ids) if ids else set()
+    todo = [i for i in ids if i not in done][:max(0, room)]
+    posts = tasks.load_posts(cur, todo)
+    own = _own(cur, todo)
+    pages = maker_pages(cur, posts, own) if linked_on() else {}
+    added = 0
+    for pid in todo:
+        if pid not in posts:
+            continue
+        for text in things_inputs(track, s["schema"], s["version"], posts[pid], own.get(pid, []), pages.get(pid, ())):
+            task_id, new = repo.add_task(cur, kind=THINGS_KIND, guide=THINGS_GUIDE, subject_kind="post_track",
+                                         input=text, a=pid, b=track["folder_id"])
+            added += new
+            if not new:
+                got = _valid_answer(cur, task_id)
+                if got is not None:
+                    apply_things(cur, repo.get_task(cur, task_id), None, got)
     return added
 
 

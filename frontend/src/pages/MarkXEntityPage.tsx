@@ -7,6 +7,7 @@ import { Button, ExternalLink, Page, PageHeader, TextLink } from '../components/
 import { ErrorState, LoadingState } from '../components/states';
 import { Accuracy, EntityPostLine, MentionContext, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
 import { ThingLinks, Timeline, VersionLine } from '../components/markx/MarkXTimeline';   // 0165 C: its timeline
+import { EntityBrief } from '../components/markx/EntityBrief';   // 0261: what it is, how it works, its results
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
@@ -321,6 +322,7 @@ export default function MarkXEntityPage() {
             {' '}<SurgeMark surges={d.surges} />
             {' · '}<TextLink to={researchStartHref(e.id)}>Research this</TextLink>
           </p>
+          <EntityBrief brief={d.brief} />{/* 0261 */}
           <Original d={d} />
           {d.current === false && d.older?.length ? <Older older={d.older} /> : null}
           {d.rabbit_hole ? <RabbitHole hole={d.rabbit_hole} entityId={entityId} /> : null}
