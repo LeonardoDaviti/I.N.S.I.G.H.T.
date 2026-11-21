@@ -985,8 +985,10 @@ class TestSourceJudge(Base):
         self.stub.guides["source-judge-v1"] = guide("source-judge-v1", "GUIDE source-judge-v1")
 
     def test_source_judge_is_the_first_default_kind_one_a_call(self):
-        self.assertEqual(W.DEFAULT_KINDS.split(",")[0], "source_judge")
+        # 0275: the reader's question first (the search page waits), then the source judge (the owner waits)
+        self.assertEqual(W.DEFAULT_KINDS.split(",")[:2], ["question", "source_judge"])
         self.assertEqual(W.per_call_arg(W.PER_CALL)["source_judge"], 1)
+        self.assertEqual(W.per_call_arg(W.PER_CALL)["question"], 1)
         argv = W.claude_argv("claude", "haiku", "S", "source_judge")
         self.assertEqual(argv[argv.index("--tools") + 1], "")
 

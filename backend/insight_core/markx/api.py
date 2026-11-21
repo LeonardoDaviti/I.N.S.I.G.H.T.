@@ -1064,3 +1064,4 @@ from insight_core.markx import tracks_api as _tracks_api; router.include_router(
 from insight_core.markx import scout_api as _scout_api; router.include_router(_scout_api.router)  # noqa: E402,E702  0148: the track scout
 from insight_core.markx import research_api as _research_api; router.include_router(_research_api.router)  # noqa: E402,E702  0162: research
 from insight_core.markx import source_judge_api as _source_judge_api; router.include_router(_source_judge_api.router)  # noqa: E402,E702  0173: is this worth it?
+from insight_core.markx import questions_api as _questions_api; router.include_router(_questions_api.router)  # noqa: E402,E702  0275: questions with citations

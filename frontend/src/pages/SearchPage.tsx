@@ -16,6 +16,7 @@ import { useSearch } from '../hooks/useSearch';
 import { middleTruncate } from '../lib/format';
 import { SEARCH_DAYS, isNarrowed, parseSearch, searchHref, searchOrder, type SearchState } from '../lib/search';
 import SearchEntities from '../components/reader/SearchEntities';
+import SearchAnswer from '../components/reader/SearchAnswer';
 import { useMarkxOn } from '../hooks/useMarkxOn';
 import TextLink from '../components/ui/TextLink';
 
@@ -151,6 +152,7 @@ export default function SearchPage() {
                   {' '}· its maker, channels, papers and who discusses it
                 </p>
               ) : null}
+              {markxOn ? <SearchAnswer q={state.q} /> : null}
               {results.entities.length ? <SearchEntities entities={results.entities} /> : null}
               <PostList
                 feed={results}
