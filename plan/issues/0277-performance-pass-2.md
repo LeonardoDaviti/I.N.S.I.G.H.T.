@@ -64,7 +64,12 @@ mentions as of the last decision run, as the docstring already says for the work
 
 ## 2. The planners' posts-by-age scan, 3. load_posts' N+1, 4. search
 
-See the sections below (items 2 and 3 were built in a parallel slice; item 4 not reached in this pass).
+See the sections below (items 2 and 3 were built in a parallel slice).
+
+Item 4, search, measured only (production GET, 2026-11-21): /api/search?q=openai 1.19 s, then 0.37, 0.37 s (41 kB);
+/api/search?q=gemma%20release 5.00 s, then 0.69 s (60 kB). A new query is 1-5 s and the same one again 0.4-0.7 s:
+the cold cost is per query (its text's first planning and reads, or a query vector), not per process. Not profiled
+in this pass; next: split one cold query's time between the text search, the vector and the result build.
 
 ## Tests
 
