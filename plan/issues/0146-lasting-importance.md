@@ -50,3 +50,13 @@ story. Importance today is voices and recency.
 ## Open (the owner)
 1. How fast a reference fades (a half-life of months, years, or none for links to an original).
 2. Whether "Still shaping today" sits inside News or as its own tab.
+
+## Measured (2026-11-20; private: `plan/research/fusion/measure/x1120/L0146/`)
+72 older candidates (30+ days) reached from 150 current posts, labelled by two blind Haiku checkers (62 agreed, 10 settled). Lasting 35, mentioned 33, unrelated 4.
+| Signal | precision of "lasting" |
+|---|---|
+| later posts linking back, top 20 | 85% (64-95) |
+| distinct later sources >= 3 | 79% (60-90) |
+| later posts >= 5 AND later sources >= 3 | 86% (65-95), recall 18 of 35 |
+| Haiku judge on titles | 64% (46-79) |
+Failure classes: a source's links to its own older posts, boilerplate links (an anniversary line), and next versions read as "building on". **A first slice is viable with no model:** count only other sources' links, a>=5 and b>=3, shown as a marked section; re-measure on a larger set.
