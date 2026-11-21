@@ -26,6 +26,15 @@ rule change's rebuild since the last stats run), never while Mark IX's story job
 in a child process of its own (its memory goes back to the OS), HARD_LIMIT seconds at most; its time, rows and peak
 memory are kept in mx_settings `source_stats_job`.
 
+**The track record** (0266, Stalker features 4 and 7: the reader's own record of a source over the last RECORD_DAYS
+days; card "record"): how often it is first on a story of 2+ voices and by how many hours before your next source
+(firsts, first_share, first_lead), how much of what it posts ends in a News row, a story of 2+ voices or a topic track
+(signal_share) or in none (noise_share), and how much of it you opened (opened_share). The stories are those News is
+made from (Mark X's when Mark X News has a written run, else Mark IX's); a member of no source of yours (a saved page)
+is no voice and never first (0263). `switch_off` reads the rows and suggests switching off an enabled source with a
+high noise share and no first (a suggestion only: nothing is switched). Computed in this job, not per request: it reads
+every recent story member and track place (seconds at server scale, 0266).
+
 Only source_stats (and the job's state in mx_settings) is written; every other table is read.
 """
 from __future__ import annotations
@@ -62,6 +71,12 @@ PLATFORM_YEARS = {"x": 2006, "youtube": 2005, "telegram": 2013, "reddit": 2005, 
 ACCOUNT_SITES = frozenset({"x.com", "twitter.com", "t.me", "telegram.me", "youtube.com", "reddit.com", "github.com",
                            "medium.com"})
 NOT_SUBJECTS = ("saved",)
+RECORD_DAYS = 30                          # 0266: the track record's window
+OPENED = ("opened", "reading_session")    # an open the reader made (read_at is also set by "mark all read")
+NOISE_OFF = 0.9                           # 0266: "switch off?" at this noise share or more, with no first
+OPENED_KEEP = 0.1                         # ... never for a source you open 10% of
+CITED_KEEP = 3                            # ... nor one 3+ other voices link (cited_by, 90 days)
+FIRST_WITHIN = timedelta(minutes=1)       # first: within a minute of the earliest other voice
 JOB_KEY = "source_stats_job"
 
 CITED_BIAS = ("Only your own sources count, and nobody links Telegram posts: a channel others don't link scores 0 "
@@ -103,14 +118,25 @@ SIGNALS: Dict[str, Signal] = {
     "followers": Signal("audience", "subscribers or followers its profile shows, as last fetched (a voice: its "
                                     "channels' together)", 0, "profiles"),
     "reputation": Signal("reputation", "inside your sources only: cited by, Classics, first to report", 0),
+    "firsts": Signal("record", "stories of 2+ voices begun in the last 30 days where its post came first (within a "
+                               "minute of the earliest other voice)", 0, "stories of 2+ voices begun in 30 days"),
+    "first_share": Signal("record", "firsts / its stories of 2+ voices begun in the last 30 days", 5, "stories"),
+    "first_lead": Signal("record", "median hours from its first post to your next source's, over its firsts (last 30 "
+                                   "days) where both have a time of day", 3, "timed firsts"),
+    "signal_share": Signal("record", "its posts of the last 30 days in a News row, a story of 2+ voices or a topic "
+                                     "track / its posts of the last 30 days", 10),
+    "noise_share": Signal("record", "its posts of the last 30 days in no News row, no story of 2+ voices and no topic "
+                                    "track / its posts of the last 30 days", 10),
+    "opened_share": Signal("record", "its posts of the last 30 days you opened / its posts of the last 30 days", 10),
     "stance": Signal("stance", "Haiku over 15 random own posts of 250+ characters; a pattern needs 2+ exact quotes "
                                "from 2 posts, checked by code (Experimental)", 15, "posts of 250+ characters"),
 }
 CARDS = [("channels", "Channels"), ("who", "Who it is"), ("own", "Own vs retold"), ("first", "First to report"),
          ("covered", "Covered by others"), ("news", "News yield"), ("cited", "Cited by"), ("posts", "What it posts"),
          ("rhythm", "Rhythm and age"), ("audience", "Audience"), ("reputation", "Reputation"),
-         ("stance", "Stance and framing")]
-LIST_COLUMNS = ("role", "per_week", "first_to_report", "news_yield", "cited_by", "solo_share")
+         ("record", "Track record, last 30 days"), ("stance", "Stance and framing")]
+LIST_COLUMNS = ("role", "per_week", "first_to_report", "news_yield", "cited_by", "solo_share",
+                "firsts", "first_lead", "signal_share", "noise_share", "opened_share")
 
 
 def _utc(t: Optional[datetime]) -> Optional[datetime]:
@@ -201,6 +227,9 @@ class Data:
     long_posts: Dict[str, int] = field(default_factory=dict)   # source -> own posts of 250+ characters (the window)
     post_titles: Dict[str, Tuple[str, Optional[datetime], str]] = field(default_factory=dict)   # any post -> (title, at, source)
     profiles: Dict[str, Dict[str, Any]] = field(default_factory=dict)   # 0132 C2: source -> its current profile
+    record_stories: List[Dict[str, Any]] = field(default_factory=list)  # 0266: News's stories' members
+    tracked: Set[str] = field(default_factory=set)          # 0266: window posts placed in a topic track
+    opened: Set[str] = field(default_factory=set)           # 0266: window posts the reader opened
 
     def voice_of(self, source_id: str) -> str:
         s = self.sources.get(source_id)
@@ -420,7 +449,37 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
         for pid, title, at, sid in cur.fetchall():
             titles[pid] = (title, at, sid)
     data.post_titles = titles
+    record_inputs(cur, data)
     return data
+
+
+def record_inputs(cur: Any, d: Data) -> None:
+    """0266: the track record's inputs. The stories News is made from: Mark X's current members (of unmerged stories
+    with a member in the last 2 x RECORD_DAYS days) when Mark X News has a written run, else Mark IX's (already read);
+    the window's posts placed in a topic track (the kept placement, issue 0195); and those the reader opened."""
+    since = d.now - timedelta(days=RECORD_DAYS)
+    if d.news_kind == "markx":
+        cur.execute(f"""WITH live AS (
+                            SELECT DISTINCT sp.story_id FROM mx_story_posts sp JOIN posts p ON p.id = sp.post_id
+                             WHERE sp.valid_to IS NULL AND sp.role = 'member' AND {AT} >= %s)
+                        SELECT sp.story_id::text, sp.post_id::text, p.source_id::text, {AT}, p.published_precision
+                          FROM mx_story_posts sp JOIN live l ON l.story_id = sp.story_id
+                          JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
+                          JOIN posts p ON p.id = sp.post_id
+                         WHERE sp.valid_to IS NULL AND sp.role = 'member'""", (since - timedelta(days=RECORD_DAYS),))
+        d.record_stories = [{"story": st, "post": pid, "source": sid, "voice": None, "at": at, "precision": prec}
+                            for st, pid, sid, at, prec in cur.fetchall()]
+    else:
+        d.record_stories = d.story_posts
+    window = [pid for pid, p in d.posts.items() if p.at and p.at >= since]
+    if _exists(cur, "mx_track_places"):
+        from insight_core.markx.track_feed import IN_TRACK
+        cur.execute("SELECT DISTINCT post_id::text FROM mx_track_places WHERE place = ANY(%s) AND post_id = ANY(%s::uuid[])",
+                    (list(IN_TRACK), window))
+        d.tracked = {r[0] for r in cur.fetchall()}
+    cur.execute("SELECT DISTINCT post_id::text FROM post_interactions WHERE interaction_type = ANY(%s) "
+                "AND post_id = ANY(%s::uuid[])", (list(OPENED), window))
+    d.opened = {r[0] for r in cur.fetchall()}
 
 
 def long_post_counts(cur: Any, ids: Sequence[str], now: datetime) -> Dict[str, int]:
@@ -529,6 +588,96 @@ class Copies:
         self.eligible = set(sets)
 
 
+class RecordIndex:
+    """0266: the track record's stories, indexed once per run: each story's members of your sources (a member of no
+    source of yours is no voice), the stories of 2+ voices' posts, and the stories of each source.
+
+    A member's time is the stories' own (story_rules.story_times, issue 0072 D): a date alone (a day's precision, or
+    00:00:00 UTC) counts as that day's earliest timed member of its story, else its date. A post dated by a date alone
+    is first only on an earlier day than every other voice; a first where either side is a date alone is not in the
+    lead (its hour is unknown)."""
+
+    def __init__(self, d: Data) -> None:
+        from insight_core.utils.story_rules import date_alone
+        self.d = d
+        self.since = d.now - timedelta(days=RECORD_DAYS)
+        self.members: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for m in d.record_stories:
+            if m["source"] in d.sources and m["at"] is not None:
+                self.members[m["story"]].append(m)
+        self.time: Dict[Tuple[str, str], Tuple[datetime, bool]] = {}   # (story, post) -> (time, a date alone)
+        self.stories_of: Dict[str, Set[str]] = defaultdict(set)
+        self.multi_posts: Set[str] = set()
+        for st, ms in self.members.items():
+            alone = {m["post"]: m.get("precision") == "day" or date_alone(m["at"]) for m in ms}
+            earliest: Dict[Any, datetime] = {}
+            for m in ms:
+                if not alone[m["post"]]:
+                    day = _utc(m["at"]).date()
+                    earliest[day] = min(earliest.get(day, m["at"]), m["at"])
+            for m in ms:
+                t = earliest.get(_utc(m["at"]).date(), m["at"]) if alone[m["post"]] else m["at"]
+                self.time[(st, m["post"])] = (t, alone[m["post"]])
+                self.stories_of[m["source"]].add(st)
+            if len({self.voice(m) for m in ms}) >= 2:
+                self.multi_posts |= {m["post"] for m in ms}
+
+    def voice(self, m: Dict[str, Any]) -> str:
+        """Mark IX's member voice when it has one (a Reddit author, a page's site), else its source's voice."""
+        return _story_voice(self.d, m) if m.get("voice") else self.d.voice_of(m["source"])
+
+    def of(self, sids: List[str], my_voice: str, by_source) -> Dict[str, Tuple[Any, int, Dict[str, Any]]]:
+        d, me = self.d, set(sids)
+        cases, leads = [], []
+        for st in sorted({st for x in sids for st in self.stories_of.get(x, ())}):
+            best: Dict[str, Tuple[datetime, bool, Dict[str, Any]]] = {}
+            for m in self.members[st]:
+                v = "SELF" if m["source"] in me else self.voice(m)
+                if v == my_voice and m["source"] not in me:
+                    continue
+                t, alone = self.time[(st, m["post"])]
+                if v not in best or (t, alone) < best[v][:2]:
+                    best[v] = (t, alone, m)
+            if len(best) < 2 or "SELF" not in best or min(b[0] for b in best.values()) < self.since:
+                continue   # a story of one voice, or one begun before the window
+            mine_t, mine_alone, mine = best["SELF"]
+            nt, n_alone, nv = min(((t, a, v) for v, (t, a, _m) in best.items() if v != "SELF"))
+            # a date alone is first only on an earlier day: on the same day as another voice its hour is unknown
+            first = mine_t <= nt + FIRST_WITHIN and not (mine_alone and _utc(mine_t).date() >= _utc(nt).date())
+            hours = round((nt - mine_t).total_seconds() / 3600, 1)
+            if first and not mine_alone and not n_alone:
+                leads.append(max(hours, 0.0))
+            cases.append({"story": st, "first": first, "at": _iso(mine_t), "post": mine["post"], "voices": len(best),
+                          "title": (d.story_titles.get(st) or d.post_titles.get(mine["post"], ("",))[0] or "")[:140],
+                          "other": _voice_name(d, nv), "hours": abs(hours), "date_alone": mine_alone or n_alone})
+        cases.sort(key=lambda e: e["at"] or "", reverse=True)
+        firsts = sum(1 for c in cases if c["first"])
+        out: Dict[str, Tuple[Any, int, Dict[str, Any]]] = {
+            "firsts": (firsts, len(cases), {"stories": [c for c in cases if c["first"]][:EVIDENCE * 2],
+                                            "days": RECORD_DAYS, "stories_kind": d.news_kind}),
+            "first_share": (_share(firsts, len(cases)), len(cases),
+                            {"later": [c for c in cases if not c["first"]][:EVIDENCE]}),
+            "first_lead": (round(statistics.median(leads), 1) if leads else None, len(leads), {"hours": sorted(leads)}),
+        }
+        posts = sorted((p for x in sids for p in by_source.get(x, []) if p.at and p.at >= self.since),
+                       key=lambda p: p.at, reverse=True)
+        n = len(posts)
+        why = {"news": [p for p in posts if p.id in d.news_posts],
+               "story": [p for p in posts if p.id in self.multi_posts],
+               "track": [p for p in posts if p.id in d.tracked]}
+        hit = {p.id for ps in why.values() for p in ps}
+        noise = [p for p in posts if p.id not in hit]
+        opened = [p for p in posts if p.id in d.opened]
+        out["signal_share"] = (_share(n - len(noise), n), n, {
+            "signal": n - len(noise), **{k: len(v) for k, v in why.items()},
+            "posts": {k: [_post_ev(d, p.id) for p in v[:5]] for k, v in why.items()}})
+        out["noise_share"] = (_share(len(noise), n), n,
+                              {"noise": len(noise), "posts": [_post_ev(d, p.id) for p in noise[:EVIDENCE]]})
+        out["opened_share"] = (_share(len(opened), n), n,
+                               {"opened": len(opened), "posts": [_post_ev(d, p.id) for p in opened[:5]]})
+        return out
+
+
 def compute(d: Data, *, only: Optional[Iterable[str]] = None) -> List[Row]:
     """Every signal of every source (or those of `only`), and of every voice."""
     subjects: List[Tuple[str, str, List[str]]] = []
@@ -584,9 +733,11 @@ def compute(d: Data, *, only: Optional[Iterable[str]] = None) -> List[Row]:
             if p is not None:
                 cites[t][d.voice_of(p.source)].add(pid)
 
+    record = RecordIndex(d)
     rows: List[Row] = []
     for kind, sid, sids in subjects:
         out = _subject(d, kind, sid, sids, by_source, stories, stories_of, multi_posts, cites, copies)
+        out.update(record.of(sids, d.voice_of(sids[0]) if kind == "voice" else d.voice_of(sid), by_source))
         rows.extend(Row(kind, sid, name, value, n, ev) for name, (value, n, ev) in out.items())
     return rows
 
@@ -847,6 +998,25 @@ def _too_few(signal: str, n: int) -> bool:
     return n < SIGNALS[signal].min
 
 
+def switch_off(stats: Dict[str, Dict[str, Any]], enabled: bool) -> Optional[Dict[str, Any]]:
+    """0266: "switch off?" for an enabled source whose last 30 days are counted (not too few), with a noise share of
+    NOISE_OFF or more, no first, under OPENED_KEEP of it opened and linked by fewer than CITED_KEEP other voices (a
+    source others link is an origin: what it adds reaches you through them): {line, noise, posts, opened, cited_by};
+    else None. A suggestion only: nothing is switched."""
+    noise, firsts, opened = stats.get("noise_share") or {}, stats.get("firsts") or {}, stats.get("opened_share") or {}
+    cited = (stats.get("cited_by") or {}).get("value") or 0
+    if not enabled or noise.get("too_few", True) or noise.get("value") is None or noise["value"] < NOISE_OFF:
+        return None
+    if firsts.get("value") or (opened.get("value") or 0) >= OPENED_KEEP or cited >= CITED_KEEP:
+        return None
+    line = (f"{noise['n']} posts in {RECORD_DAYS} days, {round(noise['value'] * 100)}% in no News row, no story of 2+ "
+            f"voices and no track; first on no story")
+    if opened.get("value") is not None:
+        line += f"; you opened {round(opened['value'] * 100)}%"
+    line += f"; linked by {cited} other voice{'' if cited == 1 else 's'}"
+    return {"line": line, "noise": noise["value"], "posts": noise["n"], "opened": opened.get("value"), "cited_by": cited}
+
+
 def list_view(cur: Any) -> Dict[str, Any]:
     """One row per voice, and per source with no voice: the role and the list's columns (no overall score), each
     {value, n, too_few}. Sorting is the page's (any column)."""
@@ -872,12 +1042,14 @@ def list_view(cur: Any) -> Dict[str, Any]:
         if voice and voice in voices:
             voices[voice]["channels"].append({"id": sid, "name": name, "kind": source_kind(platform, handle)})
             continue
+        got = stats.get(("source", sid), {})
         rows.append({"kind": "source", "id": sid, "name": name, "platform": source_kind(platform, handle),
-                     "enabled": enabled, "channels": 1, "stats": stats.get(("source", sid), {})})
+                     "enabled": enabled, "channels": 1, "stats": got, "switch_off": switch_off(got, bool(enabled))})
     for vid, v in voices.items():
         if v["channels"]:
             rows.append({"kind": "voice", "id": vid, "name": v["name"], "platform": "voice", "enabled": True,
-                         "channels": len(v["channels"]), "stats": stats.get(("voice", vid), {})})
+                         "channels": len(v["channels"]), "stats": stats.get(("voice", vid), {}),
+                         "switch_off": switch_off(stats.get(("voice", vid), {}), True)})
     rows.sort(key=lambda r: (r["name"] or "").lower())
     return {"rows": rows, "columns": list(LIST_COLUMNS), "computed_at": _iso(newest),
             "formulas": {k: SIGNALS[k].formula for k in LIST_COLUMNS}}
@@ -940,13 +1112,14 @@ def subject_view(cur: Any, subject_id: str) -> Dict[str, Any]:
         voice = cur.fetchone()
     if voice:
         cur.execute("""SELECT id::text, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url), platform,
-                              handle_or_url FROM sources WHERE voice_id = %s ORDER BY 2""", (subject_id,))
+                              handle_or_url, enabled FROM sources WHERE voice_id = %s ORDER BY 2""", (subject_id,))
         channels = cur.fetchall()
         subject = {"kind": "voice", "id": voice[0], "name": voice[1], "voice": None}
-        tabs = [("voice", voice[0], voice[1], "voice")] + [("source", c[0], c[1], source_kind(c[2], c[3])) for c in channels]
+        tabs = [("voice", voice[0], voice[1], "voice", any(c[4] for c in channels))] + [
+            ("source", c[0], c[1], source_kind(c[2], c[3]), bool(c[4])) for c in channels]
     else:
         cur.execute(f"""SELECT id::text, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url), platform,
-                               handle_or_url, {'voice_id::text' if has_voices else 'NULL'}
+                               handle_or_url, {'voice_id::text' if has_voices else 'NULL'}, enabled
                           FROM sources WHERE id = %s""", (subject_id,))
         row = cur.fetchone()
         if row is None:
@@ -957,14 +1130,16 @@ def subject_view(cur: Any, subject_id: str) -> Dict[str, Any]:
             got = cur.fetchone()
             vname = got[0] if got else None
         subject = {"kind": "source", "id": row[0], "name": row[1], "voice": {"id": row[4], "name": vname} if row[4] else None}
-        tabs = [("source", row[0], row[1], source_kind(row[2], row[3]))]
+        tabs = [("source", row[0], row[1], source_kind(row[2], row[3]), bool(row[5]))]
     out_tabs, newest = [], None
-    for kind, tid, name, platform in tabs:
+    for kind, tid, name, platform, enabled in tabs:
         rows, at = _rows(cur, kind, tid)
         newest = at if newest is None or (at and at > newest) else newest
         task = ((rows.get("stance") or {}).get("evidence") or {}).get("task")
         out_tabs.append({"kind": kind, "id": tid, "name": name, "platform": platform, "computed": bool(rows),
-                         "cards": _cards(rows, stance_labels(cur, task))})
+                         "cards": _cards(rows, stance_labels(cur, task)),
+                         "switch_off": switch_off({k: {"value": r["value"], "n": r["n"], "too_few": _too_few(k, r["n"])}
+                                                   for k, r in rows.items() if k in SIGNALS}, enabled)})
     return {"subject": subject, "tabs": out_tabs, "computed_at": _iso(newest)}
 
 

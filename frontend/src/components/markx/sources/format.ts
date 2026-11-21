@@ -8,6 +8,12 @@ export const COLUMN_TITLES: Record<string, string> = {
   news_yield: 'News yield',
   cited_by: 'Cited by',
   solo_share: 'Solo share',
+  // 0266: the track record, last 30 days
+  firsts: 'Firsts (30 d)',
+  first_lead: 'Lead',
+  signal_share: 'Signal',
+  noise_share: 'Noise',
+  opened_share: 'Opened',
 };
 
 export const ROLE_LABELS: Record<string, string> = {
@@ -22,7 +28,8 @@ export const ROLE_LABELS: Record<string, string> = {
   too_few: 'too few to tell',
 };
 
-export const SHARES = new Set(['own_share', 'root_share', 'first_to_report', 'solo_share', 'news_yield', 'media_only']);
+export const SHARES = new Set(['own_share', 'root_share', 'first_to_report', 'solo_share', 'news_yield', 'media_only',
+  'first_share', 'signal_share', 'noise_share', 'opened_share']);
 
 export function pct(value: unknown): string {
   return typeof value === 'number' ? `${Math.round(value * 100)}%` : '—';
@@ -49,6 +56,7 @@ export function valueText(signal: string, value: unknown): string {
   if (signal === 'role') return ROLE_LABELS[String(value)] ?? String(value);
   if (SHARES.has(signal)) return pct(value);
   if (signal === 'per_week') return num(value);
+  if (signal === 'first_lead') return `${num(value)} h`;
   if (signal === 'perspectives') return mix(value, false);
   if (signal === 'kinds' || signal === 'languages') return mix(value);
   if (signal === 'age') return typeof value === 'string' ? value.slice(0, 10) : '—';

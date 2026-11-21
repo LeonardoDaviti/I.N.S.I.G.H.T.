@@ -19,7 +19,26 @@ const SIGNAL_TITLES: Record<string, string> = {
   media_only: 'Media only', per_week: 'Posts a week', age: 'First stored post', audience: 'Audience',
   followers: 'Subscribers or followers',
   reputation: 'Reputation', stance: 'Patterns',
+  firsts: 'Firsts', first_share: 'First share', first_lead: 'Lead over your next source', signal_share: 'Signal',
+  noise_share: 'Noise', opened_share: 'Opened',
 };
+
+type RecordStory = { story: string; title: string; first: boolean; post: string; other: string; hours: number; date_alone?: boolean };
+
+/** 0266: a track record story: first and how far ahead of your next source, or who was first and how much earlier. */
+function RecordStories({ stories }: { stories: unknown }) {
+  const st = list<RecordStory>(stories);
+  if (!st.length) return null;
+  return (
+    <ul className="space-y-0.5">{st.map((x) => (
+      <li key={x.story} className="min-w-0 truncate">
+        <TextLink to={`/posts/${encodeURIComponent(x.post)}`}>{x.title || 'a story'}</TextLink>{' '}
+        <span className="text-fg-3">{x.first ? `first; ${x.other} ${num(x.hours)} h later` : `${x.other} ${num(x.hours)} h earlier`}
+          {x.date_alone ? ' (a date alone: hour unknown)' : ''}</span>
+      </li>
+    ))}</ul>
+  );
+}
 
 type Ev = Record<string, unknown>;
 const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
@@ -165,7 +184,23 @@ function Evidence({ s, tab }: { s: MarkxSourceSignal; tab: MarkxSourceTab }) {
       return <Stance s={s} tab={tab} />;
     case 'media_only':
     case 'root_share':
+    case 'noise_share':
+    case 'opened_share':
       return <Posts posts={ev.posts} />;
+    case 'firsts':
+      return <RecordStories stories={ev.stories} />;
+    case 'first_share':
+      return <RecordStories stories={ev.later} />;
+    case 'signal_share': {
+      const by = (ev.posts ?? {}) as Record<string, MarkxEvidencePost[]>;
+      const label: Record<string, string> = { news: 'In a News row', story: 'In a story of 2+ voices', track: 'In a track' };
+      return (
+        <div>
+          <p className="text-fg-2">News rows {num(ev.news)} · stories of 2+ voices {num(ev.story)} · tracks {num(ev.track)}</p>
+          {Object.entries(by).map(([k, ps]) => <Posts key={k} posts={ps} label={`${label[k] ?? k}:`} />)}
+        </div>
+      );
+    }
     default:
       return null;
   }
@@ -242,6 +277,11 @@ function TabBody({ tab }: { tab: MarkxSourceTab }) {
   return (
     <div className="space-y-6">
       {!tab.computed ? <p className="text-[0.8125rem] text-fg-2">Not computed yet: the stats job runs nightly and after a regroup.</p> : null}
+      {tab.switch_off ? (
+        <p className="text-[0.8125rem] text-fg-2" data-switch-off>
+          <span className="font-semibold text-fg">Switch off?</span> {tab.switch_off.line}. A suggestion only: nothing is switched off.
+        </p>
+      ) : null}
       {tab.cards.map((c) => <SourceCard key={c.card} card={c} tab={tab} />)}
     </div>
   );

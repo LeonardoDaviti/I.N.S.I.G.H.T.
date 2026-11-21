@@ -167,3 +167,36 @@ describe('a source page (0132 B)', () => {
     expect(await screen.findByText(/Not computed yet/)).toBeInTheDocument();
   });
 });
+
+describe('the track record (0266)', () => {
+  const SWITCH = { line: '40 posts in 30 days, 98% in no News row, no story of 2+ voices and no track; first on no story',
+    noise: 0.98, posts: 40, opened: 0, cited_by: 0 };
+  const LOUD = row('s4', 'Loud Feed', { firsts: cell(0, 0), signal_share: cell(0.02, 40), noise_share: cell(0.98, 40),
+    first_lead: cell(null, 0, true) }, { switch_off: SWITCH });
+  const FAST = row('s5', 'Fast Wire', { firsts: cell(9, 20), signal_share: cell(0.6, 30), noise_share: cell(0.4, 30),
+    first_lead: cell(3.5, 9) });
+
+  it('shows the columns, sorts by firsts, and lists the switch-off suggestions without switching anything', async () => {
+    const getMarkxSources = vi.fn().mockResolvedValue({ ...list([LOUD, FAST]),
+      columns: [...COLUMNS, 'firsts', 'first_lead', 'signal_share', 'noise_share', 'opened_share'] });
+    renderWithProviders(<MarkXSourcesPage />, { api: makeFakeApi({ getMarkxSources }) });
+    const table = await screen.findByRole('table', { name: 'Sources' });
+    await userEvent.click(within(table).getByRole('button', { name: 'Sort by firsts (30 d)' }));
+    expect(names()).toEqual(['Fast Wire', 'Loud Feed']);
+    const fast = within(table).getAllByRole('row').find((r) => r.textContent?.includes('Fast Wire'))!;
+    expect(within(fast).getByText('3.5 h')).toBeInTheDocument();
+    expect(within(fast).getByText('60%')).toBeInTheDocument();
+    const off = screen.getByRole('region', { name: 'Switch off?' });
+    expect(within(off).getByRole('link', { name: 'Loud Feed' })).toHaveAttribute('href', '/markx/sources/s4');
+    expect(within(off).queryByText('Fast Wire')).toBeNull();
+    expect(within(off).getByText(/nothing is switched off/)).toBeInTheDocument();
+    expect(within(off).queryByRole('button')).toBeNull();
+  });
+
+  it("shows the suggestion on the source's page", async () => {
+    const getMarkxSource = vi.fn().mockResolvedValue(page({ tabs: [{ ...tab('s1', 'Example Wire'), switch_off: SWITCH }] }));
+    renderPage({ getMarkxSource });
+    expect(await screen.findByText(/A suggestion only/)).toBeInTheDocument();
+    expect(screen.getByText(/98% in no News row/)).toBeInTheDocument();
+  });
+});

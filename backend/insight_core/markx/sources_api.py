@@ -2,7 +2,8 @@
 every /api/markx path). Both pages read source_stats rows only (markx/source_stats.py): nothing is computed here.
 
 GET  /api/markx/sources                 one row per voice and per source with no voice: {rows [{kind, id, name, platform,
-                                        enabled, channels, stats {signal: {value, n, too_few}}}], columns, formulas,
+                                        enabled, channels, stats {signal: {value, n, too_few}}, switch_off (0266:
+                                        a suggestion or null)}], columns, formulas,
                                         computed_at, job (the stats job's last run)}; no overall score
 GET  /api/markx/sources/{id}            a voice's or a source's page: {subject, tabs [{kind, id, name, platform, computed,
                                         cards [{card, title, experimental, signals [{signal, value, n, min, counts,
