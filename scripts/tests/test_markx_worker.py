@@ -1308,6 +1308,33 @@ class TestChain0219(unittest.TestCase):
         self.assertIn("reason", W.rule_error("chain", dict(ok, reason="  "), "THING: x", "chain-v1") or "")
 
 
+class TestJudgeQuotes0258(unittest.TestCase):
+    """0258 (v10.30): join and pair ask judge-read-v2, whose answer quotes the POST; the worker refuses, as the server
+    does, an answer whose quote is not in its own question's POST (one written from another question of its batch),
+    and asks it again in the same cycle."""
+
+    TEXT = ("STORY\nHeadline: Cursor adds Fable 5.2\nMembers (earliest first):\n"
+            "- [Example Dev News, x] Cursor adds Fable 5.2 — Cursor added Claude Fable 5.2, scoring 56.9% on CursorBench"
+            "\n\nPOST\nPlatform: telegram | Source: Example Physics\nTitle: Black holes\n"
+            "Text: In 1983, physicists showed that black holes form very abruptly.\n"
+            "Reading of the post: kind=commentary, events=one, main=Physics result; mentions=")
+
+    def test_the_answer_passes_the_workers_checks(self):
+        rules = W.server_rules()
+        schema = rules.schemas.schema_for("pair", "judge-read-v2")
+        ok = {"relation": "different", "confidence": 90, "post_quote": "black holes form very abruptly",
+              "reason": "A physics result, not the model's release."}
+        self.assertIsNone(W.check_answer(schema, ok))
+        self.assertIsNone(W.rule_error("pair", ok, self.TEXT, "judge-read-v2"))
+        cross = dict(ok, relation="same_event", post_quote="Cursor added Claude Fable 5.2, scoring 56.9% on CursorBench")
+        self.assertIn("not in this question's POST", W.rule_error("pair", cross, self.TEXT, "judge-read-v2") or "")
+        self.assertIn("not in this question's POST", W.rule_error("join", cross, self.TEXT, "judge-read-v2") or "")
+        self.assertIsNotNone(W.check_answer(schema, {"relation": "different", "confidence": 90}))   # no quote
+        v1 = {"relation": "same_event", "confidence": 90}
+        self.assertIsNone(W.check_answer(rules.schemas.schema_for("pair", "judge-read-v1"), v1))
+        self.assertIsNone(W.rule_error("pair", v1, self.TEXT, "judge-read-v1"))   # v1's open tasks: as before
+
+
 class TestCollideMakers0250(unittest.TestCase):
     """0250 (v10.28): two maker groups of one bare name, the collide kind's guide collide-makers-v1: the worker checks
     it by its own schema and the server's guide check (a verdict of three, its evidence never empty), not collide-v1's

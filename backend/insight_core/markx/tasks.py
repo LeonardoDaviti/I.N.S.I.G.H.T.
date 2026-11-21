@@ -17,7 +17,7 @@ The renders are the prototype's (plan/research/lab/markx/proto: read.block, judg
 exp_f4, exp_f6, exp_f12, exp_f5), and each question sees the evidence that suits it (hybrid.py):
   - read, entities: the post;
   - check: the raw post and the story's members, no reading (judge-raw-v1);
-  - join, pair: the post with its reading, and the story's card and members (judge-read-v1);
+  - join, pair: the post with its reading, and the story's card and members (judge-read-v2, 0258: its answer quotes the post);
   - merge: both stories as cards and up to 3 members each (judge-story-v1);
   - connect: both stories by up to 5 members each, with dates (connect-v1);
   - card, headline: the story's members (with their readings for the card);

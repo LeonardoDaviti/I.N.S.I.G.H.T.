@@ -424,6 +424,51 @@ def _relate(a: Dict[str, Any], input: str) -> Optional[str]:
     return None if str(a.get("reason") or "").strip() else "reason: empty"
 
 
+# 0258 (judge-read-v2, join and pair): the answer quotes the POST it judged, and maybe the STORY. The question is
+# tasks.render_story + "\n\n" + tasks.render_post: the STORY block, then "POST", the platform line, "Title: ", "Text: "
+# (its lines), "Links: " and "Reading of the post: " (the model's reading, never the post's words).
+JUDGE_POST_MARK = "\n\nPOST\nPlatform: "
+JUDGE_POST_TAILS = ("\nReading of the post: ", "\nLinks: ")   # the render's last lines, in reverse order
+JUDGE_QUOTE_MIN = 12   # folded characters: a shorter quote names too little to be this post's (unless it is all of it)
+
+
+def judge_blocks(input: str) -> Tuple[str, str]:
+    """(the STORY block, the POST's own words: its title and text) of a judge-read question."""
+    story, mark, post = (input or "").partition(JUDGE_POST_MARK)
+    if not mark:
+        return story, ""
+    for tail in JUDGE_POST_TAILS:
+        head, found, _rest = post.rpartition(tail)
+        if found:
+            post = head
+    _platform, _nl, own = post.partition("\n")
+    return story, own
+
+
+def _own_part(post: str) -> List[str]:
+    """The post's title and text, each whole (folded): a quote that is all of a short one needs no length."""
+    title, _, text = post.partition("\nText: ")
+    return [fold(title.removeprefix("Title: ")).strip(), fold(text).strip()]
+
+
+def _judge_read(a: Dict[str, Any], input: str) -> Optional[str]:
+    """0258: `post_quote` is in this question's POST (its title or text), `story_quote` (when given) in its STORY: an
+    answer written from another question of its batch quotes words this one does not show. Only `cant_tell` (a post
+    with too little text) may leave the post quote empty."""
+    story, post = judge_blocks(input)
+    q = fold(a.get("post_quote") or "").strip()
+    if not q:
+        return None if a.get("relation") == "cant_tell" else "post_quote: empty (copy the post's own words)"
+    if q not in fold(post):
+        return "post_quote: not in this question's POST title or text"
+    if len(q) < JUDGE_QUOTE_MIN and q not in _own_part(post):
+        return f"post_quote: shorter than {JUDGE_QUOTE_MIN} characters"
+    sq = fold(a.get("story_quote") or "").strip()
+    if sq and sq not in fold(story):
+        return "story_quote: not in this question's STORY"
+    return None
+
+
 # 0132 B: a stance answer's quotes, checked against the question's numbered posts.
 _STANCE_BLOCK = re.compile(r"^\[(\d+)\] ", re.M)
 STANCE_MIN_QUOTES = 2
@@ -973,7 +1018,8 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
 GUIDE_CHECKS = {"websearch-official-v1": _websearch_official,
                 "digest-v2": _digest_rows,   # 0245: a track brief's points cite its rows
                 "digest-v3": _digest_rows,   # v10.29: digest-v2's points, stating facts
-                "collide-makers-v1": _collide_makers}   # 0250: two maker groups of one bare name
+                "collide-makers-v1": _collide_makers,   # 0250: two maker groups of one bare name
+                "judge-read-v2": _judge_read}           # 0258: join's and pair's quotes are their own question's
 
 
 def unwrap(kind: str, answer: Any) -> Any:
@@ -1000,5 +1046,5 @@ def check(kind: str, answer: Any, input: str, guide: Optional[str] = None) -> Tu
     err = schema_error(schemas.schema_for(kind, guide), answer)
     if err:
         return answer, err
-    extra = GUIDE_CHECKS.get(guide or "") or CHECKS.get(kind)
+    extra = GUIDE_CHECKS.get(guide or spec.guide or "") or CHECKS.get(kind)   # no guide: the kind's (0258)
     return answer, extra(answer, input) if extra else None

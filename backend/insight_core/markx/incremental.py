@@ -51,6 +51,7 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
+from insight_core.markx import schemas
 from insight_core.markx.unchanged import table_stamps   # 0183: one table stamp for every pass
 
 log = logging.getLogger(__name__)
@@ -322,14 +323,20 @@ def refresh(cur: Any, state: State) -> Dict[str, Any]:
 
     v10.17.2 (0204): each task's calls are counted by its own (mx_calls_task_idx), not by grouping every valid call
     of every kind (~1M on the server, mostly reads and entities: 0.84 s a run at server scale, now 0.03 s)."""
-    cur.execute("""SELECT t.id::text, t.kind, t.input_hash, t.status, c.n, t.a::text, t.b::text, s.status, s.n
+    cur.execute("""SELECT t.id::text, t.kind, t.input_hash, t.status, c.n, t.a::text, t.b::text, s.status, s.n, t.guide
                      FROM mx_tasks t
                      CROSS JOIN LATERAL (SELECT count(*) n FROM mx_calls c WHERE c.task_id = t.id AND c.valid) c
                      LEFT JOIN mx_inc_tasks s ON s.task_id = t.id
                     WHERE t.kind = ANY(%s)""", (list(KINDS),))
     index, keys, was, dirty, posts = {}, {}, {}, [], set()
-    for tid, kind, h, status, n, a, b, s_status, s_n in cur.fetchall():
-        index[(kind, h)] = (tid, status, int(n))
+    order = {k: schemas.answer_guides(k) for k in KINDS}
+    rank: Dict[Tuple[str, str], int] = {}
+    for tid, kind, h, status, n, a, b, s_status, s_n, guide in cur.fetchall():
+        # 0258: a question is its task under the kind's current guide, else under an earlier one (decide.Ask.answer)
+        r = order[kind].index(guide) if guide in order[kind] else len(order[kind])
+        if r <= rank.get((kind, h), r):
+            index[(kind, h)] = (tid, status, int(n))
+            rank[(kind, h)] = r
         keys[tid] = (kind, h)
         if s_status is not None:
             was[tid] = (s_status, int(s_n))

@@ -106,13 +106,14 @@ class TheSchemaAndSets(unittest.TestCase):
 
     def test_every_judge_kind_takes_a_relation_from_its_set_and_a_confidence_in_0_100(self):
         for kind in ("check", "join", "pair", "merge", "connect"):
+            g = "judge-read-v1" if kind in ("join", "pair") else None   # 0258: v2 also quotes (JudgeQuotes0258)
             with self.subTest(kind=kind):
-                self.assertIsNone(check(kind, judge(), "STORY ...")[1])
-                self.assertIn("relation", check(kind, judge(relation="related"), "x")[1])
-                self.assertIn("above 100", check(kind, judge(confidence=120), "x")[1])
-                self.assertIn("below 0", check(kind, judge(confidence=-1), "x")[1])
-                self.assertIn("not number", check(kind, judge(confidence="high"), "x")[1])
-                self.assertIn("confidence missing", check(kind, {"relation": "different"}, "x")[1])
+                self.assertIsNone(check(kind, judge(), "STORY ...", g)[1])
+                self.assertIn("relation", check(kind, judge(relation="related"), "x", g)[1])
+                self.assertIn("above 100", check(kind, judge(confidence=120), "x", g)[1])
+                self.assertIn("below 0", check(kind, judge(confidence=-1), "x", g)[1])
+                self.assertIn("not number", check(kind, judge(confidence="high"), "x", g)[1])
+                self.assertIn("confidence missing", check(kind, {"relation": "different"}, "x", g)[1])
 
 
 class Entities(unittest.TestCase):
@@ -385,6 +386,93 @@ class TheKindsAndGuides(unittest.TestCase):
             with self.subTest(guide=path.name):
                 text = path.read_text(encoding="utf-8")
                 self.assertIsNone(re.search(r"t\.me/|(?<![\w.])r/\w|(?<![\w.])@(?!handles\b|x\b)\w|x\.com/|twitter\.com/|youtube\.com/", text))
+
+
+class JudgeQuotes0258(unittest.TestCase):
+    """0258 (judge-read-v2, join and pair): an answer quotes the POST it judged. Asked in batches, Haiku once answered a
+    question from another one's content (an invented copy of the server's case below: a physics post judged
+    same_event with a story about a model's benchmark, its reason describing the story's post). Its quote is not in
+    this question's POST, so the check refuses it; a quote of the post's own words passes."""
+
+    @staticmethod
+    def question(kind="pair"):
+        from datetime import datetime, timezone
+        from insight_core.markx import tasks
+        at = datetime(2100, 3, 1, tzinfo=timezone.utc)
+        anchor = tasks.Post("a1", "x", "Example Dev News", "s1", at, "Cursor adds Fable 5.2",
+                            "Cursor added Claude Fable 5.2, scoring 56.9% on CursorBench, available to every plan.")
+        post = tasks.Post("p2", "telegram", "Example Physics", "s2", at, "Black holes and Fable 5.2",
+                          "In 1983, physicists showed that black holes form very abruptly. Fable 5.2 found the "
+                          "transition is abrupt there too.", links=[("https://example.com/paper", "the paper")])
+        reading = {"kind": "commentary", "events": "one", "main": {"headline_en": "Model checks a physics result"},
+                   "mentions": [{"name": "Fable 5.2", "role": "subject"}]}
+        rd = {"a1": {"kind": "report", "main": {"headline_en": "Cursor adds Fable 5.2"}}, "p2": reading}
+        if kind == "pair":
+            return tasks.pair_input(anchor, post, rd)
+        return tasks.join_input(post, reading, [anchor], {"headline_en": "Cursor adds Fable 5.2 with a CursorBench score",
+                                                          "summary_en": "Cursor ships the model to every plan."})
+
+    def test_the_kinds_ask_judge_read_v2_and_keep_v1(self):
+        for kind in ("join", "pair"):
+            self.assertEqual(schemas.KINDS[kind].guide, "judge-read-v2")
+            self.assertEqual(schemas.answer_guides(kind), ("judge-read-v2", "judge-read-v1"))
+            self.assertIn("post_quote", schemas.schema_for(kind, "judge-read-v2")["required"])
+            self.assertIs(schemas.schema_for(kind, "judge-read-v1"), schemas.JUDGE_SCHEMA)
+        self.assertEqual(schemas.guide_ids()["judge-read-v1"], "join")   # stored as before: its row loads unchanged
+        self.assertEqual(schemas.guide_ids()["judge-read-v2"], "join")
+        self.assertNotEqual(schemas.guide_body("judge-read-v1"), schemas.guide_body("judge-read-v2"))
+        self.assertIn("post_quote", schemas.guide_body("judge-read-v2"))
+        self.assertEqual(schemas.answer_guides("merge"), ("judge-story-v1",))
+
+    def test_an_answer_written_from_another_question_is_refused(self):
+        for kind in ("pair", "join"):
+            text = self.question(kind)
+            with self.subTest(kind=kind):
+                cross = judge(post_quote="Cursor added Claude Fable 5.2, scoring 56.9% on CursorBench", confidence=90,
+                              reason="Post announces Fable 5.2 availability in Cursor with its CursorBench score")
+                # the story's words, though in this question, are not the POST's
+                self.assertEqual(check(kind, cross, text, "judge-read-v2")[1],
+                                 "post_quote: not in this question's POST title or text")
+                elsewhere = judge(post_quote="the first physics problem of the story")
+                self.assertIn("not in this question's POST", check(kind, elsewhere, text, "judge-read-v2")[1])
+                reading_words = judge(post_quote="Model checks a physics result")   # the reading is not the post
+                self.assertIn("not in this question's POST", check(kind, reading_words, text, "judge-read-v2")[1])
+                self.assertIn("not in this question's POST",
+                              check(kind, judge(post_quote="https://example.com/paper"), text, "judge-read-v2")[1])
+                self.assertIn("post_quote missing", check(kind, judge(), text, "judge-read-v2")[1])
+                self.assertIn("empty", check(kind, judge(post_quote="  "), text, "judge-read-v2")[1])
+                self.assertIn("shorter than", check(kind, judge(post_quote="Fable 5.2"), text, "judge-read-v2")[1])
+                bad_story = judge(post_quote="black holes form very abruptly", story_quote="a physics breakthrough")
+                self.assertEqual(check(kind, bad_story, text, "judge-read-v2")[1],
+                                 "story_quote: not in this question's STORY")
+                # no guide named: the kind's current one checks it
+                self.assertIsNotNone(check(kind, cross, text)[1])
+
+    def test_a_grounded_answer_is_accepted(self):
+        for kind in ("pair", "join"):
+            text = self.question(kind)
+            with self.subTest(kind=kind):
+                ok = judge(relation="different", post_quote="black holes  form very abruptly",   # folded: spaces, case
+                           reason="The post is about a physics result, not Cursor shipping the model.")
+                self.assertIsNone(check(kind, ok, text, "judge-read-v2")[1])
+                self.assertIsNone(check(kind, dict(ok, post_quote="In 1983, Physicists showed"), text, "judge-read-v2")[1])
+                self.assertIsNone(check(kind, dict(ok, post_quote="Black holes and Fable 5.2"), text, "judge-read-v2")[1])
+                about = dict(ok, relation="mention", story_quote="Cursor added Claude Fable 5.2")
+                self.assertIsNone(check(kind, about, text, "judge-read-v2")[1])
+                self.assertIsNone(check(kind, dict(ok, story_quote=None), text, "judge-read-v2")[1])
+                self.assertIsNone(check(kind, judge(relation="cant_tell", post_quote=""), text, "judge-read-v2")[1])
+                # an answer of v1 (no quote) stays valid under v1
+                self.assertIsNone(check(kind, judge(), text, "judge-read-v1")[1])
+
+    def test_a_short_post_may_be_quoted_whole(self):
+        from datetime import datetime, timezone
+        from insight_core.markx import tasks
+        at = datetime(2100, 3, 1, tzinfo=timezone.utc)
+        anchor = tasks.Post("a1", "x", "Example", "s1", at, "Widget 4 is out", "Acme released Widget 4 today.")
+        post = tasks.Post("p2", "x", "Example", "s2", at, "Widget 4!", "")
+        text = tasks.pair_input(anchor, post, {})
+        self.assertIsNone(check("pair", judge(post_quote="Widget 4!"), text, "judge-read-v2")[1])
+        self.assertIn("shorter than", check("pair", judge(post_quote="Widget"), text, "judge-read-v2")[1])
 
 
 if __name__ == "__main__":

@@ -174,6 +174,19 @@ JUDGE_SCHEMA = {
                    "reason": _STR},
 }
 
+# 0258 (v10.30): judge-read-v2's answer (join, pair) also quotes the POST it judged: `post_quote`, a short verbatim
+# phrase of the post's title or text its verdict rests on, and for an "about" verdict optionally `story_quote`, one of
+# the STORY's. validate._judge_read checks each is in its own block of this question: an answer written from another
+# question of its batch quotes a post this one does not show, and is refused (asked again by the retry path).
+JUDGE_QUOTE_CHARS = 300
+JUDGE_V2_SCHEMA = {
+    "type": "object",
+    "required": ["relation", "confidence", "post_quote"],
+    "properties": {**JUDGE_SCHEMA["properties"],
+                   "post_quote": {"type": "string", "maxLength": JUDGE_QUOTE_CHARS},
+                   "story_quote": {"type": ["string", "null"], "maxLength": JUDGE_QUOTE_CHARS}},
+}
+
 CARD_SCHEMA = {
     "type": "object",
     "required": ["headline_en", "actors", "object", "action"],
@@ -666,8 +679,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("read", "read-v2", "post", READ_SCHEMA),
     Kind("entities", "ent-v3", "post", ENTITIES_SCHEMA),
     Kind("check", "judge-raw-v1", "post_story", JUDGE_SCHEMA),
-    Kind("join", "judge-read-v1", "post_story", JUDGE_SCHEMA),
-    Kind("pair", "judge-read-v1", "post_post", JUDGE_SCHEMA),
+    Kind("join", "judge-read-v2", "post_story", JUDGE_V2_SCHEMA),   # 0258: v2 quotes the post (v1's tasks kept:
+    Kind("pair", "judge-read-v2", "post_post", JUDGE_V2_SCHEMA),    # EARLIER_GUIDES)
     Kind("merge", "judge-story-v1", "story_story", JUDGE_SCHEMA),
     Kind("connect", "connect-v1", "story_story", JUDGE_SCHEMA),
     Kind("card", "card-v1", "story", CARD_SCHEMA),
@@ -788,25 +801,43 @@ GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
 }
 
 
+# 0258: a kind's earlier guides, {guide: (its kinds, the schema its answers were checked by)}. A question already asked
+# under one keeps its task and answers: they are read (`answer_guides`), and a task still open there is answered and
+# checked under it. A guide change asks new questions only, never the history again.
+EARLIER_GUIDES: Dict[str, Tuple[Tuple[str, ...], Dict[str, Any]]] = {
+    "judge-read-v1": (("join", "pair"), JUDGE_SCHEMA),   # before 0258's post quote
+}
+
+
+def answer_guides(kind: str) -> Tuple[str, ...]:
+    """The guides whose task answers a question of `kind`: the current one first, then its earlier ones (0258)."""
+    return (KINDS[kind].guide,) + tuple(g for g, (kinds, _s) in EARLIER_GUIDES.items() if kind in kinds)
+
+
 def schema_for(kind: str, guide: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """The answer schema of `kind` under `guide` (an entities arm's own, a guide variant's own; else the kind's)."""
+    """The answer schema of `kind` under `guide` (an entities arm's own, a guide variant's own, an earlier guide's
+    own; else the kind's)."""
     if kind == "entities" and guide in ENTITY_ARMS:
         return ENTITY_ARMS[guide].schema
     if guide in GUIDE_VARIANTS and GUIDE_VARIANTS[guide][0] == kind:
         return GUIDE_VARIANTS[guide][1]
+    if guide in EARLIER_GUIDES and kind in EARLIER_GUIDES[guide][0]:
+        return EARLIER_GUIDES[guide][1]
     spec = KINDS.get(kind)
     return spec.schema if spec else None
 
 
 def guide_ids() -> Dict[str, str]:
-    """{guide id: kind}: every guide a kind names (a guide two kinds share, judge-read-v1, takes the first), and each
-    kind's second guide (GUIDE_VARIANTS, 0196)."""
+    """{guide id: kind}: every guide a kind names (a guide two kinds share, judge-read-v2, takes the first), each
+    kind's second guide (GUIDE_VARIANTS, 0196) and its earlier ones (EARLIER_GUIDES, 0258: their tasks are kept)."""
     out: Dict[str, str] = {}
     for kind in KINDS.values():
         if kind.guide:
             out.setdefault(kind.guide, kind.name)
     for guide_id, (kind_name, _schema) in GUIDE_VARIANTS.items():
         out.setdefault(guide_id, kind_name)
+    for guide_id, (kind_names, _schema) in EARLIER_GUIDES.items():
+        out.setdefault(guide_id, kind_names[0])   # judge-read-v1 stays stored as join's
     return out
 
 
