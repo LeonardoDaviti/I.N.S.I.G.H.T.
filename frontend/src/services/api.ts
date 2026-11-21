@@ -1898,6 +1898,16 @@ export interface MarkxSourceRow {
   enabled: boolean;
   channels: number;
   stats: Partial<Record<string, MarkxSourceCell>>;
+  /** 0266: "switch off?" (a suggestion only: nothing is switched). */
+  switch_off?: MarkxSwitchOff | null;
+}
+/** 0266: an enabled source with a high noise share, no first, few opens and few voices linking it. */
+export interface MarkxSwitchOff {
+  line: string;
+  noise: number;
+  posts: number;
+  opened: number | null;
+  cited_by: number;
 }
 export interface MarkxSourcesList {
   rows: MarkxSourceRow[];
@@ -1940,6 +1950,7 @@ export interface MarkxSourceTab {
   /** False until the stats job has run for it. */
   computed: boolean;
   cards: MarkxSourceCard[];
+  switch_off?: MarkxSwitchOff | null;
 }
 export interface MarkxSourcePage {
   subject: { kind: 'source' | 'voice'; id: string; name: string; voice: { id: string; name: string | null } | null };

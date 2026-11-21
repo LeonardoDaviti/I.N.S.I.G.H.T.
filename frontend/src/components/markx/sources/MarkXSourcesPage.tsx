@@ -11,12 +11,17 @@ import { COLUMN_TITLES, cellText, sortRows, sourceHref, type Sort } from './form
  * The source analysis list (0132 B, `/markx/sources`): one row per voice, and per source with no voice; the role, posts
  * a week, first to report, News yield, cited by and solo share, each sortable (the ranker is the sort). There is no
  * overall score (the owner's decision 5). A number counted over too few says "too few". On a phone each row is a block.
+ * 0266: the track record's columns (firsts, lead, signal, noise and opened shares, last 30 days) and "Switch off?",
+ * the suggestions for sources of high noise and no first.
  */
 export default function MarkXSourcesPage() {
   const api = markxSourcesApi(useApi());
   const query = useQuery({ queryKey: ['markx-sources'], queryFn: () => api.getMarkxSources(), staleTime: 60_000 });
   const [sort, setSort] = useState<Sort>({ by: 'name', desc: false });
   const rows = useMemo(() => (query.data ? sortRows(query.data.rows, sort) : []), [query.data, sort]);
+  // 0266: the suggestions, most posts first (a suggestion only: nothing is switched)
+  const suggested = useMemo(() => rows.filter((r) => r.switch_off)
+    .sort((a, b) => (b.switch_off?.posts ?? 0) - (a.switch_off?.posts ?? 0)), [rows]);
   if (query.isPending) return <Page><LoadingState label="Loading" rows={8} /></Page>;
   if (query.isError) return <Page><ErrorState error={query.error} onRetry={() => query.refetch()} /></Page>;
   const d = query.data;
@@ -37,6 +42,20 @@ export default function MarkXSourcesPage() {
             <TextLink to="/markx" muted>Mark X</TextLink> · every number with its formula and evidence on the source&apos;s
             page. No overall score: sort by the column you care about.
           </p>
+          {suggested.length ? (
+            <section aria-label="Switch off?" className="text-[0.8125rem]">
+              <h2 className="border-b border-line pb-2 font-semibold text-fg-2">Switch off? <span className="font-normal text-fg-3">
+                {suggested.length} suggestion{suggested.length === 1 ? '' : 's'}, nothing is switched off</span></h2>
+              <ul className="mt-2 space-y-1">
+                {suggested.map((r) => (
+                  <li key={`${r.kind}:${r.id}`} className="min-w-0">
+                    <TextLink to={sourceHref(r.id)}>{r.name || 'a source'}</TextLink>{' '}
+                    <span className="text-fg-3">{r.switch_off?.line}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           {!rows.length ? (
             <EmptyState title="No sources computed yet" description="The stats job runs nightly and after a regroup." />
           ) : (
