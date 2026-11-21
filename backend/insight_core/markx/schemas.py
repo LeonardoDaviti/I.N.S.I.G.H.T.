@@ -727,7 +727,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("dispute", "dispute-v1", "story", DISPUTE_SCHEMA),          # 0273: where the story's sources differ
     Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # 0127: event type and origin (the fold)
     Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # 0131: a newer post and an older one (Stalker)
-    Kind("chain", "chain-v1", "story_story", CHAIN_SCHEMA),          # 0219: a later story and an earlier one, one thing
+    Kind("chain", "chain-v2", "story_story", CHAIN_SCHEMA),          # 0219: a later story and an earlier one, one thing
+                                                                     # (v10.34: v2, a result made with it is no release)
     Kind("derive", "derive-v1", "entity_entity", DERIVE_SCHEMA),     # 0234: is a thing made from its predecessor?
     Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
     Kind("back", "back-v1", "story", BACK_SCHEMA),                   # 0136: an old Mark IX story back in the news
@@ -853,6 +854,8 @@ GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
 EARLIER_GUIDES: Dict[str, Tuple[Tuple[str, ...], Dict[str, Any]]] = {
     "judge-read-v1": (("join", "pair"), JUDGE_SCHEMA),   # before 0258's post quote
     "track-things-v1": (("track_things",), TRACK_THINGS_SCHEMA),   # 0261: before v2 (values only from their quote, the subject's own results)
+    "chain-v1": (("chain",), CHAIN_SCHEMA),   # v10.34: before v2's clause (a result achieved with the thing is not its
+                                              # release); its same_release pairs are asked again (graph.plan_chains)
 }
 
 

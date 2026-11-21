@@ -50,7 +50,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 
 from psycopg import errors as psycopg_errors
 
-from insight_core.markx import pairing
+from insight_core.markx import pairing, validate
 from insight_core.utils import voice
 
 log = logging.getLogger(__name__)
@@ -97,6 +97,10 @@ class Config:
     late_rule: bool = True          # the late-post table
     confirm: bool = True            # a story-changing join, pair or merge counts once asked again (0112 Decided 8)
     reason_rule: bool = True        # ... and never while its own reason says the post is not about the story
+    # v10.34: a story-changing join or pair answer with no quote of its own post (judge-read-v1's) is asked again under
+    # judge-read-v2 (it counts until that answer is in). Measured on the 11-19 copy: 3,211 current memberships rest on
+    # such answers; on 100 of them asked twice under v2, 76 kept, 24 not (the black-hole post's pair among the batch's)
+    reask_unquoted: bool = True
     link_keeps: bool = True         # a check demotes a member Mark IX joined by a link at most, never removes it (0121 D1)
     confirm_check: bool = True      # a check taking out a 2-voice story's second voice counts once asked again (0121 D1)
     # Two stories whose members link one document page are a merge question (0121 D5). Off (the owner, 2026-11-06):
@@ -110,7 +114,8 @@ class Config:
     @staticmethod
     def prototype() -> "Config":
         return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False,
-                      link_keeps=False, confirm_check=False, document_merges=False, roundup_first=False)
+                      link_keeps=False, confirm_check=False, document_merges=False, roundup_first=False,
+                      reask_unquoted=False)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -655,6 +660,8 @@ class Ask:
         self.settled: Counter = Counter()     # 0210: questions a cheap signal settled, never asked
         self.shadow_settled: Counter = Counter()   # 0210: questions a Shadow gate would settle (asked anyway)
         self.again: Dict[str, str] = {}       # a first call whose question is to be asked again -> its kind (0112 D8)
+        self.reasked: Counter = Counter()     # v10.34: unquoted story-changing answers asked under the current guide
+        self.last_earlier = False             # v10.34: whether the last answer read came from an earlier guide's task
 
     def answer(self, kind: str, text: Any, *, a: Any = None, b: Any = None, day: Any = None,
                priority: int = 0, add: bool = True) -> Optional[Tuple[Dict[str, Any], str]]:
@@ -670,12 +677,14 @@ class Ask:
         if memo is not None:
             h = incremental.hash_of(text)
             got = memo.tasks.get((kind, h))
-            task = None if got is None else {"id": got[0], "status": got[1]}
-        else:   # 0258: a question asked under the kind's earlier guide keeps that task (never asked again)
-            task = None
-            for guide in schemas.answer_guides(kind):
-                task = repo.task_for(self.cur, kind=kind, guide=guide, input=incremental.text_of(text))
-                if task is not None:
+            task = None if got is None else {"id": got[0], "status": got[1], "earlier": got[3]}
+        else:   # 0258: a question asked under the kind's earlier guide keeps that task. v10.34: the first ANSWERED
+            task = None   # task in guide order (one asked again under the current guide keeps its earlier answer
+            for guide in schemas.answer_guides(kind):   # while it waits: `reask`), else the first task found
+                got = repo.task_for(self.cur, kind=kind, guide=guide, input=incremental.text_of(text))
+                if got is not None and (task is None or (got["status"] == "answered") > (task["status"] == "answered")):
+                    task = got
+                if task is not None and task["status"] == "answered":
                     break
         if task is None and not add:
             self.settled[kind] += 1
@@ -701,7 +710,7 @@ class Ask:
                 return None
             (self.old_added if old else self.added)[kind] += 1
             if memo is not None:
-                memo.tasks[(kind, h)] = (str(tid), "open", 0)
+                memo.tasks[(kind, h)] = (str(tid), "open", 0, False)
                 memo.keys[str(tid)] = (kind, h)
             return None
         if task["status"] != "answered":
@@ -714,6 +723,8 @@ class Ask:
         if call is None:
             return None
         self.answered[kind] += 1
+        current = schemas.KINDS[kind].guide   # v10.34: answered under an earlier guide? (`settled` reads it at once)
+        self.last_earlier = bool(task.get("earlier", task.get("guide", current) != current))
         return call["answer"], str(call["id"])
 
     def verdict(self, kind: str, text: str, **kw) -> Optional[Verdict]:
@@ -733,6 +744,24 @@ class Ask:
         if first_call and not self.dry:
             self.again[first_call] = kind
 
+    def reask(self, kind: str, text: Any, *, a: Any = None, b: Any = None, priority: int = 0) -> bool:
+        """v10.34: the question asked under its kind's CURRENT guide (a new task beside the earlier guide's, whose
+        answer keeps counting until this one is answered: `answer` reads an answered task first). Within the kind's
+        cap a run; nothing in a dry run. Whether a task was added."""
+        from insight_core.markx import incremental, tasks
+        if self.dry or self.added[kind] >= self.caps.get(kind, CAP):
+            return False
+        try:
+            with self.cur.connection.transaction():
+                _tid, new = tasks.add(self.cur, kind, incremental.text_of(text), a=a, b=b, priority=priority)
+        except psycopg_errors.SerializationFailure:
+            self.raced[kind] += 1
+            return False
+        if new:
+            self.added[kind] += 1
+            self.reasked[kind] += 1
+        return new
+
     def reopen(self) -> Dict[str, int]:
         """The questions to ask again: their tasks open once more (their calls stay), {kind: how many}. An answered
         task only; one another transaction changed since the run's snapshot is left for the next run."""
@@ -748,7 +777,7 @@ class Ask:
                         tid = self.memo.call_task.get(call) if self.memo is not None else None
                         if tid and tid in self.memo.keys:
                             key = self.memo.keys[tid]
-                            self.memo.tasks[key] = (tid, "open", self.memo.tasks[key][2])
+                            self.memo.tasks[key] = (tid, "open", *self.memo.tasks[key][2:])
             except psycopg_errors.SerializationFailure:
                 self.raced[kind] += 1
         return dict(out)
@@ -967,10 +996,18 @@ class Questions:
             return None
         first = Verdict.of(got[0], got[1])
         c = self.config
-        if not (c.confirm or c.reason_rule) or not changes_story(q.type, first, c):
+        if not changes_story(q.type, first, c):
+            return first
+        # v10.34: a story-changing answer with no quote of its own post (judge-read-v1's, before 0258) cannot be told
+        # from one written for another question of its batch: the question is asked under the current guide, whose
+        # answer (quote-checked) replaces it once in; until then the earlier answers count as they did, never reopened
+        unquoted = c.reask_unquoted and self.ask.last_earlier and validate.unquoted(q.type, got[0])
+        if unquoted:
+            self.ask.reask(q.type, text, **kw)
+        if not (c.confirm or c.reason_rule):
             return first
         v, again = settle(q.type, [first] + self.ask.later(got[1]), c)
-        if again:
+        if again and not unquoted:
             self.ask.ask_again(q.type, got[1])
         return v
 
@@ -1703,6 +1740,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
                    "tasks_waiting": dict(ask.waiting), "tasks_raced": dict(ask.raced), "answers_read": dict(ask.answered),
                    "tasks_settled": dict(ask.settled),   # 0210: settled by a cheap signal, never asked
                    "tasks_shadow_settled": dict(ask.shadow_settled),   # 0210: a Shadow gate would settle them
+                   "tasks_requoted": dict(ask.reasked),   # v10.34: unquoted story-changing answers asked again
                    "isolation": isolation,
                    "window_since": read["window_since"], "posts": read["posts"]})
     repo.finish_run(cur, run_id, counts=counts)

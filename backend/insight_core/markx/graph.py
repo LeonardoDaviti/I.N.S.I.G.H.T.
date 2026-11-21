@@ -1493,7 +1493,7 @@ def label(cur: Any, *, newer: str, older: str, answer: str, note: Optional[str] 
 # edge: a = the later story, b = the earlier, a_kind = b_kind = 'story', rule CHAIN_RULE (the candidate rule that
 # proposed them) and call_id the judge's call. decide's story connections never read or close them (their rule).
 
-CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v1"
+CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v2"   # v10.34: v2 (chain-v1's same_release pairs asked again)
 CHAIN_RULE = "chain_stops"            # both stories are stops of one thing (stored stop answers saying about)
 CHAIN_DAYS = 30                       # the later story's first post at most this many days after the earlier's
 CHAIN_PREV = 3                        # a stop is paired with at most this many stops before it (and after it)
@@ -1611,7 +1611,9 @@ def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_
     out.update(sync_chains(cur, now=now, since=datetime.fromisoformat(synced) - MARGIN if synced else None))
     repo.set_setting(cur, CHAIN_SYNCED, {"at": now.isoformat()})
     mark = repo.get_setting(cur, CHAIN_MARK, default=None) or {}
-    since = datetime.fromisoformat(mark["at"]) - MARGIN if mark.get("at") else None
+    # v10.34: a pass under a new guide reads every pair once (its mark names the guide it was made under)
+    since = (datetime.fromisoformat(mark["at"]) - MARGIN if mark.get("at") and mark.get("guide", "chain-v1") == CHAIN_GUIDE
+             else None)
     book = I.lazy_book(cur)
     stops, fresh = chain_stops(cur, book, since=since)
     pairs = chain_pairs(stops, fresh)
@@ -1619,10 +1621,7 @@ def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_
     todo: List[Tuple[str, str]] = []
     if pairs:
         keys = sorted(pairs)
-        cur.execute("""SELECT a::text, b::text FROM mx_tasks WHERE kind = %s
-                        AND (a, b) IN (SELECT * FROM unnest(%s::uuid[], %s::uuid[]))""",
-                    (CHAIN_KIND, [k[0] for k in keys], [k[1] for k in keys]))
-        asked = {tuple(r) for r in cur.fetchall()}
+        asked = chain_asked(cur, keys)
         firsts = {s: at for v in stops.values() for at, s in v}
         todo = sorted((k for k in keys if k not in asked), key=lambda k: (firsts[k[0]], k), reverse=True)
         out["again"] = len(keys) - len(todo)
@@ -1636,8 +1635,32 @@ def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_
             _tid, new = tasks.add(cur, CHAIN_KIND, text, a=later, b=earlier, priority=0)
             out["asked"] += bool(new)
     if len(todo) <= limit:
-        repo.set_setting(cur, CHAIN_MARK, {"at": now.isoformat()})
+        repo.set_setting(cur, CHAIN_MARK, {"at": now.isoformat(), "guide": CHAIN_GUIDE})
     return out
+
+
+def chain_asked(cur: Any, keys: Sequence[Tuple[str, str]]) -> Set[Tuple[str, str]]:
+    """The pairs (later, earlier) already asked: a task under the current guide, or under an earlier one whose
+    verdict (`chain_verdict`) is not same_release (or not settled yet). v10.34: an earlier guide's same_release is
+    asked again under CHAIN_GUIDE (chain-v2: a result achieved with the thing is no part of its release); its edge
+    stands until the new task's runs are in (sync_chains reads the newest answered task)."""
+    if not keys:
+        return set()
+    cur.execute("""SELECT t.a::text, t.b::text, t.guide, t.id::text FROM mx_tasks t WHERE t.kind = %s
+                    AND (t.a, t.b) IN (SELECT * FROM unnest(%s::uuid[], %s::uuid[])) ORDER BY t.created_at, t.id""",
+                (CHAIN_KIND, [k[0] for k in keys], [k[1] for k in keys]))
+    rows = cur.fetchall()
+    current = {(a, b) for a, b, g, _t in rows if g == CHAIN_GUIDE}
+    newest = {(a, b): t for a, b, g, t in rows if g != CHAIN_GUIDE and (a, b) not in current}   # sync's task
+    earlier = {t: k for k, t in newest.items()}
+    calls: Dict[str, List[Tuple[str, Dict[str, Any]]]] = defaultdict(list)
+    if earlier:
+        cur.execute("""SELECT task_id::text, id::text, answer FROM mx_calls WHERE valid AND task_id = ANY(%s::uuid[])
+                        ORDER BY created_at, ctid""", (sorted(earlier),))
+        for tid, cid, ans in cur.fetchall():
+            calls[tid].append((cid, ans or {}))
+    again = {k for t, k in earlier.items() if (chain_verdict(calls.get(t) or []) or {}).get("relation") == "same_release"}
+    return current | ({k for k in earlier.values()} - again)
 
 
 def _chain_current(cur: Any) -> List[Dict[str, Any]]:
@@ -1660,7 +1683,8 @@ def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[
                      WHERE t.kind = %(k)s AND t.status = 'answered'
                        {"AND (t.a, t.b) IN (SELECT a, b FROM mx_tasks WHERE kind = %(k)s AND answered_at >= %(since)s)"
                         if since is not None else ""}
-                     ORDER BY t.a, t.b, t.created_at DESC, t.id DESC""", {"k": CHAIN_KIND, "since": since})
+                     ORDER BY t.a, t.b, t.guide = %(g)s DESC, t.created_at DESC, t.id DESC""",
+                {"k": CHAIN_KIND, "since": since, "g": CHAIN_GUIDE})   # v10.34: the current guide's answered task first
     got = cur.fetchall()
     touched = {(a, b) for a, b, _t in got}
     newest = {(a, b): tid for a, b, tid in got if (a, b) in cands}

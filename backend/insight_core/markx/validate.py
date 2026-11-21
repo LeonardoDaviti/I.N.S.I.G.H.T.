@@ -469,6 +469,16 @@ def _judge_read(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+def unquoted(kind: str, answer: Any) -> bool:
+    """v10.34: whether an answer of `kind` lacks the post quote its kind's current guide checks (judge-read-v2's, by
+    `_judge_read`): one made under an earlier guide (judge-read-v1) cannot be told from an answer written for another
+    question of its batch (a reason that describes another post), so decide asks it again before it may change a
+    story."""
+    spec = schemas.KINDS.get(kind)
+    return (spec is not None and GUIDE_CHECKS.get(spec.guide or "") is _judge_read
+            and isinstance(answer, dict) and "post_quote" not in answer)
+
+
 # 0132 B: a stance answer's quotes, checked against the question's numbered posts.
 _STANCE_BLOCK = re.compile(r"^\[(\d+)\] ", re.M)
 STANCE_MIN_QUOTES = 2

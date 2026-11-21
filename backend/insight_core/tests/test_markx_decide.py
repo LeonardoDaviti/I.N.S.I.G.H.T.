@@ -20,7 +20,7 @@ from psycopg import sql
 
 from insight_core.markx import decide as D
 from insight_core.markx import news as N
-from insight_core.markx import repo, schemas, tasks
+from insight_core.markx import repo, schemas, tasks, validate
 from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
@@ -434,6 +434,53 @@ class Job(unittest.TestCase):
         self.assertEqual(memo_ask.answer("pair", old), (ans, str(call)))
         self.assertIsNone(memo_ask.answer("pair", new))
         self.assertEqual(memo_ask.added["pair"], 0)   # the v2 task already asks it
+
+    def test_an_unquoted_story_changing_answer_is_asked_under_the_current_guide(self):
+        """v10.34 (the black-hole case): a pair answered under judge-read-v1 twice "same event" joined a physics post to
+        a Cursor-availability post; the first answer's reason described the OTHER post ("Post announces Fable 5.2
+        availability in Cursor"), and v1 has no quote to refuse it by. Such a story-changing answer is asked again
+        under judge-read-v2 (a new task beside it, never the v1 task reopened); the v1 verdict counts until the v2
+        task is answered, then the v2 answers decide. An answer that changes nothing is not asked again."""
+        from insight_core.markx import incremental
+        text = "STORY\nHeadline: Cursor added Model 5.2\n\nPOST\nPlatform: x | Source: Lab (X)\nTitle: Model 5.2 found it"
+        tid, _ = repo.add_task(self.cur, kind="pair", guide="judge-read-v1", subject_kind="post_post", input=text)
+        wrong = {"relation": "same_event", "confidence": 90,
+                 "reason": "Post announces Model 5.2 availability in Cursor, matching the story."}
+        c1 = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True, answer=wrong)
+        repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
+                      answer=dict(wrong, confidence=88, reason="Post reports the finding."))
+        repo.answer_task(self.cur, tid)
+        self.assertTrue(validate.unquoted("pair", wrong))
+        self.assertFalse(validate.unquoted("pair", dict(wrong, post_quote="Model 5.2 found it")))
+        self.assertFalse(validate.unquoted("merge", wrong))          # merge's guide quotes nothing
+
+        def ask_it(memo=None):
+            ask = D.Ask(self.cur, self.now, memo=memo)
+            qs = D.Questions.__new__(D.Questions)
+            qs.ask, qs.config = ask, D.Config()
+            q = D.Question("pair:a:p", "pair", post="p", anchor="a")
+            return qs.settled(q, text, a=None, b=None, priority=0), ask
+
+        v, ask = ask_it()
+        self.assertEqual((v.relation, v.p, str(v.call)), ("same_event", 0.88, str(c1)))   # counts meanwhile
+        self.assertEqual((ask.reasked["pair"], ask.again), (1, {}))                       # v1 never reopened
+        self.cur.execute("SELECT guide, status FROM mx_tasks WHERE kind = 'pair' ORDER BY guide")
+        self.assertEqual(self.cur.fetchall(), [("judge-read-v1", "answered"), ("judge-read-v2", "open")])
+        state = incremental.State(db="t", key="k")
+        incremental.refresh(self.cur, state)
+        v, ask = ask_it(state)                                    # the incremental index: the answered task first
+        self.assertEqual((v.relation, str(v.call), ask.reasked["pair"]), ("same_event", str(c1), 0))
+        self.cur.execute("SELECT id FROM mx_tasks WHERE guide = 'judge-read-v2'")
+        v2 = self.cur.fetchone()[0]
+        right = {"relation": "different", "confidence": 95, "post_quote": "Model 5.2 found it",
+                 "reason": "The post is a finding, the story is Cursor availability."}
+        c2 = repo.add_call(self.cur, task_id=v2, executor="claude-code", model="haiku", valid=True, answer=right)
+        repo.answer_task(self.cur, v2)
+        v, ask = ask_it()
+        self.assertEqual((v.relation, str(v.call), ask.reasked["pair"]), ("different", str(c2), 0))
+        state = incremental.State(db="t", key="k")
+        incremental.refresh(self.cur, state)
+        self.assertEqual(str(ask_it(state)[0].call), str(c2))
 
     def test_refusals_open_and_close_never_deleted(self):
         """0217: a run's refusals become the current ones touching its stories; one no longer found (or found over other

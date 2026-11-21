@@ -70,7 +70,12 @@ class Rules(unittest.TestCase):
         import hashlib
         import pathlib
         k = schemas.KINDS["chain"]
-        self.assertEqual((k.guide, k.subject), ("chain-v1", "story_story"))
+        self.assertEqual((k.guide, k.subject), ("chain-v2", "story_story"))   # v10.34: v2 (chain-v1 kept, frozen)
+        self.assertEqual(G.CHAIN_GUIDE, k.guide)
+        self.assertIn("chain-v1", schemas.answer_guides("chain"))             # its tasks kept and read
+        v2 = (pathlib.Path(G.__file__).parent / "guides" / "chain-v2.md").read_text()
+        self.assertIn("a result achieved WITH the thing", v2)                 # the owner's rule (2026-11-21)
+        self.assertIn("demos of what it can do", v2)                          # demos and benchmarks stay its release
         self.assertNotIn("next_version", schemas.CHAIN_RELATIONS)   # a successor is identity's, never the judge's
         self.assertEqual(tuple(schemas.CHAIN_RELATIONS), G.CHAIN_RELATIONS)
         path = pathlib.Path(G.__file__).parent / "guides" / "chain-v1.md"
@@ -164,6 +169,43 @@ class Chains(TL._Db):
         self.assertEqual(later["after"], [])
         self.assertEqual([i["story"] for i in G.chain(self.cur, x["a"])["after"]], [x["b"]])
         self.assertEqual(G.plan_chains(self.cur)["opened"], 0)        # nothing changed: nothing opened again
+
+    def test_an_earlier_guides_same_release_is_asked_again_under_the_current_guide(self):
+        """v10.34 (the black-hole case): chain-v1 joined a result achieved with a model (two open physics problems it
+        solved) to the model's release; chain-v2 says such a result is its own happening. A chain-v1 same_release pair
+        is asked again under chain-v2 once (a pass under a new guide reads every pair); its edge stands until both of
+        the new task's runs are in, then follows them. A chain-v1 pair that made no release edge is not asked again."""
+        x = self.line()
+        self.stops_about(x)
+        G.plan_chains(self.cur)
+        (tid, *_), = self.chain_tasks()
+        self.cur.execute("UPDATE mx_tasks SET guide = 'chain-v1' WHERE id = %s", (tid,))   # asked before v10.34
+        self.answer_chain("same_release", "same_release", task=tid)
+        repo.set_setting(self.cur, G.CHAIN_MARK, {"at": (T0 + 12 * D).isoformat()})          # a chain-v1 pass's mark
+        out = G.plan_chains(self.cur)
+        self.assertEqual((out["opened"], out["asked"]), (1, 1))
+        (_v1, *_r), (v2, a, b, _text, status) = self.chain_tasks()
+        self.assertEqual((a, b, status), (x["b"], x["a"], "open"))
+        self.cur.execute("SELECT guide FROM mx_tasks WHERE id = %s", (v2,))
+        self.assertEqual(self.cur.fetchone()[0], "chain-v2")
+        self.assertEqual(repo.get_setting(self.cur, G.CHAIN_MARK)["guide"], "chain-v2")
+        self.assertEqual(G.plan_chains(self.cur)["asked"], 0)                 # asked once
+        self.assertEqual([r[2] for r in self.edges()], ["same_release"])      # stands while the new runs wait
+        self.answer_chain("unrelated", "unrelated", task=v2)
+        G.plan_chains(self.cur)
+        self.assertEqual(self.edges(), [])                                    # the new guide's verdict decides
+        self.assertEqual([r[2] for r in self.edges(current=False)], ["same_release"])   # closed, kept
+
+    def test_an_earlier_guides_pair_with_no_release_edge_is_not_asked_again(self):
+        x = self.line()
+        self.stops_about(x)
+        G.plan_chains(self.cur)
+        (tid, *_), = self.chain_tasks()
+        self.cur.execute("UPDATE mx_tasks SET guide = 'chain-v1' WHERE id = %s", (tid,))
+        self.answer_chain("development", "development", task=tid)
+        repo.set_setting(self.cur, G.CHAIN_MARK, {"at": (T0 + 12 * D).isoformat()})
+        self.assertEqual(G.plan_chains(self.cur)["asked"], 0)
+        self.assertEqual(len(self.chain_tasks()), 1)
 
     def test_runs_that_differ_or_unrelated_make_no_edge(self):
         x = self.line()

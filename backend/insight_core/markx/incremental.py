@@ -209,7 +209,8 @@ class State:
     report: Dict[str, Any] = field(default_factory=dict)           # this run's dirty set and reading, for counts.run
     why_full: Optional[Dict[str, Any]] = None                      # v10.22.2: why open_state found no warm state
     # the judge tasks and their answers
-    tasks: Dict[Tuple[str, str], Tuple[str, str, int]] = field(default_factory=dict)   # (kind, hash) -> (id, status, n)
+    tasks: Dict[Tuple[str, str], Tuple[str, str, int, bool]] = field(default_factory=dict)   # (kind, hash) -> (id,
+    # status, n, whether it is under an earlier guide: v10.34)
     keys: Dict[str, Tuple[str, str]] = field(default_factory=dict)  # task id -> (kind, input hash)
     was: Dict[str, Tuple[str, int]] = field(default_factory=dict)  # task id -> (status, n) as the last run saw it
     calls: Dict[str, List[Tuple[Dict[str, Any], str]]] = field(default_factory=dict)  # task id -> valid calls, oldest first
@@ -330,12 +331,13 @@ def refresh(cur: Any, state: State) -> Dict[str, Any]:
                     WHERE t.kind = ANY(%s)""", (list(KINDS),))
     index, keys, was, dirty, posts = {}, {}, {}, [], set()
     order = {k: schemas.answer_guides(k) for k in KINDS}
-    rank: Dict[Tuple[str, str], int] = {}
+    rank: Dict[Tuple[str, str], Tuple[bool, int]] = {}
     for tid, kind, h, status, n, a, b, s_status, s_n, guide in cur.fetchall():
-        # 0258: a question is its task under the kind's current guide, else under an earlier one (decide.Ask.answer)
-        r = order[kind].index(guide) if guide in order[kind] else len(order[kind])
+        # 0258: a question is its task under the kind's current guide, else under an earlier one (decide.Ask.answer);
+        # v10.34: an answered task first (one asked again under the current guide keeps the earlier answer meanwhile)
+        r = (status != "answered", order[kind].index(guide) if guide in order[kind] else len(order[kind]))
         if r <= rank.get((kind, h), r):
-            index[(kind, h)] = (tid, status, int(n))
+            index[(kind, h)] = (tid, status, int(n), r[1] > 0)
             rank[(kind, h)] = r
         keys[tid] = (kind, h)
         if s_status is not None:
@@ -355,9 +357,9 @@ def refresh(cur: Any, state: State) -> Dict[str, Any]:
         cur.execute("SELECT key, copies FROM mx_inc_copies")
         state.copies_kept = {k: frozenset(v) for k, v in cur.fetchall()}
         named = {h for h in state.inputs_kept.values()}
-        need = sorted({tid for (kind, h), (tid, status, n) in index.items() if n and h in named} | set(dirty))
+        need = sorted({tid for (kind, h), (tid, status, n, _e) in index.items() if n and h in named} | set(dirty))
     else:
-        need = sorted(tid for (tid, status, n) in index.values() if n)
+        need = sorted(tid for (tid, status, n, _e) in index.values() if n)
     _read_calls(cur, state, need)
     return state.report
 
@@ -741,7 +743,7 @@ def save(cur: Any, state: State, run_id: Any, want: Dict[str, Dict[str, Tuple]])
                 cur.executemany("""INSERT INTO mx_inc_copies (key, copies) VALUES (%s, %s)
                                    ON CONFLICT (key) DO UPDATE SET copies = EXCLUDED.copies""", new)
         out[table[7:] + "_written"], out[table[7:] + "_dropped"] = len(new), len(gone)
-    seen = [(tid, status, n) for (_k, (tid, status, n)) in state.tasks.items() if state.was.get(tid) != (status, n)]
+    seen = [(tid, status, n) for (_k, (tid, status, n, _e)) in state.tasks.items() if state.was.get(tid) != (status, n)]
     if seen:
         cur.execute("""INSERT INTO mx_inc_tasks (task_id, status, n)
                        SELECT * FROM unnest(%s::uuid[], %s::text[], %s::int[])
