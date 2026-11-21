@@ -32,7 +32,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils import voice
-from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, roles, story_times
+from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, background, roles, story_times
 from insight_core.utils.titles import comparable
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
@@ -330,7 +330,8 @@ def _first(story: Story) -> Optional[str]:
     if not story.posts:
         return None
     times = story_times(story.posts)
-    return min(story.posts, key=lambda p: (times[p.id], not p.date_only, p.id)).id
+    bg = background(story.posts, times)   # 0263: a background page is never a story's first post
+    return min(story.posts, key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.id)).id
 
 
 def core_names(story: Story, found: Sequence[Surge]) -> Set[str]:
@@ -494,8 +495,10 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     out = []
     for group in groups.values():
         # A date alone counts as that day's earliest timed post (issue 0072 D): its start, its order, the window.
+        # 0263: a background page (story_rules.background) is never its first post, nor its start
         times = story_times(group)
-        group = sorted(group, key=lambda p: (times[p.id], not p.date_only, p.id))
+        bg = background(group, times)
+        group = sorted(group, key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.id))
         if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
             continue
         voices = voice.count(group, voice.Policy.NEWS_IX)   # one owner's channels one voice (issue 0111)

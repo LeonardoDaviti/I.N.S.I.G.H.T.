@@ -1139,6 +1139,14 @@ def _same(a: Row, b: Row) -> bool:
     return a[0] == b[0] and a[1] == b[1] and _p(a[2]) == _p(b[2]) and (a[3] or None) == (b[3] or None)
 
 
+def _start(members: Iterable[str], posts: Dict[str, Post]) -> Any:
+    """A story's first_at: its earliest post that is not background (story_rules.story_start, 0263: a Saved page dated
+    long before the story's first post of a voice, as a paper a release cites, never dates it)."""
+    from insight_core.utils.story_rules import story_start
+    ps = [posts[p] for p in members if p in posts]
+    return story_start(ps, {p.id: p.at for p in ps})
+
+
 def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
             write: bool = True) -> Tuple[Dict[str, str], Counter]:
     """Match each final story to the Mark X story holding most of its members (one each), open what is new and
@@ -1174,7 +1182,7 @@ def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
             ids[key] = best
             claimed.add(best)
         else:
-            first = min((world.posts[p].at for p in want[key] if p in world.posts), default=None)
+            first = _start(want[key], world.posts)
             ids[key] = str(repo.add_story(cur, first_at=first, run_id=run_id)) if write else f"new:{key}"
             counts["stories_new"] += 1
     if not write:
@@ -1190,7 +1198,7 @@ def persist(cur: Any, run_id: Any, out: Outcome, world: World, now: datetime,
                 repo.open_membership(cur, story_id=sid, post_id=pid, role=row[0], reason=row[1], p=row[2],
                                      call_id=row[3], run_id=run_id, at=now)
                 counts["opened"] += 1
-        first = min((world.posts[p].at for p in want[key] if p in world.posts), default=None)
+        first = _start(want[key], world.posts)
         if sid in began and first is not None and began[sid] != first:
             cur.execute("UPDATE mx_stories SET first_at = %s WHERE id = %s", (first, sid))
     final_of_post = {pid: ids[k] for k, ms in want.items() for pid, row in ms.items() if row[0] == "member"}

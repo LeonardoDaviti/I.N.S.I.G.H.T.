@@ -152,7 +152,7 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     first_at. `joins` (0236, the one-release row: graph.release_groups, read here when None): each group's stories
     are one story to News's code (its posts in date order, the lowest id its key), each post still naming its own."""
     from insight_core.services.news_service import NewsService
-    from insight_core.utils.story_rules import Story, story_times
+    from insight_core.utils.story_rules import Story, background, story_start, story_times
     in_story = {p for ms, _ in stories.values() for p in ms}
     every = (window_posts(cur, since) if window is None else set(window)) | in_story
     if only is not None:
@@ -180,15 +180,16 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
         if not ps or (len(ps) < 2 and not key.startswith("one:")):
             continue
         times = story_times(ps)
-        ps.sort(key=lambda p: (times[p.id], not p.date_only, p.t, p.id))
+        bg = background(ps, times)    # 0263: a background page is never the row's first post nor its start
+        ps.sort(key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.t, p.id))
         built.append(Story(id=key, first_at=times[ps[0].id], posts=ps, voices=0, roles={}, reasons={},
                            mentions=mentions - seen))
         made_of |= set(sids)
         if first is not None:
             for sid in sids:
-                own = [times[p] for p in stories[sid][0] if p in times]
-                if own:
-                    first[sid] = min(own)
+                own = story_start([sp[p] for p in stories[sid][0] if p in times], times)
+                if own is not None:
+                    first[sid] = own
     story_of: Dict[str, str] = {}
     for sid, (members, _m) in sorted(stories.items()):   # each post names its own story (the lowest id of several)
         if sid in made_of and not sid.startswith("one:"):

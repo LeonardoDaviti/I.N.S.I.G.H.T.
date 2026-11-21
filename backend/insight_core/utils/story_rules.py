@@ -597,7 +597,8 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
         stored = [p for p in ordered if p.stored_at is not None]
         stories.append(Story(
             id=min(stored, key=lambda p: (p.stored_at, p.id)).id if stored else ordered[0].id,
-            first_at=times[ordered[0].id], posts=ordered, voices=voice.count(group_posts, voice.Policy.STORIES_IX),
+            first_at=story_start(ordered, times), posts=ordered,
+            voices=voice.count(group_posts, voice.Policy.STORIES_IX),
             roles=roles(ordered),
             reasons={p.id: [r for r in REASONS if r in why[p.id]] for p in group_posts},
             mentions=mentions_of.get(root, set()),
@@ -619,6 +620,30 @@ def story_times(posts: Sequence[StoryPost]) -> Dict[str, datetime]:
             day = p.t.astimezone(timezone.utc).date()
             earliest[day] = min(earliest.get(day, p.t), p.t)
     return {p.id: earliest.get(p.t.astimezone(timezone.utc).date(), p.t) if p.date_only else p.t for p in posts}
+
+
+# 0263: a page you saved joins its linkers whatever its own date (0113), and is no voice (voice.NOT_VOICE): a Saved copy
+# of a paper a release cites, dated a year before it, became its story's start and took the release out of News. A
+# post of no voice dated more than LINK_WITHIN before its story's first post of a voice is background: still a member
+# (its page, Cited, the originals), never the story's start, its first post or the date News windows on. A post of a
+# voice is never background, however early (a leak days before a launch still begins its story).
+BACKGROUND_BEFORE = LINK_WITHIN
+
+
+def background(posts: Sequence[Any], times: Mapping[str, datetime]) -> Set[str]:
+    """The ids of `posts` (anything with `id` and `kind`: a StoryPost, Mark X's rules' Post) that are background to
+    their story (0263): of no voice, dated (`times`) more than BACKGROUND_BEFORE before its first post of a voice."""
+    voiced = [times[p.id] for p in posts if p.kind not in voice.NOT_VOICE and p.id in times]
+    if not voiced or not isinstance(min(voiced), datetime):   # the prototype's ISO strings: no date to measure
+        return set()
+    edge = min(voiced) - BACKGROUND_BEFORE
+    return {p.id for p in posts if p.kind in voice.NOT_VOICE and p.id in times and times[p.id] < edge}
+
+
+def story_start(posts: Sequence[Any], times: Mapping[str, datetime]) -> Optional[datetime]:
+    """A story's start (0263): its earliest post that is not background (`background`); None with no post timed."""
+    bg = background(posts, times)
+    return min((times[p.id] for p in posts if p.id in times and p.id not in bg), default=None)
 
 
 def page_key(url: str) -> Optional[str]:
@@ -717,6 +742,6 @@ def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = sit
     return sites.most_common(1)[0][0] if sites else ""
 
 
-__all__ = ["StoryPost", "Story", "Edge", "Grouping", "group", "grouping", "story_times", "keys", "page_key", "threads", "date_alone",
+__all__ = ["StoryPost", "Story", "Edge", "Grouping", "group", "grouping", "story_times", "background", "story_start", "keys", "page_key", "threads", "date_alone",
            "address_origins", "page_aliases", "paper_aliases", "link_via", "one_page", "roles", "named_voices", "text_key", "source_site", "title_key",
            "anchors"]
