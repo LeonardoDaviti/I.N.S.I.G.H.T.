@@ -166,6 +166,12 @@ class Rules(unittest.TestCase):
         self.assertTrue(own("https://github.com/acmes/claude-nimbus", repo=("code", "acmes")), "rule repo: one_owner's")
         self.assertIsNone(own("https://docs.github.com/en/claude-nimbus"), "the platform's other site: the site rules")
         self.assertIsNone(own("https://acme.example/claude-nimbus"))
+        # a repository named as it (one version or size word aside) is its own whoever's handle it is under
+        self.assertTrue(own("https://huggingface.co/kestrel-lab/Molmo-7B-D-0924", names=("molmo 7b-d",)))
+        self.assertTrue(own("https://huggingface.co/OtherHandle/kestrel-80b", names=("kestrel",)))
+        self.assertFalse(own("https://huggingface.co/quants/Kestrel3.5-27B-GGUF", names=("kestrel3.5 27b",)), "a build")
+        self.assertFalse(own("https://huggingface.co/quants/Kestrel3.5-397B", names=("kestrel3.5 27b",)), "two words")
+        self.assertIsNone(own("https://blog.twitter.com/2021/spaces"), "the platform's blog: the site rules")
         self.assertTrue(E.owner_agrees("acme-research", ["acme"], N.squash))
         self.assertFalse(E.owner_agrees("notacme", ["acme"], N.squash))
 
@@ -185,6 +191,11 @@ class Rules(unittest.TestCase):
         self.assertFalse(by("Redeploying Claude Nimbus 5", ["claude nimbus"]), "Nimbus 5's page, not the family's")
         self.assertTrue(by("Introducing Claude Nimbus 5", ["claude nimbus 5"]))
         self.assertTrue(by("Claude Nimbus is here", ["claude nimbus"]))
+        known = {"claude nimbus 5"}.__contains__   # with the book: a version counts when the longer name is an entity's
+        self.assertFalse(E.by_maker("https://acme.example/news/x", "Redeploying Claude Nimbus 5", makers=["acme"],
+                                    names=["claude nimbus"], squash=N.squash, known=known))
+        self.assertTrue(E.by_maker("https://acme.example/news/x", "Claude Nimbus 2026.2 release", makers=["acme"],
+                                   names=["claude nimbus"], squash=N.squash, known=known), "no such entity")
 
     def test_a_cited_page_is_no_address_of_it(self):
         t = datetime(2026, 11, 1, tzinfo=timezone.utc)

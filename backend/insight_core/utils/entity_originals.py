@@ -67,7 +67,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import quote
 
 from insight_core.utils.addresses import (PLATFORM_SITES, account_key, bare, host_of, paper_file, paper_id,
@@ -302,9 +302,11 @@ def by_title(title: Optional[str], names: Iterable[str], key) -> bool:
     return bool(names & title_keys(title, key))
 
 
-def by_maker(url: str, title: Optional[str], *, makers: Iterable[str], names: Iterable[str], squash) -> bool:
+def by_maker(url: str, title: Optional[str], *, makers: Iterable[str], names: Iterable[str], squash,
+             known: Optional[Callable[[str], bool]] = None) -> bool:
     """Rule 3: a page on the maker's own site (its registrable word is the maker's name run together) whose title
-    holds the entity's name word for word. Never a front page or a profile."""
+    holds the entity's name word for word. Never a front page or a profile, nor a page of a versioned longer name
+    (`versioned`; `known`: whether a name key is an entity's, None: every such name counts)."""
     if is_home(url) or not title:
         return False
     word = re.sub(r"[^0-9a-z]+", "", site_of(host_of(url)).split(".", 1)[0].lower())
@@ -316,18 +318,26 @@ def by_maker(url: str, title: Optional[str], *, makers: Iterable[str], names: It
     # names it in passing ("How Nimbus helped a lab ...": measured, the maker rule's wrong rows were all so), and never
     # a longer name holding it, a version after it (v10.35: "Redeploying Claude Fable 5" is Fable 5's, not Fable's)
     return any(len(n) >= NAME_MIN and word_contains(n, t) and 2 * len(n.split()) >= len(t.split())
-               and not versioned(n, t) for n in names)
+               and not versioned(n, t, known) for n in names)
 
 
 _VERSION = re.compile(r"v?\d[\w.]*$", re.I)
 
 
-def versioned(name: str, title_key: str) -> bool:
-    """v10.35: every place the name stands in the title, a version follows it ("fable 5", "nimbus v2"): the title
-    names a longer name holding it (a member of the family, a release of the thing), not the name itself."""
+def versioned(name: str, title_key: str, known: Optional[Callable[[str], bool]] = None) -> bool:
+    """v10.35: every place the name stands in the title, a version follows it that makes another entity's name
+    ("claude fable 5", an entity of its own): the title names that longer name, not the name itself. A version no
+    entity is named by (a product's "ReSharper 2026.2" release page, a size "4gb") keeps the page the entity's;
+    `known` None counts every version."""
     words, want = title_key.split(), name.split()
     at = [i for i in range(len(words) - len(want) + 1) if words[i:i + len(want)] == want]
-    return bool(at) and all(i + len(want) < len(words) and _VERSION.match(words[i + len(want)]) for i in at)
+
+    def longer(i: int) -> bool:
+        j = i + len(want)
+        if j >= len(words) or not _VERSION.match(words[j]):
+            return False
+        return known is None or known(" ".join(want + [words[j]]))
+    return bool(at) and all(longer(i) for i in at)
 
 
 def platform_thing(url: str) -> Optional[Tuple[str, Optional[str], str]]:
@@ -422,8 +432,10 @@ def voice_account(url: str) -> Optional[str]:
     """v10.35: the account a voice platform's page is under (a tweet's author, a subreddit, a channel, a Bluesky handle:
     addresses.account_key's last part); "" for a platform page under no account (a Hacker News item, a /watch video);
     None off the voice platforms."""
-    if site_of(host_of(url)) not in _VOICE_SITES:
-        return None
+    host = host_of(url)
+    site = site_of(host)
+    if site not in _VOICE_SITES or re.sub(r"^(?:www|m|mobile|old|news)\.", "", host) != re.sub(r"^news\.", "", site):
+        return None   # the platform's own other sites (its blog.<platform>) are the site rules'; news.ycombinator.com is HN
     from insight_core.utils.discover_rules import NOT_ACCOUNT
     parts = account_key(url).split("/")
     if len(parts) == 3 and parts[1] == "r":
@@ -463,6 +475,8 @@ def platform_page_own(url: str, *, repo: Optional[Tuple[str, Optional[str]]], na
     from insight_core.markx.names import key as name_key
     bare_names = {b for n in names for b in (squash(n), squash(" ".join(_unversioned(n.split())))) if len(b) >= 2}
     t = squash(name_key(thing))
+    if any(named_as(thing, n) for n in names):
+        return True   # named as it, its version or size aside (allenai/Molmo-7B-D-0924 for "Molmo 7B-D"), any owner
     o = squash(owner.casefold())
     if (len(o) >= NAME_MIN and any(b.startswith(o) for b in bare_names)):
         return True   # the owner is the name's family (Qwen/... for "Qwen2.5-Omni"): the entity's own line
@@ -487,6 +501,14 @@ def repository(url: str) -> Optional[Tuple[str, str]]:
     return segs[0].lstrip("~@"), segs[1]
 
 
+def platform_owned(url: str) -> bool:
+    """v10.35: a page in a repository on a code host's or a model hub's own host (repository's owner names who)."""
+    host = host_of(url)
+    site = site_of(host)
+    return (site in CODE_SITES or site in MODEL_HUBS) and (host[4:] if host.startswith("www.") else host) == site \
+        and repository(url) is not None
+
+
 def lesser(url: str) -> bool:
     """v10.35: a page chosen as an address only when no page of the thing is: a voice platform's post (its maker's
     tweet), a page inside a repository (a file, a pull request, its tree) rather than the repository's page."""
@@ -498,6 +520,18 @@ def lesser(url: str) -> bool:
     segs = [s.lower() for s in _segments(url)]
     n = 3 if segs[:1] in HUB_OWNED else 2
     return len(segs) > n and segs[n] != "releases"
+
+
+def named_as(thing: str, name: str) -> bool:
+    """v10.35: a repository named as the entity, one trailing version or size word aside on one side
+    ("Molmo-7B-D-0924" for "Molmo 7B-D", "idefics-80b" for "IDEFICS"); never two (Qwen3.5-397B is no "Qwen3.5 27B")
+    and never a build tag (Qwen3.5-27B-GGUF is no Qwen3.5-27B)."""
+    def forms(x: str) -> Tuple[str, str]:
+        words = [w for w in re.split(r"[^0-9a-z]+", x.casefold()) if w]
+        cut = words[:-1] if len(words) > 1 and re.fullmatch(r"v?\d+[a-z]?|\d+(?:[bmkt]|gb)", words[-1]) else words
+        return "".join(words), "".join(cut)
+    (t, t_cut), (n, n_cut) = forms(thing), forms(name)
+    return len(n) >= NAME_MIN and (t == n or t_cut == n or (len(n_cut) >= NAME_MIN and t == n_cut))
 
 
 def _unversioned(words: List[str]) -> List[str]:
@@ -684,7 +718,7 @@ def supplier_reason(n: int) -> str:
 __all__ = [
     "LONGREAD_CHARS", "LONGREAD_KINDS", "LONGREAD_LINKS", "MISSED_WITHIN", "REFERENCES_MAX", "cited_page",
     "BACKFILL_PER_RUN", "CLASSICS_DAILY", "NEVER_FRONT_TYPES", "PAGE_DELAY_S", "SITE", "WORK", "WORK_PAGES_MAX",
-    "by_site", "conversation", "front_page", "lesser", "platform_page_own", "repository", "versioned", "voice_account",
+    "by_site", "named_as", "conversation", "front_page", "lesser", "platform_owned", "platform_page_own", "repository", "versioned", "voice_account",
     "site_word", "work_front_allowed",
     "MODEL_HUBS", "PACKAGE", "PACKAGE_SITES", "PLATFORM_SECTIONS", "REPO", "by_repo", "one_owner", "owner_agrees", "platform_thing",
     "CITED", "LINK_LABELS", "carries_id", "link_names", "own_site", "paper_is_its_own", "paper_names_it",

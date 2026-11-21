@@ -96,7 +96,8 @@ def _titles(cur: Any, urls: Iterable[str]) -> Dict[str, str]:
 
 def found_in_post(*, root: str, type_: Optional[str], ref: Optional[str], span: str, name: str,
                   links: List[Tuple[str, Optional[str]]], titles: Dict[str, str], documents: int,
-                  names: Set[str], makers: Set[str]) -> List[Tuple[str, str, str, Optional[str]]]:
+                  names: Set[str], makers: Set[str],
+                  known: Optional[Any] = None) -> List[Tuple[str, str, str, Optional[str]]]:
     """[(kind, address, rule, owner)] one mention's post gives its entity, by the rules; `owner` is a platform page's
     owner segment when its thing is the entity's name (rule `repo`'s maker candidate), else None. A page the post
     only cites (0229: rule 1's paper with no own evidence, rule 2's third-party page of a thing) has kind R.CITED."""
@@ -143,7 +144,8 @@ def found_in_post(*, root: str, type_: Optional[str], ref: Optional[str], span: 
             out.append((R.CITED if cited else kind, url, R.TITLE, owner))
         elif repo:
             out.append((kind, url, R.REPO, owner))
-        elif t in R.MAKER_TYPES and R.by_maker(url, title, makers=makers, names=names, squash=N.squash):
+        elif t in R.MAKER_TYPES and R.by_maker(url, title, makers=makers, names=names, squash=N.squash,
+                                                           known=known):
             out.append((kind, url, R.MAKER, None))
     return out
 
@@ -204,7 +206,8 @@ def stage(cur: Any, *, now: datetime, since: Optional[datetime], full: bool, aft
                 makers[root] = _makers(book, root)   # its cluster (0186: not a walk), not book.members()
             gave = found_in_post(root=root, type_=type_, ref=ref, span=span or "", name=name or "",
                                  links=links[pid], titles=titles, documents=docs.get(pid, 0),
-                                 names=names.get(root, set()), makers=makers[root])
+                                 names=names.get(root, set()), makers=makers[root],
+                                 known=lambda k: book.by_key(k) is not None)
             given = {u for _, u, _, _ in gave}
             gave_none.update((root, u, pid) for u, _ in links[pid] if u not in given)
             for kind, url, rule, owner in gave:
@@ -309,6 +312,14 @@ def _current(cur: Any, book: I.Book, roots: Optional[Iterable[str]]) -> Dict[str
         if len({(k, N.squash((o or "").casefold())) for k, _, o in repo}) > len({k for k, _, _ in repo}):
             keep = R.one_owner(repo, _makers(book, root), N.squash)   # v10.17 (0186): its cluster, not book.members()
             out[root] = [g for g in got if g[2] != R.REPO or g[1] in keep]
+        # v10.35: a platform page under the stated maker wins over another owner's page of that kind (a lab's own
+        # Molmo repository over a namesake's, both named as it)
+        plat = [(g[0], R.repository(g[1])) for g in out[root] if g[0] != R.CITED and R.platform_owned(g[1])]
+        if len({o for _, (o, _) in plat}) > 1:
+            makers = list(_makers(book, root))
+            theirs = {k for k, (o, _) in plat if R.owner_agrees(o, makers, N.squash)}
+            out[root] = [g for g in out[root] if g[0] not in theirs or not R.platform_owned(g[1])
+                         or R.owner_agrees(R.repository(g[1])[0], makers, N.squash)]
     return out
 
 
