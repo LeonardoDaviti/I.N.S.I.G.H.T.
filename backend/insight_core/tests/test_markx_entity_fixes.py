@@ -83,6 +83,87 @@ class Guards(unittest.TestCase):
         self.assertEqual((name, typ), ("Zentra", None))          # more sources write it
 
 
+class _Cur:
+    """A cursor for `merge` alone: the redirect's insert answers an id."""
+    description = True
+
+    def __init__(self):
+        import contextlib
+        self.connection = mock.Mock(transaction=contextlib.nullcontext)
+        self.sql = []
+
+    def execute(self, sql, params=()):
+        self.sql.append((sql, params))
+
+    def fetchone(self):
+        return ("r1",)
+
+
+class MergeKeeper(unittest.TestCase):
+    """v10.35: a merge keeps the more general thing (a version or variant over its build), then the larger cluster,
+    then the older; a merged name's stated maker stays the cluster's."""
+    ent, book = base.Rules.ent, base.Rules.book
+
+    def _mini_and_gguf(self):
+        mini = self.ent("m", "Inkling 2 Mini", "model", maker="Thinking Machines", fields=v("Inkling", "2", "Mini"))
+        mini.level, mini.parent, mini.first_seen = "variant", "f", T0
+        gguf = self.ent("g", "Inkling-2-Mini-GGUF", "model", fields={**v("Inkling", "2", "Mini"), "build": "GGUF"})
+        gguf.level, gguf.parent, gguf.first_seen = "checkpoint", "f", T0 - D   # older
+        q4 = self.ent("q", "Inkling 2 Mini GGUF Q4", "model", fields={**v("Inkling", "2", "Mini"), "build": "GGUF"})
+        q4.level, q4.parent = "checkpoint", "f"
+        tm = self.ent("o", "Thinking Machines", "org")
+        fam = I.Ent("f", "model", "Inkling", "inkling", "family", maker="Thinking Machines")
+        book = self.book(mini, gguf, q4, tm, fam)
+        book.redirect["q"] = ("g", True)        # the GGUF's cluster is the larger, and it is older
+        return book
+
+    def test_the_variant_keeps_over_its_gguf_build_whatever_the_clusters(self):
+        for a, b in (("m", "g"), ("g", "m"), ("q", "m")):
+            book = self._mini_and_gguf()
+            cur = _Cur()
+            self.assertEqual(I.merge(cur, book, a, b, by="owner", automatic=False), "r1")
+            self.assertEqual(book.root("g"), "m")
+            self.assertEqual(book.root("q"), "m")
+            self.assertEqual(cur.sql[-1][1][:2], ("g", "m"))          # from the GGUF, into Mini
+            view = entity_views._ent_view(book, "m")
+            self.assertEqual((view["name"], view["level"], view["build"], view["maker"], view["maker_id"]),
+                             ("Inkling 2 Mini", "variant", None, "Thinking Machines", "o"))
+
+    def test_a_name_stating_a_build_is_the_specific_side_at_any_level(self):
+        a = self.ent("a", "Lyra 4", "model", fields=v("Lyra", "4"))
+        b = self.ent("b", "Lyra 4 NVFP4", "model", fields={**v("Lyra", "4"), "build": "NVFP4"})
+        a.level = b.level = "version"
+        b.first_seen, a.first_seen = T0 - D, T0
+        book = self.book(a, b)
+        I.merge(_Cur(), book, "a", "b", by="owner", automatic=False)
+        self.assertEqual(book.root("b"), "a")
+        self.assertTrue(I.is_build(b) and not I.is_build(a))
+
+    def test_without_a_build_the_larger_cluster_then_the_older_keeps_as_before(self):
+        a, b, c = (self.ent(x, n, "model") for x, n in (("a", "Vela"), ("b", "Vela AI model"), ("c", "Vela M")))
+        a.first_seen, b.first_seen, c.first_seen = T0, T0 - D, T0
+        book = self.book(a, b, c)
+        book.redirect["c"] = ("a", True)
+        I.merge(_Cur(), book, "a", "b", by="owner", automatic=False)
+        self.assertEqual(book.root("b"), "a")                          # the larger
+        book = self.book(a, b)
+        I.merge(_Cur(), book, "a", "b", by="owner", automatic=False)
+        self.assertEqual(book.root("a"), "b")                          # the older
+
+    def test_the_kept_root_shows_the_maker_a_merged_name_stated(self):
+        a = self.ent("a", "Vela", "model", maker="Zentra")
+        b = self.ent("b", "Vela model", "model")
+        b.first_seen, a.first_seen = T0 - D, T0
+        z = self.ent("z", "Zentra", "org")
+        book = self.book(a, b, z)
+        I.merge(_Cur(), book, "a", "b", by="owner", automatic=False)
+        self.assertEqual(book.root("a"), "b")                          # the older keeps, stating no maker
+        self.assertEqual(I.cluster_maker(book, "b"), "Zentra")
+        view = entity_views._ent_view(book, "b")
+        self.assertEqual((view["maker"], view["maker_id"]), ("Zentra", "z"))
+        self.assertEqual(entity_views._ent_view(book, "a")["maker"], "Zentra")   # a member: its own
+
+
 class Tick:
     """A clock that moves a second each time it is read (entity_repair's `time`): a sweep given a deadline 3.5 s
     ahead does exactly one step (v10.24, 0221: a step starts only when the last one's seconds are left)."""
