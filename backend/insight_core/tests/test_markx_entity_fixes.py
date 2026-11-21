@@ -450,12 +450,81 @@ class Fixes(base._Db):
                 self.assertEqual(after, roots[sum(steps) - 1])
         self.assertEqual(steps, [3, 3, 1])
 
+    # ---- 4c: a cluster rooted on a build -----------------------------------------------------------------------
+
+    def _rooted_on_a_build(self):
+        """The data as merged before v10.35: "Inkling" redirected into "Thinking Machines Inkling", a 975B GGUF
+        checkpoint (the older side kept), with a quantisation already under the checkpoint."""
+        ps = [self.post(n, T0 + n * H) for n in range(3)]
+        self.mentions(ps[0], ("Inkling", "model", "subject"))
+        self.mentions(ps[1], ("Thinking Machines Inkling", "model", "subject"))
+        self.mentions(ps[2], ("Inkling Q2 quant", "model", "subject"))
+        self.linked()
+        ink, tmi, q2 = (self.ent_named(x) for x in ("Inkling", "Thinking Machines Inkling", "Inkling Q2 quant"))
+        self.cur.execute("UPDATE mx_entities SET level = 'checkpoint', build = 'Dynamic 1-bit GGUF', size = '975B' "
+                         "WHERE id = %s", (tmi,))
+        self.cur.execute("UPDATE mx_entities SET level = 'checkpoint', build = 'Q2' WHERE id = %s", (q2,))
+        for f in (ink, q2):
+            self.cur.execute("""INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, evidence)
+                                VALUES (%s, %s, 'rule:maker_prefix', true, '{"rules": ["maker_prefix"]}')""", (f, tmi))
+        return ink, tmi, q2
+
+    def test_4c_a_cluster_rooted_on_a_build_re_roots_on_its_general_name_its_facts_with_it(self):
+        from insight_core.markx import entity_facts
+        ink, tmi, q2 = self._rooted_on_a_build()
+        entity_facts.write(self.cur, tmi, by="haiku", kind="model", what="Thinking Machines' language model")
+        out = self.stage(since=self.since)
+        self.assertEqual({k: out["repair"]["reroot"][k] for k in ("clusters", "rerooted", "redirects", "facts")},
+                         {"clusters": 1, "rerooted": 1, "redirects": 1, "facts": 1})
+        book = self.book()
+        self.assertEqual((book.root(tmi), book.root(q2), book.root(ink)), (ink, ink, ink))   # one thing, Inkling on top
+        self.cur.execute("SELECT from_id::text, to_id::text, by, automatic, undone_by, evidence->'undone'->>'why', "
+                         "evidence->>'rerooted_from' IS NOT NULL, evidence->'rules' FROM mx_entity_redirects ORDER BY at, id")
+        rows = self.cur.fetchall()
+        self.assertIn((ink, tmi, "rule:maker_prefix", True, "repair", "reroot", False, ["maker_prefix"]), rows)
+        self.assertIn((tmi, ink, "rule:maker_prefix", True, None, None, True, ["maker_prefix"]), rows)
+        self.assertEqual(len(rows), 3)                                      # nothing deleted, the quant left as it was
+        got = entity_facts.read(self.cur, [ink, tmi], force=True)
+        self.assertEqual(got[ink].what, "Thinking Machines' language model")   # the facts go with the root
+        self.assertIn(tmi, got)                                              # and stay with the build too
+        again = self.stage(full=True)
+        self.assertEqual(again["repair"]["reroot"]["rerooted"], 0)        # idempotent
+
+    def test_4c_the_owners_merge_stays_the_owners_and_a_rename_or_an_owners_shown_name_is_left(self):
+        ink, tmi, q2 = self._rooted_on_a_build()
+        self.cur.execute("UPDATE mx_entity_redirects SET undone_at = now(), undone_by = 'test' WHERE from_id = %s", (ink,))
+        x, y = I.pair(ink, tmi)
+        I.queue_item(self.cur, kind="alias", a=x, b=y, proposal="same", reason="test", conf=None, evidence={},
+                     call_id=None, run_id=None)
+        self.cur.execute("UPDATE mx_entity_queue SET answer = 'same', answered_at = now() WHERE a = %s AND b = %s "
+                         "RETURNING id::text", (x, y))
+        qid = self.cur.fetchone()[0]
+        self.cur.execute("""INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, queue_id, evidence)
+                            VALUES (%s, %s, 'owner', false, %s, '{}')""", (ink, tmi, qid))
+        self.cur.execute("UPDATE mx_entities SET shown_name = 'Inkling 975B', shown_by = 'owner' WHERE id = %s", (tmi,))
+        out = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
+        self.assertEqual((out["reroot"]["rerooted"], out["reroot"]["skip_owner_shown"]), (0, 1))   # the owner's name
+        self.cur.execute("UPDATE mx_entities SET shown_name = NULL, shown_by = NULL WHERE id = %s", (tmi,))
+        out = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
+        self.assertEqual(out["reroot"]["rerooted"], 1)
+        self.assertEqual(self.book().root(tmi), ink)
+        self.cur.execute("SELECT by, automatic, queue_id::text FROM mx_entity_redirects WHERE from_id = %s "
+                         "AND undone_at IS NULL", (tmi,))
+        self.assertEqual(self.cur.fetchone(), ("owner", False, qid))       # the owner's answer, the keeper changed
+        # a rename goes the older name into the newer: never turned round
+        self.cur.execute("UPDATE mx_entity_redirects SET undone_at = now(), undone_by = 'test' WHERE from_id = %s", (tmi,))
+        self.cur.execute("""INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, evidence, kind)
+                            VALUES (%s, %s, 'owner', false, '{}', 'rename')""", (ink, tmi))
+        out = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False)
+        self.assertEqual((out["reroot"]["rerooted"], out["reroot"]["skip_rename"]), (0, 1))
+        self.assertEqual(self.book().root(ink), tmi)
+
     def test_the_repairs_go_a_step_at_a_time_and_the_next_run_resumes_at_the_step_left(self):
         """v10.24 (0221): the repairs run with what the stage's budget has left; a step starts only when the seconds
         it took the last time are left, and the next run begins at the first step this one could not start."""
         z, vela, zv, v5 = self._org_and_family()
         took = {"org_family": 1.0, "product_accounts": 1.0, "reparent": 5.0, "families": 1.0, "family_home": 1.0,
-                "names": 1.0}
+                "names": 1.0, "reroot": 1.0}
         clock = Tick()
         with mock.patch.object(R, "time", clock):
             first = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=clock.t + 6.5,
@@ -466,7 +535,7 @@ class Fixes(base._Db):
         self.assertEqual(set(first["took"]), set(R.STEPS))                       # the steps not run keep their seconds
         second = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=first)
         self.assertEqual((second["done"], second["next"]), (True, None))
-        self.assertEqual(set(second) & set(R.STEPS), {"reparent", "families", "family_home", "names"})   # resumed where the first stopped
+        self.assertEqual(set(second) & set(R.STEPS), {"reparent", "families", "family_home", "names", "reroot"})   # resumed where the first stopped
         third = R.repair(self.cur, I.run_book(self.cur), run_id=None, full=False, deadline=None, last=second)
         self.assertEqual(set(third) & set(R.STEPS), set(R.STEPS))                # done: a new round from the first
         self.assertEqual(third["product_accounts"]["merged"], 0)                 # idempotent

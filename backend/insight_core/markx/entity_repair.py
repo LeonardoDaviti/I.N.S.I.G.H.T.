@@ -29,6 +29,16 @@ merged, an owner's rename (shown_by 'owner') is never replaced.
   4b. `names` (0250): a bare name whose mentions state several makers splits into one thing a maker
      (identity.split_names, the family maker rule deepened; entity_bands.json `families.split`), the new mentions of
      a name split before placed each run; the last step, a step like the others under the stage's budget.
+  4c. `reroot` (v10.35): a cluster rooted on a build (identity.is_build: a checkpoint, or a name stating GGUF, NVFP4...)
+     that holds a general name re-roots on it, the keeper identity.merge now chooses: merges made before v10.35 kept
+     the larger or older side ("Inkling" redirected into "Thinking Machines Inkling", a 975B GGUF checkpoint, so the
+     family page was the GGUF's). The redirects from the general name up to the root are undone (undone_by 'repair',
+     why 'reroot') and made again by identity.merge with their own by, queue item and call, so the same names stay
+     one thing (the owner's merges too: only the keeper changes). The build root's current facts go with the root
+     when the new one has none (entity_facts.write, a new row; the old stays); a brief stays under the id it was
+     made for (keep everything) and the brief planner, reading roots, briefs the new root; the shown name follows on
+     the touched clusters. Skipped: a rename on the path (an older name into the newer, its own direction), an owner's
+     shown name on the build root.
   5. `shown`: the name and type each cluster is shown under, by evidence (mx_entities.shown_name, shown_type, on the
      root): the member name the most distinct sources write (then posts), counting no span written as a handle nor
      a post by the account it names (an account's display name: "Zentra Devs"); a person by the full name holding
@@ -57,6 +67,7 @@ UNDO_LIMIT = 200          # redirects a run undoes (org_family)
 PRODUCT_LIMIT = 500       # product accounts a run merges into their family (product_accounts)
 REPARENT_LIMIT = 2000     # versions a run gives a family
 FAMILY_LIMIT = 300        # family merges a run (and as many version merges)
+REROOT_LIMIT = 200        # clusters a run re-roots on their general name (reroot)
 SHOWN_CHUNK = 2000        # clusters whose shown name one query reads
 SHOWN_SINGLES = 20000     # v10.23 (0218): a sweep's step: SHOWN_CHUNK clusters of several names, or this many of one
 BRAND_MIN = 3
@@ -69,7 +80,8 @@ def config() -> Dict[str, Any]:
     return {"org_family": got.get("org_family", True), "product_accounts": got.get("product_accounts", True),
             "reparent": got.get("reparent", True),
             "families": got.get("families", True), "shown": got.get("shown", True),
-            "family_home": got.get("family_home", True), "names": got.get("names", True)}
+            "family_home": got.get("family_home", True), "names": got.get("names", True),
+            "reroot": got.get("reroot", True)}
 
 
 def _owner_same(cur: Any) -> Set[Tuple[str, str]]:
@@ -618,6 +630,127 @@ def merge_versions(cur: Any, book: I.Book, *, run_id: Any, limit: int = FAMILY_L
     return n
 
 
+# ---- 4c. a cluster rooted on a build ---------------------------------------------------------------------------
+
+def reroot_plan(cur: Any, book: I.Book) -> List[Dict[str, Any]]:
+    """v10.35: the clusters rooted on a build that hold a general name, each {root, keeper, path (the redirects from
+    the keeper up to the root, keeper first), skip (None, or why not)}. Reads only. The keeper is identity.merge's:
+    of the general names, the one heading the most names (the cluster it brought), then the older; the names on
+    its path up are all builds."""
+    out: List[Dict[str, Any]] = []
+    plans = []
+    for root, ms in sorted(book.clusters().items()):
+        e = book.ents.get(root)
+        if e is None or not I.is_build(e):
+            continue
+        general = [m for m in ms if m in book.ents and not I.is_build(book.ents[m])]
+        if not general:
+            continue
+        into: Dict[str, List[str]] = defaultdict(list)
+        for m in ms:
+            if m != root and m in book.redirect:
+                into[book.redirect[m][0]].append(m)
+
+        def under(x: str) -> int:
+            n, todo, seen = 0, [x], set()
+            while todo:
+                y = todo.pop()
+                if y not in seen:
+                    seen.add(y)
+                    n += 1
+                    todo.extend(into.get(y, ()))
+            return n
+
+        def weight(m: str):
+            f = book.ents[m].first_seen
+            return (under(m), -(f.timestamp() if f else 0), m)
+        keeper = max(general, key=weight)
+        path, x = [], keeper
+        while x != root and x in book.redirect:
+            path.append(x)
+            x = book.redirect[x][0]
+        plans.append({"root": root, "keeper": keeper, "path": path, "skip": None})
+    if not plans:
+        return out
+    cur.execute("""SELECT from_id::text, id::text, kind FROM mx_entity_redirects
+                    WHERE undone_at IS NULL AND from_id = ANY(%s::uuid[])""",
+                ([f for p in plans for f in p["path"]],))
+    kinds = {f: (rid, kind) for f, rid, kind in cur.fetchall()}
+    cur.execute("SELECT id::text FROM mx_entities WHERE id = ANY(%s::uuid[]) AND shown_by = 'owner'",
+                ([p["root"] for p in plans],))
+    renamed = {r for (r,) in cur.fetchall()}
+    for p in plans:
+        if any(f not in kinds for f in p["path"]):
+            p["skip"] = "stale"            # the book's redirects are not the table's (another writer)
+        elif any(kinds[f][1] == "rename" for f in p["path"]):
+            p["skip"] = "rename"
+        elif p["root"] in renamed:
+            p["skip"] = "owner_shown"
+        p["redirects"] = [kinds[f][0] for f in p["path"] if f in kinds]
+        out.append(p)
+    return out
+
+
+def reroot_builds(cur: Any, book: I.Book, *, run_id: Any, limit: int = REROOT_LIMIT) -> Dict[str, int]:
+    """v10.35: each cluster of reroot_plan not skipped re-roots on its keeper: the redirects of its path undone and
+    made again by identity.merge (its keeper rule puts the general name on top) with their own by, automatic, call
+    and queue item (evidence: theirs, and `rerooted_from`). The old root's current facts are written to the new
+    root when it has none."""
+    from insight_core.markx import entity_facts
+    out = Counter({"clusters": 0, "rerooted": 0, "redirects": 0, "facts": 0, "skipped": 0})
+    for p in reroot_plan(cur, book):
+        out["clusters"] += 1
+        if p["skip"] or out["rerooted"] >= limit:
+            out["skipped"] += 1
+            if p["skip"]:
+                out["skip_" + p["skip"]] += 1
+            continue
+        cur.execute("""SELECT id::text, from_id::text, to_id::text, by, automatic, call_id::text, queue_id::text, evidence
+                         FROM mx_entity_redirects WHERE id = ANY(%s::uuid[]) AND undone_at IS NULL""", (p["redirects"],))
+        rows = {r[1]: r for r in cur.fetchall()}
+        if set(rows) != set(p["path"]):
+            out["skipped"] += 1
+            out["skip_stale"] += 1
+            continue
+        why = {"why": "reroot", "run": str(run_id) if run_id else None, "root": p["root"], "keeper": p["keeper"]}
+        before = {f: book.redirect[f] for f in p["path"]}
+        cur.execute("SAVEPOINT entity_reroot")
+        made = 0
+        for f in p["path"]:
+            cur.execute("""UPDATE mx_entity_redirects SET undone_at = now(), undone_by = 'repair',
+                                  evidence = COALESCE(evidence, '{}'::jsonb) || jsonb_build_object('undone', %s::jsonb)
+                            WHERE id = %s AND undone_at IS NULL""", (json.dumps(why, default=str), rows[f][0]))
+            book.redirect.pop(f, None)
+        for f in p["path"]:
+            rid, _f, to, by, auto, call, queue, ev = rows[f]
+            made += int(bool(I.merge(cur, book, f, to, by=by, automatic=auto, call_id=call, queue_id=queue,
+                                     run_id=run_id, evidence={**(ev or {}), "rerooted_from": rid, "why": "reroot"})))
+        new = book.root(p["root"])
+        if made != len(p["path"]) or new != book.root(p["keeper"]) or I.is_build(book.ents[new]):
+            cur.execute("ROLLBACK TO SAVEPOINT entity_reroot")   # one thing still, on its old root (a raced write)
+            for f in set(p["path"]) | {p["root"]}:
+                book.redirect.pop(f, None)
+            for f, got in before.items():
+                book.redirect[f] = got
+            out["skipped"] += 1
+            out["skip_failed"] += 1
+            continue
+        cur.execute("RELEASE SAVEPOINT entity_reroot")
+        out["redirects"] += made
+        out["rerooted"] += 1
+        cur.execute("""SELECT entity_id::text, kind, maker_id::text, maker_name, what, context, generic, by, sense_key
+                         FROM mx_entity_facts WHERE entity_id = ANY(%s::uuid[]) AND superseded_at IS NULL""",
+                    ([p["root"], new],))
+        facts = {r[0]: r for r in cur.fetchall()}
+        if p["root"] in facts and new not in facts:
+            _e, kind, maker_id, maker_name, what, context, generic, by, sense_key = facts[p["root"]]
+            if entity_facts.write(cur, new, by=by, kind=kind, maker_id=maker_id, maker_name=maker_name, what=what,
+                                  context=context or (), generic=bool(generic), sense_key=sense_key, run_id=run_id,
+                                  evidence={"rerooted_from": p["root"]}):
+                out["facts"] += 1
+    return dict(out)
+
+
 # ---- 5. the name and type shown ----------------------------------------------------------------------------------
 
 _SPAN_SQUASH = "lower(regexp_replace(m.span, '[^[:alnum:]]+', '', 'g'))"
@@ -810,7 +943,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
 
 # ---- the step ---------------------------------------------------------------------------------------------------
 
-STEPS = ("org_family", "product_accounts", "reparent", "families", "family_home", "names")
+STEPS = ("org_family", "product_accounts", "reparent", "families", "family_home", "names", "reroot")
 GUESS = 1.0   # v10.24 (0221): the seconds a step never measured is expected to take
 
 
@@ -830,7 +963,9 @@ def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optiona
              "families": lambda: merge_families(cur, book, run_id=run_id),
              "family_home": lambda: family_home(cur, book, w, run_id=run_id),
              # 0250: a bare name several makers state, one thing a maker (identity.split_names; families.split)
-             "names": lambda: I.split_names(cur, book, w, run_id=run_id, full=full)}
+             "names": lambda: I.split_names(cur, book, w, run_id=run_id, full=full),
+             # v10.35: a cluster rooted on a build re-roots on its general name (identity.merge's keeper)
+             "reroot": lambda: reroot_builds(cur, book, run_id=run_id)}
     last = last or {}
     took_before = last.get("took") if isinstance(last.get("took"), dict) else {}
     start = STEPS.index(last["next"]) if last.get("next") in STEPS and last.get("done") is False else 0
