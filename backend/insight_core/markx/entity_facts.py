@@ -405,7 +405,7 @@ def makers(cur: Any, book: I.Book, roots: Iterable[str], guide: Sequence[str], *
     words name), when the entity was made with none: a facts row `rule:mentions`. mx_entities.maker stays."""
     if not on():
         return 0
-    rs = sorted({r for r in roots if r in book.ents and not book.ents[r].maker
+    rs = sorted({r for r in roots if r in book.ents and not I.cluster_maker(book, r)
                  and I.schemas_type(book.ents[r].type) in PRODUCTS})
     if not rs:
         return 0
@@ -443,7 +443,7 @@ def set_maker(cur: Any, book: Any, thing: str, maker: str, *, by: str = "web",
     root = book.root(thing) if thing else None
     if not root or root not in book.ents or not (maker or "").strip():
         return None
-    if book.ents[root].maker:
+    if I.cluster_maker(book, root):   # v10.35: a merged name's stated maker counts
         return None
     cur.execute("SELECT maker_id, maker_name FROM mx_entity_facts WHERE entity_id = %s AND superseded_at IS NULL",
                 (root,))

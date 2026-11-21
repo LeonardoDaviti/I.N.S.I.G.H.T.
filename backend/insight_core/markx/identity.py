@@ -1707,6 +1707,25 @@ def product_account(w: Writer, key: str, m: Mention, fam: str, first: Optional[d
     return eid
 
 
+def is_build(e: Ent) -> bool:
+    """v10.35: a build of a thing (a checkpoint, or a name stating a build: GGUF, NVFP4, quantised weights), the more
+    specific side of a merge (`merge` keeps the other)."""
+    return e.level == "checkpoint" or bool(e.build)
+
+
+def cluster_maker(book: Book, root: str) -> Optional[str]:
+    """v10.35: the maker a cluster's names state: its root's, else its members' (in id order). A merge never loses
+    the maker the merged name stated (mx_entities.maker is the name's own and never changes)."""
+    e = book.ents.get(root)
+    if e is not None and e.maker:
+        return e.maker   # most roots: their own (the cluster is read only when it states none)
+    for m in sorted(x for x in book.cluster(root) if x != root):
+        e = book.ents.get(m)
+        if e is not None and e.maker:
+            return e.maker
+    return None
+
+
 def maker_root(book: Book, maker: Optional[str]) -> Optional[str]:
     """0164: the cluster a stated maker's name aliases (None: no entity of that name)."""
     k = N.key(maker)
@@ -3719,13 +3738,19 @@ def stamp_backlog(cur: Any, pairs: Iterable[Tuple[str, str]]) -> None:
 
 def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, call_id: Any = None, queue_id: Any = None,
           run_id: Any = None, evidence: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    """One merge: the smaller cluster's root redirects into the larger's (more names, then older). The redirect's id."""
+    """One merge: one root redirects into the other, the keeper. The redirect's id.
+
+    v10.35: the keeper is the more general thing, then the larger cluster (more names), then the older. A root is
+    the specific one when it is a build (a checkpoint, or a name stating a `build`: GGUF, NVFP4, quantised weights)
+    and the other is not: "Inkling 2 Mini" (a variant, its maker and its brief under its id) merged with
+    "Inkling-2-Mini-GGUF" keeps Mini, never the GGUF (on production the larger GGUF cluster kept, and the page lost
+    Mini's name, level, maker and brief)."""
     ra, rb = book.root(a), book.root(b)
     if ra == rb:
         return None
     def weight(r: str):
         e = book.ents[r]
-        return (book.cluster_size(r), -(e.first_seen.timestamp() if e.first_seen else 0), r)
+        return (not is_build(e), book.cluster_size(r), -(e.first_seen.timestamp() if e.first_seen else 0), r)
     to, frm = (ra, rb) if weight(ra) >= weight(rb) else (rb, ra)
     got = _savepoint(cur, """INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, call_id, queue_id, run_id, evidence)
                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb) RETURNING id::text""",

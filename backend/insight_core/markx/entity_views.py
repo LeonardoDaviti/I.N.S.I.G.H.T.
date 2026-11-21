@@ -98,10 +98,12 @@ def _ent_view(book: I.Book, eid: str, facts: Optional[Dict[str, Any]] = None) ->
     root = book.root(eid) == eid
     # 0164: a cluster is shown under its root's shown name and type (by evidence), its maker as the maker's entity
     # (the stated maker's name read through its alias: "Zentra AI" shows as the org Zentra when they are one)
-    mk = I.maker_root(book, e.maker) if e.maker else None
+    # v10.35: a root's maker is the one its names state (I.cluster_maker: a merged name's stated maker kept)
+    stated = I.cluster_maker(book, eid) if root else e.maker
+    mk = I.maker_root(book, stated) if stated else None
     out = {"id": e.id, "name": book.label(eid) if root else e.name,
            "type": book.shown_type(eid) if root else schemas.entity_type(e.type),
-           "maker": book.label(mk) if mk in book.ents else e.maker, "maker_id": mk if mk in book.ents else None,
+           "maker": book.label(mk) if mk in book.ents else stated, "maker_id": mk if mk in book.ents else None,
            "level": e.level, "version": e.version, "variant": e.variant, "size": e.size, "build": e.build,
            "status": e.status, "family": _family_of(book, eid)}
     f = (facts or {}).get(eid)
