@@ -108,7 +108,8 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0094](0094-since-you-last-looked.md) | Since you last looked: what's new on a story, entity or track since you opened it | future |
 | [0095](0095-numbers-over-time.md) | Numbers over time: prices, scores and money, per entity, with their sources | future |
 | [0096](0096-weekly-what-changed.md) | Weekly "what changed": a digest for learning, not a feed | future |
-| [0097](0097-where-sources-disagree.md) | Where sources disagree: who supports, disputes or adds what, on one story | future |
+| [0097](0097-where-sources-disagree.md) | Where sources disagree: who supports, disputes or adds what, on one story | future (first step: 0273) |
+| [0273](0273-where-sources-differ.md) | Where sources differ, on the story page and the opened News row | built, switched off (66% < 97%) |
 | [0098](0098-questions-with-citations.md) | Questions with citations: answers drawn only from what you've received | future |
 | [0099](0099-predictions-checked-later.md) | Predictions checked later: what sources said would happen, checked when the date comes | future |
 | [0100](0100-study-pages.md) | Study pages: one question or topic, everything needed to understand it on one page | future |

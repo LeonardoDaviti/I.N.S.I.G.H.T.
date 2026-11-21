@@ -353,7 +353,7 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "alias", "collide", "embed_name",                # 0119 A1
                                               "alias2", "alias3", "alias4",                     # 0130 A2; 0201
                                               "rename", "stop", "chain", "derive",              # 0165 B, C; 0219; 0234
-                                              "perspective", "sheet", "read3",                         # 0119 B
+                                              "perspective", "sheet", "read3", "dispute",              # 0119 B; 0273
                                               "relate", "stance",                               # 0131, 0132 B
                                               "back",                                           # 0136
                                               "cite",                                           # 0133 v4.2

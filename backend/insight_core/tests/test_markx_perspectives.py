@@ -407,5 +407,49 @@ class Stage(unittest.TestCase):
         self.assertEqual(view["members"][1]["facts"][0]["mine"], "not_new")
 
 
+class WhereSourcesDiffer0273(unittest.TestCase):
+    """0273: the dispute question's input and the code's checks of its answer (invented rows)."""
+    ORIG = {"post": "o", "src": "Maker", "title": "Widget 2 is out", "text": "Widget 2 costs $799 and ships today."}
+    LINES = [{"n": 1, "kind": "FACT", "text": "Costs $699", "post": "a", "src": "Blog A", "quote": "it costs $699"},
+             {"n": 2, "kind": "CLAIM", "text": "Costs $650", "post": "b", "src": "Forum B", "quote": "maybe $650"},
+             {"n": 3, "kind": "FACT", "text": "Ships today", "post": "c", "src": "Blog A", "quote": "ships today"}]
+
+    def test_the_input_numbers_the_lines_after_the_original(self):
+        text = P.dispute_input("Widget 2", self.ORIG, self.LINES)
+        self.assertIn("ORIGINAL (line 0) [Maker]", text)
+        self.assertIn("2. CLAIM [Forum B] Costs $650 | QUOTE: maybe $650", text)
+        self.assertIsNone(P.dispute_input("x", self.ORIG, []))
+        self.assertIsNone(P.dispute_input("x", {**self.ORIG, "src": "Blog A"}, [self.LINES[0]]))   # one source only
+
+    def test_a_checked_difference_is_kept_with_its_quotes(self):
+        got = P.disputes_of({"disputes": [{"fact": "price", "kind": "number", "sides": [
+            {"lines": [0], "says": "$799", "quote": "Widget 2 costs $799"}, {"lines": [1], "says": "$699"},
+            {"lines": [2], "says": "$650"}]}]}, self.ORIG, self.LINES)
+        self.assertEqual(len(got), 1)
+        sides = got[0]["sides"]
+        self.assertEqual([s["by"][0]["source"] for s in sides], ["Maker", "Blog A", "Forum B"])
+        self.assertEqual(sides[1]["by"][0]["quote"], "it costs $699")
+        self.assertEqual([s["claimed"] for s in sides], [False, False, True])
+
+    def test_unchecked_answers_are_dropped(self):
+        bad = [
+            [{"lines": [0], "says": "$799", "quote": "not in the original text"}, {"lines": [1], "says": "$699"}],
+            [{"lines": [1], "says": "$699"}, {"lines": [3], "says": "today"}],   # Blog A on both sides
+            [{"lines": [1], "says": "$699"}, {"lines": [9], "says": "?"}],        # no such line
+            [{"lines": [1], "says": "$699"}],                                     # one side
+        ]
+        for sides in bad:
+            with self.subTest(sides=sides):
+                self.assertEqual(P.disputes_of({"disputes": [{"fact": "f", "sides": sides}]}, self.ORIG, self.LINES), [])
+        self.assertEqual(P.disputes_of(None, self.ORIG, self.LINES), [])
+
+    def test_the_kind_its_guide_and_the_switch(self):
+        self.assertEqual(schemas.KINDS["dispute"].guide, "dispute-v1")
+        ok = {"disputes": [{"fact": "f", "kind": "number", "sides": [{"lines": [1], "says": "a"}]}]}
+        self.assertIsNone(validate.check("dispute", ok, "i")[1])
+        self.assertIsNotNone(validate.check("dispute", {"disputes": [{"fact": "f"}]}, "i")[1])
+        self.assertEqual(P.DISPUTES_DEFAULT, "off")   # 29 of 44 on the copy, under the bar (0273)
+
+
 if __name__ == "__main__":
     unittest.main()

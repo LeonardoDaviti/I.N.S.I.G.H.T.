@@ -85,6 +85,36 @@ export function CameTrue({ built }: { built: MarkxBuilt | null | undefined }) {
   );
 }
 
+/** 0273: "Where sources differ": each fact two or more sources state differently, each side with its sources and
+ *  quotes (a side only claimed, never stated as fact, says so). Nothing when they agree. */
+export function SourcesDiffer({ built }: { built: MarkxBuilt | null | undefined }) {
+  const ds = built?.disputes ?? [];
+  if (!ds.length) return null;
+  return (
+    <section aria-label="Where sources differ" className="mt-2 space-y-2 text-[0.8125rem] leading-5" data-built="disputes">
+      <p className="font-semibold text-fg-2">Where sources differ</p>
+      {ds.map((d, n) => (
+        <div key={n}>
+          <p className="text-fg [overflow-wrap:anywhere]">{d.fact}</p>
+          <ul className="ml-3 text-fg-2">
+            {d.sides.map((s, k) => (
+              <li key={k} className="[overflow-wrap:anywhere]">
+                <span className="font-medium text-fg">{s.says}</span>
+                {s.claimed ? <span className="text-fg-3"> (claimed)</span> : null}
+                {s.by.map((b) => (
+                  <span key={b.post} className="block text-fg-3">
+                    <TextLink to={`/posts/${encodeURIComponent(b.post)}`} muted>{b.source || 'a source'}</TextLink>: “{b.quote}”
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 /**
  * The story page's "How it was built" (0128): the event type, the original first (or the source page), the leaks
  * before the release and the stories linked "came true", with the measured accuracy.
@@ -123,6 +153,7 @@ export function BuiltSection({ built, posts }: { built: MarkxBuilt | null | unde
         </ul>
       ) : null}
       <CameTrue built={built} />
+      <SourcesDiffer built={built} />
     </section>
   );
 }
