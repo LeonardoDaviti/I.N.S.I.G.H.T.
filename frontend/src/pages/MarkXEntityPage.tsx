@@ -36,14 +36,15 @@ const WHY: Record<string, string> = { by: 'its own post', origin: 'the page it b
 
 /** 0144 B2-B3: a Mark X story (or, marked so, the Mark IX story of a post in none) with all its posts, the original
  *  first: the entity's own earliest post, else the story's root (Mark IX's outside page when it began from one). */
-export function StoryBlock({ s }: { s: MarkxEntityStory }) {
+export function StoryBlock({ s, onAll }: { s: MarkxEntityStory; onAll?: () => void }) {
   const o = s.original;
+  const total = s.posts_total ?? s.posts.length;   // 0277: the first 6 listed by default
   const title = s.headline ?? (s.mark === 'ix' ? 'A Mark IX story' : 'A Mark X story');
   return (
     <section aria-label={title}>
       <h2 className={H2}>
         {s.mark === 'x' ? <TextLink to={`/markx/stories/${encodeURIComponent(s.story)}`} muted>{title}</TextLink> : title}
-        {' · '}{plural(s.voices, 'source')} · {plural(s.posts.length, 'post')}{s.mark === 'ix' ? ' · Mark IX' : ''}
+        {' · '}{plural(s.voices, 'source')} · {plural(total, 'post')}{s.mark === 'ix' ? ' · Mark IX' : ''}
       </h2>
       {o?.url ? (
         <p className="mt-2 text-[0.8125rem] text-fg-2">
@@ -63,6 +64,9 @@ export function StoryBlock({ s }: { s: MarkxEntityStory }) {
           </li>
         ) : <EntityPostLine key={p.id} post={p} />))}
       </ul>
+      {total > s.posts.length && onAll ? (
+        <button type="button" className={MORE} onClick={onAll}>All {plural(total, 'post')} of this story</button>
+      ) : null}
     </section>
   );
 }
@@ -169,8 +173,14 @@ export function RabbitHole({ hole, entityId }: { hole: MarkxRabbitHole; entityId
   };
   const open = hole.sites.find((s) => s.state !== 'followed' && s.state !== 'stored');
   const missing = hole.works.filter((w) => w.url && !w.stored).map((w) => w.url as string);
+  const missingAll = hole.missing ?? missing.length;   // 0277: the answer lists its first 30 works, counts them all
   const dive = async () => {
-    if (missing.length) await collect(missing);
+    let urls = missing;
+    if (missingAll > missing.length) {   // every work not stored, from the whole page (?all=true)
+      const whole = await api.getMarkxEntity(entityId, undefined, undefined, undefined, true);
+      urls = (whole.rabbit_hole?.works ?? []).filter((w) => w.url && !w.stored).map((w) => w.url as string);
+    }
+    if (urls.length) await collect(urls);
     if (open) navigate(followHref(open.url));
   };
   return (
@@ -204,7 +214,7 @@ export function RabbitHole({ hole, entityId }: { hole: MarkxRabbitHole; entityId
         <p className="mt-2 text-[0.8125rem] text-fg-2">People: {hole.people.map((p, n) => (
           <span key={p.id}>{n ? ', ' : ''}<TextLink to={entityHref(p.id)}>{p.name}</TextLink></span>))}</p>
       ) : null}
-      {open || missing.length ? (
+      {open || missingAll ? (
         <Button size="sm" variant="secondary" className="mt-3" disabled={busy !== null} onClick={() => void dive()}>
           {busy ?? 'Go down the rabbit hole'}
         </Button>
@@ -240,6 +250,7 @@ export function Older({ older }: { older: MarkxOlderPost[] }) {
 }
 
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
+const MORE = 'mt-2 text-[0.8125rem] text-fg underline-offset-2 hover:underline';   // 0277: an "All N" link
 
 const ROLE_GROUP: Record<string, number> = { subject: 0, actor: 0, by: 1, venue: 2, source: 2, recommended: 2, mention: 3 };
 /** 0144 B4: subject or actor (0), by (1), venue / source / recommended (2), mentions (3): the server's order. */
@@ -280,7 +291,7 @@ function Handles({ h, name, onReplies }: { h: MarkxEntityHandles; name: string; 
 }
 
 /** How many more stories and posts in no story one Show more asks for (issue 0195: the API's pages). */
-const ENTITY_MORE = { stories: 50, loose: 100 } as const;
+const ENTITY_MORE = { stories: 20, loose: 30 } as const;
 
 export default function MarkXEntityPage() {
   const { entityId = '' } = useParams();
@@ -290,10 +301,15 @@ export default function MarkXEntityPage() {
   const [byLimit, setByLimit] = useState<number | undefined>(undefined);
   const [mentionsOpen, setMentionsOpen] = useState(false);
   const [replies, setReplies] = useState(false);   // 0168: the replies to its handles, hidden by default
-  // Issue 0195: the API lists the first 50 stories and 100 posts in no story; Show more asks for more.
+  // Issue 0195: the API lists the first 20 stories and 30 posts in no story (0277; were 50 and 100); Show more asks for more.
   const [limits, setLimits] = useState<MarkxEntityLimits | undefined>(undefined);
-  const query = useQuery({ queryKey: ['markx-entity', entityId, byLimit ?? null, replies, limits ?? null],
-    queryFn: () => (limits ? api.getMarkxEntity(entityId, byLimit, replies || undefined, limits)
+  // 0277: the API lists each story's first posts, the first citing posts and works and the timeline's top events;
+  // an "All" link asks for every one (?all=true)
+  const [whole, setWhole] = useState(false);
+  const all = () => setWhole(true);
+  const query = useQuery({ queryKey: ['markx-entity', entityId, byLimit ?? null, replies, limits ?? null, whole],
+    queryFn: () => (whole ? api.getMarkxEntity(entityId, byLimit, replies || undefined, limits, true)
+      : limits ? api.getMarkxEntity(entityId, byLimit, replies || undefined, limits)
       : replies ? api.getMarkxEntity(entityId, byLimit, true)
       : byLimit === undefined ? api.getMarkxEntity(entityId) : api.getMarkxEntity(entityId, byLimit)), staleTime: 30_000,
     placeholderData: (previous, last) => (last?.queryKey[1] === entityId ? previous : undefined) });
@@ -329,6 +345,9 @@ export default function MarkXEntityPage() {
           <Accuracy accuracy={d.accuracy} />
           {d.version_line ? <VersionLine line={d.version_line} /> : null}{/* 0220 */}
           {d.relations?.length ? <ThingLinks relations={d.relations} /> : null}{/* 0220 */}
+          {d.relations && (d.relations_total ?? 0) > d.relations.length ? (
+            <button type="button" className={MORE} onClick={all}>All {plural(d.relations_total ?? 0, 'link')}</button>
+          ) : null}
           {d.versions.length ? (
             <section aria-label="Versions">
               <h2 className={H2}>{d.family ? 'Other versions of the family' : 'Versions'}</h2>
@@ -356,25 +375,34 @@ export default function MarkXEntityPage() {
               </ul>
             </section>
           ) : null}
-          {d.timeline ? <Timeline timeline={d.timeline} /> : null}{/* 0165 C */}
+          {d.timeline ? <Timeline timeline={d.timeline} onAll={all} /> : null}{/* 0165 C; 0277: All asks for every event */}
           {d.published?.length ? (
             <section aria-label="Published">
               <h2 className={H2}>Published</h2>
               <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[0.8125rem]">
                 {d.published.map((w) => <li key={w.id}><TextLink to={entityHref(w.id)}>{w.name}</TextLink></li>)}
               </ul>
+              {(d.published_total ?? 0) > d.published.length ? (
+                <button type="button" className={MORE} onClick={all}>All {plural(d.published_total ?? 0, 'work')}</button>
+              ) : null}
             </section>
           ) : null}
           {d.citing?.length ? (
             <section aria-label="Cited as evidence">
-              <h2 className={H2}>Cited as evidence · {plural(d.citing.length, 'post')}</h2>
+              <h2 className={H2}>Cited as evidence · {plural(d.citing_total ?? d.citing.length, 'post')}</h2>
               <ul className="mt-2 space-y-1">{d.citing.map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
+              {(d.citing_total ?? 0) > d.citing.length ? (
+                <button type="button" className={MORE} onClick={all}>All {plural(d.citing_total ?? 0, 'post')}</button>
+              ) : null}
             </section>
           ) : null}
           {d.recommending?.length ? (
             <section aria-label="Recommended">
-              <h2 className={H2}>Recommended · {plural(d.recommending.length, 'post')}</h2>
+              <h2 className={H2}>Recommended · {plural(d.recommending_total ?? d.recommending.length, 'post')}</h2>
               <ul className="mt-2 space-y-1">{d.recommending.map((p) => <EntityPostLine key={p.id} post={p} />)}</ul>
+              {(d.recommending_total ?? 0) > d.recommending.length ? (
+                <button type="button" className={MORE} onClick={all}>All {plural(d.recommending_total ?? 0, 'post')}</button>
+              ) : null}
             </section>
           ) : null}
           {d.queue.some((item) => item.flag) ? (
@@ -399,7 +427,7 @@ export default function MarkXEntityPage() {
               <Sample items={d.sample} onAnswer={(story, a) => void act(() => calls.labelMarkxSample(story, a))} />
             </details>
           ) : null}
-          {d.stories.map((s) => <StoryBlock key={s.story} s={s} />)}
+          {d.stories.map((s) => <StoryBlock key={s.story} s={s} onAll={all} />)}
           {d.stories_total !== undefined && d.stories_total > d.stories.length ? (
             <button type="button" className="text-[0.8125rem] text-fg underline-offset-2 hover:underline"
                     onClick={() => setLimits({ ...limits, stories: d.stories.length + ENTITY_MORE.stories })}>

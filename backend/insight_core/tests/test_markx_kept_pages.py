@@ -280,7 +280,8 @@ class TheEntityPageKept(_World):
         return EV.kept_entity_page(self.cur, eid or self.widget, now=now, **self.PARAMS)
 
     def built(self, eid=None, now=None):
-        return kept_pages.encode(EV.entity_page(self.cur, eid or self.widget, now=now, offer_sample=True, **self.PARAMS))
+        return kept_pages.encode(EV._short(EV.entity_page(self.cur, eid or self.widget, now=now, offer_sample=True,
+                                                         **self.PARAMS)))   # 0277: the default answer, its lists cut
 
     def test_built_at_the_first_open_then_sent_as_kept_byte_for_byte(self):
         first = self.open()
@@ -352,10 +353,10 @@ class OneKeptPageServesEveryLimit(_World):
             self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
 
     def test_the_limits_clamp_and_never_error(self):
-        self.assertEqual(EV.limits(), (50, 50, 100))
+        self.assertEqual(EV.limits(), (50, 20, 30))   # 0277: were 50, 50, 100
         self.assertEqual(EV.limits(100000, 100000, 100000), (EV.BY_CAP, EV.STORIES_CAP, EV.LOOSE_CAP))
         self.assertEqual(EV.limits(-5, 0, -1), (0, 1, 1))
-        query = {"stories_limit": 100000, "loose_limit": 100000, "by_limit": 100000}
+        query = {"stories_limit": 100000, "loose_limit": 100000, "by_limit": 100000, "all": "true"}
         status, body, _ = _raw(f"/api/markx/entities/{self.widget}", query)
         self.assertEqual(status, 200)
         self.assertEqual(body, kept_pages.encode(EV.entity_page(
@@ -368,7 +369,7 @@ class OneKeptPageServesEveryLimit(_World):
                 dict(by_limit=1, stories_limit=2, loose_limit=3),
                 dict(by_limit=100000, stories_limit=100000, loose_limit=100000)]
         with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
-            got = [EV.kept_entity_page(self.cur, self.widget, **a) for a in asks]
+            got = [EV.kept_entity_page(self.cur, self.widget, whole=True, **a) for a in asks]
         self.assertEqual(built.call_count, 1)                       # one build serves them all
         for a, body in zip(asks, got):
             by, stories, loose = EV.limits(a["by_limit"], a["stories_limit"], a["loose_limit"])
@@ -389,6 +390,33 @@ class OneKeptPageServesEveryLimit(_World):
         self.assertEqual((cut["loose_total"], len(cut["stories"])), (3, 1))
         self.assertEqual([x["id"] for x in EV._cut(full, 0, 2, 1)["loose"]], ["r1"])
         self.assertEqual(EV._cut(full, 0, 2, 1)["loose_total"], 2)
+
+    def test_the_default_answer_lists_the_first_ones_and_all_answers_every_one(self):
+        """0277: each story's first posts (its original, then those about it), the first citing posts and works and
+        the timeline's top events, each with its total; ?all=true every one, from the same kept page."""
+        posts = [{"id": f"p{i}", "about": i in (7, 9)} for i in range(10)]
+        full = {"stories": [{"story": "s1", "original": {"post": "p8"}, "posts": posts},
+                            {"story": "s2", "original": None, "posts": posts[:2]}],
+                "loose": [], "loose_counts": {"report": 0, "by": 0, "other": 0, "mention": 0},
+                "citing": [{"id": f"c{i}"} for i in range(25)], "published": [{"id": f"w{i}"} for i in range(40)],
+                "rabbit_hole": {"works": [{"id": f"w{i}", "url": f"u{i}", "stored": i < 35} for i in range(40)]},
+                "relations": [{"other": i, "posts": i % 7} for i in range(70)],
+                "surges": [{"day": "d", "post_ids": ["p1"]}],
+                "timeline": {"items": [{"top": i < 3} for i in range(9)], "total": 9}}
+        short = EV._cut(full, 50, 20, 30)
+        s1, s2 = short["stories"]
+        self.assertEqual([p["id"] for p in s1["posts"]], ["p0", "p1", "p2", "p7", "p8", "p9"])   # in the block's order
+        self.assertEqual((s1["posts_total"], s2["posts_total"], len(s2["posts"])), (10, 2, 2))
+        self.assertEqual((len(short["citing"]), short["citing_total"]), (20, 25))
+        self.assertEqual((len(short["published"]), short["published_total"]), (30, 40))
+        hole = short["rabbit_hole"]
+        self.assertEqual((len(hole["works"]), hole["works_total"], hole["missing"]), (30, 40, 5))
+        self.assertEqual((len(short["relations"]), short["relations_total"]), (60, 70))
+        self.assertEqual(min(r["posts"] for r in short["relations"]), 1)   # the least stated are the ones left out
+        self.assertEqual(short["surges"], [{"day": "d"}])
+        self.assertEqual((len(short["timeline"]["items"]), short["timeline"]["items_all"]), (3, False))
+        whole = EV._cut(full, 50, 20, 30, whole=True)
+        self.assertEqual({k: v for k, v in whole.items() if k != "loose_total"}, full)
 
     def test_opens_are_counted_and_another_shape_is_never_sent(self):
         for _ in range(3):
@@ -504,7 +532,9 @@ class TheShapesAreNamed(_World):
         for i in range(4):
             self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
 
-    FROZEN = {"news": ("2", "626a1b818dcd802b"), "entity": ("4", "fd5ba899b59a4c67"),
+    # 0277: the entity answer's new fields (posts_total, citing_total, ...) are added by the request's cut, not kept: a
+    # page kept by the previous code is cut to the new shape too, so its kept shape (PAGE_SHAPE) stays 4
+    FROZEN = {"news": ("2", "626a1b818dcd802b"), "entity": ("4", "2c509c7e41d46aec"),
               "entities": ("1", "4efd649ca53508be"), "entity_queue": ("1", "aa10ad3c5d2a3012")}
 
     def shapes(self):

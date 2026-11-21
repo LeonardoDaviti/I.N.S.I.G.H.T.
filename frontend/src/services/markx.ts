@@ -196,6 +196,8 @@ export interface MarkxTimelineEvent {
 export interface MarkxTimeline {
   items: MarkxTimelineEvent[];
   shown: number;
+  /** 0277: false when only the top events are listed (the page asks ?all=true for every one). */
+  items_all?: boolean;
   total: number;
   earlier: { id: string; name: string | null; names: string[] }[];
 }
@@ -382,6 +384,8 @@ export interface MarkxEntityStory {
   newest: string;
   mark?: 'x' | 'ix';
   first_at?: string;
+  /** 0277: the story's posts (the default answer lists 6: its original, then those about the entity). */
+  posts_total?: number;
   original?: { post: string | null; url: string | null; why: 'by' | 'origin' | 'root'; title?: string | null; stored?: string | null };
   posts: MarkxEntityPost[];
 }
@@ -493,6 +497,10 @@ export interface MarkxEntityPage {
   published_by?: { id: string; name: string; type: string | null }[];
   published?: { id: string; name: string; type: string | null }[];
   citing?: MarkxEntityPost[];
+  /** 0277: how many posts cite it, recommend it and works it published (the default answer lists the first ones). */
+  citing_total?: number;
+  recommending_total?: number;
+  published_total?: number;
   recommending?: MarkxEntityPost[];
   /** 0138 A: its original (a paper or release page its posts link, found by rules), stored or not, and its other pages. */
   original?: MarkxOriginal | null;
@@ -512,6 +520,8 @@ export interface MarkxEntityPage {
   version_line?: MarkxVersionLine | null;
   /** 0220: the relations posts state between it and other things (only the measured ones). */
   relations?: MarkxEntityRelation[];
+  /** 0277: how many relations it has (the default answer lists the 60 most stated; ?all=true every one). */
+  relations_total?: number;
 }
 
 /** 0220: one version on a family's line: the name most posts use, its first post about it, how many posts name it. */
@@ -542,6 +552,9 @@ export interface MarkxRabbitHole {
   works: { id: string; name: string; url: string | null; kind: string | null; stored: boolean; post_id: string | null }[];
   people: { id: string; name: string }[];
   left: { sites: number; works: number };
+  /** 0277: how many works it has, and how many are not stored (the default answer lists the first 30 works). */
+  works_total?: number;
+  missing?: number;
 }
 
 export interface MarkxOriginal {
