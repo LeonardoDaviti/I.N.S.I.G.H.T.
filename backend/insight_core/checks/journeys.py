@@ -11,7 +11,11 @@ one before it:
     stated maker this thing's), not a namesake;
   - `entity_timeline`: entity -> timeline: each event's post is about this thing (subject, actor or compared) and of
     its maker;
-  - `family_makers`: entity -> family -> versions: one maker across the family, unless the family is a split parent.
+  - `family_makers`: entity -> family -> versions: one maker across the family, unless the family is a split parent;
+  - `family_versions` (v10.30, 0259; hard set only, entries `{from: family_versions, family_name_like, why}`): a
+    family page's versions are versions of one thing: each by the family's maker as its mentions state it, each a
+    version string that is a version (not a ratio "5:1", not a model id's first number), and no setting of a version
+    ("5.2 (max)", "5 low") listed as a version of its own.
 
 Two sets, measured apart: the **hard set** (a file, private: plan/research/lab/journeys.json; each entry a rule, the
 names it selects read from the copy, never a name in code: `shared_names` = the bare names whose mentions state
@@ -31,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from collections import Counter, defaultdict
@@ -52,6 +57,7 @@ STEPS = {
     "entity_links": "entity -> links: each post a shown link stands on names this thing, not a namesake",
     "entity_timeline": "entity -> timeline: each event's post is about this thing (subject, actor, compared), its maker's",
     "family_makers": "entity -> family -> versions: one maker across the family (a split parent apart)",
+    "family_versions": "family -> versions: each by the family's maker, a real version, no setting listed as a version",
 }
 FIX = {
     "story_things": "0250 #4 Things in this story (perspective_views.story_view `things`)",
@@ -59,7 +65,13 @@ FIX = {
     "entity_links": "0250 #2 links follow the split; a single contradicted `released` held (identity.held_released)",
     "entity_timeline": "0250 #3 outside events need subject/actor/compared (timeline OUTSIDE_ROLES) and the split",
     "family_makers": "0230 family maker rule (identity.other_maker, families.maker) / 0250 #1",
+    "family_versions": "0259 version parsing (names.clean, names.setting, entity_views.family_versions) / 0250 #1 split",
 }
+# v10.30 (0259): the check's own reading of a version string and a variant (apart from names', which it measures)
+_RATIO = re.compile(r"^\s*\d+\s*:\s*\d+\s*$")
+_MODEL_ID = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*[-_](\d+)[-_](\d{1,2})$")
+_SETTING = frozenset(("max", "maximum", "medium", "mid", "min", "low", "high", "xhigh", "minimal", "ultra", "ultracode",
+                      "latest", "default"))
 
 
 def _key(name: Optional[str]) -> str:
@@ -159,6 +171,14 @@ class Copy:
         ra, rb = self.alias_root(ka), self.alias_root(kb)
         return ra is not None and ra == rb
 
+    def stated_makers(self, root: str) -> Counter:
+        """The makers an entity cluster's current mentions state ({maker as written: n})."""
+        members = [root] + [x for x in self.redirect if self.root(x) == root and x != root]
+        self.cur.execute("""SELECT btrim(maker), count(*) FROM mx_mentions_now WHERE guide = ANY(%s)
+                              AND entity_id = ANY(%s::uuid[]) AND NULLIF(btrim(maker), '') IS NOT NULL GROUP BY 1""",
+                         (self.guides, members))
+        return Counter(dict(self.cur.fetchall()))
+
     def split_parents(self) -> Set[str]:
         self.cur.execute("SELECT DISTINCT old->>'entity' FROM mx_entity_fixes WHERE kind = 'maker_split' AND undone_at IS NULL")
         return {self.root(r[0]) for r in self.cur.fetchall() if r[0]}
@@ -220,6 +240,17 @@ def shared_names(cur: Any, copy: Copy, *, makers_at_least: int = 2, mentions_eac
         for x in out:
             x["entities"] = sorted(e for e in ents.get(x["key"], ()) if e)
     return out
+
+
+def families_like(cur: Any, copy: Copy, like: str) -> List[str]:
+    """v10.30 (0259): the family roots (a `family`, or a thing some version names as its parent) whose name or key
+    matches `like` (an ILIKE pattern, from the private hard-set file: never a name in code), in a stable order."""
+    cur.execute("""SELECT e.id::text FROM mx_entities e
+                    WHERE e.status <> 'not_entity' AND (e.name ILIKE %(l)s OR e.key ILIKE %(l)s)
+                      AND (e.level = 'family' OR EXISTS (SELECT 1 FROM mx_entities v WHERE v.parent = e.id
+                                                           AND v.level IN ('version', 'variant', 'checkpoint')))
+                    ORDER BY e.id""", {"l": like})
+    return sorted({copy.root(r[0]) for r in cur.fetchall()})
 
 
 def stories_naming(cur: Any, copy: Copy, key: str, n: int = STORIES_A_NAME) -> List[str]:
@@ -408,8 +439,56 @@ class Walks:
                       cause=None if ok else "another maker's thing in the family")
 
 
+def _family_versions(walks: "Walks", fam: str, start: str) -> None:
+    """v10.30 (0259): one family page's versions, each checked: its stated makers agree with the family's (the
+    family's own maker, else the most stated across its versions), its version string is a version, and it is no
+    setting of a version listed as a row of its own."""
+    copy = walks.copy
+    page = walks.page(fam)
+    if page is None:
+        return
+    fam = (page.get("family") or {}).get("id") or page["entity"]["id"]
+    fpage = page if fam == page["entity"]["id"] else walks.page(fam)
+    if fpage is None:
+        return
+    fname = fpage["entity"].get("name")
+    vs = fpage.get("versions") or []
+    stated = {v["id"]: copy.stated_makers(v["id"]) for v in vs}
+    top = (fpage.get("maker") or {}).get("name") or copy.maker_of(fam)
+    if not top:
+        votes = Counter()
+        for c in stated.values():
+            votes.update({_key(m): n for m, n in c.items()})
+        top = votes.most_common(1)[0][0] if votes else None
+    listed = {(v.get("version") or "").strip() for v in vs if not v.get("variant")}
+    for v in vs:
+        name, ver, var = v.get("name") or "", (v.get("version") or "").strip(), (v.get("variant") or "").strip()
+        row = dict(start=start, entity=fam, name=fname, version=v["id"])
+        mk = stated[v["id"]].most_common(1)[0][0] if stated[v["id"]] else None
+        if top and mk and not copy.agree(mk, top):
+            walks.mark("family_versions", "hard", "wrong", **row, returned=f"{name} (by {mk}) a version of {fname}",
+                       said=f"the family's maker: {top}", cause="another maker's thing among the family's versions")
+            continue
+        idm = _MODEL_ID.match(name.strip())
+        if _RATIO.match(ver):
+            walks.mark("family_versions", "hard", "wrong", **row, returned=f"{name}: version {ver}",
+                       cause="a ratio read as a version")
+            continue
+        if idm and ver == idm.group(1) and var == idm.group(2):
+            walks.mark("family_versions", "hard", "wrong", **row, returned=f"{name}: version {ver}, variant {var}",
+                       said=f"version {idm.group(1)}.{idm.group(2)}", cause="a model id read as a version and a variant")
+            continue
+        ws = _key(var).split()
+        if ws and all(w in _SETTING for w in ws) and (not ver or ver in listed):
+            walks.mark("family_versions", "hard", "wrong", **row, returned=f"{name} listed as a version",
+                       said=f"a setting ({var}) of {ver or 'the family'}", cause="a setting counted as a version")
+            continue
+        walks.mark("family_versions", "hard", "right", **row)
+
+
 def load_hard(path: Optional[str]) -> List[Dict[str, Any]]:
-    """The hard set's entries (a file: {walks: [{id, from: shared_names, makers_at_least, mentions_each, top, why}]};
+    """The hard set's entries (a file: {walks: [{id, from: shared_names, makers_at_least, mentions_each, top, why}
+    or {id, from: family_versions, family_name_like, why}]};
     `top` left out: every name the rule selects); none given: the rule's default (v10.28: every bare name of 2+
     makers, each by 2+ mentions; no name is ever written here)."""
     if path:
@@ -429,6 +508,12 @@ def run(cur: Any, now: Any, *, hard: Sequence[Dict[str, Any]], random_stories_n:
     walks = Walks(copy)
     sets: Dict[str, Any] = {"hard": [], "random": {}}
     for entry in hard:
+        if entry.get("from") == "family_versions" and entry.get("family_name_like"):
+            fams = families_like(cur, copy, str(entry["family_name_like"]))
+            sets["hard"].append({"id": entry.get("id"), "why": entry.get("why"), "names": [{"family": f} for f in fams]})
+            for f in fams:
+                _family_versions(walks, f, f"{entry.get('id')}: family {f}")
+            continue
         if entry.get("from") != "shared_names":
             continue
         names = shared_names(cur, copy, makers_at_least=int(entry.get("makers_at_least") or 2),

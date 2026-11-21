@@ -13,6 +13,9 @@ parses as family Acme, version V4, variant Pro; the lab's parser stripped "Acme"
   parse(name, type, maker) family, version, variant, size, build
   vt(version)             a version as a tuple ("4.10" != "4.1"; "V4" = (4,); "K3.1" = ('k', 3, 1))
   fields_key(fields, maker) (family key, version tuple, variant key, size key, build key)
+  clean(fields, name, versions) v10.30: a ratio is no version ("5:1"); a model id's last two numbers one version
+                          ("x-5-1": 5.1) when its family states it
+  setting(variant, name)  v10.30: a variant that is a setting of its version ("low", "xhigh", "(max)"), not a release
 
 A size ("27B", "8x7B", "A3B", "E4B") or a build ("GGUF", "Q4_K_M", "EXL3", a date) is never a version.
 """
@@ -163,7 +166,52 @@ def parse(name: Optional[str], type_: Optional[str] = None, maker: Optional[str]
         fk = f["family"]
         if fk.startswith(mk + " ") and len(fk) > len(mk) + 1:
             f["family"] = fk[len(mk) + 1:]
+    return clean(f, name)
+
+
+# v10.30 (0259): what a stated version can be that is not one, and the settings a variant can be
+RATIO = re.compile(r"^\s*\d+\s*:\s*\d+\s*$")                       # "5:1", "16:9": a ratio, never a version
+MODEL_ID = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*?[-_](\d+)[-_](\d{1,2})$")   # "acme-nimbus-5-1": 5.1
+# effort / settings words: a variant of a version made of them is the version run another way, not a release of its
+# own. The plain ones only ever say a setting of a model ("o9 low"); the others are tiers as often ("Nimbus 3 Max",
+# "Vexa Ultra") and are a setting only written in brackets ("Nimbus 5.2 (max)"). Measured on the server copy
+# (plan/issues/0259-family-versions.md): bracketed, 13 of 14 settings; plain max / ultra / medium, tiers as often.
+SETTING_PLAIN = frozenset(("low", "high", "xhigh", "minimal"))
+SETTING_WORDS = SETTING_PLAIN | frozenset(("max", "maximum", "medium", "mid", "min", "ultra", "ultracode", "default"))
+
+
+def not_a_version(v: Any) -> bool:
+    """A stated version that is no version: a ratio ("5:1")."""
+    return v not in (None, "", "null") and bool(RATIO.match(str(v)))
+
+
+def clean(fields: Optional[Dict[str, Any]], name: Optional[str] = None, versions: Optional[Set[Tuple]] = None) -> Dict[str, Any]:
+    """The fields as a version reads them (v10.30, 0259): a ratio stated as the version is no version ("5:1"). A name
+    written as a model id ("acme-nimbus-5-1", read as version 5, variant 1) is version 5.1 only when its family states
+    that version (`versions`, the family's version tuples): an id's last two numbers are as often a shape ("...-12-6",
+    layers), measured 1 of 2 on the server copy without it. Anything else as given (the same dict)."""
+    f = fields if fields is not None else {}
+    v, var = f.get("version"), f.get("variant")
+    if not_a_version(v):
+        return {**f, "version": None}
+    m = MODEL_ID.match(unicodedata.normalize("NFKC", name or "").strip()) if versions else None
+    if m and str(v or "").strip() == m.group(1) and str(var or "").strip() == m.group(2) \
+            and vt(f"{m.group(1)}.{m.group(2)}") in versions:
+        return {**f, "version": f"{m.group(1)}.{m.group(2)}", "variant": None}
     return f
+
+
+def setting(variant: Optional[str], name: Optional[str] = None, type_: Optional[str] = None) -> bool:
+    """A model's variant that is a setting of its version (v10.30, 0259): its words all effort / settings words, and
+    either only the plain ones ("low", "xhigh") or written in brackets in the name ("Nimbus 5.2 (max)")."""
+    if type_ not in ("model", None) or not variant:
+        return False
+    ws = key(variant).split()
+    if not ws or not all(w in SETTING_WORDS for w in ws):
+        return False
+    if all(w in SETTING_PLAIN for w in ws):
+        return True
+    return any(key(b) == " ".join(ws) for b in re.findall(r"[(\[]([^()\[\]]+)[)\]]", name or ""))
 
 
 _VNUM = re.compile(r"(\d+|[a-z]+)")

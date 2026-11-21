@@ -86,7 +86,7 @@ import logging
 import random
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -237,7 +237,7 @@ class Ent:
     @property
     def hk(self) -> Tuple:
         if self._hk is None:
-            self._hk = _shared_key(N.fields_key(self.haiku, self.maker))
+            self._hk = _shared_key(N.fields_key(N.clean(self.haiku, self.name), self.maker))   # v10.30: clean
         return self._hk
 
     @property
@@ -1643,6 +1643,7 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
     """The entity of a key with no alias yet, made from its mentions (0090 C: a known family's new version is its
     provisional child; an unknown family is made provisional too)."""
     m = _majority(ms)
+    m = replace(m, fields=N.clean(m.fields, m.name))   # v10.30 (0259): a ratio is no version
     first = min((x.at for x in ms if x.at), default=None)
     hk = N.fields_key(m.fields, m.maker)
     pk = N.fields_key(N.parse(m.name, m.type, m.maker), m.maker)
