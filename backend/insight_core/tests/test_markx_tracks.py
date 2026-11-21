@@ -500,6 +500,21 @@ class KeptPlaces(_Tracks):
         from insight_core.markx import track_kept
         return track_kept.calibration(self.cur, self.folder) is not None
 
+    def test_a_title_less_post_shows_its_shown_title_live_and_kept(self):
+        """v10.35: a toot has no stored title; the track page shows the title every page shows (post_parts')."""
+        toot = self.post(title="")
+        self.cur.execute("""INSERT INTO post_parts (post_id, title, title_from, lead, parse_stamp, digest)
+                            VALUES (%s, 'Vanadium 158 released', 'first line', '', 'test', 'test')""", (toot,))
+        self.plan()
+        self.judge(toot, verdict())
+
+        def title():
+            return next(it["title"] for sec in self.page()["sections"] for it in sec["items"] if it["post_id"] == toot)
+        self.assertEqual(title(), "Vanadium 158 released")
+        self.keep()
+        self.assertTrue(self.kept())
+        self.assertEqual(title(), "Vanadium 158 released")
+
     def test_kept_answers_are_the_live_ones(self):
         a, b = self.post(title="active in"), self.post(title="active out")
         passive = []

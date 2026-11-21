@@ -230,6 +230,58 @@ def pagination_page(url: str, title: str = "") -> bool:
     return bool(title and PAGINATION_TITLE_RE.search(title))
 
 
+# v10.35: a listing of other posts (a tag, category, topic or author archive) is no post, though it shows an
+# article's title, opening and date (a WordPress tag page listing one article; a sitemap's taxonomy files list them).
+# By its address: one of LISTING_SEGMENTS just before its last segment (/tag/<name>/), past the source's own prefix;
+# by its markup: WordPress's body class "archive", Ghost's tag/author templates, JSON-LD CollectionPage or
+# ProfilePage, or a feed of its own ("<page>/feed/", "<page>/index.xml"; never a comments feed).
+LISTING_SITEMAP_RE = re.compile(r"(?i)taxonom|post_tag|(?:^|[-_])(?:tags?|categor(?:y|ies)|authors?|users?)(?:[-_.]|$)")
+LISTING_SEGMENTS = frozenset({"tag", "tags", "topic", "topics", "category", "categories", "author", "authors"})
+BODY_CLASS_RE = re.compile(r"""(?is)<body\b[^>]*\bclass\s*=\s*["']([^"']*)["']""")
+LISTING_BODY_CLASSES = frozenset({"archive", "tag-template", "author-template"})
+LISTING_LD_RE = re.compile(r'"@type"\s*:\s*"(?:CollectionPage|ProfilePage)"')
+ALTERNATE_FEED_RE = re.compile(r"""(?is)<link\b[^>]*\btype\s*=\s*["']application/(?:rss|atom)\+xml["'][^>]*>""")
+HREF_ATTR_RE = re.compile(r"""(?is)\bhref\s*=\s*["']?([^"'\s>]+)""")
+OWN_FEED_NAMES = frozenset({"feed", "feed/", "index.xml", "rss", "rss/", "rss.xml", "atom.xml"})
+MARKUP_HEAD = 400_000     # a page's markup read for these signs
+
+
+def listing_address(url: str, prefix: str = "") -> bool:
+    """Whether the address is a tag / category / topic / author archive (/tag/<name>/, /blog/author/<name>), the
+    source's own prefix aside (a watched /topics/ section's /topics/<slug> pages stay its articles)."""
+    segments = parsing.path_segments(url)
+    own = len([part for part in str(prefix or "").split("/") if part])
+    return len(segments) >= 2 and len(segments) - 2 >= own and segments[-2].lower() in LISTING_SEGMENTS
+
+
+def listing_markup(page: str, url: str) -> bool:
+    """Whether the page says it lists other posts (LISTING_BODY_CLASSES, LISTING_LD_RE, a feed of its own)."""
+    head = page[:MARKUP_HEAD]
+    body = BODY_CLASS_RE.search(head)
+    if body and LISTING_BODY_CLASSES & set(body.group(1).lower().split()):
+        return True
+    if LISTING_LD_RE.search(head):
+        return True
+    own = (url or "").split("#")[0].split("?")[0].rstrip("/") + "/"
+    for tag in ALTERNATE_FEED_RE.findall(head):
+        href = HREF_ATTR_RE.search(tag)
+        if href is None or "comment" in tag.lower():
+            continue
+        target = urllib.parse.urljoin(url, html.unescape(href.group(1)))
+        if target.startswith(own) and target[len(own):] in OWN_FEED_NAMES:
+            return True
+    return False
+
+
+def not_post(page: str, url: str, post: Mapping[str, Any]) -> bool:
+    """Whether a page read as an article is none whatever it shows: a form (c7), a listing's numbered page (c10),
+    a page whose markup says it lists other posts (v10.35; a listing address is left out before it is read:
+    discovery's candidates, the archive's sitemap section). Page watch and the archive's sitemap pages ask it, and
+    a post's linked pages."""
+    return bool(action_page(url) or pagination_page(url, post.get("title") or "")
+                or form_page(page, post.get("content") or "") or listing_markup(page, url))
+
+
 def page_key(url: str) -> str:
     """One key for one page's addresses (v10.15 c6): www. and the bare host are one, as ingestion normalises them."""
     return normalize_url(url) or url
@@ -412,7 +464,7 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
         path = urllib.parse.urlparse(url).path
         return (publication_of(host_of(url)) == site and url != listing and path.startswith(prefix)
                 and path + "/" != prefix and page_key(url) != listing_key
-                and not action_page(url) and not pagination_page(url))
+                and not action_page(url) and not pagination_page(url) and not listing_address(url, prefix))
 
     async def found_under(prefix: str) -> Discovery:
         # One page at www. and at the bare host is one candidate (v10.15 c6): its first address kept.
@@ -500,6 +552,9 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
         if root == "sitemapindex":
             # An index's children that name the section (or posts) first.
             children = [loc for loc, _ in locs if loc]
+            # v10.35: never a taxonomy's or the authors' file (WordPress's wp-sitemap-taxonomies-post_tag-1.xml
+            # names "post" too): each lists listing pages, no post.
+            children = [child for child in children if not LISTING_SITEMAP_RE.search(child.rsplit("/", 1)[-1])]
             if posts_only:
                 children = [child for child in children if "post" in child.rsplit("/", 1)[-1].lower()] or children
             queue.extend(sorted(children, key=lambda child: not (section and section in child or "post" in child)))
@@ -680,8 +735,9 @@ def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime],
         return None
     date = date or (None if new else older_date(url)) or lastmod or (datetime.now(timezone.utc) if new else None)
     post = article_post(page, source_url, url, date, adapter=PageWatchKind.adapter_type)
-    # v10.15: a form (c7) or a listing's numbered page (c10) is no post, whatever its address says.
-    if post is not None and (action_page(url) or pagination_page(url, post["title"]) or form_page(page, post["content"])):
+    # v10.15: a form (c7) or a listing's numbered page (c10) is no post, whatever its address says; v10.35: nor a
+    # listing of other posts.
+    if post is not None and not_post(page, url, post):
         return None
     return post
 
@@ -704,8 +760,9 @@ async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: s
     if date is None or date > datetime.now(timezone.utc):
         return None
     post = article_post(page, str(source["handle_or_url"]), url, date, adapter=adapter)
-    if post is not None:
-        post[BACKLOG_KEY] = True
+    if post is None or not_post(page, url, post):
+        return None
+    post[BACKLOG_KEY] = True
     return post
 
 
@@ -1053,7 +1110,7 @@ class PageWatchKind(BaseSourceAdapter):
             yield page
 
 
-__all__ = ["Discovery", "PageWatchKind", "action_page", "article_post", "article_shaped", "discover", "discover_changed",
+__all__ = ["Discovery", "PageWatchKind", "action_page", "listing_address", "listing_markup", "not_post", "article_post", "article_shaped", "discover", "discover_changed",
            "form_page", "name_titles", "pagination_page", "site_suffixes", "stable_prefix",
            "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_dating", "page_title", "preview",
            "read_page_post", "section_prefix", "sitemap_entries", "list_pages", "list_offers", "dated_list"]

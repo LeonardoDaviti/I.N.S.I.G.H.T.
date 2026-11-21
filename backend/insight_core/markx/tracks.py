@@ -73,6 +73,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
+from insight_core.db.repo_post_parts import shown_title
 from insight_core.markx import finders, pairing, repo, schemas, tasks
 
 log = logging.getLogger(__name__)
@@ -909,7 +910,7 @@ def _items(cur: Cursor, folder_id: Any, *, shown: bool = True) -> List[Dict[str,
         return [dict(zip(("post_id", "verdict", "confidence", "source_id", "at", "check_in", "check_confidence"), r))
                 for r in cur.fetchall()]
     cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, i.subtopic, i.why, i.origin,
-                           i.cos, i.answered_at, i.version, i.found_by, p.title, p.url, {_date()}, p.source_id::text,
+                           i.cos, i.answered_at, i.version, i.found_by, {shown_title()}, p.url, {_date()}, p.source_id::text,
                            COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
                                     s.handle_or_url), i.check_in, i.check_confidence
                       FROM mx_track_items i JOIN posts p ON p.id = i.post_id JOIN sources s ON s.id = p.source_id
