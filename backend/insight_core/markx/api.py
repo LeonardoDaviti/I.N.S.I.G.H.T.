@@ -21,8 +21,9 @@ GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>
          "tasks": [{"id": "<uuid>", "kind": "<kind>", "guide": "<guide id>", "input": "<text>"}]}
     Every task's guide is in "guides". No open task: "tasks": [] and "guides": {}. An unknown kind: 400.
     0176 (additive): an entities task also carries "post": "<uuid>" (a long post is asked a task a window; the worker
-    never puts two tasks of one post in one call). Posts fetched in the last 24 hours are planned and leased first
-    (the fresh lane, up to 3/4 of a lease).
+    never puts two tasks of one post in one call); v10.35: a join or pair task carries its judged post too
+    (POST_KINDS). Posts fetched in the last 24 hours are planned and leased first (the fresh lane, up to 3/4 of a
+    lease).
 
 POST /api/markx/answers
     {"worker": "<name>", "executor": "claude-code" | "api" | "api-batch", "model": "<model id>",
@@ -255,7 +256,11 @@ PLAN_REST_SECONDS = 60.0   # v10.13.3: a planner that found nothing to add rests
 _PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (per API process)
 FRESH = "fresh:"                    # 0176 A: _PLAN_REST's key prefix for a kind's fresh-lane planner
 FRESH_REST_SECONDS = 30.0           # a fresh-lane planner that found nothing rests this long (a new post waits at most this)
-POST_KINDS = ("entities", "reading")   # 0176 B: kinds whose leased tasks carry their post (a long post's windows); 0212: + reading
+# 0176 B: kinds whose leased tasks carry their post, by the column it is in (a long post's windows); 0212: + reading.
+# v10.35: + join and pair, their JUDGED post (join's `a`, pair's `b`: the POST block; a pair's `a` is its STORY), so
+# the worker never asks two questions of one post in one call: both quote the same post, and an answer written for
+# one passed judge-read-v2's quote check (validate._judge_read) under the other's task id.
+POST_KINDS = {"entities": "a", "reading": "a", "join": "a", "pair": "b"}
 
 
 def _plan_resting(kind: str) -> bool:
@@ -322,7 +327,7 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
             "guides": {gid: {"sha256": g["sha256"], "body": g["body"],
                              "schema": schemas.schema_for(g["kind"], gid) or g["schema"]} for gid, g in guides.items()},
             "tasks": [dict({"id": str(t["id"]), "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
-                           **({"post": str(t["a"])} if t["kind"] in POST_KINDS and t.get("a") else {}),
+                           **({"post": str(t[POST_KINDS[t["kind"]]])} if t.get(POST_KINDS.get(t["kind"], "")) else {}),
                            **_model(t["kind"]))
                       for t in leased]}
 

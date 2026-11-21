@@ -210,7 +210,7 @@ def _lease(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str, minute
                    UPDATE mx_tasks t SET status = 'leased', leased_by = %(worker)s,
                           lease_until = now() + make_interval(mins => %(minutes)s)
                      FROM picked WHERE t.id = picked.id
-                   RETURNING t.id, t.kind, t.guide, t.input, t.lease_until, t.a, picked.outside, picked.rank,
+                   RETURNING t.id, t.kind, t.guide, t.input, t.lease_until, t.a, t.b, picked.outside, picked.rank,
                              t.created_at, picked.held""",
                 {"kinds": list(kinds), "limit": limit, "worker": worker, "minutes": minutes,
                  "windowed": list(windowed), "days": days, "fresh": list(fresh), "hours": fresh_hours,
@@ -219,7 +219,7 @@ def _lease(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str, minute
     return rows if lane is not None else [{k: r[k] for k in LEASED} for r in rows]
 
 
-LEASED = ("id", "kind", "guide", "input", "lease_until", "a")
+LEASED = ("id", "kind", "guide", "input", "lease_until", "a", "b")
 
 
 def _lease_order(r: Dict[str, Any]) -> Tuple:
