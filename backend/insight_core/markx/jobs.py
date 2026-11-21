@@ -166,8 +166,10 @@ def _entities_missing(cur: Any, now: datetime) -> bool:
 
 
 def _tracks_missing(cur: Any, now: datetime) -> bool:
-    from insight_core.markx import track_brief, tracks
-    return tracks.kept_missing(cur, now) or track_brief.missing(cur, now)   # 0245: and a closed week's issue
+    from insight_core.markx import track_brief, track_kept, tracks
+    # 0245: and a closed week's issue; 0264: and a track placement due again (the owner's change, or the worker's
+    # once REFRESH_GAP old)
+    return tracks.kept_missing(cur, now) or track_brief.missing(cur, now) or track_kept.due(cur)
 
 
 def _unread_missing(cur: Any, now: datetime) -> bool:
