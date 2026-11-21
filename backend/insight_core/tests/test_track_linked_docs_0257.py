@@ -132,6 +132,7 @@ class Flow(_Briefer):
         self.run_planner("track_things")
         rows = [r for r in self.open_tasks("track_things") if r[1] == p]
         self.assertEqual(len(rows), 2, "the post, then its maker's one stored page (not another site's, not unstored)")
+        rows.sort(key=lambda r: "Linked page" in r[3])   # one transaction: same created_at, so pick each by content
         post_q, page_q = rows[0][3], rows[1][3]
         self.assertNotIn("Linked page", post_q)
         self.assertIn("Linked page on the post's own site: " + DOCS, page_q)
