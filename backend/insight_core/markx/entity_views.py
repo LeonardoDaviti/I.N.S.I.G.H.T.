@@ -406,7 +406,7 @@ STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more
 LOOSE_CAP = 500       # posts in no story listed at most
 BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
 DEFAULTS = {"by": 50, "stories": 20, "loose": 30}   # the route's defaults (PP.BY_LIMIT; issue 0195; 0277: were 50, 100)
-PAGE_SHAPE = "7"      # v10.35: a version's `builds`; a story's `joined` (its release group). 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
+PAGE_SHAPE = "8"      # v10.35: a story's `about` (stories about it listed first); a timeline's release rule. v10.35: a version's `builds`; a story's `joined` (its release group). 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
 #                       bump it): a page kept by the previous code is sent only while its shape is this one
 HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
 HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)
@@ -903,6 +903,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                                        if source_of(p)), voice.Policy.MARKX),   # 0189: a saved page is none
                 "newest": max(at_of(p) for p in ps), "first_at": first_at, "original": orig}
     # (head, the block's arguments) of every story; the blocks listed are built in full, the rest only headed
+    from insight_core.markx import timeline as TL
     x_heads = {sid: head(sid, ps, "x", heads.get(sid)) for sid, ps in x_members.items() if ps}
     specs = []
     for g in story_entries(cur, x_members, {s: h["voices"] for s, h in x_heads.items()}):
@@ -919,7 +920,14 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
               "origin_url": st["origin_url"], "origin_title": st["origin_title"]}
         specs.append((head(sid, st["posts"], "ix", kw["headline"], root_post=st["root"], origin_url=st["origin_url"]),
                       (sid, st["posts"], "ix"), kw))
-    specs.sort(key=lambda x: (-x[0]["voices"], -x[0]["newest"].timestamp(), x[0]["story"]))
+    # v10.35: the stories about it first (its timeline's stops: the stored stop answer, else its share of the members
+    # whose subject or actor it is, timeline.stops_of), then those that only name it; each by voices, then the newest
+    stops = TL.stops_of(cur, book, root, {a[0]: list(a[1]) for _h, a, _k in specs},
+                        {p: at_of(p) for _h, a, _k in specs for p in a[1]},
+                        {p for p, ln in lines.items() if ln["roles"] & set(ROLE_REPORT)})
+    for h, a, _k in specs:
+        h["about"] = stops[a[0]][0]
+    specs.sort(key=lambda x: (not x[0]["about"], -x[0]["voices"], -x[0]["newest"].timestamp(), x[0]["story"]))
     every = [h for h, _a, _k in specs]
     listed = specs if stories_limit is None else specs[:stories_limit]
     blocks = [block(*args, **kw) for _h, args, kw in listed]
@@ -962,7 +970,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     named = named_now(cur, book)
     versions = [v for v in versions if v["id"] in named]   # 0138: never a version no current reading names
     # 0165 A: a product's components (things under it, not versions) are listed apart, with their posts
-    from insight_core.markx import components as C, stops as ST, timeline as TL
+    from insight_core.markx import components as C, stops as ST
     comps = [c for c in C.components_of(book, root) if c in named]
     versions = family_versions(book, [v for v in versions if v["id"] not in set(comps)])   # v10.30 (0259)
     comp_posts = _post_counts(cur, book, comps)
@@ -982,7 +990,8 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "versions": versions, "posts": len(lines), "voices": len(sources),
             "components": [{"id": c, "name": book.label(c), "type": book.shown_type(c), "posts": comp_posts.get(c, 0)}
                            for c in sorted(comps, key=lambda c: (-comp_posts.get(c, 0), book.label(c) or ""))],
-            "timeline": TL.of_entity(cur, book, root, stories=[{**h, "members": a[1]} for h, a, _k in specs]),   # 0165 C
+            "timeline": TL.of_entity(cur, book, root, stories=[{**h, "members": a[1]} for h, a, _k in specs],
+                                     original_post=release),   # 0165 C
             "version_line": TL.version_line(cur, book, root) if ST.config().get("version_line") else None,   # 0220
             "relations": _relations(cur, book, root, members),     # 0220: the relations posts state, the measured ones
             "stories": blocks, "loose": [line(p) for p in (loose if loose_limit is None else loose[:loose_limit])],

@@ -291,6 +291,37 @@ class Timeline(_Db):
         tl = entity_views.entity_page(self.cur, self.entity_of(birth), now=T0 + 2 * D)["timeline"]
         self.assertEqual([i["post"]["id"] for i in tl["items"] if i["kind"] == "first_outside"], [review])
 
+    def test_a_release_is_the_makers_release_reading(self):
+        """v10.35 (server 2026-11-21: a maker's customer story, a black-hole result and others' posts were releases; a
+        round-up was a birth): a release is a maker post whose reading is a release, never its guide or research
+        post; a round-up is never the birth; another's post read as a release by its own maker (a quant of it) is no
+        release of this thing and stays outside."""
+        maker = lambda path: f"https://dev.acme.example/{path}/{uuid.uuid4().hex[:6]}"
+        digest = self.post_at(2, T0 - 300 * D, "Everything this week")
+        self.mentions(digest, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(digest, "roundup", "the week", "Ten things happened", event_type="digest")
+        launch = self.post_at(0, T0 - 200 * D, "Introducing Acme Kite", url=maker("news"))
+        self.mentions(launch, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(launch, "report", "Acme Kite", "Acme releases Acme Kite", event_type="product_release",
+                     origin="maker")
+        guide = self.post_at(0, T0 - 150 * D, "How teams use Acme Kite", url=maker("blog"))
+        self.mentions(guide, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(guide, "report", "Acme Kite", "Teams use Acme Kite", event_type="tutorial_explainer",
+                     origin="maker")
+        quant = self.post_at(3, T0 - 100 * D, "1-bit Acme Kite is out")
+        self.mentions(quant, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(quant, "report", "1-bit Acme Kite quant", "A lab releases a 1-bit Acme Kite",
+                     event_type="model_release", origin="maker")
+        self.stage()
+        tl = entity_views.entity_page(self.cur, self.entity_of(launch), now=T0 + 2 * D)["timeline"]
+        kinds = {}
+        for i in tl["items"]:
+            kinds.setdefault(i["kind"], []).append(i["post"]["id"] if i.get("post") else None)
+        self.assertEqual(kinds.get("birth"), [launch])
+        self.assertEqual(kinds.get("release", []), [])     # the launch is the birth (also a release)
+        self.assertEqual([i.get("also") for i in tl["items"] if i["kind"] == "birth"], [["release"]])
+        self.assertEqual(kinds.get("first_outside"), [quant])
+
     def test_a_round_up_or_a_post_about_another_thing_only_names_it(self):
         """0220: the extractor marks the thing subject of a digest naming everything, or of a post about another
         thing; by the post's reading, neither is its birth, first outside mention or a month's lead (the switch
