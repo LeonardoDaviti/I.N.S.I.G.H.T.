@@ -126,3 +126,25 @@ today's Mark X joined 33% of the pairs the labellers agreed on, events 39%; both
   and candidates that are not typed for AI news.
 - **Step 4 (the first hour) gets simpler:** a new sphere's news needs a worker run on its posts, not a new method.
 - 0156, 0157 and 0158 read "event" as "a Mark X story with its key" until the chain step is measured.
+
+## One list, with 0246 (2026-11-22)
+0246 ("the full potential of our data", on the v10.26+ branches) and this plan describe the same work from two sides:
+0246 from the stored assets, this plan from the stages. Merged, with every measurement to date (2026-11-10, -20, -22).
+
+**Built since this plan was written (other sessions):** story chains (0219, a happening's steps linked), one release
+one row (0236, on), entity relations (on, 2026-11-20), the general track briefer (0245/0249, on in v10.28), seen state
+for tracks (0249's quick look).
+
+| # | What | Issue | State | Next |
+|---|---|---|---|---|
+| 1 | **Claims at read time**, long posts in windows | 0152, 0150 C | claims-v2 passed (97.8% in post, dates 93%); windows passed; the stored reading holds only 22% of claims, so claims are their own task | **build** (Shadow-free: it passed); quarter dates and the status check in v3 |
+| 2 | **The track briefer fixed** | 0245/0249 | on in production, failing: points supported 56% on the server's issues (bar 97%), cross-post joins 53% | fix the joins and digest-v3's hedge rule; re-measure on the same sets |
+| 3 | Types for any sphere | 0151 | passed in six spheres; AI news 1.3 points under | one guide line (product vs object), re-check 30 AI posts; ship |
+| 4 | Track suggestions | 0160 | passed (11/15; new spheres 5/5, 4/5) | fix the single-story gate, then build |
+| 5 | Still referenced (lasting importance) | 0146 | 85% held out (a>=5, b>=4 other sources), no model | spec; exclude saved pages; fresh set |
+| 6 | Who said what first: "also said by", origins by named speaker, source cards | 0157, 0158 A | hiding repeats failed twice (82-93%; 3-8% hide new facts); counts work | build the marks and cards, never folding; needs 1 |
+| 7 | Source check at add | 0149 | fit passed; reading quality needs the page comparison | build A and C, B for fit only |
+| 8 | The knowledge page | 0156 | failed twice (88%, 84%) with model-written lines | lines assembled by code from claims; re-measure; needs 1 |
+| 9 | Since you looked across News and tracks; weekly digest | 0154, 0158 B | partly built for tracks | after 1 and 6 |
+| 10 | Numbers over time, questions with citations, search by meaning | 0095, 0098/0141, 0247 | not started; 0247 skipped by the owner | after 1 |
+Closed: 0153 (events as a separate join), 0155 (answer queue), 0159 (surges against own past).

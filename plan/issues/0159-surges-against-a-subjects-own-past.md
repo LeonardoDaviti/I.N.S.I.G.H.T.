@@ -1,7 +1,9 @@
 # 0159 — Surges against a subject's own past: how surprising today is, not how loud
 
-Status: **spec** (2026-11-10). Fusion stage 6 (Measures). No model. Buildable now: measured on the lab's labelled
-surges before it replaces anything. Roadmap: `plan/INSIGHT_fusion_plan.md`.
+Status: **closed, not adopted (2026-11-22)**: measured 2026-11-20 on the lab's labelled windows (below): the own-past
+rule loses recall and precision against today's 3-voice rule. One variant left untested: today's rule OR a quiet
+subject's 2-voice day (about 85% precise by the counts, under the 88% bar).
+Roadmap: `plan/INSIGHT_fusion_plan.md`.
 
 Read first: 0090 E, 0119 A2 (`markx/surges.py`: a day of 3 or more voices is a surge; "the 3x baseline waits for a
 month of data"); the lab's surge sets (private: `plan/research/lab/markx/proto/out/surges_v2`, `surges_v3`).

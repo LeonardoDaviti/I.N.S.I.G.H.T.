@@ -72,3 +72,10 @@ Five subjects (two organisations, two models, a person) from the server by GET, 
 - Where sources differ: empty on all five pages (not exercised).
 - **Cause of "partly":** a quoted person's words shown as fact, and narrowed scope dropped ("all users" for one plan's users). **Fix before re-measuring:** every Now and Numbers line carries its claim's speaker and status ("X says", "reported"), and its scope.
 - Posts must be chosen as those naming the subject (the story's posts that never name it gave empty pages).
+
+## Measured again (page-v2, 2026-11-22; private: `plan/research/fusion/measure/x1122/E6b/`)
+claims-v2; lines carry speaker, status, hedge and scope; 10 subjects (5 of round 1, 5 new).
+- **Lines supported 141 of 167 = 84% (78-89): worse than round 1 (88%).** New subjects 89%, shared ones 80%. Checkers agree poorly (kappa 0.27); read strictly 72%.
+- **The code check holds:** 0 numbers or dates differ from claims; code dropped 26 model lines.
+- The round-1 causes are gone; new ones replace them: invented attributions ("officially", "an unnamed source"), merged posts, names the posts don't give.
+- **Decision (two rounds):** the model does not write page lines. Every line is assembled by code from one claim's fields and quote; the model only selects and orders claims (and groups them under Timeline events). Re-measure that shape.

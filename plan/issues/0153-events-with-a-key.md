@@ -1,8 +1,9 @@
 # 0153 — Events with a key: one stored thing per happening, in any sphere and language
 
-Status: **changed by E1 (2026-11-10): the separate event join is dropped; keys, cards, dates and state on Mark X's
-stories stay, plus three additions (see "Measured")**. Not yet rewritten section by section. Fusion stage 4 (Events). Shadow, beside Mark X's stories. Roadmap:
-`plan/INSIGHT_fusion_plan.md`.
+Status: **closed (2026-11-22)**: E1 measured the separate event join below today's Mark X stories (recall 39%
+against 33%, both ~100% precise; bar 80%). What it was meant to add is built elsewhere: the chain of a happening's
+steps by story chains (0219) and one release as one row (0236). A key, card and state per story are left to those.
+Roadmap: `plan/INSIGHT_fusion_plan.md`.
 
 Read first: `plan/HANDOFF-v10.md`; 0086 E (`markx/decide.py`: Mark X's stories start from Mark IX's, then judged
 joins); `markx/candidates.py` (the four candidate sources and their 72-hour windows); 0127 (duplicates folded), 0128

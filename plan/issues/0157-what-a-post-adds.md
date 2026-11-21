@@ -61,3 +61,9 @@ E4 (0161): 150 unseen later posts of events with earlier posts. Bar: a claim mar
 - **The repeat share is about 20-24%, not 43%** (831 later-post claims: 19% repeats, 8% updates, 73% new).
 - **B: works.** Of 97 claims said by two or more sources, 39 (40%) have fewer origins than sources; in 32 one origin. Origin assignment 17 of 20 right.
 - Next: adds-v2 with "updates" defined as a changed number, date or status only, on a new set.
+
+## Measured again (adds-v2, 2026-11-22; private: `plan/research/fusion/measure/x1122/E4b/`)
+40 new stories (201 posts); `adds-v2` adds `contradicts` and limits `updates` to a changed number, date or status; origins matched to entities.
+- **A fails, more clearly:** repeats really said 49 of 60 = 82% (70-89), bar 95%; repeats hiding a clear new fact 5 of 60 = 8% (an age limit, a licence, a different event), bar under 3%. Updates right 61%; contradicts 1 of 6.
+- **B by entity gains little:** sources collapsing to fewer origins 28% (string) -> 31% (entity); origin check 21 of 30 = 70%. Link-kind origins 0 of 3; vague subjects ("the team") taken as origins.
+- **Decision (two rounds):** a repeat is never hidden: the post page marks a claim "also said by <source>, <date>" and keeps it in place. Origins count only named speakers and the post's own voice, never links.

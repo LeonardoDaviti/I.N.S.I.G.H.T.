@@ -103,3 +103,6 @@ New set of 150 posts (50 AI news, 100 from six other spheres); v1 and v2 (cap 12
 | event date when given | 88.8% | 93.2% (90-95) |
 | date misses | 5.4% | 2.1% |
 **Adopt claims-v2.** Claims past the 8th: 76 of 79 right. For v3: a quarter form (`YYYY-Qn`: 20 of v2's 24 wrong dates); validation refuses status "source" (4 claims).
+
+## Measured: from the stored reading? (2026-11-22; private: `plan/research/fusion/measure/x1122/CU/`)
+On 50 AI posts: of claims-v2's 333 claims, the shipped reading (ent-v5) holds 22% fully, 52% partly, 26% not (number claims 45% fully). It never stores a quote, a per-claim speaker, status or subject, or a number's unit, basis, period and scope; one event date per post. **Claims stay a separate task** (this issue's section 3); the stored event headline and numbers may be passed to it as context.

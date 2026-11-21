@@ -1,7 +1,8 @@
 # 0155 — One answer queue: every question INSIGHT has for you in one place, the most useful first
 
-Status: **spec** (2026-11-10). Fusion stage 8 (Answers). No model. Buildable now. Roadmap:
-`plan/INSIGHT_fusion_plan.md`.
+Status: **closed (2026-11-22)**, superseded by the owner's rule of 2026-11-14 (no features gated on the owner's
+labels: Haiku decides above a blind-measured bar, the owner sees only flags) and by 0216 D (the Labels queue removed).
+Roadmap: `plan/INSIGHT_fusion_plan.md`.
 
 Read first: 0086 F (`markx/labels.py`: the queue, the split, precision per feature), the entity review queue
 (0119 A, `/entities/queue`), the label endpoints (`/labels`, `/labels/news`, `/labels/perspective`, `/labels/fact`,

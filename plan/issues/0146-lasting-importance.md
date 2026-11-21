@@ -60,3 +60,10 @@ story. Importance today is voices and recency.
 | later posts >= 5 AND later sources >= 3 | 86% (65-95), recall 18 of 35 |
 | Haiku judge on titles | 64% (46-79) |
 Failure classes: a source's links to its own older posts, boilerplate links (an anniversary line), and next versions read as "building on". **A first slice is viable with no model:** count only other sources' links, a>=5 and b>=3, shown as a marked section; re-measure on a larger set.
+
+## Measured again (2026-11-22; private: `plan/research/fusion/measure/x1122/L2/`)
+156 candidates (116 walked back from 700 current posts, 40 random older posts with 1-2 later links); the full list of later posts from `GET /api/posts/item/<id>/connected?all=true`.
+- Rule chosen on half: **at least 5 later posts from at least 4 other sources: 85% (64-95) on the held-out half,** 77% (61-88) over all 156; recall 27 of 44.
+- All 8 wrong rows shown were the owner's saved pages (tools, repos, references): excluding saved pages is the next rule, found after the fact, so it needs a fresh set. The boilerplate and next-version filters barely fired.
+- Missed: 11 of the 17 missed lasting rows are one source's own thread (by design, not counted).
+- **Shape:** a marked "Still referenced" section on News and entity pages, not a claim.
