@@ -6,19 +6,25 @@ tracks and News care about:
 
   (a) **authors**: the accounts your in-track and News posts quote, repost, @mention or link: an X / Bluesky /
       Telegram / YouTube account (a tweet's address is its author's: a quote or a retweet is a link to it), a code
-      host's owner (github.com/<owner>, from a linked repository) and a model hub's org (huggingface.co/<org>);
-      keyed as the scout keys them (scout.key_of), so a key here is a key there;
+      host's owner (from a linked repository) and a model hub's org; keyed as the scout keys them (scout.key_of), so a
+      key here is a key there;
   (b) **makers**: the makers (entity_facts' maker) of the entities those posts name, each with the channels the
       official-channels module found for it (official.book: proven, would_add, refused), never a new search here.
 
-**Where the posts come from** (30 days, WITHIN_DAYS): each topic track's in and ✓ posts (scout.in_posts: Haiku's in
-from a switched-off source is none, the owner's ✗ is out) and the posts of the News rows first seen in the window
-(news_posts). A post counts once a candidate however many ways it names it.
+**Where the posts come from** (30 days, WITHIN_DAYS): each topic track's posts placed in the track or joined
+(track_feed.track_posts, the track's own reading view: a post in the track's Discover is not in it), and the posts of
+the News rows first seen in the window (news_posts). A post counts once a candidate however many ways it names it.
 
-**Ranked** by the posts that brought the candidate (in a track or News), a track's post and a News post alike, then the
-tracks it appears in, then its key; at least MIN_POSTS posts. Never one you follow (the scout's Followed: an account,
-a site, a source's address), one you hid in Discover (discover_hidden), a reference/app/document address
-(discover_rules.place_kind) or a platform that is no person (Reddit, Hacker News).
+**Ranked** by the posts that brought the candidate (in a track or News), then the tracks it appears in, then its key.
+Kept: MIN_POSTS posts, or 2+ posts from MIN_SOURCES of your sources (measured 0276: the one-off project owners came
+from 2 posts of one source). Never one you follow (the scout's Followed: an account, a site, a source's address), one
+you hid in Discover (discover_hidden), a reference/app/document address (discover_rules.place_kind) or a platform that
+is no person (Reddit, Hacker News).
+
+**People** (`people`): an account is a person's only where the handles module says so (the owner's yes in
+mx_entity_handles: never a handle from a name, never the same handle on another platform, handles.py's rule). Such
+accounts fold into one suggestion (`person:<id>`), and a person you follow under any account or site (a source of
+theirs: mx_entity_sources yes, a live voice of theirs, a yes handle that is a followed source's account) is left out.
 
 **Followable**: each suggestion carries the address Follow sends through the add path (the feed finder, then page
 watching; POST /api/sources' own): an X account through the configured nitter bridge (feed_finder.bridge_feed), a
@@ -29,7 +35,7 @@ through the finder / page watching (scrape regardless of a feed: no candidate is
 (INSIGHT_OFFICIAL); a person is followed by the owner's tap.
 
     rows = hits(cur, now)                       # what the posts say (SQL), Hit rows
-    got = rank(rows, skip=..., followed=...)    # pure: the ranked suggestions with their evidence
+    got = rank(rows, skip=..., people=...)      # pure: the ranked suggestions with their evidence
     page = suggestions(cur, now)                # both, plus the makers' channels: GET /api/discover/people
 """
 from __future__ import annotations
@@ -40,15 +46,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 WITHIN_DAYS = 30
-MIN_POSTS = 2          # a candidate brought by one post is chance
+MIN_POSTS = 3          # a candidate needs 3+ posts ...
+MIN_SOURCES = 2        # ... or 2+ posts from 2+ of your sources
 EVIDENCE = 5           # the posts shown with each suggestion
 LIMIT = 60
-TRACK_POSTS = 400      # a track's newest in posts read (scout.in_posts' own limit is the scout's)
+TRACK_POSTS = 400      # a track's newest posts of the window read
 # The scout's platform words (scout._platform_word) that are a person or a maker; "site" is Discover's main list,
 # "reddit" is closed (0262), "hn" is a forum.
 PERSON_WORDS = frozenset({"x", "telegram", "youtube", "bluesky", "code", "hub", "account"})
 NOT_PERSON = frozenset({"reddit", "hn", "site"})
 HOWS = ("quote", "repost", "mention", "link", "maker")
+CODE_HOST = "git" + "hub.com/"
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,7 @@ class Hit:
     title: str = ""
     at: Optional[datetime] = None
     name: str = ""       # a maker's name; an account's handle otherwise
+    source_id: str = ""  # the post's source
 
 
 @dataclass
@@ -71,6 +80,8 @@ class Suggestion:
     word: str
     name: str
     posts: Set[str] = field(default_factory=set)
+    sources: Set[str] = field(default_factory=set)
+    accounts: Set[str] = field(default_factory=set)   # the keys folded into it (one person's accounts)
     tracks: Set[str] = field(default_factory=set)
     news: Set[str] = field(default_factory=set)
     hows: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
@@ -80,8 +91,8 @@ class Suggestion:
 # ---- the address a key is followed at -------------------------------------------------------------------------
 
 def followable(key: str, word: str) -> Dict[str, Any]:
-    """{address, via, ready}: what Follow sends through the add path for this key, by shape (no request). `ready` is
-    False only when the kind's bridge is not set (an X account without a nitter bridge)."""
+    """{address, via, feed, ready}: what Follow sends through the add path for this key, by shape (no request). `ready`
+    is False only when the kind's bridge is not set (an X account without a nitter bridge)."""
     from insight_core.ingestion.feed_finder import bridge_feed
     address = key if key.startswith(("http://", "https://")) else "https://" + key
     if word in ("x", "telegram"):
@@ -112,6 +123,8 @@ def person_key(url: str, platforms: Optional[Dict[str, Tuple[str, ...]]] = None)
         return None                              # an owner, never a search feed or a deeper page
     if word == "youtube" and not key.split("/", 1)[1].startswith(("@", "channel/", "c/", "user/")):
         return None                              # a playlist or a video page: no channel (measured: youtube.com/playlist)
+    if word == "account" and not key.split("/", 1)[1].startswith("@"):
+        return None                              # a site's section the platform rules key (measured: a news site's /tech)
     from insight_core.markx.official import _NOT_REPO
     if word == "code" and key.split("/", 1)[1] in _NOT_REPO:
         return None                              # a code host's own pages (features, topics, ...), no owner
@@ -120,22 +133,90 @@ def person_key(url: str, platforms: Optional[Dict[str, Tuple[str, ...]]] = None)
     return key, word
 
 
+# ---- people: one person's accounts, and whether you follow them (the handles module's links only) ---------------
+
+HANDLE_PLATFORMS = (("x.com/", "x"), (CODE_HOST, "github"), ("huggingface.co/", "hf"), ("t.me/", "telegram"),
+                    ("bsky.app/profile/", "bluesky"))
+
+
+def handle_of(key: str) -> Optional[Tuple[str, str]]:
+    """A candidate key as the handles module keys an account ((platform, handle)), or None."""
+    for prefix, platform in HANDLE_PLATFORMS:
+        if key.startswith(prefix):
+            h = key[len(prefix):].split("/", 1)[0].lstrip("@").casefold()
+            return (platform, h) if h else None
+    return None
+
+
+@dataclass
+class People:
+    """(platform, handle) -> (person id, name), from the owner's yes in mx_entity_handles; `followed`: the persons you
+    follow under any account or site."""
+    handles: Dict[Tuple[str, str], Tuple[str, str]] = field(default_factory=dict)
+    followed: Set[str] = field(default_factory=set)
+
+    def of(self, key: str) -> Optional[Tuple[str, str]]:
+        h = handle_of(key)
+        return self.handles.get(h) if h else None
+
+
+def people(cur: Any) -> People:
+    """The handles the owner said are a person's (newest answer yes), and the persons followed: a yes handle that is
+    a followed source's account (handles.account_of), a source the owner said is theirs (mx_entity_sources yes), or a
+    live confirmed voice of theirs (voices.entity_id)."""
+    from insight_core.markx.handles import account_of
+    cur.execute("""SELECT DISTINCT ON (h.entity_id, h.platform, h.handle) h.entity_id::text, h.platform, h.handle,
+                          h.answer, COALESCE(e.shown_name, e.name)
+                     FROM mx_entity_handles h JOIN mx_entities e ON e.id = h.entity_id
+                    WHERE e.status <> 'not_entity'
+                    ORDER BY h.entity_id, h.platform, h.handle, h.created_at DESC, h.id DESC""")
+    out = People()
+    for eid, platform, handle, answer, name in cur.fetchall():
+        if answer == "yes":
+            out.handles[(platform, handle.casefold())] = (eid, name or handle)
+    cur.execute("SELECT platform, handle_or_url FROM sources WHERE enabled")
+    for platform, handle in cur.fetchall():
+        acc = account_of(platform, handle)
+        if acc and acc in out.handles:
+            out.followed.add(out.handles[acc][0])
+    cur.execute("""SELECT DISTINCT ON (a.entity_id, a.source_id) a.entity_id::text, a.answer
+                     FROM mx_entity_sources a JOIN sources s ON s.id = a.source_id AND s.enabled
+                    ORDER BY a.entity_id, a.source_id, a.created_at DESC, a.id DESC""")
+    out.followed |= {eid for eid, answer in cur.fetchall() if answer == "yes"}
+    cur.execute("""SELECT DISTINCT v.entity_id::text FROM voices v JOIN sources s ON s.voice_id = v.id AND s.enabled
+                    WHERE v.entity_id IS NOT NULL AND v.confirmed_at IS NOT NULL AND v.removed_at IS NULL""")
+    out.followed |= {eid for (eid,) in cur.fetchall()}
+    return out
+
+
 # ---- the ranking (pure) ---------------------------------------------------------------------------------------
 
 def rank(hits: Iterable[Hit], *, skip: Callable[[str, str], bool] = lambda k, w: False,
-         min_posts: int = MIN_POSTS, limit: int = LIMIT) -> List[Suggestion]:
+         people: Optional[People] = None, min_posts: int = MIN_POSTS, min_sources: int = MIN_SOURCES,
+         limit: int = LIMIT) -> List[Suggestion]:
     """The candidates the hits name, those `skip` says are followed or hidden left out, ranked by their posts (a
-    track's or News'), then the tracks they appear in, then their key; each with its newest EVIDENCE posts (one a post)."""
+    track's or News'), then the tracks they appear in, then their key; each with its newest EVIDENCE posts (one a post).
+    Kept: min_posts posts, or 2+ posts from min_sources sources. `people`: a person's accounts are one suggestion
+    (`person:<id>`), and a person you follow under any account or source is left out."""
     by: Dict[str, Suggestion] = {}
     seen: Set[Tuple[str, str, str]] = set()
     for h in hits:
         if skip(h.key, h.word):
             continue
-        s = by.get(h.key)
+        key, name = h.key, h.name
+        person = people.of(h.key) if people is not None and h.word != "maker" else None
+        if person is not None:
+            if person[0] in people.followed:
+                continue                             # you follow this person under another account or site
+            key, name = f"person:{person[0]}", person[1]
+        s = by.get(key)
         if s is None:
-            s = by[h.key] = Suggestion(h.key, h.word, h.name or h.key.split("/", 1)[-1])
-        if (h.key, h.post_id, h.how) not in seen:
-            seen.add((h.key, h.post_id, h.how))
+            s = by[key] = Suggestion(key, h.word, name or key.split("/", 1)[-1])
+        s.accounts.add(h.key)
+        if h.source_id:
+            s.sources.add(h.source_id)
+        if (key, h.post_id, h.how) not in seen:
+            seen.add((key, h.post_id, h.how))
             s.hows[h.how] += 1
         if h.where.startswith("track:"):
             s.tracks.add(h.where[6:])
@@ -144,7 +225,8 @@ def rank(hits: Iterable[Hit], *, skip: Callable[[str, str], bool] = lambda k, w:
         if h.post_id not in s.posts:
             s.posts.add(h.post_id)
             s.evidence.append(h)
-    out = [s for s in by.values() if len(s.posts) >= min_posts]
+    out = [s for s in by.values()
+           if len(s.posts) >= min_posts or (len(s.posts) >= 2 and len(s.sources) >= min_sources)]
     for s in out:
         s.evidence.sort(key=lambda h: h.at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         s.evidence = s.evidence[:EVIDENCE]
@@ -159,7 +241,8 @@ def shown(s: Suggestion, channels: Sequence[Dict[str, Any]] = ()) -> Dict[str, A
     why = f"{len(s.posts)} of your posts in 30 days" + (f" in {', '.join(tracks)}" if tracks else "") + \
           (f"{' and' if tracks else ' in'} News ({len(s.news)})" if s.news else "")
     out = {"key": s.key, "kind": "maker" if s.word == "maker" else "author", "platform": s.word, "name": s.name,
-           "posts": len(s.posts), "tracks": tracks, "news": len(s.news), "how": dict(s.hows), "why": why,
+           "posts": len(s.posts), "sources": len(s.sources), "accounts": sorted(s.accounts) if s.word != "maker" else [],
+           "tracks": tracks, "news": len(s.news), "how": dict(s.hows), "why": why,
            "evidence": [{"post_id": h.post_id, "title": h.title, "url": h.url, "where": h.where, "how": h.how,
                          "at": h.at.isoformat() if h.at else None} for h in s.evidence]}
     if s.word == "maker":
@@ -170,21 +253,29 @@ def shown(s: Suggestion, channels: Sequence[Dict[str, Any]] = ()) -> Dict[str, A
                                                    "ready": any(c.get("state") in ("proven", "would_add", "added")
                                                                 for c in channels)}
     else:
-        out["follow"] = followable(s.key, s.word)
+        account = s.key if not s.key.startswith("person:") else sorted(s.accounts)[0]
+        got = person_key("https://" + account)
+        out["follow"] = followable(account, got[1] if got else s.word)
     return out
 
 
 # ---- what the posts say (SQL) ---------------------------------------------------------------------------------
 
 def window_posts(cur: Any, now: datetime, *, days: int = WITHIN_DAYS) -> Dict[str, Set[str]]:
-    """post id -> where it sits (`track:<name>`, `news`): each topic track's in and ✓ posts, the News rows' posts."""
-    from insight_core.markx import scout, tracks
+    """post id -> where it sits (`track:<name>`, `news`): each topic track's posts placed in it or joined (its newest
+    TRACK_POSTS of the window), and the posts of the News rows first seen in the window."""
+    from insight_core.markx import track_feed, tracks
     since = now - timedelta(days=days)
     out: Dict[str, Set[str]] = defaultdict(set)
     for t in tracks.list_tracks(cur):
         if not t["topic"]:
             continue
-        for pid in scout.in_posts(cur, t["id"], limit=TRACK_POSTS, since=since):
+        ids = track_feed.track_posts(cur, t["id"]) or []
+        if not ids:
+            continue
+        cur.execute(f"""SELECT p.id::text FROM posts p WHERE p.id = ANY(%s::uuid[]) AND {tracks._date('p')} >= %s
+                         ORDER BY {tracks._date('p')} DESC LIMIT %s""", (ids, since, TRACK_POSTS))
+        for (pid,) in cur.fetchall():
             out[pid].add(f"track:{t['name']}")
     cur.execute("""SELECT np.post_id::text FROM news_posts np JOIN news_stories n ON n.id = np.news_id
                     WHERE n.first_at >= %s""", (since,))
@@ -197,18 +288,18 @@ def hits(cur: Any, now: datetime, *, days: int = WITHIN_DAYS,
          places: Optional[Dict[str, Set[str]]] = None) -> List[Hit]:
     """Every (post, candidate) the window's posts give: their links and @mentions to an account (a quote is a link to
     the quoted tweet), a repost's original author, and the makers of the entities they name."""
-    from insight_core.markx import scout
+    from insight_core.markx import scout, tracks
     from insight_core.utils import byline
+    from insight_core.utils.addresses import is_tweet
     places = window_posts(cur, now, days=days) if places is None else places
     ids = list(places)
     if not ids:
         return []
     platforms = scout._platforms(cur)
-    from insight_core.markx import tracks
     cur.execute(f"""SELECT p.id::text, COALESCE(p.title, ''), p.url, {tracks._date('p')}, s.handle_or_url,
-                           ({byline.retweet_sql('p')} OR {byline.reposted_sql('p')})
+                           ({byline.retweet_sql('p')} OR {byline.reposted_sql('p')}), p.source_id::text
                       FROM posts p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY(%s::uuid[])""", (ids,))
-    meta = {pid: (title, url, at, own, bool(rt)) for pid, title, url, at, own, rt in cur.fetchall()}
+    meta = {pid: (title, url, at, own, bool(rt), sid) for pid, title, url, at, own, rt, sid in cur.fetchall()}
     out: List[Hit] = []
 
     def add(pid: str, url: str, how: str) -> None:
@@ -216,19 +307,18 @@ def hits(cur: Any, now: datetime, *, days: int = WITHIN_DAYS,
         if got is None or pid not in meta:
             return
         key, word = got
-        title, purl, at, own, _ = meta[pid]
+        title, purl, at, own, _, sid = meta[pid]
         if (own or "").split("://", 1)[-1].lower().removeprefix("www.").startswith(key):
             return                                   # a source naming itself
         for where in places[pid]:
-            out.append(Hit(pid, where, key, word, how, purl or url, title, at, key.split("/", 1)[-1]))
+            out.append(Hit(pid, where, key, word, how, purl or url, title, at, key.split("/", 1)[-1], sid))
 
-    for pid, (_, url, _, _, rt) in meta.items():
+    for pid, (_, url, _, _, rt, _) in meta.items():
         if rt and url:
             add(pid, url, "repost")                 # a retweet's address is the original tweet: its author's
     cur.execute("""SELECT l.post_id::text, l.target_url, l.kind FROM post_links l
                     WHERE l.post_id = ANY(%s::uuid[])
                       AND ((NOT l.boilerplate AND l.kind = 'link') OR l.kind = 'mention')""", (ids,))
-    from insight_core.utils.addresses import is_tweet
     for pid, url, kind in cur.fetchall():
         add(pid, url, "mention" if kind == "mention" else ("quote" if is_tweet(url) else "link"))
     out.extend(maker_hits(cur, places, meta))
@@ -245,14 +335,14 @@ def maker_hits(cur: Any, places: Dict[str, Set[str]], meta: Dict[str, Tuple]) ->
                 (list(places),))
     out = []
     for pid, mid, name in cur.fetchall():
-        title, url, at, _, _ = meta.get(pid, ("", "", None, "", False))
+        title, url, at, _, _, sid = meta.get(pid, ("", "", None, "", False, ""))
         for where in places.get(pid, ()):
-            out.append(Hit(pid, where, f"maker:{mid}", "maker", "maker", url or "", title, at, name or ""))
+            out.append(Hit(pid, where, f"maker:{mid}", "maker", "maker", url or "", title, at, name or "", sid))
     return out
 
 
 def _skip(cur: Any) -> Callable[[str, str], bool]:
-    """Followed (the scout's Followed) or hidden in Discover; a maker whose official channel you already follow."""
+    """Followed (the scout's Followed) or hidden in Discover."""
     from insight_core.db.repo_stories import StoriesRepository
     from insight_core.markx import scout
     followed = scout._followed(cur)
@@ -268,13 +358,13 @@ def _skip(cur: Any) -> Callable[[str, str], bool]:
 
 def suggestions(cur: Any, now: Optional[datetime] = None, *, limit: int = LIMIT, days: int = WITHIN_DAYS
                 ) -> Dict[str, Any]:
-    """GET /api/discover/people: {authors, makers, window_days, posts}: each ranked list with its evidence and where it
-    is followed. A maker with a channel already followed (an `added` row, or a source on it) is left out."""
+    """{window_days, posts, authors, makers, built_at}: each ranked list with its evidence and where it is followed.
+    A maker with a channel already followed (an `added` row, or a source on it) is left out."""
     from insight_core.markx import official
     now = now or datetime.now(timezone.utc)
     places = window_posts(cur, now, days=days)
     rows = hits(cur, now, days=days, places=places)
-    ranked = rank(rows, skip=_skip(cur), limit=limit * 2)
+    ranked = rank(rows, skip=_skip(cur), people=people(cur), limit=limit * 2)
     makers = [s for s in ranked if s.word == "maker"]
     book = official.book(cur, [s.key.split(":", 1)[1] for s in makers])
     authors_out = [shown(s) for s in ranked if s.word != "maker"][:limit]
@@ -284,4 +374,49 @@ def suggestions(cur: Any, now: Optional[datetime] = None, *, limit: int = LIMIT,
         if any(c.get("state") == "added" or c.get("source_id") for c in chans):
             continue                                 # you follow its own channel already
         makers_out.append(shown(s, chans))
-    return {"window_days": days, "posts": len(places), "authors": authors_out, "makers": makers_out[:limit]}
+    return {"window_days": days, "posts": len(places), "authors": authors_out, "makers": makers_out[:limit],
+            "built_at": now.isoformat()}
+
+
+# ---- kept: built in the jobs process's "discover" view, served from system_settings --------------------------------
+# Measured 0276 on the server copy (162k posts, 2,056 window posts, 5,872 hits): 0.98-1.06 s a build, so it is never
+# made on the request.
+
+KEY = "discover_people"
+KEEP_FOR = timedelta(hours=1)      # a kept list this old is built again at the next "discover" job
+
+
+def due(cur: Any, now: Optional[datetime] = None) -> bool:
+    """Whether the kept list is missing or KEEP_FOR old."""
+    from insight_core.db.repo_operations import SystemSettingsRepository
+    row = SystemSettingsRepository.get(cur, KEY)
+    now = now or datetime.now(timezone.utc)
+    return row is None or row[1] is None or now - row[1] >= KEEP_FOR
+
+
+def keep(cur: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Build the list (LIMIT a kind) and keep it: {built, authors, makers, seconds}. The jobs process's, never the API's."""
+    import json
+    import time
+    from insight_core.db.repo_operations import SystemSettingsRepository
+    t = time.monotonic()
+    got = suggestions(cur, now)
+    SystemSettingsRepository.upsert(cur, KEY, json.loads(json.dumps(got, default=str)))
+    return {"built": True, "authors": len(got["authors"]), "makers": len(got["makers"]),
+            "seconds": round(time.monotonic() - t, 2)}
+
+
+def served(cur: Any, *, limit: int = 30, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """GET /api/discover/people: the kept list (its first `limit` of each kind) with `built_at` and `refreshing`; when
+    it is missing or due, the "discover" job is wanted (markx/jobs.py) and the older list (or an empty one) is served."""
+    from insight_core.db.repo_operations import SystemSettingsRepository
+    from insight_core.markx import jobs
+    row = SystemSettingsRepository.get(cur, KEY)
+    value = (row[0] if row else None) or {}
+    refreshing = False
+    if due(cur, now):
+        jobs.want(cur, "discover")
+        refreshing = True
+    return {"window_days": value.get("window_days", WITHIN_DAYS), "posts": value.get("posts", 0),
+            "authors": (value.get("authors") or [])[:limit], "makers": (value.get("makers") or [])[:limit],
+            "built_at": value.get("built_at"), "refreshing": refreshing}

@@ -181,9 +181,9 @@ class BackgroundTests(unittest.TestCase):
         due = [True]
         stories = SimpleNamespace(refresh=lambda: built.append(1), served_due=lambda: due[0])
         with mock.patch.dict("os.environ", {"INSIGHT_DISCOVER_READS": "0"}):
-            self.assertEqual(discover_reads.keep("unused", stories=stories)["built"], ["answer"])
+            self.assertEqual(discover_reads.keep("unused", stories=stories, people=lambda _url: {})["built"], ["answer"])
             due[0] = False
-            self.assertEqual(discover_reads.keep("unused", stories=stories)["built"], [])
+            self.assertEqual(discover_reads.keep("unused", stories=stories, people=lambda _url: {})["built"], [])
         self.assertEqual(built, [1])
 
     def test_the_api_starts_no_discover_work(self):

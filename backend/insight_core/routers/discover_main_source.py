@@ -11,7 +11,7 @@ GET /api/discover/main-source   {rows [{key ("main:<channel key>", Not intereste
                                 process, which tests the shown channels at most once in 30 days each (off with
                                 INSIGHT_DISCOVER_READS=0). Nothing is followed here: Follow opens Add source on the
                                 channel.
-GET /api/discover/people        {window_days, posts, authors [...], makers [...]} (issue 0276, markx/discover_people):
+GET /api/discover/people        {window_days, posts, authors [...], makers [...], built_at, refreshing} (issue 0276, markx/discover_people):
                                 the people and makers your tracks' in posts and News rows of 30 days quote, repost,
                                 mention, link or name, each {key, kind author | maker, platform, name, posts, tracks,
                                 news, how, why, evidence [{post_id, title, url, where, how, at}], follow {address, via,
@@ -54,13 +54,14 @@ def get_main_source(limit: int = Query(20, ge=1, le=100), test: bool = Query(Tru
 
 
 @router.get("/api/discover/people")
-def get_people(limit: int = Query(30, ge=1, le=100), days: int = Query(30, ge=1, le=90)):
-    """Issue 0276: who is behind what your tracks and News care about (read on the request: no fetch, no write)."""
+def get_people(limit: int = Query(30, ge=1, le=100)):
+    """Issue 0276: who is behind what your tracks and News care about: the list the jobs process's "discover" view
+    kept (a build took ~1 s on the server copy), with built_at and refreshing (the job wanted when it is due)."""
     from insight_core.db import database as db
     from insight_core.markx import discover_people
     from insight_core.services.registry import services
     try:
-        with db.connection(services().db_url) as conn, conn.cursor() as cur:
-            return discover_people.suggestions(cur, limit=limit, days=days)
+        with db.transaction(services().db_url) as cur:
+            return discover_people.served(cur, limit=limit)
     except Exception as exc:  # noqa: BLE001 - Discover's own list stands without it
         raise HTTPException(status_code=500, detail=f"Could not read the people: {type(exc).__name__}") from None
