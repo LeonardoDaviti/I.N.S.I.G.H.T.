@@ -156,9 +156,13 @@ def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
         this = monday(now)
         for w in _weeks(cur, tid, now):
             was = last.get(w)
-            if was is not None and (was[2] in ("open", "leased") or (w == this and now - was[1] < BRIEF_EVERY)):
+            if was is not None and was[2] in ("open", "leased"):
                 continue
-            added += _ask(cur, t, kinds, w, _period(w), *rows_between(cur, tid, *bounds(w)))
+            rows, rs = rows_between(cur, tid, *bounds(w))
+            # the week in progress at most every BRIEF_EVERY, unless most rows its brief cites left it (0269)
+            if was is not None and w == this and now - was[1] < BRIEF_EVERY and not _cites_left(cur, tid, w, rows):
+                continue
+            added += _ask(cur, t, kinds, w, _period(w), rows, rs)
     return added
 
 
@@ -190,9 +194,9 @@ def plan_subject(cur: Any, t: Dict[str, Any], *, now: datetime, period: str) -> 
                 *rows_between(cur, t["folder_id"], None, None))
 
 
-def points(cur: Any, track_id: str, week: Optional[date] = None) -> Optional[Dict[str, Any]]:
-    """The newest valid brief of the week (None: of any week): {points: [{text, cites: [thing ids]}], at, week}, each
-    cite its thing's current root; a point left with no cite is not shown."""
+def _answered(cur: Any, track_id: str, week: Optional[date]) -> Optional[Tuple[List[Dict[str, Any]], Any, date]]:
+    """The newest valid brief of the week (None: of any week): ([{text, cites}], at, week), each cite its thing's
+    current root (a cite of a thing dropped since stays, as its id)."""
     cur.execute("""SELECT a.thing_ids::text[], c.answer, c.created_at, a.week
                      FROM mx_track_brief_asks a JOIN mx_calls c ON c.task_id = a.task_id AND c.valid
                     WHERE a.track_id = %s AND (%s::date IS NULL OR a.week = %s::date)
@@ -202,15 +206,46 @@ def points(cur: Any, track_id: str, week: Optional[date] = None) -> Optional[Dic
         return None
     ids, answer, at, w = r
     root = TT.roots(cur, track_id)
-    cur.execute("SELECT id::text FROM mx_track_things WHERE track_id = %s AND status = 'current'", (track_id,))
-    live = {i for (i,) in cur.fetchall()}
     out = []
     for p in (answer or {}).get("points") or []:
         cites = [root.get(ids[n - 1], ids[n - 1]) for n in p.get("cites") or [] if isinstance(n, int) and 1 <= n <= len(ids)]
-        cites = [c for c in dict.fromkeys(cites) if c in live]
-        if p.get("text") and cites:
+        if p.get("text"):
+            out.append({"text": p["text"], "cites": list(dict.fromkeys(cites))})
+    return out, at, w
+
+
+def points(cur: Any, track_id: str, week: Optional[date] = None, *,
+           within: Optional[Sequence[str]] = None) -> Optional[Dict[str, Any]]:
+    """The newest valid brief of the week (None: of any week): {points: [{text, cites: [thing ids]}], at, week}, each
+    cite its thing's current root; a point left with no cite is not shown. 0269 `within` (a week's issue: the rows
+    its sections show): a point is shown only when every row it cites is one of them (the week's rows change when
+    posts are dated again: a point about rows that left the week is not the week's)."""
+    got = _answered(cur, track_id, week)
+    if got is None:
+        return None
+    pts, at, w = got
+    cur.execute("SELECT id::text FROM mx_track_things WHERE track_id = %s AND status = 'current'", (track_id,))
+    live = {i for (i,) in cur.fetchall()}
+    keep = None if within is None else set(within)
+    out = []
+    for p in pts:
+        if keep is not None and not (p["cites"] and set(p["cites"]) <= keep):
+            continue
+        cites = [c for c in p["cites"] if c in live]
+        if cites:
             out.append({"text": p["text"], "cites": cites})
     return {"points": out, "at": at, "week": w} if out else None
+
+
+def _cites_left(cur: Any, track_id: str, week: date, rows: Sequence[Dict[str, Any]]) -> bool:
+    """0269: whether most of the rows the week's newest brief cites are no longer its rows (posts dated again, things
+    dropped): its points would be about another week, so it is asked again whatever BRIEF_EVERY says."""
+    got = _answered(cur, track_id, week)
+    cited = {c for p in (got[0] if got else []) for c in p["cites"]}
+    if not cited:
+        return False
+    now_ids = {t["id"] for t in rows}
+    return 2 * len(cited - now_ids) > len(cited)
 
 
 # ---- shapes ----------------------------------------------------------------------------------------------------
@@ -413,8 +448,8 @@ def issue(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = Non
     also = _also(cur, t, start, end)
     posts = _posts(cur, tid, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])} | set(also)))
     sections = _sections(kinds, rows, rs, posts)
-    got = points(cur, tid, week)
     shown = [x["id"] for s in sections for x in s["things"]]
+    got = points(cur, tid, week, within=shown + list(_hosts(sections)))   # 0269: only points about the week's rows
     body = {**base, "points": _point_views(got, shown, _hosts(sections)), "points_at": _iso(got["at"]) if got else None,
             "sections": sections, "also": [posts[p] for p in also if p in posts],
             "counts": {"things": len(rows), "new": sum(1 for x in rows if x["new"]),

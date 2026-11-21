@@ -32,6 +32,7 @@ function Part({ label, lines, brief }: { label: string; lines: MarkxBriefLine[];
         {lines.map((l) => (
           <li key={l.thing} className="text-[0.9375rem] leading-6 text-fg [overflow-wrap:anywhere]">
             {l.text}
+            {l.note ? <span className="text-fg-2" data-brief-note=""> — {l.note}</span> : null}
             {l.who?.length ? <span className="text-fg-3"> · {l.who.join(', ')}</span> : null}
             <Cites line={l} brief={brief} />
           </li>

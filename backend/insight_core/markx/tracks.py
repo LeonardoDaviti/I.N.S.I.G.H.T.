@@ -1188,10 +1188,15 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
                           (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM sources WHERE NOT enabled)""",
                 {"f": f, "k": ITEM_KIND})
     strict = [f, topic, *cur.fetchone()]
+    # 0269: when the track was placed again is strict too: the page reads its kept placement, so a page kept from an
+    # older placement is never sent (production: posts the refresh had moved to Discover, as the sidebar's counts and
+    # /why said, still 'joined' on the page until its KEPT_LAG ended). The jobs process places and then builds in one
+    # look (jobs.Jobs.tracks), so the next open is sent kept.
     cur.execute("""SELECT (SELECT json_agg(json_build_array(track_id, placed_at) ORDER BY track_id)
                              FROM mx_track_places_state WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
                           -- 0264: a kept track's page reads its kept placement: the worker's changes move it once
-                          -- placed again (placed_at above); a track never kept is placed live: all its changes do
+                          -- placed again (placed_at above, strict since 0269); a track never kept is placed live: all
+                          -- its changes do
                           (SELECT json_build_array(count(*), max(c.id)) FROM mx_track_changes c
                             WHERE (%(f)s::uuid IS NULL OR c.track_id = %(f)s::uuid)
                               AND (c.owner OR NOT EXISTS (SELECT 1 FROM mx_track_places_state s
@@ -1206,7 +1211,9 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
                           (SELECT json_build_array(count(*), max(c.created_at)) FROM mx_track_subtopic_asks a
                              JOIN mx_calls c ON c.task_id = a.task_id
                             WHERE %(f)s::uuid IS NULL OR a.track_id = %(f)s::uuid)""", {"f": f})
-    return strict, json.dumps([planner, *cur.fetchone()], default=str, separators=(",", ":"))
+    loose = cur.fetchone()
+    strict.append(loose[0])   # 0269: the placements kept (above)
+    return strict, json.dumps([planner, *loose], default=str, separators=(",", ":"))
 
 
 def _kept_key(folder_id: Optional[Any]) -> str:

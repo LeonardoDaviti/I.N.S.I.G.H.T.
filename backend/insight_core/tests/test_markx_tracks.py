@@ -580,6 +580,46 @@ class KeptPlaces(_Tracks):
         self.assertTrue(self.kept())
         self.assertEqual(track_counts.topic_counts(self.cur)[self.folder]["discover"], 0)
 
+    def test_the_kept_page_follows_a_placement_of_the_workers_change(self):
+        """Issue 0269 (production, after migration 0169 reset one-run joins): the refresh placed the posts back in
+        Discover (the sidebar's counts and /why said so) while the kept page bytes, sent until their KEPT_LAG ended,
+        still listed them 'joined'. The page's stamp reads when the track was placed: the next open after the
+        refresh shows the new placement; until the refresh the kept bytes are sent (no live placement)."""
+        from unittest import mock
+        from insight_core.markx import track_kept
+        sure, other = (self.post(title=t, source=self.other) for t in ("sure", "other"))
+        for p in (sure, other):
+            self.vector(p, unit((0, 1), (3, 0.2)))
+        self.plan()
+        for p in (sure, other):
+            self.judge(p, verdict(conf=0.8))
+        self.plan()
+        self.cur.execute("SELECT check_task_id FROM mx_track_items WHERE post_id = %s", (sure,))
+        check = self.cur.fetchone()[0]
+        for conf in (0.9, 0.88):
+            self.answer((check, verdict(conf=conf)))
+        self.assertEqual(self.keep(), 1)
+
+        def places(body):
+            return {**{it["post_id"]: it["place"] for s in body["sections"] for it in s["items"]},
+                    **{it["post_id"]: it["place"] for it in body["discover"]}}
+        self.assertEqual(places(self.page())[sure], "joined")
+        # the check reset as migration 0169 did it (the worker's change, logged by the trigger)
+        self.cur.execute("""UPDATE mx_track_items SET check_in = NULL, check_confidence = NULL, check_why = NULL,
+                                   checked_at = NULL WHERE post_id = %s""", (sure,))
+        with mock.patch.object(tracks, "placed", wraps=tracks.placed) as placed:
+            self.assertEqual(places(self.page())[sure], "joined", "within REFRESH_GAP: the kept page")
+        self.assertEqual(placed.call_count, 0)
+        self.cur.execute("UPDATE mx_track_places_state SET placed_at = now() - interval '6 minutes' WHERE track_id = %s",
+                         (self.folder,))
+        self.assertTrue(track_kept.due(self.cur))
+        self.assertEqual(self.keep(), 1)
+        body = self.page()
+        self.assertEqual(places(body)[sure], "discover", "placed again: the page follows at the next open")
+        self.assertEqual(body["counts"]["discover"],
+                         sum(1 for it in tracks.placed(self.cur, tracks.get(self.cur, self.folder))["items"]
+                             if it["place"] == "discover"))
+
 
 class SwitchedOff(_Tracks):
     """Issue 0200 (v10.17.1): a passive source the owner switched off feeds no suggestion of a track: its posts are

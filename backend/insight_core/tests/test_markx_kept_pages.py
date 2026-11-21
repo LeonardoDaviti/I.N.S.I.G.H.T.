@@ -504,7 +504,7 @@ class TheShapesAreNamed(_World):
         for i in range(4):
             self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
 
-    FROZEN = {"news": ("2", "626a1b818dcd802b"), "entity": ("3", "fd5ba899b59a4c67"),
+    FROZEN = {"news": ("2", "626a1b818dcd802b"), "entity": ("4", "fd5ba899b59a4c67"),
               "entities": ("1", "4efd649ca53508be"), "entity_queue": ("1", "aa10ad3c5d2a3012")}
 
     def shapes(self):

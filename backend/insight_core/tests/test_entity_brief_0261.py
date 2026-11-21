@@ -40,12 +40,14 @@ class EntityBrief(_Briefer):
         p1, ent = self.about(None, "Zqedit Mode", "Zqedit Mode is an experimental mode of the Zq editor.")
         p2, _ = self.about(ent, "Turning it on", "Zqedit Mode is turned on with the flag --zq-mode in settings.")
         self.about(ent, "Only named", "A list of editors; Zqedit Mode is one.", role="mention")
+        for k in range(2):
+            self.about(ent, f"Note {k}", f"Zqedit Mode note {k}.")
         with self.conn.transaction():
-            self.assertEqual(EB.plan_things(self.cur, roots=[ent]), 0, "2 report posts: under MIN_POSTS")
+            self.assertEqual(EB.plan_things(self.cur, roots=[ent]), 0, "4 report posts: under MIN_POSTS (5)")
         p3, _ = self.about(ent, "Benchmark", "In our test of 40 tasks Zqedit Mode cut steps from 12 to 3.")
         with self.conn.transaction():
             asked = EB.plan_things(self.cur, roots=[ent])
-        self.assertEqual(asked, 3, "the three report posts, never the mention")
+        self.assertEqual(asked, 5, "the five report posts, never the mention")
         s = TT.current_schema(self.cur, ent)
         self.assertEqual((s["by"], [k["kind"] for k in s["schema"]["kinds"]]),
                          ("code", [EB.WHAT, EB.HOW, TT.PRACTICE_KIND]))
@@ -68,10 +70,14 @@ class EntityBrief(_Briefer):
         p2, _ = self.about(ent, "Turning it on", "Zqedit Mode is turned on with the flag --zq-mode in settings.")
         p3, _ = self.about(ent, "Benchmark", "In our test of 40 tasks Zqedit Mode cut steps from 12 to 3. "
                                              "Qbench Labs found it 2x faster.")
+        more = [self.about(ent, f"Note {k}", f"Zqedit Mode note {k}.")[0] for k in range(2)]
         with self.conn.transaction():
             EB.plan_things(self.cur, roots=[ent])
+        for p in more:
+            self.things(ent, p)            # read, no row: the brief has read 5 posts (SHOW_POSTS)
         self.things(ent, p1, {"kind": EB.WHAT, "fields": {
             "definition": v("an experimental mode of the Zq editor", "an experimental mode of the Zq editor"),
+            "subject": v("Zqedit Mode", "Zqedit Mode is"),
             "stage": v("experimental", "is an experimental mode"),
             "maker": v("Acme", "made by Acme")}})   # not in the post: dropped by the checks, the line stays
         self.things(ent, p2, {"kind": EB.HOW, "fields": {
@@ -86,14 +92,16 @@ class EntityBrief(_Briefer):
                 "result": v("2x faster on 9 runs", "found it 2x faster"),   # a figure its quote lacks: dropped
                 "by": v("Qbench Labs", "Qbench Labs found it")}})
         with self.conn.transaction():
-            b = EB.view(self.cur, ent)
-        (faster,) = [ln for ln in b["results"] if ln["text"] == "faster"]
+            b = EB.view(self.cur, ent, names=["Zqedit Mode"])
+        (faster,) = [ln for ln in b["results"] if ln["text"].startswith("faster")]
         self.assertEqual(faster["who"], ["Qbench Labs"], "the measurer its quote names, not the poster")
         b["results"] = [ln for ln in b["results"] if ln is not faster]
-        self.assertEqual([ln["text"] for ln in b["what"]], ["an experimental mode of the Zq editor (experimental)"])
-        self.assertEqual([ln["text"] for ln in b["how"]], ["turned on with a flag in settings: --zq-mode"])
+        self.assertEqual([(ln["text"], ln["note"]) for ln in b["what"]],
+                         [("an experimental mode of the Zq editor", "experimental")])
+        self.assertEqual([(ln["text"], ln["note"]) for ln in b["how"]], [("turned on with a flag in settings", "--zq-mode")])
         (res,) = b["results"]
-        self.assertEqual(res["text"], "fewer steps per task: steps cut from 12 to 3 (a test of 40 tasks)")
+        self.assertEqual((res["text"], res["note"]), ("fewer steps per task → steps cut from 12 to 3", "a test of 40 tasks"),
+                         "0269: what → result, the evidence apart (it gives a figure the line does not)")
         self.assertEqual(res["who"], ["Zq Lab Notes"])
         self.assertEqual([c["n"] for c in b["what"][0]["cites"] + b["how"][0]["cites"] + res["cites"]], [1, 2, 3])
         self.assertEqual(faster["cites"][0]["n"], 3)
@@ -111,13 +119,50 @@ class EntityBrief(_Briefer):
             {"text": "Zqedit Mode is turned on with a flag.", "cites": [2]}]}))
         self.assertEqual((status, body["valid"]), (200, 1), body)
         with self.conn.transaction():
-            b = EB.view(self.cur, ent)
+            b = EB.view(self.cur, ent, names=["Zqedit Mode"])
         self.assertEqual(b["points"], [{"text": "Zqedit Mode needs fewer steps.", "cites": [3]},
                                        {"text": "Zqedit Mode is turned on with a flag.", "cites": [2]}])
         # the entity page carries it
         status, page = call("GET", f"/api/markx/entities/{ent}")
         self.assertEqual(status, 200, page)
-        self.assertEqual([ln["text"] for ln in page["brief"]["how"]], ["turned on with a flag in settings: --zq-mode"])
+        self.assertEqual([ln["text"] for ln in page["brief"]["how"]], ["turned on with a flag in settings"])
+
+    def test_a_brief_needs_five_posts_read_and_a_definition_of_the_entity_itself(self):
+        """0269 (production: a phone OS's brief, from one post about its camera app, said it 'is a camera app'): a
+        brief is shown only when SHOW_POSTS posts were read and a what_it_is line's subject is the entity itself; a
+        line about '<entity> Camera' is that product's. Lines of the same figures and key words are one; a result
+        whose 'what' is the entity's own name shows its result alone."""
+        p1, ent = self.about(None, "Zqedit Mode Camera", "Zqedit Mode Camera is a camera app, version 94.")
+        rest = [self.about(ent, f"Post {k}", f"Zqedit Mode post {k}: it cut steps from 12 to 3.")[0] for k in range(4)]
+        with self.conn.transaction():
+            EB.plan_things(self.cur, roots=[ent])
+        self.things(ent, p1, {"kind": EB.WHAT, "fields": {
+            "definition": v("a camera app", "is a camera app"),
+            "subject": v("Zqedit Mode Camera", "Zqedit Mode Camera is"),
+            "stage": v("version 94", "version 94")}})
+        with self.conn.transaction():
+            self.assertIsNone(EB.view(self.cur, ent, names=["Zqedit Mode"]), "1 post read")
+        for k, p in enumerate(rest):
+            self.things(ent, p, {"kind": TT.PRACTICE_KIND, "fields": {
+                "what": v("Zqedit Mode", f"Zqedit Mode post {k}"),
+                "result": v(f"cut steps from 12 to 3{' per task' if k % 2 else ''}", "it cut steps from 12 to 3")}})
+        with self.conn.transaction():
+            self.assertIsNone(EB.view(self.cur, ent, names=["Zqedit Mode"]),
+                              "5 read, but the only definition is of the camera app")
+        q = self.post(title="What it is", text="Zqedit Mode is a mode of the Zq editor.", source=self.src)
+        self.mention(q, "Zqedit Mode", entity=ent)
+        with self.conn.transaction():
+            EB.plan_things(self.cur, roots=[ent])
+        self.things(ent, q, {"kind": EB.WHAT, "fields": {
+            "definition": v("a mode of the Zq editor", "a mode of the Zq editor"),
+            "subject": v("Zqedit Mode", "Zqedit Mode is")}})
+        with self.conn.transaction():
+            b = EB.view(self.cur, ent, names=["Zqedit Mode"])
+        self.assertEqual([ln["text"] for ln in b["what"]], ["a mode of the Zq editor"], "the camera app's line is not its")
+        texts = sorted(ln["text"] for ln in b["results"])
+        self.assertTrue(all("Zqedit Mode" not in t for t in texts), texts)
+        self.assertEqual(len(texts), 2, f"the same figures and key words: one line; another word: two ({texts})")
+        self.assertEqual(sum(len(ln["cites"]) for ln in b["results"]), 4, "every post the merged lines rest on")
 
 
 class Checks(unittest.TestCase):
