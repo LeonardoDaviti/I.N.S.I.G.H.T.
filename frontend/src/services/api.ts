@@ -265,6 +265,20 @@ export interface NewsPage extends FeedPage {
   rows?: number;
   unread_rows?: number;
 }
+/** Issue 0271, "Since you looked": News rows begun since the reader's one look, rows a voice joined since, and each
+ *  track's new things. */
+export interface SinceRow extends FeedItem {
+  since?: { voices: string[]; lines: Array<{ id: string; title: string | null; source: string }> };
+}
+export interface SinceTrack {
+  id: string; name: string; since: string; new: number; also: number;
+  lines: Array<{ text: string; kind: string | null; sources: number; post: string | null }>;
+}
+export interface SinceLooked {
+  look: string; first: boolean;
+  news: { counts: { new: number; changed: number }; new: SinceRow[]; changed: SinceRow[] };
+  tracks: SinceTrack[];
+}
 export type NewsMark = 'main' | 'ix';
 export type NewsOrder = 'ranked' | 'coverage';
 /** Issue 0208: a Mark X News row's kept rank: its significance (the worker's answer), coverage and fit, each 0..1. */
@@ -1497,6 +1511,10 @@ export function createApi() {
     /** Issue 0238: "Mark all News read": every post of every News row the scope lists, read only (Later kept). Its ids undo it. */
     markAllNewsRead: (scope: string, mark: NewsMark = 'main') =>
       request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: mark === 'ix' ? { scope, news: true, mark } : { scope, news: true } }),
+    /** Issue 0271: "Since you looked", since the reader's one look (read only). */
+    getSince: (signal?: AbortSignal) => request<SinceLooked>('/api/news/since', { signal }),
+    /** Issue 0271: the reader opened "Since you looked": the look moves to now. */
+    lookSince: () => request<{ before: string | null; now: string }>('/api/news/since/look', { method: 'POST' }),
     /** Classics (issue 0051): the pages a scope's sources keep citing, cited again first. */
     getClassics: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
       request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),

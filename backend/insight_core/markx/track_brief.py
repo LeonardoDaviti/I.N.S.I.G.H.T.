@@ -599,6 +599,33 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
             "nothing_new": not rows and not also and not pts, "last_issue": closed[0] if closed else None, "weeks": weeks}
 
 
+SINCE_LINES = 3   # 0271: a track's top lines in "Since you looked"
+
+
+def since_lines(cur: Any, folder_id: Any, since: datetime, *, now: Optional[datetime] = None,
+                n: int = SINCE_LINES) -> Dict[str, Any]:
+    """0271: a track in "Since you looked", read from its quick look since `since` (no second path): {id, name, since,
+    new (things found since), also (posts joined since that gave no row), lines: the top `n`, the things most
+    independent sources reported first, those first reported after the look before the rest (each {text: its name,
+    kind, sources, post}), then the joined posts}.
+    KeyError: not a topic track."""
+    q = quick_look(cur, folder_id, since, now=now)
+    # first reported after the look first (a thing re-read from an older post of the week is new to the track, not
+    # to the reader), then by sources; stable
+    things = sorted((t for s in q["sections"] for t in s["things"]),
+                    key=lambda t: (not (t["first_at"] and datetime.fromisoformat(t["first_at"]) > since), -t["sources"]))
+    lines: List[Dict[str, Any]] = []
+    for t in things[:n]:
+        name = next(iter(t["fields"].values()), None)
+        post = t["posts"][0]["id"] if t["posts"] else (name or {}).get("post")
+        lines.append({"text": name["shown"] if name else t["kind"].replace("_", " "), "kind": t["kind"],
+                      "sources": t["sources"], "post": post})
+    for p in q["also"][:max(0, n - len(lines))]:
+        lines.append({"text": p["title"] or p["url"], "kind": None, "sources": 1, "post": p["id"]})
+    return {"id": q["track"]["id"], "name": q["track"]["name"], "since": q["since"], "new": q["counts"]["things"],
+            "also": q["counts"]["also"], "lines": lines}
+
+
 RAIL_QUIET = timedelta(days=30)   # a track not opened for this long shows no count in the rail (0245's UX)
 
 

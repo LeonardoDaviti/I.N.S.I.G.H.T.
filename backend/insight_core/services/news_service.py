@@ -258,6 +258,35 @@ class NewsService:
     MARKX_EMPTY = "Mark X has no News yet (a new install, or its worker has not run): this is the older News."
     MARKX_OFF = "Mark X is off on this install: this is the older News."
 
+    def since(self, at: Optional[datetime] = None) -> Dict[str, Any]:
+        """Issue 0271, "Since you looked": what came since the reader's one look (`at` given: since then; never
+        looked: the last SINCE_FIRST), read, never written (opening the view sets the look, `look`). {look (ISO),
+        first (never looked), news: `since_rows` over the Main feed's News as News ranks it, tracks: each topic track's
+        new things since its look (the later of its own and `at`; Mark X on only, `track_brief.since_lines`)}."""
+        from insight_core.markx import api as mx_api, track_brief, track_subtopics, tracks
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            stored = track_subtopics.reader_look(cur)
+            look = at or stored or self.clock() - SINCE_FIRST
+            run, _ = self.rows_of(cur)
+            news = since_rows(self.news_on(cur, "all", mx_run=run)["items"], look)
+            shown = []
+            if mx_api.enabled():
+                for t in tracks.described(cur):
+                    own = track_subtopics.seen(cur, t["folder_id"])["track"]
+                    since = look if at or not own else max(look, datetime.fromisoformat(own))
+                    try:
+                        shown.append(track_brief.since_lines(cur, t["folder_id"], since, now=self.clock()))
+                    except KeyError:
+                        continue
+        return {"look": look.isoformat(), "first": at is None and stored is None, "news": news,
+                "tracks": [t for t in shown if t["new"] or t["also"]]}
+
+    def look(self) -> Dict[str, Optional[str]]:
+        """Issue 0271: the reader opened "Since you looked" now: {before, now} (track_subtopics.look_all)."""
+        from insight_core.markx import track_subtopics
+        with db.transaction(self.db_url) as cur:
+            return track_subtopics.look_all(cur, now=self.clock())
+
     def post_ids(self, scope: str | None = None, mark: str = "main") -> List[str]:
         """Issue 0238: every post of every News row the scope lists (as `news` lists them: each row's lead and its
         lines), for "Mark all News read"."""
@@ -506,6 +535,37 @@ def read_state(answer: Dict[str, Any], unread: bool = False) -> Dict[str, Any]:
     if unread:
         items = [item for item in items if item["news"]["unread"]]
     return {**answer, "items": items, "rows": len(answer.get("items") or []), "unread_rows": unread_rows}
+
+
+SINCE_FIRST = timedelta(hours=24)   # 0271: never looked, "Since you looked" shows the last day
+SINCE_SHOWN = 20                    # rows of each list the view sends (the counts count them all)
+
+
+def _at(value: Any) -> datetime:
+    return value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def since_rows(items: Sequence[Dict[str, Any]], at: datetime, shown: int = SINCE_SHOWN) -> Dict[str, Any]:
+    """Issue 0271: News since a look, in the order News gives (its rank): `new`, the rows begun after `at`; `changed`,
+    the rows begun before it that a voice joined after it (a post dated after the look from a source none of the
+    row's earlier posts came from: a confirming report, a release row's benchmarks), each with `since` {voices (the
+    new voices' names), lines (their posts: id, title, source)}, the most voices joined first (then News's order). A
+    later post from a voice already in the row is no change. {counts {new, changed}, new, changed}, `shown` of each list."""
+    new: List[Dict[str, Any]] = []
+    changed: List[Dict[str, Any]] = []
+    for item in items:
+        if _at(item["news"]["first_at"]) > at:
+            new.append(item)
+            continue
+        posts = row_posts(item)
+        before = {p["source_display_name"] for p in posts if _at(p["sort_at"]) <= at}
+        joined = [p for p in posts if _at(p["sort_at"]) > at and p["source_display_name"] not in before]
+        if joined:
+            voices = list(dict.fromkeys(p["source_display_name"] for p in joined))
+            changed.append({**item, "since": {"voices": voices, "lines": [
+                {"id": p["id"], "title": p["title"], "source": p["source_display_name"]} for p in joined]}})
+    changed.sort(key=lambda i: -len(i["since"]["voices"]))   # most voices joined first; stable: News's order after
+    return {"counts": {"new": len(new), "changed": len(changed)}, "new": new[:shown], "changed": changed[:shown]}
 
 
 def reader_view(answer: Dict[str, Any]) -> Dict[str, Any]:

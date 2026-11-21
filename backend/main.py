@@ -1166,6 +1166,35 @@ async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=10
                                                order=order, unread=unread))
 
 
+@app.get("/api/news/since")
+@error_detail("load Since you looked")
+async def get_news_since(at: str | None = None):
+    """Issue 0271, "Since you looked": since the reader's one look (or `at`, an ISO time with its zone): {look, first,
+    news {counts {new, changed}, new, changed (each row with `since` {voices, lines})}, tracks [{id, name, since, new,
+    also, lines}]}. Read only: opening the view sets the look (POST /api/news/since/look)."""
+    from insight_core.services.news_service import reader_view
+    when = None
+    if at:
+        try:
+            when = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="at: an ISO time")
+        if when.tzinfo is None:
+            raise HTTPException(status_code=400, detail="at: an ISO time with its zone")
+    answer = await asyncio.to_thread(services().news.since, when)
+    news = answer["news"]
+    answer["news"] = {**news, "new": reader_view({"items": news["new"]})["items"],
+                      "changed": reader_view({"items": news["changed"]})["items"]}
+    return answer
+
+
+@app.post("/api/news/since/look")
+@error_detail("record the look")
+def post_news_since_look():
+    """Issue 0271: the reader opened "Since you looked": {before, now}."""
+    return services().news.look()
+
+
 @app.get("/api/classics")
 @error_detail("load Classics")
 async def get_classics(scope: str = "all", limit: int = Query(CLASSICS_PAGE, ge=1, le=1000),

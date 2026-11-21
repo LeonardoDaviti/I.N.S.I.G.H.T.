@@ -40,6 +40,8 @@ members changed since.
 nothing, until a sample passes BAR with a Wilson lower bound of LOWER.
 
 **New since you looked** (`seen` / `look`): the reader's last look at a track and at each sub-topic (mx_track_seen).
+0271: mx_track_seen also keeps the reader's one look at everything (`reader_look` / `look_all`: no track, no
+sub-topic), set by opening "Since you looked"; a track's look is the later of its own and that one.
 The page carries, per section, when each member joined the track (`joined`, its verdict's time), so the reader counts
 what is new since its look without the kept page depending on the look.
 
@@ -851,16 +853,44 @@ def joined_at(it: Dict[str, Any]) -> Optional[datetime]:
 
 # ---- seen: "new since you looked" ---------------------------------------------------------------------------
 
+ZERO = "00000000-0000-0000-0000-000000000000"   # the unique index's stand-in for a NULL track or sub-topic
+
+
 def seen(cur: Cursor, folder_id: Any) -> Dict[str, Any]:
-    """{track: the last look at the track (ISO) or None, subtopics: {id: ISO}}."""
-    cur.execute("SELECT subtopic_id::text, seen_at FROM mx_track_seen WHERE track_id = %s", (str(folder_id),))
+    """{track: the last look at the track (ISO) or None, subtopics: {id: ISO}}. 0271: the track's look is the later
+    of its own and the reader's look at everything ("Since you looked" showed what was new in it)."""
+    cur.execute("""SELECT subtopic_id::text, seen_at FROM mx_track_seen
+                    WHERE track_id = %s OR (track_id IS NULL AND subtopic_id IS NULL)""", (str(folder_id),))
     out: Dict[str, Any] = {"track": None, "subtopics": {}}
+    track: Optional[datetime] = None
     for sid, at in cur.fetchall():
         if sid is None:
-            out["track"] = at.isoformat()
+            track = at if track is None else max(track, at)
         else:
             out["subtopics"][sid] = at.isoformat()
+    out["track"] = track.isoformat() if track else None
     return out
+
+
+def _record(cur: Cursor, track: Optional[str], subtopic: Optional[str], now: datetime) -> None:
+    cur.execute(f"""INSERT INTO mx_track_seen (track_id, subtopic_id, seen_at) VALUES (%s, %s, %s)
+                    ON CONFLICT (COALESCE(track_id, '{ZERO}'::uuid), COALESCE(subtopic_id, '{ZERO}'::uuid))
+                    DO UPDATE SET seen_at = EXCLUDED.seen_at""", (track, subtopic, now))
+
+
+def reader_look(cur: Cursor) -> Optional[datetime]:
+    """0271: the reader's last look at everything ("Since you looked"), or None (never opened)."""
+    cur.execute("SELECT seen_at FROM mx_track_seen WHERE track_id IS NULL AND subtopic_id IS NULL")
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def look_all(cur: Cursor, *, now: Optional[datetime] = None) -> Dict[str, Optional[str]]:
+    """0271: the reader opened "Since you looked" now: {before (the look before this one, ISO or None), now}."""
+    now = now or datetime.now(timezone.utc)
+    before = reader_look(cur)
+    _record(cur, None, None, now)
+    return {"before": before.isoformat() if before else None, "now": now.isoformat()}
 
 
 def look(cur: Cursor, folder_id: Any, subtopic: Optional[str] = None, *, now: Optional[datetime] = None
@@ -876,9 +906,7 @@ def look(cur: Cursor, folder_id: Any, subtopic: Optional[str] = None, *, now: Op
         if cur.fetchone() is None:
             raise KeyError(subtopic)
     before = seen(cur, folder_id)
-    cur.execute("""INSERT INTO mx_track_seen (track_id, subtopic_id, seen_at) VALUES (%s, %s, %s)
-                   ON CONFLICT (track_id, COALESCE(subtopic_id, '00000000-0000-0000-0000-000000000000'::uuid))
-                   DO UPDATE SET seen_at = EXCLUDED.seen_at""", (str(folder_id), subtopic, now))
+    _record(cur, str(folder_id), subtopic, now)
     return {"before": before, "now": seen(cur, folder_id)}
 
 

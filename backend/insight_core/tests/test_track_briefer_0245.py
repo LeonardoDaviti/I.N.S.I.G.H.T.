@@ -616,6 +616,17 @@ class Flow(_Briefer):
         counts = call("GET", "/api/markx/tracks/counts")[1]["by_track"]
         self.assertEqual(counts[f]["things"], 1)
         self.assertEqual(TB.new_count(self.cur, f, now=now + timedelta(days=31)), 0)
+        # 0271: "Since you looked" reads the track's lines from the quick look; the reader's one look moves the track's
+        from insight_core.markx import track_subtopics as TS
+        seen = datetime.fromisoformat(TS.seen(self.cur, f)["track"])
+        got = TB.since_lines(self.cur, f, seen)
+        self.assertEqual((got["new"], got["lines"][0]["text"].lower()), (1, "tomato soup"), got)
+        self.assertTrue(got["name"].startswith("recipes"))
+        later = datetime.now(timezone.utc) + timedelta(minutes=1)
+        with self.conn.transaction():
+            TS.look_all(self.cur, now=later)
+        self.assertEqual(TS.seen(self.cur, f)["track"], later.isoformat(), "the later of its own look and the reader's")
+        self.assertEqual(call("GET", "/api/markx/tracks/counts")[1]["by_track"][f]["things"], 0)
         self.switch(False)
         self.assertNotIn("things", call("GET", "/api/markx/tracks/counts")[1]["by_track"][f], "off: the shape as before")
         self.switch(True)

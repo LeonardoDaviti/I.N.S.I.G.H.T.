@@ -19,11 +19,13 @@ const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
 ];
 /** A source that watches its pages offers its updates as one more Show choice (issue 0039). */
 const UPDATED = { value: 'updated' as const, label: 'Updated' };
-/** Issue 0238: News's own Show: every row, or only the rows with an unread post. */
-export type NewsShow = 'all' | 'unread';
+/** Issue 0238: News's own Show: every row, or only the rows with an unread post; 0271: what came since the reader's
+ *  one look (News, the changed rows, the tracks). */
+export type NewsShow = 'all' | 'unread' | 'since';
 const NEWS_SHOW: ReadonlyArray<{ value: NewsShow; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'unread', label: 'Unread' },
+  { value: 'since', label: 'Since you looked' },
 ];
 /** News and Classics are views next to the feed (issue 0051), of the Main feed, a track or one source (0077). */
 const VIEWS: ReadonlyArray<{ value: ReaderView; label: string }> = [
