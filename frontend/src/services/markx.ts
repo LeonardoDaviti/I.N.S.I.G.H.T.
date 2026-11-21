@@ -433,7 +433,29 @@ export interface MarkxEntityList {
 /** Issue 0195: how many stories and posts in no story an entity's page lists (GET ...?stories_limit=&loose_limit=). */
 export interface MarkxEntityLimits { stories?: number; loose?: number }
 
+/** 0261: one line of an entity's brief, with the posts it rests on (n: the superscript) and their quotes. */
+export interface MarkxBriefLine {
+  thing: string;
+  text: string;
+  cites: { post: string; n: number; quote?: string | null; quotes?: string[] }[];
+  sources: number;
+  /** results only: the sources of the posts that reported it */
+  who?: string[];
+}
+
+/** 0261: what it is, how it works, its results, each line cited; null while off or nothing is found yet. */
+export interface MarkxEntityBrief {
+  what: MarkxBriefLine[];
+  how: MarkxBriefLine[];
+  results: MarkxBriefLine[];
+  points: { text: string; cites: number[] }[];
+  as_of: string | null;
+  posts: { id: string; n: number; title: string | null; url: string | null; at: string | null; source: string | null }[];
+}
+
 export interface MarkxEntityPage {
+  /** 0261: the entity's brief */
+  brief?: MarkxEntityBrief | null;
   entity: MarkxEntityRef;
   asked: string;
   redirected: boolean;

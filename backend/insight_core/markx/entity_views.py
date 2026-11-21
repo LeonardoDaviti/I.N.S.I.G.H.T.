@@ -389,7 +389,7 @@ STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more
 LOOSE_CAP = 500       # posts in no story listed at most
 BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
 DEFAULTS = {"by": 50, "stories": 50, "loose": 100}   # the route's defaults (PP.BY_LIMIT; issue 0195)
-PAGE_SHAPE = "2"      # 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
+PAGE_SHAPE = "3"      # 0261: `brief` added. 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
 #                       bump it): a page kept by the previous code is sent only while its shape is this one
 HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
 HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)
@@ -465,7 +465,9 @@ def page_inputs(cur: Any, entity_id: str) -> Tuple[Optional[str], Optional[List[
                           (SELECT json_build_array(count(*), max(created_at)) FROM mx_story_sample_labels),
                           (SELECT value->>'computed_at' FROM system_settings WHERE key = 'stories')""")
     samples, sample_labels, story_job = cur.fetchone()
-    return str(last["id"]), [root, members, mentions, sample_labels, story_job, kept_pages.owner_marks(cur), samples]
+    from insight_core.markx import entity_brief
+    return str(last["id"]), [root, members, mentions, sample_labels, story_job, kept_pages.owner_marks(cur),
+                             entity_brief.stamp(cur, root), samples]   # 0261: the brief's reports and points
 
 
 def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None, replies: bool = False,
@@ -836,7 +838,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     comp_posts = _post_counts(cur, book, comps)
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
-    from insight_core.markx import entity_facts
+    from insight_core.markx import entity_brief, entity_facts
     facts = entity_facts.read(cur, [root], senses=True)   # 0184: what it is, and the name's other senses
     page_entity = _ent_view(book, root, facts)
     if root in facts and facts[root].senses:
@@ -866,7 +868,8 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             **_documents(cur, book, members, lines, line),   # 0133: publisher, works, citing and recommending posts
             "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
-            "queue": queue_about(cur, book, root)}
+            "queue": queue_about(cur, book, root),
+            "brief": entity_brief.view(cur, root)}   # 0261: what it is, how it works, its results, each line cited
     if CONTEXT_ON:
         _with_contexts(cur, book, members, page)   # 0222: the sentences around the mention under each post
     return page, _until(now, every, offer_sample)

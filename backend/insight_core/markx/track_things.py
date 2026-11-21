@@ -403,11 +403,12 @@ def schema_at(cur: Any, folder_id: Any, version: int) -> Optional[Dict[str, Any]
 
 
 def _put_schema(cur: Any, folder_id: str, schema: Dict[str, Any], *, by: str, track_version: int,
-                task_id: Any = None) -> int:
-    cur.execute("""INSERT INTO mx_track_schemas (track_id, version, schema, by, track_version, task_id)
-                   SELECT %s, COALESCE(max(version), 0) + 1, %s::jsonb, %s, %s, %s FROM mx_track_schemas
+                task_id: Any = None, subject: str = "track") -> int:
+    """A schema version stored; `subject` 'entity' (0261, by 'code'): the "track" is an entity's root (entity_brief)."""
+    cur.execute("""INSERT INTO mx_track_schemas (track_id, version, schema, by, track_version, task_id, subject)
+                   SELECT %s, COALESCE(max(version), 0) + 1, %s::jsonb, %s, %s, %s, %s FROM mx_track_schemas
                     WHERE track_id = %s RETURNING version""",
-                (folder_id, json.dumps(schema), by, track_version, task_id, folder_id))
+                (folder_id, json.dumps(schema), by, track_version, task_id, subject, folder_id))
     return cur.fetchone()[0]
 
 
@@ -620,7 +621,7 @@ def _asked(cur: Any, track_id: str, version: int, ids: Sequence[str]) -> Set[str
 def plan_things(cur: Any, **_kw: Any) -> int:
     """`track_things` questions for each topic track with a schema: its posts in the track not yet asked under that
     schema's version, newest first, every window of each, THINGS_OPEN waiting at most a track: how many were added."""
-    from insight_core.markx import repo, schemas, tasks, track_subtopics, tracks
+    from insight_core.markx import schemas, track_subtopics, tracks
     if not on():
         return 0
     schemas.ensure_guides(cur)
@@ -636,23 +637,33 @@ def plan_things(cur: Any, **_kw: Any) -> int:
             continue
         epoch = datetime.min.replace(tzinfo=timezone.utc)
         items = sorted(track_subtopics.in_track(cur, t), key=lambda it: (it["at"] or epoch, it["post_id"]), reverse=True)
-        ids = [it["post_id"] for it in items]
-        done = _asked(cur, t["folder_id"], s["version"], ids) if ids else set()
-        todo = [i for i in ids if i not in done][:room]
-        posts = tasks.load_posts(cur, todo)
-        own = _own(cur, todo)
-        pages = maker_pages(cur, posts, own) if linked_on() else {}
-        for pid in todo:
-            if pid not in posts:
-                continue
-            for text in things_inputs(t, s["schema"], s["version"], posts[pid], own.get(pid, []), pages.get(pid, ())):
-                task_id, new = repo.add_task(cur, kind=THINGS_KIND, guide=THINGS_GUIDE, subject_kind="post_track",
-                                             input=text, a=pid, b=t["folder_id"])
-                added += new
-                if not new:
-                    got = _valid_answer(cur, task_id)
-                    if got is not None:
-                        apply_things(cur, repo.get_task(cur, task_id), None, got)
+        added += ask_posts(cur, t, s, [it["post_id"] for it in items], room=room)
+    return added
+
+
+def ask_posts(cur: Any, track: Dict[str, Any], s: Dict[str, Any], ids: Sequence[str], *, room: int) -> int:
+    """The things questions of `ids` (in their order) not yet asked under schema `s`'s version, `room` posts at most,
+    every window of each (and its maker's linked pages): how many were added. A question already answered is applied
+    again (its reports, once). A track's posts (plan_things) and an entity's (entity_brief: the entity as the track)
+    are asked by this one path."""
+    from insight_core.markx import repo, tasks
+    done = _asked(cur, track["folder_id"], s["version"], ids) if ids else set()
+    todo = [i for i in ids if i not in done][:max(0, room)]
+    posts = tasks.load_posts(cur, todo)
+    own = _own(cur, todo)
+    pages = maker_pages(cur, posts, own) if linked_on() else {}
+    added = 0
+    for pid in todo:
+        if pid not in posts:
+            continue
+        for text in things_inputs(track, s["schema"], s["version"], posts[pid], own.get(pid, []), pages.get(pid, ())):
+            task_id, new = repo.add_task(cur, kind=THINGS_KIND, guide=THINGS_GUIDE, subject_kind="post_track",
+                                         input=text, a=pid, b=track["folder_id"])
+            added += new
+            if not new:
+                got = _valid_answer(cur, task_id)
+                if got is not None:
+                    apply_things(cur, repo.get_task(cur, task_id), None, got)
     return added
 
 
