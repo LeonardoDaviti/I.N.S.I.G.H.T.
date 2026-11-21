@@ -39,6 +39,20 @@ describe('EntityBrief (0261)', () => {
     expect((how.querySelector('[data-brief-note]') as HTMLElement).textContent).toBe(' — --zen-mode');
   });
 
+  it('shows each measure over time in a table, each value cited, a dispute marked (0272)', () => {
+    const numbers = [{ measure: 'Zbench score', unit: '%', money: false, posts: 2, disputes: 1, points: [
+      { at: '2026-11-01', as_of: null, value: 71, range_to: null, shown: '71 %', setting: null, post: 'p2',
+        quote: 'scores 71%', dispute: true, n: 2 },
+      { at: '2026-11-01', as_of: null, value: 74, range_to: null, shown: '74 %', setting: null, post: 'p3',
+        quote: '74% on Zbench', dispute: true, n: 3 }] }];
+    render(<MemoryRouter><EntityBrief brief={{ ...brief, what: [], how: [], results: [], numbers }} /></MemoryRouter>);
+    const box = screen.getByRole('region', { name: 'Brief' });
+    const part = box.querySelector('[data-brief-part="Numbers over time"]') as HTMLElement;
+    expect(within(part).getByText(/Zbench score \(%\)/)).toBeTruthy();
+    expect(within(part).getAllByText('(disputed)').length).toBe(2);
+    expect(within(part).getAllByRole('link').map((a) => a.getAttribute('title'))[1]).toContain('74% on Zbench');
+  });
+
   it('shows nothing while off or empty', () => {
     const { container } = render(<MemoryRouter><EntityBrief brief={null} /></MemoryRouter>);
     expect(container.textContent).toBe('');

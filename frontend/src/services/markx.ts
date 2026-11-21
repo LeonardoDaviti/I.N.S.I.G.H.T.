@@ -448,12 +448,26 @@ export interface MarkxBriefLine {
   who?: string[];
 }
 
+/** 0272: one measure of an entity over time (one name and unit); a value marked `dispute` differs from another
+ * post's for the same date and setting (both shown, never averaged). */
+export interface MarkxNumberSeries {
+  measure: string;
+  unit: string | null;
+  money: boolean;
+  posts: number;
+  disputes: number;
+  points: { at: string | null; as_of: string | null; value: number; range_to: number | null; shown: string;
+    setting: string | null; post: string; quote: string | null; dispute: boolean; n: number }[];
+}
+
 /** 0261: what it is, how it works, its results, each line cited; null while off or nothing is found yet. */
 export interface MarkxEntityBrief {
   what: MarkxBriefLine[];
   how: MarkxBriefLine[];
   results: MarkxBriefLine[];
   points: { text: string; cites: number[] }[];
+  /** 0272: each recurring measure's values over time (2+ values from 2+ posts); absent or [] while off */
+  numbers?: MarkxNumberSeries[];
   as_of: string | null;
   posts: { id: string; n: number; title: string | null; url: string | null; at: string | null; source: string | null }[];
 }

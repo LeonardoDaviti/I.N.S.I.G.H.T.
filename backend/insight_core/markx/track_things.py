@@ -130,9 +130,11 @@ _MULTS = {"k": 1e3, "к": 1e3, "thousand": 1e3, "тыс": 1e3, "m": 1e6, "м": 1
           "b": 1e9, "bn": 1e9, "billion": 1e9, "млрд": 1e9}
 
 
-def figures(quote: str) -> Set[float]:
+def figures(quote: str, *, strict: bool = False) -> Set[float]:
     """Every value a figure of `quote` can be read as: its parts, its thousands grouping ("1,500", "1 500"), its
-    decimal ("24,5", "4.5"), each times a multiplier written right after it ("16K", "1.2M", "27B")."""
+    decimal ("24,5", "4.5"), each times a multiplier written right after it ("16K", "1.2M", "27B"). 0272 `strict` (a
+    typed number's check): a figure with a word multiplier after it ("115,8 млрд", "3 billion") or a letter glued to
+    it ("16K") is read only multiplied: 115.8 is not "115,8 млрд" (a letter after a space may be a unit: "5 m")."""
     out: Set[float] = set()
     for m in _FIG.finditer(quote or ""):
         tok = m.group(0)
@@ -146,7 +148,8 @@ def figures(quote: str) -> Set[float]:
         mult = _MULT.match(quote, m.end())
         if mult:
             k = _MULTS[(mult.group(1) or mult.group(2)).lower()]
-            vals |= {v * k for v in vals}
+            only = strict and (mult.group(2) is not None or not mult.group(0)[:1].isspace())
+            vals = {v * k for v in vals} if only else vals | {v * k for v in vals}
         out |= vals
     return out
 
@@ -174,12 +177,13 @@ def currency_shown(code: str, quote: str) -> bool:
 
 
 def unit_shown(unit: str, quote: str) -> bool:
-    """The unit as the quote writes it: whole, or its first word's first three letters ("tokens/s" in "tok/s")."""
+    """The unit as the quote writes it: whole, or each of its words by its first three letters ("tokens/s" in
+    "tok/s"; 0272: every word, so "per month" is not shown by "per million tokens")."""
     u, q = fold(unit), fold(quote)
     if not u or u in q:
         return True
-    word = re.match(r"[^\W\d_]+", u)
-    return bool(word) and word.group(0)[:3] in q
+    words = re.findall(r"[^\W\d_]+", u)
+    return bool(words) and all(w[:3] in q for w in words)
 
 
 def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optional[str]]:
@@ -199,13 +203,13 @@ def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optio
         if not isinstance(value, dict) or not isinstance(value.get("number"), (int, float)) \
                 or isinstance(value.get("number"), bool):
             return None, f"{t} not typed"
-        figs = figures(quote)
+        figs = figures(quote, strict=True)
         num = float(value["number"])
-        if not _same_number(num, figs):
+        if not _same_number(abs(num), figs):   # 0272: a fall given as a negative number shows its digits
             return None, "number not in its quote"
         to = value.get("range_to")
         if to is not None:
-            if not isinstance(to, (int, float)) or isinstance(to, bool) or not _same_number(float(to), figs):
+            if not isinstance(to, (int, float)) or isinstance(to, bool) or not _same_number(abs(float(to)), figs):
                 return None, "range_to not in its quote"
             if float(to) < num:
                 return None, "range_to below number"
@@ -215,11 +219,11 @@ def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optio
             if not currency_shown(cur_, quote):
                 return None, "currency not in its quote"
             out["currency"] = cur_
-        else:
-            unit = value.get("unit")
-            unit = unit.strip() if isinstance(unit, str) and unit.strip() else None
-            if unit and not unit_shown(unit, quote):
-                return None, "unit not in its quote"
+        unit = value.get("unit")   # 0272: money may say what it is per ("per million input tokens"), shown by its quote
+        unit = unit.strip() if isinstance(unit, str) and unit.strip() else None
+        if unit and not unit_shown(unit, quote):
+            return None, "unit not in its quote"
+        if t != "money" or unit:
             out["unit"] = unit
         return out, None
     if not isinstance(value, str) or not value.strip():
@@ -276,7 +280,8 @@ def shown_value(field: Dict[str, Any], v: Any) -> str:
         def n(x: float) -> str:
             return f"{x:,.0f}" if float(x).is_integer() else f"{x:,}"
         s = n(v["number"]) + (f"-{n(v['range_to'])}" if v.get("range_to") is not None else "")
-        tail = v.get("currency") if field.get("type") == "money" else (v.get("unit") or field.get("unit"))
+        tail = (" ".join(x for x in (v.get("currency"), v.get("unit")) if x) if field.get("type") == "money"
+                else (v.get("unit") or field.get("unit")))
         return f"{s} {tail}" if tail else s
     if field.get("type") == "link" and isinstance(v, str):
         return reader_link(v)

@@ -26,6 +26,7 @@ sources come first. Behind entity_bands.json `entities.brief` (`on`): off, nothi
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -36,6 +37,7 @@ SWITCH = ("entities", "brief")
 SUBJECT = "entity"
 SCHEMA_VERSION = 2      # the general schema's version (its track_version): a change here re-reads every post
                         # (0269: 2, what_it_is says whose definition it is: `subject`)
+NUMBERS_VERSION = 3     # 0272: the schema's version with the measure kind (entities.numbers on): its posts read again
 MIN_POSTS = 5           # an entity is briefed with this many subject/actor posts or more (0269: was 3)
 SHOW_POSTS = 5          # 0269: a brief is shown only when this many of its posts were read (one post misled)
 MAX_POSTS = 12          # posts read for an entity at most (newest first)
@@ -43,7 +45,9 @@ OPENED = 50             # the most opened entity pages considered (kept_pages.mo
 ASKS_A_DAY = 150        # things questions a day across entities at most
 PERIOD = "everything its posts say so far"
 SHOWN = {"what": 3, "how": 6, "results": 8}
-WHAT, HOW = "what_it_is", "how_it_works"
+WHAT, HOW, MEASURE = "what_it_is", "how_it_works", "measure"
+NUMBERS_SWITCH = ("entities", "numbers")   # 0272: the numbers over time on the page (the rows are asked either way)
+NUMBERS_SHOWN = 12      # measures shown at most (the most reported first)
 SCHEMA = {"kinds": [
     {"kind": WHAT, "about": "what the subject itself is: a definition line, its stage, who makes it",
      "fields": [{"name": "definition", "type": "text", "key": True,
@@ -60,6 +64,25 @@ SCHEMA = {"kinds": [
                 {"name": "detail", "type": "text", "key": False,
                  "about": "a setting, command, flag, version or requirement given for it"}]},
 ]}
+MEASURE_KIND = {"kind": MEASURE, "about": "one figure the post states of the subject itself: a score on a benchmark, a price, a "
+                               "speed, a size, a count, a share, revenue; one thing per figure (when it is also a "
+                               "result, give that result too)",
+     "fields": [{"name": "measure", "type": "text", "key": True,
+                 "about": "what is measured, named so the same measure reads the same in every post: the benchmark or "
+                          "quantity alone, without the figure or the subject's name, with the period it covers when "
+                          "it is a flow (\"SWE-bench Verified score\", \"price per million input tokens\", "
+                          "\"memory bandwidth\", \"share price\", \"quarterly revenue\", \"annual revenue\")"},
+                {"name": "value", "type": "number", "key": False,
+                 "about": "the figure when it is not money, with its unit as the quote writes it (%, tok/s, GB, ...); "
+                          "a fall, drop or loss as a negative number"},
+                {"name": "amount", "type": "money", "key": False,
+                 "about": "the figure when it is money; its `unit` what the money is per, as the quote writes it "
+                          "(per month, per million input tokens, per PH/s per day), or null"},
+                {"name": "setting", "type": "text", "key": False,
+                 "about": "what the figure is of, when the post says: a version or variant, a mode, the game, task "
+                          "or test it was measured on, a test setting"},
+                {"name": "as_of", "type": "text", "key": False,
+                 "about": "the date or period the figure is for, when the post states one (\"Q3 2025\", \"March\")"}]}
 
 
 def on() -> bool:
@@ -68,9 +91,20 @@ def on() -> bool:
     return bool((identity.bands().get(SWITCH[0]) or {}).get(SWITCH[1]))
 
 
+def numbers_on() -> bool:
+    """entity_bands.json `entities.numbers` (0272, default off): the page shows the numbers over time."""
+    from insight_core.markx import identity
+    return bool((identity.bands().get(NUMBERS_SWITCH[0]) or {}).get(NUMBERS_SWITCH[1]))
+
+
 def schema() -> Dict[str, Any]:
-    """The general schema with the practice kind code always adds (its results)."""
-    return TT.with_practice(SCHEMA)
+    """The general schema with the practice kind code always adds (its results); 0272: with the measure kind while
+    entities.numbers is on (off: the schema the brief was measured with, unchanged)."""
+    return TT.with_practice({"kinds": SCHEMA["kinds"] + ([MEASURE_KIND] if numbers_on() else [])})
+
+
+def schema_version() -> int:
+    return NUMBERS_VERSION if numbers_on() else SCHEMA_VERSION
 
 
 def subject(name: str, type_: Optional[str], maker: Optional[str], aliases: Sequence[str], entity_id: str
@@ -121,8 +155,8 @@ def report_posts(cur: Any, book: Any, root: str) -> List[str]:
 def ensure_schema(cur: Any, root: str) -> Dict[str, Any]:
     """The entity's schema row (written by code once, again when SCHEMA_VERSION changes)."""
     s = TT.current_schema(cur, root)
-    if s is None or s["track_version"] != SCHEMA_VERSION or s["schema"] != schema():
-        TT._put_schema(cur, root, schema(), by="code", track_version=SCHEMA_VERSION, subject=SUBJECT)
+    if s is None or s["track_version"] != schema_version() or s["schema"] != schema():
+        TT._put_schema(cur, root, schema(), by="code", track_version=schema_version(), subject=SUBJECT)
         s = TT.current_schema(cur, root)
     return s
 
@@ -265,6 +299,83 @@ def read_posts(cur: Any, root: str) -> int:
     return cur.fetchone()[0]
 
 
+# ---- 0272: numbers over time ---------------------------------------------------------------------------------
+
+_PERCENT = {"%", "percent", "per cent", "pct", "процент", "процентов", "процента"}
+
+
+def unit_key(unit: Any) -> str:
+    """A unit as two series are compared: folded, no spaces or trailing dots; every way of writing percent is '%'."""
+    u = re.sub(r"\s+", " ", TT.fold(unit or "")).strip(" .")
+    return "%" if u in _PERCENT else u.replace(" ", "")
+
+
+def _day(at: Any) -> Optional[str]:
+    return at.date().isoformat() if isinstance(at, datetime) else (str(at)[:10] if at else None)
+
+
+def series(reported: Sequence[Dict[str, Any]], *, min_posts: int = 2) -> List[Dict[str, Any]]:
+    """The numbers over time of an entity from its measure reports ([{post, at, values}]: values as stored, each
+    {value, quote}): one series per measure name (key_text), unit (a money figure's currency and what it is per) and
+    setting (the game, task or variant it is of: a different setting is a different measure), each value with its
+    date (the post's; `as_of` when the post states the period), post, quote and setting; a post's same figure once.
+    Only series with `min_posts` posts or more. Two values of one series, date and setting from different posts that
+    differ are a dispute (0097): both kept, both marked, never averaged. Most reported series first."""
+    fields = {f["name"]: f for f in MEASURE_KIND["fields"]}
+    groups: Dict[Any, Dict[str, Any]] = {}
+    for r in reported:
+        vals = r.get("values") or {}
+        name = (vals.get("measure") or {}).get("value")
+        fig, field = None, None
+        for f in ("value", "amount"):
+            if isinstance((vals.get(f) or {}).get("value"), dict):
+                fig, field = vals[f], fields[f]
+                break
+        if not isinstance(name, str) or not name.strip() or fig is None:
+            continue
+        v = fig["value"]
+        money = field["name"] == "amount"
+        unit = ("money:" + " ".join(x for x in (v.get("currency", ""), v.get("unit")) if x)) if money \
+            else "unit:" + unit_key(v.get("unit"))
+        setting = (vals.get("setting") or {}).get("value")
+        key = (TT.key_text(name), (v.get("currency", "") if money else "") + "|" + unit_key(v.get("unit")),
+               TT.key_text(setting))
+        g = groups.setdefault(key, {"names": defaultdict(int), "points": [], "seen": set(), "unit": unit,
+                                    "setting": setting})
+        g["names"][name.strip()] += 1
+        as_of = (vals.get("as_of") or {}).get("value")
+        mark = (r["post"], v["number"], v.get("range_to"), TT.key_text(setting))
+        if mark in g["seen"]:
+            continue
+        g["seen"].add(mark)
+        g["points"].append({"at": _day(r.get("at")), "as_of": as_of, "value": v["number"], "range_to": v.get("range_to"),
+                            "shown": TT.shown_value(field, v), "setting": setting, "post": r["post"],
+                            "quote": fig.get("quote"), "dispute": False})
+    out = []
+    for _k, g in groups.items():
+        unit = g["unit"]
+        pts = g["points"]
+        if len({p["post"] for p in pts}) < min_posts or len(pts) < 2:
+            continue
+        pts.sort(key=lambda p: (p["at"] or "", p["post"]))
+        when: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
+        for p in pts:
+            when[TT.key_text(p["as_of"]) or p["at"]].append(p)
+        disputes = 0
+        for same in when.values():
+            if len({p["post"] for p in same}) > 1 and len({(p["value"], p["range_to"]) for p in same}) > 1:
+                disputes += 1
+                for p in same:
+                    p["dispute"] = True
+        name = sorted(g["names"].items(), key=lambda x: (-x[1], x[0]))[0][0]
+        out.append({"measure": name, "unit": unit.partition(":")[2] or None, "money": unit.startswith("money:"),
+                    "setting": g["setting"],
+                    "points": pts, "posts": len({p["post"] for p in pts}), "disputes": disputes})
+    out.sort(key=lambda s: (-s["posts"], -len(s["points"]), s["measure"]))
+    return out
+
+
+
 def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, Any]]:
     """The brief of an entity (its root; `names`: its members' names), or None (off, nothing found yet, 0269: fewer
     than SHOW_POSTS posts read, or no what_it_is line about the entity itself): {what, how, results, points, as_of,
@@ -304,6 +415,8 @@ def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, A
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     for t in sorted(things, key=lambda t: (-TB.sources_of(rs.get(t["id"], []), posts),
                                            -(t["last_at"] or epoch).timestamp(), t["id"])):
+        if t["kind"] == MEASURE:   # 0272: a measure is a value of the numbers over time, never a line
+            continue
         text, note = line_parts(t["kind"], t, names)
         text = text.strip()
         if not text:
@@ -339,7 +452,15 @@ def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, A
             shown_things.append(ln["thing"])
             for c in ln["cites"]:
                 c["n"] = numbers.setdefault(c["post"], len(numbers) + 1)
-    if not shown_things:
+    numbers_shown: List[Dict[str, Any]] = []
+    if numbers_on():   # 0272: each recurring measure's values over time, each value's post numbered as a cite
+        got_series = series([dict(r) for t in things if t["kind"] == MEASURE for r in rs.get(t["id"], [])
+                             if r["post"] in posts])
+        for sr in got_series[:NUMBERS_SHOWN]:
+            for pt in sr["points"]:
+                pt["n"] = numbers.setdefault(pt["post"], len(numbers) + 1)
+            numbers_shown.append(sr)
+    if not shown_things and not numbers_shown:
         return None
     got = TB.points(cur, root)
     points = []
@@ -348,7 +469,7 @@ def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, A
         if ns:
             points.append({"text": p["text"], "cites": ns})
     found = [r["found_at"] for v in rs.values() for r in v if r.get("found_at")]
-    return {**sections, "points": points,
+    return {**sections, "points": points, "numbers": numbers_shown,
             "as_of": max(found).isoformat() if found else None,
             "posts": [dict(posts[p], n=n) for p, n in sorted(numbers.items(), key=lambda x: x[1])]}
 
@@ -361,4 +482,4 @@ def stamp(cur: Any, root: str) -> List[Any]:
                              JOIN mx_calls c ON c.task_id = a.task_id AND c.valid WHERE a.track_id = %s),
                           (SELECT json_build_array(count(*), max(updated_at)) FROM mx_track_things
                             WHERE track_id = %s)""", (root, root, root))
-    return list(cur.fetchone()) + [on()]
+    return list(cur.fetchone()) + [on(), numbers_on()]
