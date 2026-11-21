@@ -5,13 +5,13 @@ import { toast } from 'sonner';
 
 import { Button, ExternalLink, Page, PageHeader, TextLink } from '../components/ui';
 import { ErrorState, LoadingState } from '../components/states';
-import { Accuracy, EntityPostLine, MentionContext, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
+import { EntityPostLine, MentionContext, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
 import { ThingLinks, Timeline, VersionLine } from '../components/markx/MarkXTimeline';   // 0165 C: its timeline
 import { EntityBrief } from '../components/markx/EntityBrief';   // 0261: what it is, how it works, its results
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
-  MarkxEntityHandles, MarkxEntityLimits, MarkxSampleAnswer } from '../services/markx';
+  MarkxEntityHandles, MarkxEntityLimits } from '../services/markx';
 import { errorMessage } from '../lib/apiError';
 import { request } from '../lib/request';
 import { researchStartHref } from '../services/research';
@@ -19,7 +19,6 @@ import { bylineText } from '../lib/byline';
 
 type PageCalls = {
   answerMarkxEntitySources: (entity: string, sourceIds: string[], answer: 'yes' | 'no') => Promise<unknown>;
-  labelMarkxSample: (story: string, answer: MarkxSampleAnswer) => Promise<unknown>;
 };
 /** 0144's calls, here (this page's chunk) and not in api.ts; a test's fake api may provide them. */
 function pageCalls(api: object): PageCalls {
@@ -27,8 +26,6 @@ function pageCalls(api: object): PageCalls {
   return {
     answerMarkxEntitySources: got.answerMarkxEntitySources ?? ((entity, sourceIds, answer) =>
       request(`/api/markx/entities/${encodeURIComponent(entity)}/sources`, { method: 'POST', body: { source_ids: sourceIds, answer } })),
-    labelMarkxSample: got.labelMarkxSample ?? ((story, answer) =>
-      request(`/api/markx/stories/${encodeURIComponent(story)}/sample`, { method: 'POST', body: { answer } })),
   };
 }
 
@@ -67,29 +64,6 @@ export function StoryBlock({ s, onAll }: { s: MarkxEntityStory; onAll?: () => vo
       {total > s.posts.length && onAll ? (
         <button type="button" className={MORE} onClick={onAll}>All {plural(total, 'post')} of this story</button>
       ) : null}
-    </section>
-  );
-}
-
-/** 0144 C: old stories to label: right, wrong, or it missed a post. */
-export function Sample({ items, onAnswer }: { items: NonNullable<EntityPageData['sample']>;
-  onAnswer: (story: string, answer: MarkxSampleAnswer) => void }) {
-  if (!items.length) return null;
-  return (
-    <section aria-label="Old stories to check">
-      <h2 className={H2}>Old stories to check · {plural(items.length, 'story')}</h2>
-      <ul className="mt-2 space-y-1 text-[0.8125rem] text-fg-2">
-        {items.map((it) => (
-          <li key={it.story} className="flex flex-wrap items-center gap-x-3">
-            <TextLink to={`/markx/stories/${encodeURIComponent(it.story)}`}>{it.first_at ? it.first_at.slice(0, 10) : 'a story'}</TextLink>
-            {(['right', 'wrong', 'missed'] as MarkxSampleAnswer[]).map((a) => (
-              <button key={a} type="button" aria-pressed={it.answer === a}
-                      className={`underline-offset-2 hover:underline ${it.answer === a ? 'font-semibold text-fg' : 'text-fg-2'}`}
-                      onClick={() => onAnswer(it.story, a)}>{a === 'missed' ? 'missed a post' : a}</button>
-            ))}
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }
@@ -329,20 +303,18 @@ export default function MarkXEntityPage() {
       <PageHeader title={e.name} meta={`${entityMeta(e)} · ${plural(d.voices, 'source')} · ${plural(d.posts, 'post')}`}>
         <div className="space-y-8">
           <p className="text-[0.8125rem] text-fg-2">
-            <TextLink to="/markx?tab=entities" muted>Mark X entities</TextLink>
-            {d.maker ? <> · by <TextLink to={entityHref(d.maker.id)}>{d.maker.name}</TextLink></> : null}
-            {d.family ? <> · family <TextLink to={entityHref(d.family.id)}>{d.family.name}</TextLink></> : null}
-            {d.published_by?.length ? <> · published by {d.published_by.map((p, n) => (
-              <span key={p.id}>{n ? ', ' : ''}<TextLink to={entityHref(p.id)}>{p.name}</TextLink></span>))}</> : null}
-            {d.aliases.length > 1 ? ` · also written ${d.aliases.filter((a) => a !== e.name).join(', ')}` : ''}
-            {' '}<SurgeMark surges={d.surges} />
-            {' · '}<TextLink to={researchStartHref(e.id)}>Research this</TextLink>
+            {d.maker ? <>by <TextLink to={entityHref(d.maker.id)}>{d.maker.name}</TextLink> · </> : null}
+            {d.family ? <>family <TextLink to={entityHref(d.family.id)}>{d.family.name}</TextLink> · </> : null}
+            {d.published_by?.length ? <>published by {d.published_by.map((p, n) => (
+              <span key={p.id}>{n ? ', ' : ''}<TextLink to={entityHref(p.id)}>{p.name}</TextLink></span>))} · </> : null}
+            {d.aliases.length > 1 ? `also written ${d.aliases.filter((a) => a !== e.name).join(', ')} · ` : ''}
+            {d.surges.length ? <><SurgeMark surges={d.surges} />{' · '}</> : null}
+            <TextLink to={researchStartHref(e.id, e.name)}>Research this</TextLink>
           </p>
           <EntityBrief brief={d.brief} />{/* 0261 */}
           <Original d={d} />
           {d.current === false && d.older?.length ? <Older older={d.older} /> : null}
           {d.rabbit_hole ? <RabbitHole hole={d.rabbit_hole} entityId={entityId} /> : null}
-          <Accuracy accuracy={d.accuracy} />
           {d.version_line ? <VersionLine line={d.version_line} /> : null}{/* 0220 */}
           {d.relations?.length ? <ThingLinks relations={d.relations} /> : null}{/* 0220 */}
           {d.relations && (d.relations_total ?? 0) > d.relations.length ? (
@@ -418,13 +390,6 @@ export default function MarkXEntityPage() {
                 Operator view: {plural(d.queue.filter((item) => !item.flag).length, 'open question')} about it
               </summary>
               <ul>{d.queue.filter((item) => !item.flag).map((item) => <QueueItem key={item.id} item={item} />)}</ul>
-            </details>
-          ) : null}
-          {d.sample?.length ? (
-            // 0222: old stories offered to check measure the story window; the operator's, collapsed (not a to-do)
-            <details>
-              <summary className="cursor-pointer text-[0.8125rem] text-fg-2">Operator view: {plural(d.sample.length, 'old story', 'old stories')} offered to check</summary>
-              <Sample items={d.sample} onAnswer={(story, a) => void act(() => calls.labelMarkxSample(story, a))} />
             </details>
           ) : null}
           {d.stories.map((s) => <StoryBlock key={s.story} s={s} onAll={all} />)}

@@ -410,8 +410,6 @@ export interface MarkxEntityHandles {
   replies_shown: boolean;
 }
 
-export type MarkxSampleAnswer = 'right' | 'wrong' | 'missed';
-
 export interface MarkxEntityRow extends MarkxEntityRef {
   voices: number;
   posts: number;
@@ -515,8 +513,6 @@ export interface MarkxEntityPage {
   by?: MarkxEntityBy;
   /** 0168 (absent from an older API). */
   handles?: MarkxEntityHandles;
-  /** 0144 C: old stories offered to label here (10 a page, 30 a day). */
-  sample?: { story: string; first_at: string | null; answer: MarkxSampleAnswer | null }[];
   sources: { id: string; name: string | null; kind: string | null; posts: number; reports: number; by?: boolean }[];
   surges: MarkxSurge[];
   accuracy: MarkxEntityAccuracy;

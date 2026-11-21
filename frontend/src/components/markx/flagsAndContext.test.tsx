@@ -87,7 +87,7 @@ describe('a post shows its mention in context (issue 0222)', () => {
     expect(document.querySelector('[data-context]')).toBeNull();
   });
 
-  it('collapses the entity page’s unflagged questions and old stories to check into the operator’s view', async () => {
+  it('collapses the entity page’s unflagged questions into the operator’s view, and offers no old stories to check', async () => {
     const PAGE: MarkxEntityPage = {
       entity: ref('e1', 'Kestrel Coder'), asked: 'e1', redirected: false, aliases: ['Kestrel Coder'], maker: null, family: null,
       versions: [], posts: 1, voices: 1, accuracy: ACCURACY, surges: [], stories: [],
@@ -103,7 +103,7 @@ describe('a post shows its mention in context (issue 0222)', () => {
     const mine = await screen.findByRole('region', { name: 'Flagged for you' });
     expect(within(mine).getAllByRole('group', { name: 'Your answer' })).toHaveLength(1);
     expect(screen.getByText(/Operator view: 1 open question about it/).closest('details')).not.toHaveAttribute('open');
-    expect(screen.getByText(/Operator view: 1 old story offered to check/).closest('details')).not.toHaveAttribute('open');
+    expect(screen.queryByText(/old story offered to check/)).not.toBeInTheDocument();
     const about = screen.getByRole('region', { name: 'About Kestrel Coder' });
     expect(within(about).getByText('Kestrel Coder').tagName).toBe('MARK');
   });

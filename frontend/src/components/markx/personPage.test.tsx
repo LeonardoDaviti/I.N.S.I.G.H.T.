@@ -12,7 +12,7 @@ const makeFakeApi = (methods: Record<string, unknown>) => makeApi(methods as Par
 const now = new Date().toISOString();
 
 // Issue 0144: a person's own posts ("By"), every story with all its posts and the original first, a Mark IX story
-// marked, loose posts by role with mentions collapsed, the old stories to label; the story window on the Worker tab.
+// marked, loose posts by role with mentions collapsed; the story window on the Worker tab.
 const page: MarkxEntityPage = {
   entity: { id: 'e1', name: 'Ivo Kestrel', type: 'person', maker: null, level: 'thing', version: null, variant: null,
     size: null, build: null, status: 'provisional', family: null },
@@ -34,13 +34,11 @@ const page: MarkxEntityPage = {
   ],
   loose_counts: { report: 1, by: 4, other: 0, mention: 1 },
   by: { sources: [{ id: 'src1', name: 'Notes', kind: 'site', via: 'owner' }], proposed: [{ id: 'src2', name: 'ikestrel', kind: 'x' }], posts: 5 },
-  sample: [{ story: 's9', first_at: '2026-05-19T10:00:00Z', answer: null }],
   sources: [{ id: 'src1', name: 'Notes', kind: 'site', posts: 5, reports: 0, by: true }],
 };
 
 function open(api: Record<string, unknown> = {}) {
-  const calls = { getMarkxEntity: vi.fn().mockResolvedValue(page), answerMarkxEntitySources: vi.fn().mockResolvedValue({}),
-    labelMarkxSample: vi.fn().mockResolvedValue({}), ...api };
+  const calls = { getMarkxEntity: vi.fn().mockResolvedValue(page), answerMarkxEntitySources: vi.fn().mockResolvedValue({}), ...api };
   renderWithProviders(<Routes><Route path="/markx/entities/:entityId" element={<MarkXEntityPage />} /></Routes>,
     { api: makeFakeApi(calls), route: '/markx/entities/e1' });
   return calls;
@@ -75,11 +73,18 @@ describe('the person page (issue 0144)', () => {
     expect(within(about).getByText('Name dropped in passing')).toBeInTheDocument();
   });
 
-  it('offers old stories to label', async () => {
-    const calls = open();
-    const sample = await screen.findByRole('region', { name: 'Old stories to check' });
-    fireEvent.click(within(sample).getByRole('button', { name: 'missed a post' }));
-    await waitFor(() => expect(calls.labelMarkxSample).toHaveBeenCalledWith('s9', 'missed'));
+  it('shows the reader no section label, no accuracy line and no old stories to label; Research carries the name', async () => {
+    // v10.35: the owner never labels by default (Claude reviews), so the page offers no old stories to check even
+    // when the API still sends them; the "Mark X entities" kicker and the accuracy paragraph are gone.
+    open({ getMarkxEntity: vi.fn().mockResolvedValue({ ...page, sample: [{ story: 's9', first_at: now, answer: null }] }) });
+    await screen.findByRole('region', { name: 'A weekend tool' });
+    expect(screen.queryByText('Mark X entities')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Experimental:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Claude reviews the decisions first/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Old stories to check' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/old stor(y|ies) offered to check/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'missed a post' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Research this' })).toHaveAttribute('href', '/research?seed=e1&name=Ivo%20Kestrel');
   });
 });
 

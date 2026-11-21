@@ -80,12 +80,21 @@ export const researchApi = {
 };
 
 export const researchHref = (id: string) => `/research/${encodeURIComponent(id)}`;
-export const researchStartHref = (seed: string) => `/research?seed=${encodeURIComponent(seed)}`;
+/** Start research from a seed; an entity's id goes with its name, so the start page shows the name, never the id. */
+export const researchStartHref = (seed: string, name?: string) =>
+  `/research?seed=${encodeURIComponent(seed)}${name ? `&name=${encodeURIComponent(name)}` : ''}`;
 
 const SEED_WORDS: Record<SeedKind, string> = {
   post: 'a pasted post', link: 'a link', entity: 'an entity', name: 'a name', question: 'a question',
 };
 export const seedWords = (k: SeedKind) => SEED_WORDS[k] ?? k;
+
+/** A seed as the reader reads it: an entity's name when known, else its kind ("an entity"), never its bare id;
+ *  any other seed as typed, cut at `max`. */
+export function seedText(kind: SeedKind, seed: string, max: number, name?: string | null): string {
+  if (kind === 'entity') return name || seedWords(kind);
+  return seed.length > max ? `${seed.slice(0, max - 3)}…` : seed;
+}
 
 /** The run's state in words. */
 export function statusLine(page: ResearchPage): string {
