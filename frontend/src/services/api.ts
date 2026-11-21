@@ -1754,6 +1754,14 @@ export interface MarkxBuilt {
   came_true: MarkxBuiltLink[];
   /** On a release story: the leak stories before it. */
   leaked_before: (MarkxBuiltLink & { posts: string[] })[];
+  /** 0273: where the story's sources differ on one fact (empty when they agree, or the switch is off). */
+  disputes?: MarkxDispute[];
+}
+/** 0273: one fact the story's sources state differently; each side a value, its sources and their quotes. */
+export interface MarkxDispute {
+  fact: string;
+  kind: 'number' | 'date' | 'status' | 'cause' | 'attribution' | 'other';
+  sides: { says: string; claimed: boolean; by: { post: string; source: string | null; quote: string; claim: boolean }[] }[];
 }
 export type MarkxBuiltLine =
   | { role: 'original'; how: MarkxOriginalHow }

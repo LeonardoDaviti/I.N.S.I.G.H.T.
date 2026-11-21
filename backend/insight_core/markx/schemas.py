@@ -338,6 +338,19 @@ SHEET_SCHEMA = {
                        "correction": _BOOL_OR_NULL}}}},
 }
 
+# 0273: where a story's sources differ (dispute-v1). Loose as the sheet's: a side whose lines or quote the code cannot
+# check is dropped by perspectives.disputes_of, never a reason to ask again.
+DISPUTE_SCHEMA = {
+    "type": "object",
+    "required": ["disputes"],
+    "properties": {"disputes": {"type": "array", "items": {
+        "type": "object", "required": ["fact", "sides"],
+        "properties": {"fact": _STR, "kind": _STR_OR_NULL, "sides": {"type": "array", "items": {
+            "type": "object", "required": ["lines", "says"],
+            "properties": {"lines": {"type": "array", "items": {"type": "integer"}}, "says": _STR,
+                           "quote": _STR_OR_NULL}}}}}}},
+}
+
 # 0131 (Stalker's first edges): how a newer post relates to an older one (relate-v1, the lab's frozen G2 judge v3).
 RELATE_RELATIONS = ["same_event", "follows_up", "next_version", "builds_on", "refers_back", "background", "unrelated"]
 RELATE_SCHEMA = {
@@ -698,6 +711,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)
     Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # 0119 B3: what each member of a story adds
     Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged
+    Kind("dispute", "dispute-v1", "story", DISPUTE_SCHEMA),          # 0273: where the story's sources differ
     Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # 0127: event type and origin (the fold)
     Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # 0131: a newer post and an older one (Stalker)
     Kind("chain", "chain-v1", "story_story", CHAIN_SCHEMA),          # 0219: a later story and an earlier one, one thing

@@ -271,6 +271,7 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     firsts = {s: min(ps, key=lambda p: (p.at, p.id)).id for s, ps in world.items() if ps}
     titles = _titles(cur, sorted({x[k] for x in links for k in ("leak", "release")}), firsts)
     sts = stories_of(cur, ids, book=book)
+    differ = disputes(cur, ids)
     out: Dict[str, Dict[str, Any]] = {}
     for sid in ids:
         ps = world.get(sid)
@@ -294,8 +295,21 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
                                "joins": x["joins"], "via": x["via"],
                                "posts": [p.id for p in sorted(world[x["leak"]], key=lambda p: (p.at, p.id))]}
                               for x in links if x["release"] == sid],
+            "disputes": differ.get(sid, []),
         }
     return out
+
+
+def disputes(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """0273: where each story's sources differ, as its current sheet keeps it (perspectives.disputes_of); none while
+    the switch is off."""
+    from insight_core.markx import perspectives
+    if not story_ids or not perspectives.disputes_on(cur):
+        return {}
+    cur.execute("""SELECT story_id::text, sheet->'disputes' FROM mx_sheets
+                    WHERE valid_to IS NULL AND story_id = ANY(%s::uuid[]) AND jsonb_typeof(sheet->'disputes') = 'array'""",
+                (list(story_ids),))
+    return {sid: got for sid, got in cur.fetchall() if got}
 
 
 def line_roles(b: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:

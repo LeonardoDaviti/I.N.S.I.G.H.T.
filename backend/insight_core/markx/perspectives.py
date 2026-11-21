@@ -680,6 +680,104 @@ def build_sheet(st: Story, fin: Dict[str, Dict[str, Any]], answer: Optional[Dict
     }
 
 
+# ---- where sources differ (0273) ------------------------------------------------------------------------
+# One `dispute` question a story (dispute-v1), asked with its sheet when the story has lines from two or more sources:
+# the ORIGINAL (line 0, its text) and every member's facts and claims with their spans. The answer's differences are
+# kept only when the code can check them: two or more sides, each a value stated by its own lines, no source on two
+# sides, every side quoting its post (a line's span; line 0 a quote found in the ORIGINAL's text). A side whose lines
+# are all claims is shown as claimed.
+
+DISPUTES = "stories.disputes"      # the switch (mx_settings): asked and shown only when "on"
+DISPUTES_DEFAULT = "off"           # 0273: measured blind 29 of 44 (66%), under the bar: off
+DISPUTES_PER_DAY = 300             # new dispute questions a day at most (a story is asked again only when its members'
+                                   # lines change: its input changes)
+DISPUTE_KINDS = ("number", "date", "status", "cause", "attribution", "other")
+
+
+def disputes_on(cur: Any) -> bool:
+    from insight_core.markx import repo
+    return repo.get_setting(cur, DISPUTES, default=DISPUTES_DEFAULT) == "on"
+
+
+def dispute_lines(st: Story, fin: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Every fact and claim (with its span) of the story's members, a member of another story left out; from 1."""
+    lines: List[Dict[str, Any]] = []
+    for i in st.ids:
+        a = fin.get(st.mid(i)) or {}
+        if a.get("label") == "not_this_story":
+            continue
+        for kind, key, items in (("FACT", "fact", a.get("facts")), ("CLAIM", "claim", a.get("claims"))):
+            for f in items or []:
+                if f.get(key) and f.get("span"):
+                    lines.append({"n": len(lines) + 1, "kind": kind, "text": f[key], "post": i,
+                                  "src": st.by[i].src_name, "quote": f["span"]})
+    return lines
+
+
+def dispute_original(st: Story) -> Dict[str, Any]:
+    R = st.by[st.ref]
+    return {"post": st.ref, "src": R.src_name, "title": squash(R.title)[:200], "text": squash(R.text)[:1500]}
+
+
+def dispute_input(subject: str, original: Dict[str, Any], lines: Sequence[Dict[str, Any]]) -> Optional[str]:
+    """The dispute question's input; None with no lines, or when every line and the ORIGINAL are one source's."""
+    if not lines or len({l["src"] for l in lines} | {original["src"]}) < 2:
+        return None
+    out = [f"SUBJECT: {subject}", f"ORIGINAL (line 0) [{original['src']}]: {original['title']}",
+           "Text: " + original["text"], "", "LINES:"]
+    out += [f"{l['n']}. {l['kind']} [{l['src']}] {l['text']} | QUOTE: {squash(l['quote'])[:300]}" for l in lines]
+    return "\n".join(out)
+
+
+def disputes_of(answer: Optional[Dict[str, Any]], original: Dict[str, Any],
+                lines: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The answer's differences the code can check (see above), each side with its sources, posts and quotes."""
+    by_n = {l["n"]: l for l in lines}
+    otext = fold(original["title"] + " " + original["text"])
+    out = []
+    for d in (answer or {}).get("disputes") or []:
+        if not isinstance(d, dict) or not isinstance(d.get("fact"), str) or not d["fact"].strip():
+            continue
+        sides: List[Dict[str, Any]] = []
+        used: Set[str] = set()
+        ok = True
+        for s in d.get("sides") or []:
+            ns = [n for n in (s.get("lines") or []) if isinstance(n, int) and not isinstance(n, bool)] \
+                if isinstance(s, dict) else []
+            if not ns or not isinstance(s.get("says"), str) or not s["says"].strip() \
+                    or any(n != 0 and n not in by_n for n in ns):
+                ok = False
+                break
+            said: List[Dict[str, Any]] = []
+            for n in dict.fromkeys(ns):
+                if n == 0:
+                    q = s.get("quote")
+                    if isinstance(q, str) and len(fold(q)) >= 12 and fold(q) in otext:
+                        said.append({"post": original["post"], "source": original["src"], "quote": squash(q)[:300],
+                                     "claim": False})
+                    continue
+                l = by_n[n]
+                said.append({"post": l["post"], "source": l["src"], "quote": squash(l["quote"])[:300],
+                             "claim": l["kind"] == "CLAIM"})
+            srcs = {x["source"] for x in said}
+            if not said or srcs & used:        # a side with no checked quote; a source on two sides
+                ok = False
+                break
+            used |= srcs
+            one_each = list({x["source"]: x for x in reversed(said)}.values())[::-1]   # a source's first quote
+            sides.append({"says": squash(s["says"])[:120], "claimed": all(x["claim"] for x in one_each),
+                          "by": one_each})
+        if ok and len(sides) >= 2:
+            out.append({"fact": squash(d["fact"])[:160],
+                        "kind": d.get("kind") if d.get("kind") in DISPUTE_KINDS else "other", "sides": sides})
+    return out
+
+
+def disputes_asked_today(cur: Any, now: datetime) -> int:
+    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'dispute' AND created_at > %s", (now - timedelta(days=1),))
+    return int(cur.fetchone()[0])
+
+
 # ---- the stage ---------------------------------------------------------------------------------------------
 
 def member_hash(members: Iterable[str]) -> str:
@@ -729,9 +827,13 @@ def mentions_of(cur: Any, posts: Sequence[str]) -> Dict[str, List[Dict[str, Any]
     return dict(out)
 
 
-def _status(cur: Any, kind: str, text: str) -> Optional[str]:
+def repo_task(cur: Any, kind: str, text: str) -> Optional[Dict[str, Any]]:
     from insight_core.markx import repo, schemas
-    t = repo.task_for(cur, kind=kind, guide=schemas.KINDS[kind].guide, input=text)
+    return repo.task_for(cur, kind=kind, guide=schemas.KINDS[kind].guide, input=text)
+
+
+def _status(cur: Any, kind: str, text: str) -> Optional[str]:
+    t = repo_task(cur, kind, text)
     return None if t is None else t["status"]
 
 
@@ -879,8 +981,27 @@ def one(cur: Any, story_id: str, st: Story, ask: Any, *, run_id: Any, mhash: str
                 return {"state": "sheet waiting", **stored}
         else:
             answer, call = got
+    disputes = None                                   # 0273: not asked (switched off, or no two sources' lines)
+    dlines, orig = dispute_lines(st, fin), dispute_original(st)
+    dtext = dispute_input(st.subject(), orig, dlines) if disputes_on(cur) else None
+    if dtext is not None:
+        fresh = repo_task(cur, "dispute", dtext) is None
+        if fresh and disputes_asked_today(cur, now) >= DISPUTES_PER_DAY:
+            stored = store(cur, story_id, run_id, mhash, rows, now)
+            return {"state": "disputes waiting", **stored}      # the day's bound: asked on a later run
+        got = ask.answer("dispute", dtext, a=story_id)
+        if got is None:
+            if _status(cur, "dispute", dtext) != "failed":
+                stored = store(cur, story_id, run_id, mhash, rows, now)
+                return {"state": "disputes waiting", **stored}
+            disputes = []
+        else:
+            disputes = disputes_of(got[0], orig, dlines)
     stored = store(cur, story_id, run_id, mhash, rows, now)
-    opened = store_sheet(cur, story_id, run_id, mhash, build_sheet(st, fin, answer), call, now)
+    sheet = build_sheet(st, fin, answer)
+    if disputes is not None:
+        sheet["disputes"] = disputes
+    opened = store_sheet(cur, story_id, run_id, mhash, sheet, call, now)
     return {"state": "done", "sheet_opened": opened, "given_up": len(j.given_up), **stored}
 
 

@@ -14,7 +14,7 @@ import { newsPart } from '../../lib/news';
 import { errorMessage } from '../../lib/apiError';
 import { ANSWER_WORDS, ixWords, judged, TAG_WORDS, whyWords } from '../../lib/markx';
 import { FoldedPosts, FoldHeader } from './MarkXFolds';   // 0127: duplicates folded
-import { CameTrue, eventWords, LineRole } from './MarkXBuilt';   // 0128: how the story is built
+import { CameTrue, eventWords, LineRole, SourcesDiffer } from './MarkXBuilt';   // 0128: how the story is built
 import type { BuiltLine, BuiltRow } from './MarkXBuilt';
 import { RowChain } from './MarkXChain';   // 0267: a row's Earlier and Later
 import { bylineText } from '../../lib/byline';
@@ -180,6 +180,7 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
             <FoldedPosts lines={row.posts} render={(line, extra) => <PostLine key={line.id} line={line} now={now} extra={extra} />} />
           </ul>
           <CameTrue built={built} />
+          <SourcesDiffer built={built} />
           {row.removed.length ? (
             <>
               <p className="mt-3 text-[0.75rem] font-medium text-fg-3">In Mark IX’s row, not in this one</p>
