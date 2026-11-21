@@ -388,3 +388,81 @@ def with_senses(cur: Cursor, cards: List[Dict[str, Any]]) -> List[Dict[str, Any]
                 folded |= {s["id"] for s in f.senses}
         out.append(c)
     return out
+
+
+# ---- search by meaning (issue 0247) ----------------------------------------------------------------------------
+#
+# The query's BGE-M3 vector, from the embedder the worker uses (a llama-server --embedding --pooling cls), reached at
+# INSIGHT_EMBEDDER_URL by the API itself: the server never embeds posts (embed.py), but a query has no task to wait
+# for. No URL, the embedder down or slow (MEANING_TIMEOUT), or the switch off (entity_bands.json `search.meaning`):
+# no vector, and search is the word search alone, as before. The vector is never kept; the nearest posts are read
+# from mx_embeddings by an exact scan in Postgres (the posts' HNSW index was dropped in 0149), so the API holds no
+# vectors: one 1,024-number list a search.
+
+MEANING_SWITCH = ("search", "meaning")
+MEANING_TIMEOUT = 2.0      # seconds the API waits for the query's vector
+MEANING_K = 30             # the nearest posts merged with the word ranking
+MEANING_MIN = 0.55         # a post less near than this cosine is no meaning match (measured, 0247)
+MEANING_MIN_CHARS = 200    # a post this short is found by its words only (its vector is near everything)
+RRF_K = 60                 # reciprocal rank fusion's constant (Cormack et al. 2009)
+
+
+def embedder_url() -> str:
+    return os.getenv("INSIGHT_EMBEDDER_URL", "").strip().rstrip("/")
+
+
+def meaning_on() -> bool:
+    """entity_bands.json `search.meaning` (0247) and an embedder configured (INSIGHT_EMBEDDER_URL)."""
+    from insight_core.markx import identity
+    return bool((identity.bands().get(MEANING_SWITCH[0]) or {}).get(MEANING_SWITCH[1], False)) and bool(embedder_url())
+
+
+def query_vector(q: str, *, url: Optional[str] = None, timeout: float = MEANING_TIMEOUT) -> Optional[List[float]]:
+    """The query's vector scaled to length 1, or None (no embedder, down, slow, or an answer without a vector)."""
+    import json
+    import math
+    import urllib.request
+    url = url if url is not None else embedder_url()
+    text = " ".join((q or "").split())
+    if not url or not text:
+        return None
+    req = urllib.request.Request(f"{url}/embedding", data=json.dumps({"content": [text]}).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            body = json.loads(res.read())
+    except Exception:  # noqa: BLE001 - the embedder down or slow: the word search alone
+        return None
+    e = body[0] if isinstance(body, list) and body else body
+    v = e.get("embedding") if isinstance(e, dict) else None
+    if isinstance(v, list) and len(v) == 1 and isinstance(v[0], list):
+        v = v[0]
+    if not isinstance(v, list) or len(v) != 1024 or not all(isinstance(x, (int, float)) for x in v):
+        return None
+    norm = math.sqrt(sum(x * x for x in v))
+    return [x / norm for x in v] if norm > 0 else None
+
+
+def nearest_posts(cur: Cursor, vector: List[float], *, limit: int = MEANING_K,
+                  floor: float = MEANING_MIN) -> List[str]:
+    """The posts whose current vector (embed.MODEL) is nearest the query's, nearest first, at cosine `floor` or more."""
+    from insight_core.markx import embed, repo
+    # A short text's vector is near every query (measured on the 11-19 copy: placeholder and one-line posts at
+    # 0.56-0.57 for "Boeing artificial intelligence aviation pilots"): a post of fewer than MEANING_MIN_CHARS is found
+    # by its words only.
+    cur.execute("""SELECT n.post_id::text FROM (
+                       SELECT e.post_id, e.v <=> %s::halfvec AS d FROM mx_embeddings e
+                         JOIN posts p ON p.id = e.post_id
+                        WHERE e.model = %s AND length(coalesce(p.content, '')) >= %s
+                        ORDER BY d LIMIT %s) n
+                   WHERE 1 - n.d >= %s ORDER BY n.d""",
+                (repo.vector_text(vector), embed.MODEL, MEANING_MIN_CHARS, limit, floor), prepare=False)
+    return [r[0] for r in cur.fetchall()]
+
+
+def meaning_posts(cur: Cursor, q: str) -> List[str]:
+    """The nearest posts to the query by meaning while the switch is on and the embedder answers, else []."""
+    if not meaning_on():
+        return []
+    vector = query_vector(q)
+    return nearest_posts(cur, vector) if vector else []

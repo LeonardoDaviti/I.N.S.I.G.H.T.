@@ -112,5 +112,6 @@
     {"opinion": "second", "guard": "version", "band": "any", "auto": false, "right": 5, "n": 5, "why": "held by 0130 A3: the family has several versions"},
     {"opinion": "second", "guard": "paren", "band": "any", "auto": false, "right": 0, "n": 0, "why": "not measured"},
     {"opinion": "second", "guard": "chain", "band": "any", "auto": false, "right": 11, "n": 11, "why": "the chain guard runs after; a chain is never automatic"}
-  ]
+  ],
+  "search": {"meaning_doc": "0247 (Stealth v10.32, markx/search.meaning_posts): in best order the 30 posts nearest the query's BGE-M3 vector (cosine >= 0.55, 200+ characters of text) join the word matches, merged by reciprocal rank (k 60); a post only meaning found is marked 'By meaning'. Needs INSIGHT_EMBEDDER_URL (the worker's llama-server, reachable from the API, 2 s timeout); without it, or the embedder down, search is the word search alone. Measured 2026-11-21 on the 11-19 server copy, 32 frozen known-item queries rephrased by meaning (plan/issues/0247): recall@10 8/32 -> 28/32, first-10 precision (Claude, on topic) 79/218 = 36% -> 160/270 = 59%. Better on both; the issue's 97% precision bar is met by neither.", "meaning": true}
 }

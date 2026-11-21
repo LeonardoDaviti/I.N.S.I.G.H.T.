@@ -338,6 +338,13 @@ class SearchRepository:
                 cur.execute(f"""SELECT DISTINCT o.post_id::text FROM {table} sp JOIN {table} o ON o.{gkey} = sp.{gkey}
                                 WHERE sp.post_id = ANY(%s::uuid[])""", (first_ids,))
                 first_ids = sorted(set(first_ids) | {r[0] for r in cur.fetchall()})
+        # Issue 0247: in best order the nearest posts by meaning (the query's vector, markx/search.meaning_posts; []
+        # with the switch off or no embedder) join the matches, and the word ranking and theirs merge by reciprocal
+        # rank (RRF_K); a post only meaning found is marked so (`matched: "meaning"`).
+        meaning_ids: List[str] = []
+        if markx and query.order == "best":
+            from insight_core.markx import search as mx_search
+            meaning_ids = mx_search.meaning_posts(cur, query.q)
         if query.order == "best":
             # Ranked among the newest RANKED_MATCHES matches: ranking reads every vector it ranks.
             split = _words(query.q) >= 2
@@ -386,8 +393,8 @@ class SearchRepository:
             mx_line, line_params = "NULL::text", []
         # The matches newest first (the feed's order index, or the GIN index for a rare word),
         # then the page, then the line for its rows only: ts_headline re-reads each text.
-        def branch(match: str) -> str:   # the matches of one layer, newest first, limited
-            return f"""(SELECT p.id, {key} AS sort_at
+        def branch(match: str, word: bool = True) -> str:   # the matches of one layer, newest first, limited
+            return f"""(SELECT p.id, {key} AS sort_at, {'TRUE' if word else 'FALSE'} AS word
                 FROM posts p
                 JOIN sources s ON s.id = p.source_id
                 LEFT JOIN post_reader_state rs ON rs.post_id = p.id
@@ -404,23 +411,34 @@ class SearchRepository:
                 layer_params += [*[query.q] * 7, *params, matches]
         else:
             layers, layer_params = own, [query.q, *params, matches]
+        if meaning_ids:   # 0247: the nearest posts, under the same scope, filter, dates and story rule
+            layers += f" UNION {branch('p.id = ANY(%s::uuid[])', word=False)}"
+            layer_params += [meaning_ids, *params, matches]
+        from insight_core.markx.search import RRF_K
         cur.execute(
             f"""
             WITH matches AS (
-                SELECT u.id, u.sort_at, p.search_vector, p.title
+                SELECT u.id, max(u.sort_at) AS sort_at, bool_or(u.word) AS word, p.search_vector, p.title
                 FROM ({layers}) u
                 JOIN posts p ON p.id = u.id
-                ORDER BY u.sort_at DESC, u.id DESC
+                GROUP BY u.id, p.search_vector, p.title
+                ORDER BY bool_or(u.word), max(u.sort_at) DESC, u.id DESC
                 LIMIT %s
+            ), ranked AS (
+                SELECT m.id, m.sort_at, m.word, CASE WHEN m.word THEN {rank} ELSE 0 END AS rank,
+                       m.id = ANY(%s::uuid[]) AS first, {titled} AS titled, {exact} AS exact FROM matches m
             ), hits AS (
-                SELECT m.id, m.sort_at, {rank} AS rank, m.id = ANY(%s::uuid[]) AS first, {titled} AS titled,
-                       {exact} AS exact FROM matches m
-                ORDER BY exact DESC, first DESC, titled DESC, rank DESC, sort_at DESC, id DESC
+                SELECT r.*, CASE WHEN r.word THEN 1.0 / ({RRF_K} + row_number() OVER (
+                                     ORDER BY r.word DESC, r.rank DESC, r.sort_at DESC, r.id DESC)) ELSE 0 END
+                            + COALESCE(1.0 / ({RRF_K} + array_position(%s::uuid[], r.id)), 0) AS fused
+                FROM ranked r
+                ORDER BY exact DESC, first DESC, titled DESC, fused DESC, rank DESC, sort_at DESC, id DESC
                 {page}
                 LIMIT %s
             )
             SELECT {_ITEM_COLUMNS},
                    hits.sort_at,
+                   hits.word,
                    {mx_line},
                    ts_headline('russian', translate(left(p.content, {HEADLINE_CHARS}), %s, ''), {MARK_TSQUERY}, %s)
             FROM hits
@@ -428,9 +446,10 @@ class SearchRepository:
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             LEFT JOIN post_parts pp ON pp.post_id = p.id
-            ORDER BY hits.exact DESC, hits.first DESC, hits.titled DESC, hits.rank DESC, hits.sort_at DESC, hits.id DESC
+            ORDER BY hits.exact DESC, hits.first DESC, hits.titled DESC, hits.fused DESC, hits.rank DESC, hits.sort_at DESC,
+                     hits.id DESC
             """,
-            [*layer_params, matches, *rank_params, first_ids, *titled_params, *exact_params, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
+            [*layer_params, matches, *rank_params, first_ids, *titled_params, *exact_params, meaning_ids, *page_params, limit + 1, *line_params, MARK_START + MARK_END,
              query.q, query.q, query.q, HEADLINE_OPTIONS],
             # Never a prepared statement: a generic plan cannot see the words, and walks the
             # feed's order index for a rare word (40 ms became 300 ms on 50k posts).
@@ -439,8 +458,8 @@ class SearchRepository:
         rows = cur.fetchall()
         items = []
         for row in rows[:limit]:
-            item = _item(row[:-3])
-            sort_at, markx_line, own_line = row[-3:]
+            item = _item(row[:-4])
+            sort_at, word, markx_line, own_line = row[-4:]
             if history:   # its key is the last open, as History lists it (issue 0052)
                 item["sort_at"] = item["opened_at"] = sort_at
             if markx_line is not None:   # only Mark X's English layer matched: its headline, marked "Mark X"
@@ -448,6 +467,10 @@ class SearchRepository:
                 item["snippet_from"] = "markx"
             else:
                 item["snippet"] = snippet_parts(own_line)
+            if not word:   # 0247: no word of the query found it, its meaning did: its first line, marked "by meaning"
+                item["snippet"] = snippet_parts(own_line, plain=True)
+                item["snippet_from"] = "meaning"
+                item["matched"] = "meaning"
             items.append(item)
         if group == "story":
             self.reader.attach_stories(cur, items)
