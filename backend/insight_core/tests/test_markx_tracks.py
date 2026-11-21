@@ -530,6 +530,56 @@ class KeptPlaces(_Tracks):
         self.keep()
         self.assertEqual(self.keep(), 0, "nothing changed since")
 
+    def test_the_workers_changes_read_the_kept_placement_the_owners_live(self):
+        """Issue 0264: a blind check's answers (the worker's) leave the kept placement read, never placed live, until
+        the refresh places the track again once REFRESH_GAP old; the owner's label is read live at once."""
+        from unittest import mock
+        from insight_core.markx import track_counts, track_kept
+        sure, other = (self.post(title=t, source=self.other) for t in ("sure", "other"))
+        for p in (sure, other):
+            self.vector(p, unit((0, 1), (3, 0.2)))
+        self.plan()
+        for p in (sure, other):
+            self.judge(p, verdict(conf=0.8))
+        self.plan()                                         # the blind checks asked
+        self.cur.execute("SELECT check_task_id FROM mx_track_items WHERE post_id = %s", (sure,))
+        check = self.cur.fetchone()[0]
+        self.assertIsNotNone(check)
+        self.assertEqual(self.keep(), 1)
+        for conf in (0.9, 0.88):                            # two runs in: `sure` joins (placed live)
+            status, body = self.answer((check, verdict(conf=conf)))
+            self.assertEqual((status, body["valid"]), (200, 1), body)
+        self.cur.execute("SELECT count(*) > 0, bool_or(owner) FROM mx_track_changes WHERE track_id = %s", (self.folder,))
+        self.assertEqual(self.cur.fetchone(), (True, False), "the worker's changes logged as the worker's")
+        live = {it["post_id"]: it["place"] for it in tracks.placed(self.cur, tracks.get(self.cur, self.folder))["items"]}
+        self.assertEqual(live[sure], "joined")
+        self.assertTrue(self.kept(), "read kept")
+        with mock.patch.object(tracks, "placed", wraps=tracks.placed) as placed:
+            counts = track_counts.topic_counts(self.cur)[self.folder]
+            body = self.page()
+            tracks.suggestions(self.cur, now=NOW + DAY)
+        self.assertEqual(placed.call_count, 0, "no live placement while only the worker changed the track")
+        self.assertEqual(counts["discover"], 2, "the last kept placement: `sure` still in Discover")
+        self.assertEqual({it["post_id"] for it in body["discover"]}, {sure, other})
+        self.assertEqual(self.keep(), 0, "placed less than REFRESH_GAP ago: not yet")
+        self.assertTrue(track_kept.due(self.cur, gap=0) and not track_kept.due(self.cur))
+        self.cur.execute("UPDATE mx_track_places_state SET placed_at = now() - interval '6 minutes' WHERE track_id = %s",
+                         (self.folder,))
+        self.assertTrue(track_kept.due(self.cur))
+        self.assertEqual(self.keep(), 1, "REFRESH_GAP old: placed again")
+        self.cur.execute("SELECT count(*) FROM mx_track_changes WHERE track_id = %s", (self.folder,))
+        self.assertEqual(self.cur.fetchone()[0], 0, "its change rows taken")
+        self.assertEqual(track_counts.topic_counts(self.cur)[self.folder]["discover"], 1, "`sure` joined")
+        self.label(other, "out")                            # the owner's ✗: read live at once
+        self.assertFalse(self.kept())
+        with mock.patch.object(tracks, "placed", wraps=tracks.placed) as placed:
+            self.assertEqual(track_counts.topic_counts(self.cur)[self.folder]["discover"], 0)
+        self.assertGreater(placed.call_count, 0, "placed live")
+        self.assertTrue(track_kept.due(self.cur), "the owner's change is due at once")
+        self.assertEqual(self.keep(), 1, "placed again whatever REFRESH_GAP says")
+        self.assertTrue(self.kept())
+        self.assertEqual(track_counts.topic_counts(self.cur)[self.folder]["discover"], 0)
+
 
 class SwitchedOff(_Tracks):
     """Issue 0200 (v10.17.1): a passive source the owner switched off feeds no suggestion of a track: its posts are

@@ -1190,8 +1190,12 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
     strict = [f, topic, *cur.fetchone()]
     cur.execute("""SELECT (SELECT json_agg(json_build_array(track_id, placed_at) ORDER BY track_id)
                              FROM mx_track_places_state WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
-                          (SELECT json_build_array(count(*), max(id)) FROM mx_track_changes
-                            WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
+                          -- 0264: a kept track's page reads its kept placement: the worker's changes move it once
+                          -- placed again (placed_at above); a track never kept is placed live: all its changes do
+                          (SELECT json_build_array(count(*), max(c.id)) FROM mx_track_changes c
+                            WHERE (%(f)s::uuid IS NULL OR c.track_id = %(f)s::uuid)
+                              AND (c.owner OR NOT EXISTS (SELECT 1 FROM mx_track_places_state s
+                                                           WHERE s.track_id = c.track_id))),
                           -- 0207: the clustering's members and the sub-topics' names and digests (the jobs process's
                           -- and the worker's: the page may lag them within KEPT_LAG)
                           (SELECT json_build_array(count(*), max(since), sum(hashtext(post_id::text || subtopic_id::text)))
