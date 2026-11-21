@@ -6,8 +6,12 @@
     name; `named_since` when an older post only names it);
   - `earlier_name` / `renamed`: each earlier name (a rename merge, markx/rename.py) at its last post, and the first post
     under the name it has now;
-  - `release`: a post about it (role subject or actor) by its maker (a source that is the maker, or a site whose name
-    is the maker's) or at one of its own addresses; a family's versions at their first post about them;
+  - `release`: a post about it (role subject or actor) whose reading says it is a release, by its maker (a source
+    that is the maker, a site whose name is the maker's, one of its own addresses itself, or a saved copy of the
+    maker's post), and its stored original; with none, its first release report (`releases`, v10.35); a family's
+    versions at their release by the same rule, never any post naming them. The birth and the first outside mention
+    are about it by their reading (0234) and never a background page (story_rules.background); the first outside
+    mention never before the birth, never a saved copy of the maker's post;
   - `first_outside` / `outside`: the posts by anyone else, the first one about it (or linking back) marked, the rest
     grouped by month (the month's first post about it; a month whose posts only name it is `named_only`, never among the
     top; how many posts and sources); a post linking back to one of its posts (0131's post edges) counts as an outside
@@ -68,14 +72,6 @@ def _site(url: Optional[str]) -> Optional[str]:
     return label
 
 
-def _host(url: Optional[str]) -> Optional[str]:
-    try:
-        h = (urlsplit(url or "").hostname or "").lower()
-    except ValueError:
-        return None
-    return h.removeprefix("www.") or None
-
-
 def maker_of(book: I.Book, root: str) -> Optional[str]:
     """The maker cluster of a thing: its names' stated maker's cluster, else its org or person parent's."""
     for m in [root] + sorted(book.cluster(root)):
@@ -121,8 +117,8 @@ class Lines:
         self.rows: Dict[str, Dict[str, Any]] = {}
 
     def add(self, pid: str, at: datetime, role: Optional[str], src: Optional[str], url: Optional[str],
-            eid: Optional[str]) -> None:
-        r = self.rows.setdefault(pid, {"at": at, "roles": set(), "source": src, "url": url, "as": set()})
+            eid: Optional[str], kind: Optional[str] = None) -> None:
+        r = self.rows.setdefault(pid, {"at": at, "roles": set(), "source": src, "url": url, "as": set(), "kind": kind})
         r["roles"].add(role or "mention")
         if eid:
             r["as"].add(eid)
@@ -136,7 +132,8 @@ def lines_of(cur: Any, book: I.Book, members: Iterable[str]) -> Lines:
         return out
     # 0232: the linked mentions by the entity index, the pinned ones apart (one OR read all of mx_mentions: 0.75 s)
     sql = f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.role,
-                     {pairing.post_date('p')}, p.source_id::text, p.url
+                     {pairing.post_date('p')}, p.source_id::text, p.url,
+                     (SELECT s.platform FROM sources s WHERE s.id = p.source_id)
                 FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
                WHERE m.guide = ANY(%s)"""
     guides = schemas.mention_guides()
@@ -146,10 +143,10 @@ def lines_of(cur: Any, book: I.Book, members: Iterable[str]) -> Lines:
                           (SELECT post_id, guide, n FROM mx_entity_pins WHERE undone_at IS NULL AND entity_id = ANY(%s::uuid[]))""",
                 (guides, ids, guides, ids, ids))
     want = set(ids)
-    for pid, g, n, eid, role, at, src, url in cur.fetchall():
+    for pid, g, n, eid, role, at, src, url, kind in cur.fetchall():
         e = book.pins.get((pid, g, n), eid)
         if e in want and at is not None:
-            out.add(pid, at, role, src, url, e)
+            out.add(pid, at, role, src, url, e, kind)
     return out
 
 
@@ -208,15 +205,16 @@ FIRST_CHUNK = 50      # outside posts read at a time while looking for the first
 
 
 def _first_about(cur: Any, book: I.Book, members: Iterable[str], rows: Dict[str, Dict[str, Any]],
-                 order: List[str]) -> Optional[str]:
+                 order: List[str], roles: Tuple[str, ...] = ("subject",)) -> Optional[str]:
     """0234 (#5): the first outside mention, of `order` (oldest first): a post linking back to its posts, or one whose
     main subject is the thing: the thing is its `subject` (an actor is in it, not what it is about) and its reading
     says so (about_by_reading: no round-up, its main event names the thing; a post with no reading keeps its role).
     A post about another thing that names this one as a subject (a method shown on another maker's model) is never
-    it. The readings are read a chunk at a time, oldest first, until one is found."""
+    it. The readings are read a chunk at a time, oldest first, until one is found. v10.35: `roles`, the roles a
+    candidate may hold (the birth asks subject or actor, the same reading rule)."""
     from insight_core.markx import reading5
     forms: Optional[Set[str]] = None
-    cand = [p for p in order if "links" in rows[p]["roles"] or "subject" in rows[p]["roles"]]
+    cand = [p for p in order if "links" in rows[p]["roles"] or rows[p]["roles"] & set(roles)]
     for k in range(0, len(cand), FIRST_CHUNK):
         part = cand[k:k + FIRST_CHUNK]
         need = [p for p in part if "links" not in rows[p]["roles"]]
@@ -243,15 +241,101 @@ def _maker_sources(cur: Any, book: I.Book, maker: Optional[str]) -> Set[str]:
     return {s["id"] for s in got["by"]}
 
 
+def _types(cur: Any, posts: Iterable[str]) -> Dict[str, Any]:
+    """{post: event_types.EventType} of the posts with a reading (one query)."""
+    from insight_core.markx import event_types
+    return event_types.of_posts(cur, posts)
+
+
+def is_release(t: Any) -> bool:
+    """Whether a post's EventType says it is a release (pure): a release-typed reading (RELEASE_TYPES), else, with no
+    closed type, a main action of the release group that released it ("launched", never "delayed"); never a leak."""
+    if t is None or t.type == LEAK_TYPE:
+        return False
+    if t.type:
+        return t.type in RELEASE_TYPES
+    return t.group == "release" and t.stage == "released"
+
+
+class _Kinded:
+    __slots__ = ("id", "kind")
+
+    def __init__(self, pid: str, kind: Optional[str]):
+        self.id, self.kind = pid, kind
+
+
+def _background(rows: Dict[str, Dict[str, Any]], posts: List[str]) -> Set[str]:
+    """v10.35: the posts of `posts` that are background to the thing (story_rules.background, 0263: a Saved page dated
+    more than BACKGROUND_BEFORE before its first post of a voice): never its birth, a release or its first outside."""
+    from insight_core.utils.story_rules import background
+    return background([_Kinded(p, rows[p].get("kind")) for p in posts], {p: rows[p]["at"] for p in posts})
+
+
+def _original_post(cur: Any, book: I.Book, root: str) -> Optional[str]:
+    """The stored post of the thing's original (entity_views.original), None when it has none stored."""
+    from insight_core.markx import entity_views as EV
+    try:
+        got = EV.original(cur, book, root).get("original") or {}
+    except Exception:   # noqa: BLE001 - a view never fails for want of it
+        return None
+    return (got.get("post") or {}).get("id")
+
+
+def maker_copy(row: Dict[str, Any], t: Any) -> bool:
+    """A saved page (no voice) whose reading's origin is the maker: a copy of the maker's own post (pure). A voiced
+    source's origin `maker` says only that its author made what it announces (a quant, an engine's support), never
+    this thing: its maker is told by its source, site or address (`from_maker`)."""
+    return row.get("kind") in voice.NOT_VOICE and t is not None and t.origin == "maker"
+
+
+def releases(cur: Any, book: I.Book, members: Iterable[str], rows: Dict[str, Dict[str, Any]], about: List[str],
+             types: Dict[str, Any], from_maker: Any, original_post: Optional[str],
+             reports_too: bool = True) -> List[str]:
+    """v10.35: a thing's release posts, oldest first, of `about` (its posts about it, oldest first, background left
+    out): each post about it whose reading says it is a release (is_release) and that is its maker's (its sources,
+    its sites, its own addresses: `from_maker`; or a saved copy of its post: `maker_copy`), and its stored original
+    (`original_post`) when about it. Each about it by its reading (about_by_reading: no round-up, its main event
+    names it); a saved copy also by its main object. With none (and `reports_too`: never a family's own line, its
+    versions are what is released), its first release report: a release-typed post whose subject it is, not a
+    saved page, about it by its reading (0234's rule). A maker post that is no release (a guide, a customer story)
+    and a post that only names it are never one."""
+    from insight_core.markx import reading5
+    # a maker post not read yet keeps its place (nothing to tell by, as about_by_reading keeps an unread post's role)
+    cand = [p for p in about if (from_maker(rows[p]) and p not in types)
+            or is_release(types.get(p)) and (from_maker(rows[p]) or maker_copy(rows[p], types[p]))]
+    got = reading5.pick(cur, cand, ("read-v3", "read-v2")) if cand else {}
+    forms = name_forms(book, members)
+
+    def theirs(p: str) -> bool:
+        r = got.get(p)
+        if not r:
+            return from_maker(rows[p])
+        if not about_by_reading(r.get("kind"), r.get("reading"), r.get("headline"), forms):
+            return False
+        main = (r.get("reading") or {}).get("main")
+        obj = N.squash(N.key(str(main.get("object") or ""))) if isinstance(main, dict) else ""
+        return from_maker(rows[p]) or not forms or any(f in obj for f in forms)
+    rel = [p for p in cand if theirs(p)]
+    if original_post and original_post in about and original_post not in rel:
+        rel = sorted(rel + [original_post], key=lambda p: (rows[p]["at"], p))
+    if rel or not reports_too:
+        return rel
+    reports = [p for p in about if "subject" in rows[p]["roles"] and is_release(types.get(p))
+               and rows[p].get("kind") not in voice.NOT_VOICE]
+    got = _first_about(cur, book, members, rows, reports)
+    return [got] if got else []
+
+
 def _event(kind: str, at: datetime, post: Optional[str] = None, **kw: Any) -> Dict[str, Any]:
     return {"kind": kind, "at": at, "post": post, "rank": RANK[kind], **kw}
 
 
 def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str, Any]]] = None,
-           light: bool = False) -> List[Dict[str, Any]]:
+           light: bool = False, original_post: Any = ...) -> List[Dict[str, Any]]:
     """The cluster's dated events (unsorted, with their post ids; `of_entity` adds the posts' lines). `stories`: the
     entity page's story blocks ({story, mark, headline, voices, first_at}); `light`: only what the post page's
-    "before" needs (birth, renames, releases, outside mentions)."""
+    "before" needs (birth, renames, releases, outside mentions); `original_post`: its stored original's post id (the
+    entity page has it; read when not given)."""
     from insight_core.markx import rename
     members = set(book.cluster(root))
     lines = lines_of(cur, book, members)
@@ -268,18 +352,27 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
     sites = maker_names(book, root, maker)
     by_maker = _maker_sources(cur, book, maker)
     from insight_core.markx import entity_addresses as EA
-    own_hosts = {_host(u) for kind, u, *_ in EA.current(cur, book, [root]).get(root, ())
-                 if kind in ("release", "demo", "work")} - {None}
+    from insight_core.utils.url_normalization import normalize_url
+    # v10.35: a post at one of its own addresses (the address itself, never any page of its host: a release address on
+    # youtube.com, x.com or a newsletter made every post there the maker's)
+    own_urls = {normalize_url(u) or u for kind, u, *_ in EA.current(cur, book, [root]).get(root, ())
+                if kind in ("release", "demo", "work") and u}
 
     def from_maker(r: Dict[str, Any]) -> bool:
-        return r["source"] in by_maker or _site(r["url"]) in sites or _host(r["url"]) in own_hosts
+        return (r["source"] in by_maker or _site(r["url"]) in sites
+                or bool(r["url"]) and (normalize_url(r["url"]) or r["url"]) in own_urls)
 
     out: List[Dict[str, Any]] = []
     rows = lines.rows
     order = sorted(rows, key=lambda p: (rows[p]["at"], p))
     name = lambda e: book.ents[e].name if e in book.ents else None
     about = [p for p in order if rows[p]["roles"] & set(ABOUT)]
-    first = (about or order)[0]                      # 0165 v10.23: the oldest post about it, else naming it
+    types = _types(cur, about)
+    bg = _background(rows, about)                    # v10.35: an old Saved page neither dates nor starts it
+    dated = [p for p in about if p not in bg]
+    # 0165 v10.23: the oldest post about it, else naming it; v10.35: about it by its reading (0234's rule: no round-up,
+    # its main event names it), never a background page
+    first = _first_about(cur, book, members, rows, dated, ABOUT) or (dated or about or order)[0]
     out.append(_event("birth", rows[first]["at"], first, name=name(sorted(rows[first]["as"])[0]),
                       **({"named_since": rows[order[0]]["at"]} if order[0] != first else {})))
     # earlier names: each at its last post, then the first post under the name it has now
@@ -292,8 +385,10 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         now_posts = [p for p in order if rows[p]["as"] - early]
         if now_posts:
             out.append(_event("renamed", rows[now_posts[0]]["at"], now_posts[0], name=book.label(root)))
-    # releases: about it, by its maker or at its own address
-    rel = [p for p in order if rows[p]["roles"] & set(ABOUT) and from_maker(rows[p])]
+    # releases (v10.35, `releases`): a release-typed post about it by its maker, or its stored original
+    orig = original_post if original_post is not ... else _original_post(cur, book, root)
+    rel = releases(cur, book, members, rows, dated, types, from_maker, orig,
+                   reports_too=book.ents[root].level != "family")   # a family is released by its versions
     for k, p in enumerate(rel):
         out.append(_event("release", rows[p]["at"], p, name=name(sorted(rows[p]["as"])[0]),
                           rank=RANK["release"] if k in (0, len(rel) - 1) else RANK["outside"]))
@@ -302,17 +397,23 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
                        if (e := book.ents[x]).level in I.VERSION_LEVELS and e.parent in members and book.root(x) != root})
         if kids:
             kl = lines_of(cur, book, {m for k in kids for m in book.cluster(k)})
+            k_about = sorted((p for p in kl.rows if kl.rows[p]["roles"] & set(ABOUT)),
+                             key=lambda q: (kl.rows[q]["at"], q))
+            k_types = _types(cur, k_about)
+            k_bg = _background(kl.rows, k_about)
             firsts: Dict[str, str] = {}
-            for p in sorted(kl.rows, key=lambda q: (kl.rows[q]["at"], q)):
-                if not kl.rows[p]["roles"] & set(ABOUT):
-                    continue
-                for e in kl.rows[p]["as"]:
-                    firsts.setdefault(book.root(e), p)
+            for k in kids:   # v10.35: a version's release by the same rule (its first), never any post naming it
+                mine = [p for p in k_about if p not in k_bg and k in {book.root(e) for e in kl.rows[p]["as"]}]
+                got = releases(cur, book, set(book.cluster(k)), kl.rows, mine, k_types, from_maker, None)
+                if got:
+                    firsts[k] = got[0]
             for k, p in sorted(firsts.items(), key=lambda kv: (kl.rows[kv[1]]["at"], kv[0])):
                 if p not in rows:
                     out.append(_event("release", kl.rows[p]["at"], p, name=book.label(k), version=k))
-    # outside mentions: the first marked, the rest by month; posts linking back to its posts count
-    outside = [p for p in order if not from_maker(rows[p]) and p not in rel]
+    # outside mentions: the first marked, the rest by month; posts linking back to its posts count. v10.35: a post
+    # whose reading's origin is the maker (a saved copy of its own post) is not outside
+    outside = [p for p in order if not from_maker(rows[p]) and p not in rel
+               and not (p in types and maker_copy(rows[p], types[p]))]
     about_roles = set(OUTSIDE_ROLES) if ST.config().get("outside_roles") else set(ABOUT)
     if ST.config().get("outside_roles"):
         # 0250: an outside event is a post about the thing (its subject, actor or compared), never one that only names
@@ -322,13 +423,16 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
     seen = set(rows)
     for p, (at, src) in sorted(linked.items(), key=lambda kv: (kv[1][0], kv[0])):
         if p not in seen and at is not None:
-            rows[p] = {"at": at, "roles": {"links"}, "source": src, "url": None, "as": set()}
+            rows[p] = {"at": at, "roles": {"links"}, "source": src, "url": None, "as": set(), "kind": None}
             outside.append(p)
     outside.sort(key=lambda p: (rows[p]["at"], p))
     if outside:
         # 0165 v10.23: the first outside post about it (subject or actor) or linking back to its posts; a post that
-        # only names it is counted in its month, never marked first
-        firsts = [p for p in outside if rows[p]["roles"] & (set(ABOUT) | {"links"})]
+        # only names it is counted in its month, never marked first. v10.35: never before its birth (a page linking
+        # to a later post under an archive's date), never a background page
+        born = rows[first]["at"]
+        firsts = [p for p in outside if rows[p]["roles"] & (set(ABOUT) | {"links"}) and p not in bg
+                  and rows[p]["at"] >= born]
         p0 = _first_about(cur, book, members, rows, firsts)   # 0234: its main subject, never a post about another
         if p0 is not None:
             out.append(_event("first_outside", rows[p0]["at"], p0, linked="links" in rows[p0]["roles"]))
@@ -357,7 +461,6 @@ def _stories(cur: Any, book: I.Book, root: str, stories: List[Dict[str, Any]],
     """The page's stories as `story` (a stop) or `in_story` events: the stored stop answer decides, else the thing's
     share of the members (stops.candidate) with the story type's stop. A story given without its members is a stop
     (the caller knows no better)."""
-    from insight_core.markx import event_types, stops as ST
     dated = [s for s in stories if s.get("first_at")]
     members = {s["story"]: [str(p) for p in s.get("members") or []] for s in dated}
     at: Dict[str, datetime] = {p: r["at"] for p, r in rows.items()}
@@ -365,25 +468,40 @@ def _stories(cur: Any, book: I.Book, root: str, stories: List[Dict[str, Any]],
     if ids:
         cur.execute(f"SELECT p.id::text, {pairing.post_date('p')} FROM posts p WHERE p.id = ANY(%s::uuid[])", (ids,))
         at.update({p: a for p, a in cur.fetchall() if a is not None})
+    about_posts = {p for ps in members.values() for p in ps if p in rows and rows[p]["roles"] & set(ABOUT)}
+    got = stops_of(cur, book, root, members, at, about_posts)
+    out = []
+    for s in dated:
+        ps = members[s["story"]]
+        about, stop, by, sh = got[s["story"]]
+        out.append(_event("story" if about else "in_story", s["first_at"], None, story=s["story"], mark=s["mark"],
+                          headline=s.get("headline"), voices=s.get("voices"), stop=stop, stop_by=by,
+                          share=[sh.about, sh.members], members=ps))
+    return out
+
+
+def stops_of(cur: Any, book: I.Book, root: str, members: Dict[str, List[str]], at: Dict[str, datetime],
+             about_posts: Set[str]) -> Dict[str, Tuple[bool, Optional[str], str, Any]]:
+    """{story: (about the thing, its stop, "asked" or "type", its stops.Share)} of the stories (`members`: their
+    posts; `at`: the posts' dates; `about_posts`: the posts whose subject or actor the thing is): the stored stop
+    answer decides, else the thing's share of the members (stops.candidate); a story without members is about it
+    (the caller knows no better). The timeline's stops and in_story, and (v10.35) the entity page's story order."""
+    from insight_core.markx import event_types, stops as ST
     on = ST.config()
     answers = ST.of(cur, book, root, list(members))
     types = event_types.of_stories(cur, {s: ps for s, ps in members.items() if s not in answers and ps}) \
         if on["stop_types"] else {}
-    out = []
-    for s in dated:
-        ps = members[s["story"]]
-        sh = ST.share([(at[p], p) for p in ps if p in at],
-                      [p for p in ps if p in rows and rows[p]["roles"] & set(ABOUT)])
-        got = answers.get(s["story"])
+    out = {}
+    for sid, ps in members.items():
+        sh = ST.share([(at[p], p) for p in ps if p in at], [p for p in ps if p in about_posts])
+        got = answers.get(sid)
         if got is not None:
             about, stop, by = got.about, got.stop, "asked"
         else:
-            about, stop, by = (ST.candidate(sh) if ps else True), ST.coarse(types.get(s["story"])), "type"
+            about, stop, by = (ST.candidate(sh) if ps else True), ST.coarse(types.get(sid)), "type"
         about = about or not on["stops"]                  # the split off: every story a stop, as before 0165's case 2
         stop = stop if on["stop_types"] else None         # the word off: kept in the answers, not shown
-        out.append(_event("story" if about else "in_story", s["first_at"], None, story=s["story"], mark=s["mark"],
-                          headline=s.get("headline"), voices=s.get("voices"), stop=stop, stop_by=by,
-                          share=[sh.about, sh.members], members=ps))
+        out[sid] = (about, stop, by, sh)
     return out
 
 
@@ -503,11 +621,11 @@ def _shown(cur: Any, evs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def of_entity(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str, Any]]] = None,
-              top: int = TOP) -> Optional[Dict[str, Any]]:
+              top: int = TOP, original_post: Any = ...) -> Optional[Dict[str, Any]]:
     """The entity page's Timeline: {items (oldest first, each with `top`), shown (how many are top), total, earlier
     (its earlier names)}; None when it has fewer than MIN_EVENTS dated events."""
     from insight_core.markx import rename
-    evs = events(cur, book, root, stories=stories)
+    evs = events(cur, book, root, stories=stories, original_post=original_post)
     if len(evs) < MIN_EVENTS:
         return None
     keep = _top(evs, top)

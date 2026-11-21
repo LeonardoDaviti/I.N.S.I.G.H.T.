@@ -533,7 +533,7 @@ class TheShapesAreNamed(_World):
             self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
 
     # 0277: the entity answer's new fields (posts_total, citing_total, ...) are added by the request's cut, not kept
-    FROZEN = {"news": ("3", "89f3b3d2fda1404e"), "entity": ("7", "d5d63f7c85a8909f"),
+    FROZEN = {"news": ("3", "89f3b3d2fda1404e"), "entity": ("9", "d5d63f7c85a8909f"),
               "entities": ("1", "4efd649ca53508be"), "entity_queue": ("1", "aa10ad3c5d2a3012")}
 
     def shapes(self):
