@@ -11,8 +11,9 @@ with its original first, the loose posts by role, and the sample of old stories 
     mentions alone).
   - **Stories** (B2): each Mark X story holding one of the entity's posts and, for a post in no Mark X story, its Mark IX
     story (marked "Mark IX"); both list **all** their posts, not only those naming the entity.
-  - **Original first** (B3): the story's earliest post by the entity itself, else its root (Mark IX: the outside page it
-    hangs from, `origin_url`, stored or not, else its first post; Mark X: its earliest member).
+  - **Original first** (B3): the entity's own original (its release page) when the story holds it, else the story's
+    earliest post by the entity itself, else its root (Mark IX: the outside page it hangs from, `origin_url`, stored or
+    not, else its first post; Mark X: its earliest member that is not background, story_rules.background).
   - **Loose posts by role** (B4): subject and actor first, then by, then venue / source / recommended, then mentions
     (the page collapses them: "158 mentions").
   - **The sample** (C): the page offers up to SAMPLE_PAGE of the entity's Mark X stories older than 30 days (oldest
@@ -189,18 +190,24 @@ def mark_ix_stories(cur: Any, post_ids: Iterable[str]) -> Tuple[Dict[str, str], 
 
 
 def original_of(posts: List[str], at: Callable[[str], Any], by: Set[str], root: Optional[str] = None,
-                origin_url: Optional[str] = None) -> Dict[str, Any]:
-    """B3: a story's original: {"post": id or None, "url": the outside page or None, "why": by | origin | root}. The
-    earliest post by the entity itself, else the root: Mark IX's outside page (origin_url) or first post, a Mark X
-    story's earliest member."""
+                origin_url: Optional[str] = None, release: Optional[str] = None,
+                background: Iterable[str] = ()) -> Dict[str, Any]:
+    """B3: a story's original: {"post": id or None, "url": the outside page or None, "why": release | by | origin |
+    root}. v10.35: the entity's own original (`release`: entity_views.original's stored post, its release page) when
+    the story holds it; else the earliest post by the entity itself; else the root: Mark IX's outside page
+    (origin_url) or first post, a Mark X story's earliest member. A `background` post (story_rules.background, 0263:
+    a Saved page dated long before the story's first voice) is never the root, as it never leads a News row."""
+    if release and release in posts:
+        return {"post": release, "url": None, "why": "release"}
     mine = sorted((p for p in posts if p in by), key=lambda p: (at(p), p))
     if mine:
         return {"post": mine[0], "url": None, "why": "by"}
     if origin_url:
         return {"post": None, "url": origin_url, "why": "origin"}
-    if root and root in posts:
+    bg = set(background)
+    if root and root in posts and root not in bg:
         return {"post": root, "url": None, "why": "root"}
-    first = sorted(posts, key=lambda p: (at(p), p))
+    first = sorted(posts, key=lambda p: (p in bg, at(p), p))
     return {"post": first[0] if first else None, "url": None, "why": "root"}
 
 

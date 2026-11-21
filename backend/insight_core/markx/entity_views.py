@@ -391,7 +391,7 @@ STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more
 LOOSE_CAP = 500       # posts in no story listed at most
 BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
 DEFAULTS = {"by": 50, "stories": 20, "loose": 30}   # the route's defaults (PP.BY_LIMIT; issue 0195; 0277: were 50, 100)
-PAGE_SHAPE = "5"      # 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
+PAGE_SHAPE = "6"      # v10.35: a story's `joined` (its release group). 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
 #                       bump it): a page kept by the previous code is sent only while its shape is this one
 HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
 HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)
@@ -746,6 +746,51 @@ def _until(now: datetime, every: Sequence[Dict[str, Any]], offer_sample: bool) -
     return min([day, *crossing])
 
 
+class _Kinded:
+    """A post as story_rules.background reads it: its id and its source's kind."""
+    __slots__ = ("id", "kind")
+
+    def __init__(self, pid: str, kind: Optional[str]):
+        self.id, self.kind = pid, kind
+
+
+def story_dating(ps: Sequence[str], at: Any, kind: Any) -> Tuple[Set[str], Any]:
+    """v10.35: (the background posts of a story's `ps`, its start), by the rule Mark X stores a story's first_at by
+    and News leads a row by (story_rules.background, 0263: a Saved page dated more than 72 h before the story's first
+    post of a voice neither dates nor leads it). `at`, `kind`: a post's date and its source's kind."""
+    from insight_core.utils.story_rules import background
+    times = {p: at(p) for p in ps}
+    bg = background([_Kinded(p, kind(p)) for p in ps], times)
+    return bg, min((t for p, t in times.items() if p not in bg), default=None)
+
+
+def story_entries(cur: Any, members: Dict[str, List[str]], voices: Dict[str, int]) -> List[List[str]]:
+    """v10.35: the entity page's Mark X entries, each [its lead story, *the stories joined into it]: the stories one
+    current same_release chain joins (graph.release_groups, 0236) are one entry, as they are one News row, led by
+    News's launch order (news.launch_order: the maker's own story, a release first, then most voices), else the one
+    of most voices; every other story its own entry."""
+    from insight_core.markx import graph
+    from insight_core.markx import news as NW
+    sids = sorted(s for s, ps in members.items() if ps)
+    out, seen = [], set()
+    for g in graph.release_groups(cur, sids):
+        g = [s for s in g if s in voices]
+        if len(g) < 2:
+            continue
+        order = NW.launch_order(NW._story_facts(cur, g), {s: voices[s] for s in g})
+        rest = sorted((s for s in g if s not in order), key=lambda s: (-voices[s], s))
+        out.append(list(dict.fromkeys(order + rest)))
+        seen |= set(g)
+    return out + [[s] for s in sids if s not in seen]
+
+
+def covered(ix_posts: Sequence[str], entries: Sequence[Set[str]]) -> bool:
+    """v10.35: a Mark IX story is the group of a Mark X entry holding most of its posts (more than half): it is listed
+    once, as that Mark X story (its posts in no Mark X story are the page's loose posts)."""
+    n = len(set(ix_posts))
+    return bool(n) and any(2 * len(set(ix_posts) & e) > n for e in entries)
+
+
 def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                  by_limit: Optional[int] = None, offer_sample: bool = False,
                  replies: bool = False, stories_limit: Optional[int] = None,
@@ -799,6 +844,8 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     shown = {p for ps in x_members.values() for p in ps} | {p for st in ix_stories.values() for p in st["posts"]}
     posts = _posts(cur, set(lines) | shown)
     heads = _story_heads(cur, x_members)
+    page_original = original(cur, book, root)   # 0138; v10.35: its stored post leads every story holding it
+    release = ((page_original.get("original") or {}).get("post") or {}).get("id")
 
     def at_of(pid: str) -> Any:
         ln = lines.get(pid)
@@ -816,30 +863,47 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                 "about": pid in lines}
 
     def block(sid: str, ps: List[str], mark: str, *, headline: Optional[str], root_post: Optional[str] = None,
-              origin_url: Optional[str] = None, origin_title: Optional[str] = None) -> Dict[str, Any]:
-        orig = PP.original_of(ps, at_of, set(mine), root_post, origin_url)
+              origin_url: Optional[str] = None, origin_title: Optional[str] = None,
+              joined: Sequence[str] = ()) -> Dict[str, Any]:
+        h = head(sid, ps, mark, headline, root_post=root_post, origin_url=origin_url, joined=joined)
+        orig = h["original"]
         ordered = sorted(ps, key=lambda p: (p != orig["post"], at_of(p), p))
         if orig["url"]:
             from insight_core.utils.url_normalization import normalize_url
             cur.execute("SELECT id::text FROM posts WHERE normalized_url = %s LIMIT 1", (normalize_url(orig["url"]) or orig["url"],))
             got = cur.fetchone()
             orig = {**orig, "title": origin_title, "stored": got[0] if got else None}
-        return {**head(sid, ps, mark, headline), "original": orig, "posts": [line(p) for p in ordered]}
+        return {**h, "original": orig, "posts": [line(p) for p in ordered]}
 
-    def head(sid: str, ps: List[str], mark: str, headline: Optional[str]) -> Dict[str, Any]:
-        """A block's own fields (what the order, the timeline and the sample read), without its posts' lines."""
-        return {"story": sid, "mark": mark, "headline": headline,
+    def head(sid: str, ps: List[str], mark: str, headline: Optional[str], *, root_post: Optional[str] = None,
+             origin_url: Optional[str] = None, joined: Sequence[str] = ()) -> Dict[str, Any]:
+        """A block's own fields (what the order, the timeline and the sample read), without its posts' lines.
+        v10.35: dated and led as News dates and leads a story (`story_dating`: a background page neither dates nor
+        leads it; the entity's release page leads it when held); no headline: its lead's title, as News names it."""
+        bg, first_at = story_dating(ps, at_of, lambda p: (posts.get(p) or {}).get("kind"))
+        orig = PP.original_of(ps, at_of, set(mine), root_post, origin_url, release, bg)
+        title = (posts.get(orig["post"]) or {}).get("title") or (posts.get(root_post) or {}).get("title")
+        return {"story": sid, "mark": mark, "headline": headline or title or None, "joined": list(joined),
                 "voices": voice.count((voice.Said(source_of(p), (posts.get(p) or {}).get("kind")) for p in ps
                                        if source_of(p)), voice.Policy.MARKX),   # 0189: a saved page is none
-                "newest": max(at_of(p) for p in ps), "first_at": min(at_of(p) for p in ps)}
+                "newest": max(at_of(p) for p in ps), "first_at": first_at, "original": orig}
     # (head, the block's arguments) of every story; the blocks listed are built in full, the rest only headed
-    specs = [(head(sid, ps, "x", heads.get(sid)), (sid, ps, "x"), {"headline": heads.get(sid)})
-             for sid, ps in x_members.items() if ps]
-    for sid, st in ix_stories.items():
-        rp = posts.get(st["root"]) or {}
-        kw = {"headline": st["origin_title"] or rp.get("title"), "root_post": st["root"],
+    x_heads = {sid: head(sid, ps, "x", heads.get(sid)) for sid, ps in x_members.items() if ps}
+    specs = []
+    for g in story_entries(cur, x_members, {s: h["voices"] for s, h in x_heads.items()}):
+        lead, joined = g[0], g[1:]
+        ps = list(dict.fromkeys(p for s in g for p in x_members[s]))
+        kw = {"headline": heads.get(lead), "joined": joined}
+        specs.append((x_heads[lead] if not joined else head(lead, ps, "x", kw["headline"], joined=joined),
+                      (lead, ps, "x"), kw))
+    entries = [set(a[1]) for _h, a, _k in specs]
+    ix_of = {p: s for p, s in ix_of.items() if not covered(ix_stories[s]["posts"], entries)}
+    for sid in sorted(set(ix_of.values())):
+        st = ix_stories[sid]
+        kw = {"headline": st["origin_title"], "root_post": st["root"],
               "origin_url": st["origin_url"], "origin_title": st["origin_title"]}
-        specs.append((head(sid, st["posts"], "ix", kw["headline"]), (sid, st["posts"], "ix"), kw))
+        specs.append((head(sid, st["posts"], "ix", kw["headline"], root_post=st["root"], origin_url=st["origin_url"]),
+                      (sid, st["posts"], "ix"), kw))
     specs.sort(key=lambda x: (-x[0]["voices"], -x[0]["newest"].timestamp(), x[0]["story"]))
     every = [h for h, _a, _k in specs]
     listed = specs if stories_limit is None else specs[:stories_limit]
@@ -896,7 +960,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
         page_entity["senses"] = facts[root].senses
     page = {"entity": page_entity, "asked": entity_id, "redirected": root != entity_id,
             "current": current, **({} if current else {"older": older_posts(cur, book, members)}),   # 0138
-            **original(cur, book, root),   # 0138: its original first, and its other addresses
+            **page_original,   # 0138: its original first, and its other addresses
             "aliases": sorted(book.ents[m].name for m in members),
             "maker": {"id": maker, "name": book.label(maker)} if maker in book.ents else None,
             "family": ({"id": fam_root, "name": book.label(fam_root)} if fam_root and fam_root != root else None),
@@ -913,7 +977,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "handles": {"known": known,
                         "posts": len([p for p, r in cited.items() if r["role"] != "reply" or replies]),
                         "replies": hidden_replies, "replies_shown": replies},   # 0168
-            "sample": PP.offer(cur, root, {b["story"]: b["first_at"] for b in every if b["mark"] == "x"}, now)
+            "sample": PP.offer(cur, root, {s: h["first_at"] for s, h in x_heads.items()}, now)
             if offer_sample else [],                                                                  # 0144 C
             "sources": sorted(sources.values(), key=lambda s: (-s["posts"], s["name"] or "")),
             **_documents(cur, book, members, lines, line),   # 0133: publisher, works, citing and recommending posts

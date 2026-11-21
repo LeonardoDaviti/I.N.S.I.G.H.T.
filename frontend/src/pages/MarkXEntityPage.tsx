@@ -29,7 +29,7 @@ function pageCalls(api: object): PageCalls {
   };
 }
 
-const WHY: Record<string, string> = { by: 'its own post', origin: 'the page it began from', root: 'the first post' };
+const WHY: Record<string, string> = { release: 'its release', by: 'its own post', origin: 'the page it began from', root: 'the first post' };
 
 /** 0144 B2-B3: a Mark X story (or, marked so, the Mark IX story of a post in none) with all its posts, the original
  *  first: the entity's own earliest post, else the story's root (Mark IX's outside page when it began from one). */
