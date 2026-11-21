@@ -42,6 +42,7 @@ FEATURES: Dict[str, Feature] = {f.name: f for f in (
     Feature("sources", True, "sources: stance, the source judge and research (asked by the owner)"),
     Feature("embeddings", True, "the embedder's vectors (no model cost)"),
     Feature("briefing", True, "the day's briefing on /markx"),
+    Feature("questions", True, "questions with citations on the search page (0275): asked only by the reader"),
     Feature("back", False, "Back in the news (0136): not shipped, its bar failed (68%); off since 0210"),
     Feature("perspectives", True, "perspectives and story sheets (0119 B): Shadow on /markx, kept for later use (the "
                                   "owner, 2026-11-16)"),
@@ -59,6 +60,7 @@ CONSUMER: Dict[str, str] = {
     "scout": "tracks", "identity": "sources", "websearch": "sources", "source_judge": "sources",
     "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news", "stop": "entities",   # 0165 C: the timeline stops
     "track_schema": "tracks", "track_things": "tracks", "track_same": "tracks",   # 0245 (behind tracks.briefs too)
+    "question": "questions",   # 0275: the reader's questions on the search page (asked only by the reader)
     "reading": "news",   # 0212: ent-v5 (planned only while its own switch is shadow or on)
 }
 

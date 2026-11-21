@@ -563,6 +563,19 @@ SOURCE_FILTER_SCHEMA = {
                                           "regex": {"type": "string", "minLength": 1, "maxLength": 120},
                                           "why": {"type": "string", "minLength": 1, "maxLength": 200}}}},
                        "keep": {"type": "array", "maxItems": 10, "items": {"type": "string", "pattern": "^i[0-9]{1,2}$"}}}}]}
+# 0275: a question the reader asked, answered only from the posts it shows (question-v1, markx/questions.py): each
+# sentence with the numbers of the posts it rests on; `answerable` false (no sentences) when the posts don't say.
+QUESTION_SENTENCES = 6
+QUESTION_SENTENCE_CHARS = 400
+QUESTION_SCHEMA = {
+    "type": "object",
+    "required": ["answerable", "sentences"],
+    "properties": {"answerable": {"type": "boolean"},
+                   "sentences": {"type": "array", "maxItems": QUESTION_SENTENCES, "items": {
+                       "type": "object", "required": ["text", "cites"],
+                       "properties": {"text": {"type": "string", "minLength": 1, "maxLength": QUESTION_SENTENCE_CHARS},
+                                      "cites": {"type": "array", "items": {"type": "integer", "minimum": 1}}}}}},
+}
 SOURCE_JUDGE_V2_SCHEMA = {**SOURCE_JUDGE_SCHEMA,
                           "properties": {**SOURCE_JUDGE_SCHEMA["properties"], "filter": SOURCE_FILTER_SCHEMA}}
 # 0196 (official channels): who announces an event and where (websearch-official-v1, the `websearch` kind's second
@@ -724,6 +737,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),   # 0245: a track's kinds and fields
     Kind("track_things", "track-things-v2", "post_track", TRACK_THINGS_SCHEMA),   # 0245: the things of a post; 0261: v2
     Kind("track_same", "track-same-v1", "thing_thing", TRACK_SAME_SCHEMA),   # 0245: two practices, one claim?
+    Kind("question", "question-v1", "question", QUESTION_SCHEMA),   # 0275: the reader's question, from their posts
 )}
 
 

@@ -361,7 +361,7 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "digest", "subtopic_place",                       # 0207
                                               "scout", "identity",                              # 0148, 0162
                                               "websearch",                                      # 0171
-                                              "source_judge",                                   # 0173
+                                              "source_judge", "question",                       # 0173, 0275
                                               "news_sections",                                  # 0174
                                               "reading",                                        # 0212
                                               "news_place",                                     # 0197
@@ -375,7 +375,7 @@ class TheKindsAndGuides(unittest.TestCase):
                 self.assertIn(kind.subject, ("post", "post_story", "post_post", "story", "story_story", "day",
                                              "entity", "entity_entity", "source", "track", "post_track",
                                              "research_pair", "research_run",   # 0132 B: source; 0145; 0162; 0171
-                                             "source_candidate",                # 0173
+                                             "source_candidate", "question",    # 0173, 0275
                                              "news_run",                         # 0174
                                              "thing_thing"))                    # 0245
 
