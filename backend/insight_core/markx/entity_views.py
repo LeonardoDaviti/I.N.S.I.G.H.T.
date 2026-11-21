@@ -986,7 +986,8 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     e = book.ents[root]
     fam_root = root if e.level in ("family", "thing") else (_family_of(book, root) or {}).get("id")
     versions = []
-    if fam_root:
+    # v10.35: an org's or a person's things are not its versions (Anthropic listed 404 things: code flags, skills)
+    if fam_root and (book.shown_type(fam_root) or book.ents[fam_root].type) not in ("org", "person"):
         kids = [x for x in book.with_parent_in(fam_root)   # v10.17 (0186): asked of the book, not walked
                 if book.root(x) == x and book.ents[x].status != "not_entity"]
         versions = sorted(({"id": x, "name": book.label(x), "version": book.ents[x].version,
