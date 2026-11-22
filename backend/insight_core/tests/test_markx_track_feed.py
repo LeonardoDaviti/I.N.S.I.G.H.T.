@@ -122,7 +122,7 @@ class TrackFeed(_Tracks):
 
     def test_the_count_and_the_waiting(self):
         w = self.world()
-        self.assertEqual(self.counts()[self.folder], {"unread": 3, "discover": 1, "count": 4, "waiting": 1, "things": 0})   # 0249: things while tracks.briefs is on
+        self.assertEqual(self.counts()[self.folder], {"unread": 3, "discover": 1, "count": 4, "waiting": 1})   # v10.36: no `things` (the rail count is gone)
         scope = track_feed.restrict(self.cur, FeedScope("folder", self.folder))
         self.assertEqual(ReaderRepository().scope_unread(self.cur, scope), 3)
         self.plan()
