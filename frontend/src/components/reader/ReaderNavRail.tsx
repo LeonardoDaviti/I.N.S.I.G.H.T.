@@ -13,7 +13,6 @@ import { matchesSource, queryWords } from '../../lib/sourceSearch';
 import { formatCount, middleTruncate, plural } from '../../lib/format';
 import { fieldClass, iconButtonClass } from '../ui/styles';
 import { FOCUS_RING } from '../states';
-import { railThings } from '../tracks/briefWords';
 
 const SOURCES_SHOWN = 12;
 
@@ -29,8 +28,8 @@ function Badge({ count, push = true }: { count: number | undefined; push?: boole
   );
 }
 
-function RailLink({ to, current, label, count, icon, note, onNavigate }: {
-  to: string; current: boolean; label: string; count?: number; icon?: ReactNode; note?: string | null; onNavigate?: () => void;
+function RailLink({ to, current, label, count, icon, onNavigate }: {
+  to: string; current: boolean; label: string; count?: number; icon?: ReactNode; onNavigate?: () => void;
 }) {
   return (
     <Link
@@ -42,9 +41,7 @@ function RailLink({ to, current, label, count, icon, note, onNavigate }: {
     >
       {icon}
       <span className="min-w-0 truncate">{middleTruncate(label, 26)}</span>
-      {/* 0245: the things found since the last look (capped 9+, silent at 0, none after 30 days unopened) */}
-      {note ? <span className="ml-auto shrink-0 pl-2 text-[0.6875rem] tabular-nums text-fg-3" data-rail-things="">{note}</span> : null}
-      <Badge count={count} push={!note} />
+      <Badge count={count} push />
     </Link>
   );
 }
@@ -172,7 +169,6 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
                 current={scope === folderScope}
                 label={folder.name}
                 count={topics.data?.by_track[folder.id]?.count ?? counts?.by_folder?.[folder.id]}
-                note={railThings(topics.data?.by_track[folder.id]?.things)}
                 onNavigate={onNavigate}
               />
             );

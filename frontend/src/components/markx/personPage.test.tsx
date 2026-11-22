@@ -84,7 +84,7 @@ describe('the person page (issue 0144)', () => {
     expect(screen.queryByRole('region', { name: 'Old stories to check' })).not.toBeInTheDocument();
     expect(screen.queryByText(/old stor(y|ies) offered to check/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'missed a post' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Research this' })).toHaveAttribute('href', '/research?seed=e1&name=Ivo%20Kestrel');
+    expect(screen.queryByRole('link', { name: 'Research this' })).toBeNull();   // v10.36: no Research link on an entity page
   });
 });
 

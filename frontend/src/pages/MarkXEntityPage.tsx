@@ -14,7 +14,6 @@ import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntitySto
   MarkxEntityHandles, MarkxEntityLimits } from '../services/markx';
 import { errorMessage } from '../lib/apiError';
 import { request } from '../lib/request';
-import { researchStartHref } from '../services/research';
 import { bylineText } from '../lib/byline';
 
 type PageCalls = {
@@ -302,15 +301,21 @@ export default function MarkXEntityPage() {
     <Page>
       <PageHeader title={e.name} meta={`${entityMeta(e)} · ${plural(d.voices, 'source')} · ${plural(d.posts, 'post')}`}>
         <div className="space-y-8">
-          <p className="text-[0.8125rem] text-fg-2">
-            {d.maker ? <>by <TextLink to={entityHref(d.maker.id)}>{d.maker.name}</TextLink> · </> : null}
-            {d.family ? <>family <TextLink to={entityHref(d.family.id)}>{d.family.name}</TextLink> · </> : null}
-            {d.published_by?.length ? <>published by {d.published_by.map((p, n) => (
-              <span key={p.id}>{n ? ', ' : ''}<TextLink to={entityHref(p.id)}>{p.name}</TextLink></span>))} · </> : null}
-            {d.aliases.length > 1 ? `also written ${d.aliases.filter((a) => a !== e.name).join(', ')} · ` : ''}
-            {d.surges.length ? <><SurgeMark surges={d.surges} />{' · '}</> : null}
-            <TextLink to={researchStartHref(e.id, e.name)}>Research this</TextLink>
-          </p>
+          {(() => {
+            const parts = [
+              d.maker ? <>by <TextLink to={entityHref(d.maker.id)}>{d.maker.name}</TextLink></> : null,
+              d.family ? <>family <TextLink to={entityHref(d.family.id)}>{d.family.name}</TextLink></> : null,
+              d.published_by?.length ? <>published by {d.published_by.map((p, n) => (
+                <span key={p.id}>{n ? ', ' : ''}<TextLink to={entityHref(p.id)}>{p.name}</TextLink></span>))}</> : null,
+              d.aliases.length > 1 ? <>also written {d.aliases.filter((a) => a !== e.name).join(', ')}</> : null,
+              d.surges.length ? <SurgeMark surges={d.surges} /> : null,
+            ].filter(Boolean);
+            return parts.length ? (
+              <p className="text-[0.8125rem] text-fg-2">
+                {parts.map((x, i) => <span key={i}>{i ? ' · ' : ''}{x}</span>)}
+              </p>
+            ) : null;
+          })()}
           <EntityBrief brief={d.brief} />{/* 0261 */}
           <Original d={d} />
           {d.current === false && d.older?.length ? <Older older={d.older} /> : null}

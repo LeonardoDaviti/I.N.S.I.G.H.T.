@@ -9,8 +9,6 @@ import { useMarkxOn } from './useMarkxOn';
  *  also its Stream's count (the Stream lists only its items); `waiting`, its active sources' posts not judged yet. */
 export interface TopicTrackCount {
   unread: number; discover: number; count: number; waiting?: number;
-  /** 0245 (only while the briefer's switch is on): things found since the last look; 0 when not opened for 30 days. */
-  things?: number;
 }
 
 /** Only tracks that are topics are listed; a plain folder keeps its sources' unread count. */

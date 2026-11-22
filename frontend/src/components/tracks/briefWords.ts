@@ -47,12 +47,6 @@ export function sinceLine(since: string, n: number, now: Date = new Date()): str
   return `since ${dayWord(since, now)} · ${n} new`;
 }
 
-/** The rail's count: "3 new things", "9+ new things"; null at 0 (silent). */
-export function railThings(n: number | undefined): string | null {
-  if (!n || n < 1) return null;
-  return `${n > 9 ? '9+' : n} new ${n === 1 ? 'thing' : 'things'}`;
-}
-
 /** A kind as a heading when the backend gave none: "print_test" → "Print test". */
 export function kindWord(kind: string): string {
   const s = kind.replace(/_/g, ' ');

@@ -612,10 +612,8 @@ class Flow(_Briefer):
                          "v10.29: a thing from an older post, found since the look, is in the tables, not new")
         self.assertEqual(look["points"], [], "last week's points cite none of the new things")
         self.assertEqual(look["weeks"], [TB.monday(now).isoformat(), last.isoformat()], "the issue strip, newest first")
-        # the rail's count (v10.28): things since the look; none for a track not opened in 30 days
-        counts = call("GET", "/api/markx/tracks/counts")[1]["by_track"]
-        self.assertEqual(counts[f]["things"], 1)
-        self.assertEqual(TB.new_count(self.cur, f, now=now + timedelta(days=31)), 0)
+        # v10.36: the rail's "N new things" is gone (owner 2026-11-22: always "9+", it told nothing)
+        self.assertNotIn("things", call("GET", "/api/markx/tracks/counts")[1]["by_track"][f])
         # 0271: "Since you looked" reads the track's lines from the quick look; the reader's one look moves the track's
         from insight_core.markx import track_subtopics as TS
         seen = datetime.fromisoformat(TS.seen(self.cur, f)["track"])
@@ -626,10 +624,6 @@ class Flow(_Briefer):
         with self.conn.transaction():
             TS.look_all(self.cur, now=later)
         self.assertEqual(TS.seen(self.cur, f)["track"], later.isoformat(), "the later of its own look and the reader's")
-        self.assertEqual(call("GET", "/api/markx/tracks/counts")[1]["by_track"][f]["things"], 0)
-        self.switch(False)
-        self.assertNotIn("things", call("GET", "/api/markx/tracks/counts")[1]["by_track"][f], "off: the shape as before")
-        self.switch(True)
         self.assertEqual(call("GET", f"/api/markx/tracks/{f}/brief", query={"since": "yesterday"})[0], 400)
         self.assertEqual(call("GET", f"/api/markx/tracks/{f}/brief", query={"week": "soon"})[0], 400)
         self.assertEqual(call("GET", f"/api/markx/tracks/{uuid.uuid4()}/brief", query={"week": last.isoformat()})[0], 404)

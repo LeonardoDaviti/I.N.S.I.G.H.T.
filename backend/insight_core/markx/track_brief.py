@@ -627,28 +627,6 @@ def since_lines(cur: Any, folder_id: Any, since: datetime, *, now: Optional[date
             "also": q["counts"]["also"], "lines": lines}
 
 
-RAIL_QUIET = timedelta(days=30)   # a track not opened for this long shows no count in the rail (0245's UX)
-
-
-def new_count(cur: Any, folder_id: Any, *, now: Optional[datetime] = None) -> int:
-    """The rail's count (0245): the track's current things found since the reader's last look at it; 0 when it was
-    never opened, or not for RAIL_QUIET, or the briefer is off. One indexed count."""
-    from insight_core.markx import track_subtopics
-    if not TT.on():
-        return 0
-    now = now or datetime.now(timezone.utc)
-    look = track_subtopics.seen(cur, folder_id)["track"]
-    if not look:
-        return 0
-    at = datetime.fromisoformat(look)
-    if now - at > RAIL_QUIET:
-        return 0
-    kinds = list(TT._kinds(cur, str(folder_id)))
-    cur.execute("""SELECT count(*) FROM mx_track_things WHERE track_id = %s AND status = 'current' AND created_at > %s
-                      AND first_at >= %s AND kind = ANY(%s)""", (str(folder_id), at, fresh_from(at, now), kinds))
-    return int(cur.fetchone()[0])
-
-
 # ---- the tables ------------------------------------------------------------------------------------------------
 
 def _match(f: Dict[str, Any], v: Any, op: str, want: str) -> bool:

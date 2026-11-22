@@ -10,7 +10,7 @@ import TrackTopic from './TrackTopic';
 import TrackSheet from './TrackSheet';
 import ReaderNavRail from '../reader/ReaderNavRail';
 import {
-  chipParams, citeMarks, dayWord, filterChips, mondayOf, nextSort, railThings, sinceLine, sortThings, toggleChip,
+  chipParams, citeMarks, dayWord, filterChips, mondayOf, nextSort, sinceLine, sortThings, toggleChip,
   weekLine,
 } from './briefWords';
 import {
@@ -125,11 +125,6 @@ describe('the briefer words', () => {
     expect(weekLine('2026-11-16', '2026-11-22')).toBe('week of 16-22 Nov');
     expect(weekLine('2026-09-28', '2026-10-04')).toBe('week of 28 Sep-4 Oct');
     expect(mondayOf(NOW)).toBe('2026-11-16T00:00:00.000Z');
-    expect(railThings(0)).toBeNull();
-    expect(railThings(undefined)).toBeNull();
-    expect(railThings(1)).toBe('1 new thing');
-    expect(railThings(3)).toBe('3 new things');
-    expect(railThings(12)).toBe('9+ new things');
   });
 
   it('builds filter chips from each type, for three kinds of track', () => {
@@ -331,10 +326,10 @@ describe('the schema editor in the track sheet', () => {
 });
 
 describe('the rail', () => {
-  it('counts new things per track, capped at 9+, silent at 0', async () => {
+  it('shows no "new things" count beside a track (v10.36: it was always 9+)', async () => {
     vi.spyOn(trackCountsApi, 'counts').mockResolvedValue({ by_track: {
-      garden: { unread: 2, discover: 0, count: 2, things: 12 },
-      games: { unread: 0, discover: 0, count: 0, things: 0 },
+      garden: { unread: 2, discover: 0, count: 2 },
+      games: { unread: 0, discover: 0, count: 0 },
       bread: { unread: 1, discover: 0, count: 1 },
     } });
     const api = makeFakeApi({
@@ -346,7 +341,9 @@ describe('the rail', () => {
     renderWithProviders(<ReaderNavRail scope="all" counts={{ total: 3, by_source: {}, by_folder: {} } as never} search=""
       drawerOpen={false} onDrawerOpenChange={() => undefined} />, { api });
     const garden = await screen.findByRole('link', { name: /Invented garden/ });
-    await waitFor(() => expect(garden).toHaveTextContent('9+ new things'));
+    await waitFor(() => expect(garden).toHaveTextContent('2'));
+    expect(garden).not.toHaveTextContent('new thing');
+    expect(garden.querySelector('[data-rail-things]')).toBeNull();
     expect(screen.getByRole('link', { name: /Invented games/ }).querySelector('[data-rail-things]')).toBeNull();
     expect(screen.getByRole('link', { name: /Invented bread/ }).querySelector('[data-rail-things]')).toBeNull();
   });
