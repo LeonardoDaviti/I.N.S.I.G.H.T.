@@ -73,8 +73,9 @@ GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `
 GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}; 0131 adds
                                    before [{post_id, relation, rule, p, reason, uncertain, at, title, source, label}]
                                    (the older posts it connects to, oldest first, 10 at most) and before_more
-GET /api/markx/posts/{post_id}/related   v10.36: related reading, {post_id, vector, items [{id, title, source, at, url,
-                                   byline, cosine, guide}]}: the nearest posts by the stored vector, on request (~1.5 s)
+GET /api/markx/posts/{post_id}/related   v10.36: related reading, {post_id, vector, about, items [{id, title, source, at,
+                                   url, byline, cosine, guide, about, loose}]}: the nearest posts by the stored vector,
+                                   on request (~1.5 s); v10.37: a short report's page first, a few loose when few close
 POST /api/markx/labels/edge        0131: {newer, older, answer: right | wrong | undo, note?}: the owner's mark on an edge
 GET /api/markx/overview            {worker, briefing, entities}: the page's other tabs
 POST /api/markx/decide             asks for a decision run: {"wanted": true, "jobs"}; insight-ingestion runs it within a

@@ -1006,6 +1006,20 @@ RELATED_MIN = 0.62
 RELATED_SCAN = 1000         # the nearest rows read before the rules above thin them (one source can fill 200)
 RELATED_PER_SOURCE = 2
 RELATED_GUIDE_TYPES = ("tutorial_explainer",)   # what a reading calls a guide or explainer
+# v10.37: under RELATED_LOOSE items at the floor, the nearest under it fill the list up to RELATED_LOOSE, each marked
+# `loose` (the page shows them under "loosely related"): a seed nothing was near (a 3D-printed GPU chassis) had none.
+RELATED_LOOSE = 3
+# v10.37: what a short report is about. A post of at most RELATED_ABOUT_WORDS words (post_parts.words) reporting a
+# document, a guide, a course or a tool ("Google released a free course, How LLMs Work") has a vector of the news, so
+# its nearest were the maker's news, not the subject's explainers. Its page, when INSIGHT holds it: the stored page of
+# its subject document (story_originals `work`, by the entity), any length; for a short post, a page it links (its
+# kept links, its shared page, the originals step's `linked`/`reference` rows) stored as a post. Of those, the one
+# nearest the post, at RELATED_ABOUT_MIN or more (a link to something else, a signature, is not it: on the copy a
+# YouTube link post's linked guide was at 0.35, a CVE roundup's advisory at 0.52; the realtime "Interaction Models"
+# post's own paper at 0.61). The list is then seeded by the two vectors' mean (the report and what it reports), and
+# the page is listed first, marked `about`.
+RELATED_ABOUT_WORDS = 200
+RELATED_ABOUT_MIN = 0.55
 
 
 def title_key(title: Optional[str]) -> str:
@@ -1016,9 +1030,45 @@ def title_key(title: Optional[str]) -> str:
     return " ".join(re.findall(r"[^\W_]+", t.lower()))[:120]
 
 
-def related(cur: Any, post_id: str, *, n: int = RELATED_N, floor: float = RELATED_MIN) -> Dict[str, Any]:
-    """{post_id, vector: whether the post has one, items: [_posts' line + cosine, guide]}, the nearest first; `guide`
-    is True when the post's reading already types it a tutorial or explainer (event_types; no model call)."""
+def related_about(cur: Any, post_id: str, *, floor: float = RELATED_ABOUT_MIN) -> Optional[Tuple[str, float]]:
+    """(the stored page the post is about, its cosine to the post) or None, by RELATED_ABOUT_WORDS's rule: from what the
+    entities answer and the links already store (no model call)."""
+    from insight_core.markx import embed
+    cur.execute("""WITH short AS (SELECT COALESCE((SELECT pp.words FROM post_parts pp WHERE pp.post_id = %(p)s), 0)
+                                         <= %(words)s AS yes),
+                        cand AS (
+                        SELECT o.post_id FROM mx_mentions_now m
+                          JOIN story_originals o ON o.kind = 'work' AND o.entity_id = m.entity_id AND o.post_id IS NOT NULL
+                         WHERE m.post_id = %(p)s AND m.role = 'subject' AND m.type = 'document'
+                        UNION
+                        SELECT o.post_id FROM story_originals o, short
+                         WHERE short.yes AND o.from_post_id = %(p)s AND o.kind IN ('linked', 'reference')
+                           AND o.post_id IS NOT NULL
+                        UNION
+                        SELECT q.id FROM short, (SELECT l.target_url AS u FROM post_links l
+                                                  WHERE l.post_id = %(p)s AND NOT l.boilerplate
+                                                    AND l.kind IN ('link', 'reference')
+                                                 UNION SELECT pp.link_target FROM post_parts pp
+                                                  WHERE pp.post_id = %(p)s AND pp.link_target IS NOT NULL) k
+                          JOIN posts q ON q.normalized_url = k.u
+                         WHERE short.yes)
+                   SELECT c.post_id::text, 1 - (e.v <=> s.v) AS cos FROM cand c
+                     JOIN mx_embeddings e ON e.post_id = c.post_id AND e.model = %(m)s
+                     JOIN mx_embeddings s ON s.post_id = %(p)s AND s.model = %(m)s
+                    WHERE c.post_id <> %(p)s ORDER BY cos DESC, c.post_id LIMIT 1""",
+                {"p": post_id, "m": embed.MODEL, "words": RELATED_ABOUT_WORDS})
+    row = cur.fetchone()
+    return (row[0], float(row[1])) if row is not None and row[1] >= floor else None
+
+
+def related(cur: Any, post_id: str, *, n: int = RELATED_N, floor: float = RELATED_MIN,
+            about: bool = True) -> Dict[str, Any]:
+    """{post_id, vector: whether the post has one, about: the page it is about or None, items: [_posts' line + cosine,
+    guide, about, loose]}: the page the post is about first (RELATED_ABOUT_WORDS; `about` False: never), then the
+    nearest first, `cosine` to the seed (the post's vector, or its mean with the page's; the page's own to the post's);
+    `guide` True when the post's
+    reading already types it a tutorial or explainer (event_types; no model call); `loose` one under the floor
+    (RELATED_LOOSE)."""
     from insight_core.markx import embed, event_types
     date = pairing.published_date("p")
     cur.execute(f"""SELECT p.source_id::text, {date}, COALESCE(pp.title, p.title) FROM mx_embeddings e
@@ -1026,28 +1076,39 @@ def related(cur: Any, post_id: str, *, n: int = RELATED_N, floor: float = RELATE
                      WHERE e.post_id = %s AND e.model = %s""", (post_id, embed.MODEL))
     seed = cur.fetchone()
     if seed is None:
-        return {"post_id": post_id, "vector": False, "items": []}
-    cur.execute(f"""WITH near AS MATERIALIZED (
-                        SELECT e.post_id, 1 - (e.v <=> s.v) AS cos FROM mx_embeddings e,
-                               (SELECT v FROM mx_embeddings WHERE post_id = %(p)s AND model = %(m)s) s
-                         WHERE e.model = %(m)s AND e.post_id <> %(p)s ORDER BY e.v <=> s.v LIMIT %(scan)s)
+        return {"post_id": post_id, "vector": False, "about": None, "items": []}
+    page = related_about(cur, post_id) if about else None
+    other = page[0] if page else post_id
+    # the seed: the post's vector, or with the page it is about the two's mean (their sum: a cosine is scale-free)
+    cur.execute(f"""WITH s AS MATERIALIZED (
+                        SELECT (SELECT v FROM mx_embeddings WHERE post_id = %(p)s AND model = %(m)s)
+                             + (SELECT v FROM mx_embeddings WHERE post_id = %(a)s AND model = %(m)s) AS v),
+                         near AS MATERIALIZED (
+                        SELECT e.post_id, 1 - (e.v <=> s.v) AS cos FROM mx_embeddings e, s
+                         WHERE e.model = %(m)s AND e.post_id <> %(p)s AND e.post_id <> %(a)s
+                         ORDER BY e.v <=> s.v LIMIT %(scan)s)
                     SELECT near.post_id::text, near.cos, p.source_id::text, {date}, COALESCE(pp.title, p.title)
                       FROM near JOIN posts p ON p.id = near.post_id LEFT JOIN post_parts pp ON pp.post_id = p.id
-                     WHERE near.cos >= %(floor)s
-                       AND NOT EXISTS (SELECT 1 FROM mx_story_posts a JOIN mx_story_posts b ON b.story_id = a.story_id
+                     WHERE NOT EXISTS (SELECT 1 FROM mx_story_posts a JOIN mx_story_posts b ON b.story_id = a.story_id
                                         WHERE a.post_id = %(p)s AND a.valid_to IS NULL
                                           AND b.post_id = near.post_id AND b.valid_to IS NULL)
                      ORDER BY near.cos DESC, near.post_id""",
-                {"p": post_id, "m": embed.MODEL, "scan": RELATED_SCAN, "floor": floor})
+                {"p": post_id, "a": other, "m": embed.MODEL, "scan": RELATED_SCAN})
     rows = cur.fetchall()
     seed_source, seed_at, seed_title = seed
     titles = {title_key(seed_title)} - {""}
+    if page:
+        cur.execute("SELECT COALESCE(pp.title, p.title) FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id"
+                    " WHERE p.id = %s", (other,))
+        titles |= {title_key((cur.fetchone() or [None])[0])} - {""}
     day = timedelta(days=1)
     times: Dict[str, List[Any]] = defaultdict(list)    # each source's listed posts' times (the seed's with them)
     times[seed_source].append(seed_at)
     listed: Counter = Counter()
-    kept: List[Tuple[str, float]] = []
+    kept: List[Tuple[str, float]] = [page] if page else []
     for pid, cos, sid, at, title in rows:
+        if cos < floor and len(kept) >= RELATED_LOOSE:   # the nearest first: all after are under the floor too
+            break
         if listed[sid] >= RELATED_PER_SOURCE:
             continue
         if at is not None and any(t is not None and abs(at - t) < day for t in times[sid]):
@@ -1073,9 +1134,10 @@ def related(cur: Any, post_id: str, *, n: int = RELATED_N, floor: float = RELATE
     for pid, cos in kept:
         if pid in lines:
             t = typed[pid].type if pid in typed else None
-            items.append({**lines[pid], "cosine": round(cos, 3),
+            is_page = page is not None and pid == other
+            items.append({**lines[pid], "cosine": round(cos, 3), "about": is_page, "loose": cos < floor and not is_page,
                           "guide": t in RELATED_GUIDE_TYPES if t else pid in by_kind})
-    return {"post_id": post_id, "vector": True, "items": items}
+    return {"post_id": post_id, "vector": True, "about": other if page else None, "items": items}
 
 
 def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Dict[str, Any]:

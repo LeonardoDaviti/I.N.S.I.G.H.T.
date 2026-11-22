@@ -207,8 +207,11 @@ export interface MarkxTimeline {
 export interface MarkxRelated {
   post_id: string;
   vector: boolean;
+  /** v10.37: the stored page a short report is about (its subject document's, or one it links), listed first. */
+  about?: string | null;
+  /** v10.37: `about` the page the post reports; `loose` under the floor (the nearest, when few are close). */
   items: { id: string; title: string; source: string; at: string | null; url: string | null; byline?: Byline | null;
-    cosine: number; guide: boolean }[];
+    cosine: number; guide: boolean; about?: boolean; loose?: boolean }[];
 }
 
 /** 0131: one older post a post connects to (Stalker's first edges). `uncertain`: the judge's alone (label it). */

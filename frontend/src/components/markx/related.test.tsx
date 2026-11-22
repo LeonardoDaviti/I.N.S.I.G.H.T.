@@ -31,6 +31,31 @@ describe('Related reading (v10.36)', () => {
     expect(screen.getByRole('link', { name: 'a post' }).getAttribute('href')).toBe('/posts/r2');
   });
 
+  it('marks the page a report is about and lists the loose ones under "loosely related" (v10.37)', async () => {
+    const data: MarkxRelated = { post_id: 'p1', vector: true, about: 'r1', items: [
+      { ...RELATED.items[0], about: true, guide: false },
+      { id: 'r3', title: 'A printed GPU rack', source: 'Example Site', at: null, url: null, cosine: 0.58, guide: false,
+        loose: true },
+    ] };
+    renderWithProviders(<MarkXRelated postId="p1" />, {
+      api: makeFakeApi({ getMarkxRelated: vi.fn().mockResolvedValue(data) }) });
+    await userEvent.click(screen.getByText('Related reading'));
+    const page = await screen.findByRole('link', { name: 'What is a transformer model?' });
+    expect(page.parentElement?.textContent).toContain('the page it reports');
+    const label = screen.getByText('loosely related');
+    const loose = screen.getByRole('link', { name: 'A printed GPU rack' });
+    expect(label.compareDocumentPosition(loose) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(label.compareDocumentPosition(page) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
+
+  it('shows no "loosely related" label when every item is close', async () => {
+    renderWithProviders(<MarkXRelated postId="p1" />, {
+      api: makeFakeApi({ getMarkxRelated: vi.fn().mockResolvedValue(RELATED) }) });
+    await userEvent.click(screen.getByText('Related reading'));
+    await screen.findByRole('link', { name: 'What is a transformer model?' });
+    expect(screen.queryByText('loosely related')).toBeNull();
+  });
+
   it('says when the post has no vector yet', async () => {
     renderWithProviders(<MarkXRelated postId="p1" />, {
       api: makeFakeApi({ getMarkxRelated: vi.fn().mockResolvedValue({ post_id: 'p1', vector: false, items: [] }) }) });
