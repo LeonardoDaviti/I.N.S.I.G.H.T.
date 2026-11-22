@@ -45,3 +45,11 @@ read-only walk of production (News top rows, 8 entity pages, 2 families, 2 track
 - Story leads: the Apple row led by a cited article (rule:citation, first post never checked).
 - Track section names read from 8 nearest posts only.
 - `generic` repair wrong in ~7 of 40 (one product under an acquirer: ThinkPad, SketchUp).
+
+## Real-data check (v10.33 2031968c vs v10.35, 11-19 copy, 2026-11-22): FAIL, nothing new from v10.35's cases
+- No case changes state against 2031968c; the 22 "marked pass, fail" fail the same on the base (copy data gaps).
+- decide (690 MB / 108 s) and discover (481 MB) over budget on both sides (base 697 MB / 101 s, 478 MB).
+- New: journeys.story_makers.hard 62 -> 64 (PHP 8.x versions credited to PHP Group vs PHP Foundation) and
+  journeys.entity_links.hard 64 -> 68 (Atlas: Boston Dynamics' Atlas posts linked as `released` on the shared
+  Atlas; Orion/Genie/Civilization namesakes) — likely the reroot moving a shared bare name's root; to read.
+- Report: plan/research/lab/checks/v1029-2026-11-22.md.
