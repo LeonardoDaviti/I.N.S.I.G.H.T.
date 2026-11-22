@@ -202,6 +202,15 @@ export interface MarkxTimeline {
   earlier: { id: string; name: string | null; names: string[] }[];
 }
 
+/** v10.36: related reading, the posts nearest a post by its stored vector (GET /api/markx/posts/{id}/related).
+ *  `vector`: false when the post has none yet; `guide`: its reading types it a tutorial or explainer. */
+export interface MarkxRelated {
+  post_id: string;
+  vector: boolean;
+  items: { id: string; title: string; source: string; at: string | null; url: string | null; byline?: Byline | null;
+    cosine: number; guide: boolean }[];
+}
+
 /** 0131: one older post a post connects to (Stalker's first edges). `uncertain`: the judge's alone (label it). */
 export interface MarkxBefore {
   post_id: string;

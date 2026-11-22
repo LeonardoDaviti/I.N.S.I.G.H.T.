@@ -3,7 +3,7 @@ import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
 import type { Byline } from '../lib/byline';
-import type { MarkxFlag, MarkxNews, MarkxOverview, MarkxPostPanel, MarkxSettings } from './markx';
+import type { MarkxFlag, MarkxNews, MarkxOverview, MarkxPostPanel, MarkxRelated, MarkxSettings } from './markx';
 import type { MarkxEntityAnswer, MarkxEntityLimits, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue, MarkxQueueView } from './markx';
 import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
 import type { MarkxFold, MarkxFoldAnswer } from './markx';   // 0127
@@ -1672,6 +1672,8 @@ export function createApi() {
     getMarkxOn: () => request<{ on: boolean }>('/api/markx/on'),
     getMarkxNews: (all = false) => request<MarkxNews>(`/api/markx/news?all=${all ? 1 : 0}`),
     getMarkxPost: (postId: string) => request<MarkxPostPanel>(`/api/markx/posts/${enc(postId)}`),
+    /** v10.36: related reading, on request (~1.5 s: a scan of every stored vector). */
+    getMarkxRelated: (postId: string) => request<MarkxRelated>(`/api/markx/posts/${enc(postId)}/related`),
     getMarkxOverview: () => request<MarkxOverview>('/api/markx/overview'),
     runMarkxDecisions: () => request<Record<string, unknown>>('/api/markx/decide', { method: 'POST' }),
     /** The reading window from the Worker tab: days, or null for every post; counts from the next planner run. */

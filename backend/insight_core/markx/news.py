@@ -992,6 +992,92 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
             "recommended": cited["recommended"]}
 
 
+# v10.36: related reading, the post page's Obsidian-like "related": the posts nearest it by its stored BGE-M3 vector
+# (embed.MODEL), computed on request: a scan of every stored vector (no index, nothing kept), ~1.5 s on the
+# 2026-11-19 server copy's 158,875, so it is a click of its own, never part of the panel above. Not the panel's
+# `recommended` (the works the post itself recommends, 0133). Left out: the post; its Mark X stories' members (its
+# news, listed there); a post of a source within a day of the seed or of one already listed from that source (a
+# thread); a title already listed or the post's own (one copy kept); and a source's posts past RELATED_PER_SOURCE
+# (one prolific source never fills the list). At cosine RELATED_MIN or more: on the copy's five seeds (an explainer,
+# a release, a CVE advisory, a Russian lecture post, a 3D-printing project) the posts above 0.62 were on the subject;
+# under it a security seed's were loosely so (weeknotes, newsletters) and a release's unrelated ("Starlink Mini 2").
+RELATED_N = 10
+RELATED_MIN = 0.62
+RELATED_SCAN = 1000         # the nearest rows read before the rules above thin them (one source can fill 200)
+RELATED_PER_SOURCE = 2
+RELATED_GUIDE_TYPES = ("tutorial_explainer",)   # what a reading calls a guide or explainer
+
+
+def title_key(title: Optional[str]) -> str:
+    """A title as its words (letters and digits, lower case), a leading bracketed tag ("[Project]") left out: two
+    titles that differ only in case, punctuation or spacing are one."""
+    import re
+    t = re.sub(r"^\s*(?:\[[^\]]{0,40}\]\s*)+", "", title or "")
+    return " ".join(re.findall(r"[^\W_]+", t.lower()))[:120]
+
+
+def related(cur: Any, post_id: str, *, n: int = RELATED_N, floor: float = RELATED_MIN) -> Dict[str, Any]:
+    """{post_id, vector: whether the post has one, items: [_posts' line + cosine, guide]}, the nearest first; `guide`
+    is True when the post's reading already types it a tutorial or explainer (event_types; no model call)."""
+    from insight_core.markx import embed, event_types
+    date = pairing.published_date("p")
+    cur.execute(f"""SELECT p.source_id::text, {date}, COALESCE(pp.title, p.title) FROM mx_embeddings e
+                      JOIN posts p ON p.id = e.post_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE e.post_id = %s AND e.model = %s""", (post_id, embed.MODEL))
+    seed = cur.fetchone()
+    if seed is None:
+        return {"post_id": post_id, "vector": False, "items": []}
+    cur.execute(f"""WITH near AS MATERIALIZED (
+                        SELECT e.post_id, 1 - (e.v <=> s.v) AS cos FROM mx_embeddings e,
+                               (SELECT v FROM mx_embeddings WHERE post_id = %(p)s AND model = %(m)s) s
+                         WHERE e.model = %(m)s AND e.post_id <> %(p)s ORDER BY e.v <=> s.v LIMIT %(scan)s)
+                    SELECT near.post_id::text, near.cos, p.source_id::text, {date}, COALESCE(pp.title, p.title)
+                      FROM near JOIN posts p ON p.id = near.post_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE near.cos >= %(floor)s
+                       AND NOT EXISTS (SELECT 1 FROM mx_story_posts a JOIN mx_story_posts b ON b.story_id = a.story_id
+                                        WHERE a.post_id = %(p)s AND a.valid_to IS NULL
+                                          AND b.post_id = near.post_id AND b.valid_to IS NULL)
+                     ORDER BY near.cos DESC, near.post_id""",
+                {"p": post_id, "m": embed.MODEL, "scan": RELATED_SCAN, "floor": floor})
+    rows = cur.fetchall()
+    seed_source, seed_at, seed_title = seed
+    titles = {title_key(seed_title)} - {""}
+    day = timedelta(days=1)
+    times: Dict[str, List[Any]] = defaultdict(list)    # each source's listed posts' times (the seed's with them)
+    times[seed_source].append(seed_at)
+    listed: Counter = Counter()
+    kept: List[Tuple[str, float]] = []
+    for pid, cos, sid, at, title in rows:
+        if listed[sid] >= RELATED_PER_SOURCE:
+            continue
+        if at is not None and any(t is not None and abs(at - t) < day for t in times[sid]):
+            continue
+        key = title_key(title)
+        if key and key in titles:
+            continue
+        titles.add(key)
+        times[sid].append(at)
+        listed[sid] += 1
+        kept.append((pid, float(cos)))
+        if len(kept) >= n:
+            break
+    ids = [pid for pid, _ in kept]
+    lines = _posts(cur, ids)
+    typed = event_types.of_posts(cur, ids)
+    # a reading with no closed type: its kind as the closed type it reads as (event_types.KIND_TYPES: a tool an explainer)
+    kinds = [k for k, t in event_types.KIND_TYPES.items() if t in RELATED_GUIDE_TYPES]
+    cur.execute("SELECT DISTINCT post_id::text FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND kind = ANY(%s)",
+                (ids, kinds))
+    by_kind = {r[0] for r in cur.fetchall()}
+    items = []
+    for pid, cos in kept:
+        if pid in lines:
+            t = typed[pid].type if pid in typed else None
+            items.append({**lines[pid], "cosine": round(cos, 3),
+                          "guide": t in RELATED_GUIDE_TYPES if t else pid in by_kind})
+    return {"post_id": post_id, "vector": True, "items": items}
+
+
 def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Dict[str, Any]:
     """Today's and this week's main-subject entities (F7, ent-v3: role subject), each with its posts and voices."""
     now = now or datetime.now(timezone.utc)

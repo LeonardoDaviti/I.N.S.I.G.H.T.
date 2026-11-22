@@ -73,6 +73,8 @@ GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `
 GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}; 0131 adds
                                    before [{post_id, relation, rule, p, reason, uncertain, at, title, source, label}]
                                    (the older posts it connects to, oldest first, 10 at most) and before_more
+GET /api/markx/posts/{post_id}/related   v10.36: related reading, {post_id, vector, items [{id, title, source, at, url,
+                                   byline, cosine, guide}]}: the nearest posts by the stored vector, on request (~1.5 s)
 POST /api/markx/labels/edge        0131: {newer, older, answer: right | wrong | undo, note?}: the owner's mark on an edge
 GET /api/markx/overview            {worker, briefing, entities}: the page's other tabs
 POST /api/markx/decide             asks for a decision run: {"wanted": true, "jobs"}; insight-ingestion runs it within a
@@ -662,6 +664,16 @@ def mx_post(post_id: str):
         from insight_core.markx import timeline
         panel["before_timeline"] = timeline.before_post(cur, str(found), skip=[r["post_id"] for r in got["items"]])
         return panel
+
+
+@router.get("/posts/{post_id}/related")
+def mx_post_related(post_id: str):
+    """v10.36: related reading, the posts nearest this one by its stored vector (news.related), on request."""
+    found = _uuid(post_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such post")
+    with transaction() as cur:
+        return news.related(cur, str(found))
 
 
 @router.get("/overview")
