@@ -4,40 +4,26 @@
     python -m insight_core.scripts.repair_full_text --rule [--dry-run] [--source ID] [--limit N]
     python -m insight_core.scripts.repair_full_text --entities [--dry-run] [--source ID]
 
---rule (issue 0140): the posts left short whose last page read ended nothing_longer, not_same_article
-or needs_script, or recorded no outcome (every post read before 0140), read again once per version of
-the rules (full_text.FULL_TEXT_RULE, metadata.full_text_rule): short, or cut by a "read more" link
-(full_text.cut_marker), generic RSS only (no paid teaser), newest first, as politely as below. Every
-read records its outcome and the version, so a run stopped midway resumes where it stopped and a
-second run finds nothing. The ingestion process runs it at each start (repair_safely: logged, in a
-thread; nothing on a machine that must not fetch, INSIGHT_DISCOVER_READS=0, or with
-INSIGHT_FULL_TEXT_REPAIR=0).
+Which posts: a body shorter than full_text.SHORT_BODY_CHARS, or a paid teaser (metadata.paywalled), never read
+from its page, newest first. How each is read again:
+  - a substack source: its post from Substack's API (paid ones only with the Substack session in Connections);
+  - a generic RSS source: the article page, as new posts are read (ingestion/full_text.py), unless the source
+    has `fetch_full_content: false` or the link is not an article;
+  - a nitter_rss tweet that is an X Article given as a link: its article (kinds/x_articles.py);
+  - every other kind is skipped: its post is whole.
 
-Which posts: a body shorter than full_text.SHORT_BODY_CHARS, or a paid teaser of any length
-(metadata.paywalled), that was never read from its page, newest first. How each is read again:
-  - a source of the substack kind: its post from Substack's API (free posts come in full;
-    paid ones only with the Substack session in Connections);
-  - a generic RSS source: the article page, as new posts are read (ingestion/full_text.py),
-    unless the source has `fetch_full_content: false` or the link is not an article;
-  - a tweet of the nitter_rss kind that is an X Article the bridge gave as a link (its own words aside)
-    (kinds/x_articles.py, v10.13.10): its article, by its status id, under --rule too (once: the
-    read records its outcome and the rules' version);
-  - every other kind is skipped: a tweet, a Telegram message, a Reddit post or a video
-    description is the whole post.
+--rule: instead, the generic RSS teasers (short, or cut by a "read more" link) whose last read ended
+nothing_longer, not_same_article or needs_script, or recorded none, read again once per full_text.FULL_TEXT_RULE
+version. Each read records its outcome and the version, so a stopped run resumes and a second run finds nothing.
+The ingestion process runs it at each start (repair_safely).
 
-Polite: the posts of one site are read one at a time, full_text.PAGE_DELAY_S apart, up to
-SITE_CONCURRENCY sites at once. A site that fails STOP_AFTER_FAILURES times in a row is
-blocking us; its remaining posts are left for the next run.
+Polite: one site's posts one at a time, full_text.PAGE_DELAY_S apart, up to SITE_CONCURRENCY sites at once; a
+site failing STOP_AFTER_FAILURES times in a row is left for the next run. Every read is marked
+metadata.full_text_checked_at (--retry includes those) and counted in metadata.page_tries; a failed request is
+not marked checked. --dry-run prints what a run would read. The summary is printed as JSON.
 
-Every post read is marked metadata.full_text_checked_at, so the next run does not read it
-again; --retry includes them (after adding a Substack session, say). Each read is counted in
-metadata.page_tries as a fetch counts it (issue 0069): a failed request is not marked checked,
-and the source's later fetches read it again (0062's retry), at most 3 reads in all. --dry-run reads
-nothing: it prints what a run would read. The summary is printed as JSON.
-
---entities reads no page: it decodes the HTML codes ("That&#39;s") left in the plain text
-of posts stored before strip_html decoded them, in every stored post (or --source's).
-With --dry-run it only counts the posts it would change.
+--entities reads no page: it decodes HTML codes ("That&#39;s") left in stored plain text (every post, or
+--source's); with --dry-run it only counts.
 """
 from __future__ import annotations
 
@@ -76,15 +62,15 @@ Item = Tuple[Dict[str, Any], Any]  # (candidate post, its source kind)
 
 def plan(posts: Sequence[Dict[str, Any]], registry: KindRegistry, *, rule: bool = False
          ) -> Tuple[Dict[str, List[Item]], Counter]:
-    """The posts to read, grouped by site, and why the others are skipped. With rule (issue 0140): generic
-    RSS teasers only (full_text.is_teaser: short, or cut by a "read more" link)."""
+    """The posts to read, grouped by site, and why the others are skipped. With `rule`: generic RSS teasers only
+    (full_text.is_teaser)."""
     sites: Dict[str, List[Item]] = defaultdict(list)
     skipped: Counter = Counter()
     for post in posts:
         source = post["source"]
         kind = registry.resolve(source)
         if kind.name == "nitter_rss" and x_articles.is_article_post(post) and x_articles.lookups_on(getattr(kind, "env", os.environ)):
-            sites[x_articles.HOST_KEY].append((post, kind))   # an X Article the bridge gave as a link (v10.13.10)
+            sites[x_articles.HOST_KEY].append((post, kind))   # an X Article the bridge gave as a link
         elif rule and kind.name == "generic_rss" and not isinstance(kind, SubstackKind) and not full_text.is_teaser(post):
             skipped["no teaser"] += 1
         elif rule and (isinstance(kind, SubstackKind) or kind.name != "generic_rss"):
@@ -145,7 +131,7 @@ class Repair:
         summary.update({
             "repaired": self.counts["repaired"],
             "nothing_longer": self.counts["nothing_longer"],
-            # Every read's outcome (issue 0140): full, nothing_longer, not_same_article, needs_script, error:/http:.
+            # every read's outcome: full, nothing_longer, not_same_article, needs_script, error:/http:
             "outcomes": dict(self.outcomes),
             "failed": self.counts["failed"],
             "left_for_next_run": self.counts["left"],
@@ -176,7 +162,7 @@ class Repair:
             except Exception as exc:  # noqa: BLE001 - one post must not stop the others
                 logger.warning("Could not read %s (%s): %s", post["url"], type(exc).__name__, str(exc)[:200])
                 self.outcomes[full_text.error_outcome(exc)] += 1
-                # A failed request is counted: 0062's retry reads it again. Any other failure only says why.
+                # a failed request is counted, so the fetch's retry reads it again
                 await asyncio.to_thread(self._write, post, None, full_text.error_outcome(exc),
                                         failed=True, counted=isinstance(exc, HttpError))
                 self.counts["failed"] += 1
@@ -187,7 +173,7 @@ class Repair:
                 continue
             failures = 0
             self.outcomes[outcome] += 1
-            # Nothing longer for a post with no body is a failed try (issue 0108): read again, here and by 0062.
+            # nothing longer for a post with no body is a failed try: read again
             await asyncio.to_thread(self._write, post, found, outcome, failed=not found and full_text.empty_read_failed(post))
             self.counts["repaired" if found else "nothing_longer"] += 1
             done = self.counts["repaired"] + self.counts["nothing_longer"] + self.counts["failed"]
@@ -200,7 +186,7 @@ class Repair:
         self.counts["left"] += len(left)
 
     async def _read(self, post: Dict[str, Any], kind: Any) -> Tuple[Optional[Dict[str, Any]], str]:
-        """(the full body ({content, content_html, metadata}) or None, the read's outcome: issue 0140)."""
+        """(the full body ({content, content_html, metadata}) or None, the read's outcome)."""
         current = full_text.body_text(post)
         if kind.name == "nitter_rss":
             fresh = await kind.read_article_post(post)
@@ -222,9 +208,8 @@ class Repair:
 
     def _write(self, post: Dict[str, Any], found: Optional[Dict[str, Any]], outcome: str, *,
                failed: bool = False, counted: bool = True) -> None:
-        """Store a read: its full text, or only that it was checked, with its outcome and the rules'
-        version (issue 0140). Every request is counted in page_tries (issue 0069), as a fetch counts its
-        own; a failed one is not checked, so the next run and 0062's retry read it again."""
+        """Store a read: its full text, or only that it was checked, with its outcome and the rules' version.
+        Counted in page_tries; a failed one is not checked, so it is read again."""
         now = self.clock()
         tried = ({PAGE_TRIES_KEY: full_text.with_page_try(post, now, failed=failed)["metadata"][PAGE_TRIES_KEY]}
                  if counted else {})
@@ -271,10 +256,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def repair_safely(db_url: str, *, http: Optional[KindHttp] = None, registry: Optional[KindRegistry] = None
                   ) -> Optional[Dict[str, Any]]:
-    """The ingestion process's start (issue 0140): the teasers left short read again once for this version
-    of the rules (`--rule`), logged; resumable (each read records its version), so a later start finds
-    nothing. Never raises. Nothing on a machine that must not fetch (INSIGHT_DISCOVER_READS=0) or with
-    INSIGHT_FULL_TEXT_REPAIR=0."""
+    """The ingestion process's start: `--rule`, logged; resumable, so a later start finds nothing. Never raises.
+    Nothing with INSIGHT_DISCOVER_READS=0 (a machine that must not fetch) or INSIGHT_FULL_TEXT_REPAIR=0."""
     import os
 
     if os.getenv("INSIGHT_DISCOVER_READS", "1") == "0" or os.getenv("INSIGHT_FULL_TEXT_REPAIR", "1") == "0":

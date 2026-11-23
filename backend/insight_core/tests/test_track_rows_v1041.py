@@ -1,15 +1,7 @@
-"""Stealth v10.41: a track's rows, one a thing, dated by publication (the general track briefer, track_things).
-
-  - joins: two reports are one thing only on a strong identity: the same name, or a shared link and names that agree
-    (a rare word of the kind's names in both); a shared link alone or another key (the hardware) is not; no chain
-    through a weak key;
-  - a row's fields: each the value most of its posts give (a tie: the earliest post's), value and quote one post's;
-  - the same-thing question covers every kind and a pair one post gave (track-same-v2);
-  - the repair: a row that absorbed unrelated reports is split (dry run first), nothing deleted; a catalog post is
-    asked again under track-things-v3 and its answer folds its item rows into one;
-  - dates: a thing's first and last dates and the quick look's "also" by the post's publication, not by the day a feed
-    surfaced it.
-Synthetic data only (invented tracks); the DB tests run on a database whose name ends in _test."""
+"""A track's rows, one a thing, dated by publication (track_things): two reports are one thing only on a strong
+identity (the same name, or a shared link and agreeing names; no chain through a weak key); a row's fields are the
+value most of its posts give; the same-thing question covers every kind; the repair splits a row that absorbed
+unrelated reports (nothing deleted); dates by the post's publication. Synthetic data only; DB tests on _test only."""
 from __future__ import annotations
 
 import unittest
@@ -101,7 +93,7 @@ class Rows(_Briefer):
         self.run_planner("track_things")
         for p, n in zip(posts, ("Zqbox 9", "Zqtower 2", "Zqbox 9", "Zqmini 4")):
             self.things(f, p, {"kind": "setup", "fields": {"hardware": v(n, n), "page": v(hub, hub)}})
-        # the pre-v10.41 black hole: every report joined to the first row (as a shared link did)
+        # every report joined to the first row by a shared link: the case the strong identity prevents
         rows = TT.current(self.cur, f, "setup")
         self.assertEqual(len(rows), 3)
         hole = min(rows, key=lambda t: t["found_at"])["id"]

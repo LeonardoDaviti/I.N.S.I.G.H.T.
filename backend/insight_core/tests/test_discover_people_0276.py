@@ -1,8 +1,7 @@
-"""Issue 0276 (Stealth v10.33): Discover's people and makers. Which addresses are a person's or maker's account, the
-ranking by the posts that brought them (a post once however it names them; 3+ posts or 2+ sources), a person's
-accounts folded and a followed person left out only where the handles module links them, where each is followed;
-and on a database: the track's own posts only (never its Discover), News, links, mentions, reposts, makers, and the
-list kept by the "discover" job and served. Invented names only."""
+"""Discover's people and makers (0276): which addresses are a person's or maker's account, the ranking by the posts
+that brought them (a post once however it names them; 3+ posts or 2+ sources), a person's accounts folded and a
+followed person left out only where the handles module links them; on a database: the track's own posts only, News,
+links, mentions, reposts, makers, and the list kept by the "discover" job. Invented names only."""
 from __future__ import annotations
 
 import json
@@ -224,7 +223,7 @@ class OnTheDatabase(_Scout):
         for _ in range(3):
             self.in_track([CODE + "simonex/tool"])                                 # followed as his site: out
         got = P.suggestions(self.cur, self.now)
-        self.assertEqual([a["key"] for a in got["authors"]], ["x.com/twosrc"])   # v10.33: 3 posts from 1 source: out
+        self.assertEqual([a["key"] for a in got["authors"]], ["x.com/twosrc"])   # 3 posts from 1 source: out
         self.assertEqual(got["authors"][0]["evidence"][0]["where"], self.where)
         first = P.served(self.cur)
         self.assertEqual(first["authors"], [])                                    # nothing kept yet: the job is wanted

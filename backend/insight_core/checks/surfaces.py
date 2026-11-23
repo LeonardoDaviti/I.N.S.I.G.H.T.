@@ -1,4 +1,4 @@
-"""What a page shows, asked of the services the pages call (issue 0075: not SQL written again).
+"""What a page shows, asked of the services the pages call (not SQL written again).
 
 Each surface answers one assertion's selector with a JSON-shaped value its `path` reads:
 

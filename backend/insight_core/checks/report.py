@@ -1,12 +1,11 @@
-"""The merge report (issue 0075 E): the cases, the invariants against main's baseline, the story job's
-identity and the diff, from the two sides realdata-check.sh ran. Private: it names the owner's posts.
+"""The merge report: the cases, the invariants against main's baseline, the story job's identity, the journeys, the
+jobs' resources and the diff, from the two sides realdata-check.sh ran. Private: it names the owner's posts.
 
     python -m insight_core.checks.report --work <dir with base/ and head/> --out report.md
                                         [--label-base main --label-head <branch>] [--copy <db>] [--allow name=reason …]
 
-Exits 1 when the change can't merge: a case marked pass fails, an invariant rose with no reason
-named, a side's step failed, or (0218) a job's peak memory or seconds is over its budget or more than 20% worse than
-the base's (checks/resources.py).
+Exits 1 when the change can't merge: a case marked pass fails, an invariant rose with no reason named, a side's step
+failed, or a job's peak memory or seconds is over its budget or more than 20% worse than the base's (resources.py).
 """
 from __future__ import annotations
 
@@ -20,13 +19,13 @@ from typing import Any, Dict, List, Optional
 from insight_core.checks import diff, journeys, resources
 
 
-# What fails the check whatever main does (issue 0110: main's deploy start failed on the server copy too).
+# What fails the check whatever main does (main may be broken too).
 MUST_BE_ZERO = {"story.deploy_start", "story.dangling",
-                "markx.ix_unchanged", "markx.after_run",   # 0086 Safety: Mark X never changes Mark IX, nor breaks its own rules
-                "markx.api_during_run",                    # 0112 Decided 13: the API answers under 1 s while Mark X decides
-                "markx.api_during_rebuild"}                # 0121 Decided 8: ... and during a first start's rebuild
-# Of those, the ones that fail above zero even when the branch does better than main (0112 Decided 13: "failing it
-# means don't merge"; main's in-API decision run may be slower still).
+                "markx.ix_unchanged", "markx.after_run",   # Mark X never changes Mark IX, nor breaks its own rules
+                "markx.api_during_run",                    # the API answers under 1 s while Mark X decides
+                "markx.api_during_rebuild"}                # ... and during a first start's rebuild
+# Of those, the ones that fail above zero even when the branch does better than main ("failing it means don't
+# merge", 0112).
 ZERO_EVEN_IF_FELL = {"markx.api_during_run", "markx.api_during_rebuild"}
 
 
@@ -39,7 +38,7 @@ def _load(path: str) -> Optional[Any]:
 
 def _found(side: str) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
-    for name in ("deploy.json", "invariants.json", "jobs.json", "journeys.json"):   # 0250: the journeys' counts too
+    for name in ("deploy.json", "invariants.json", "jobs.json", "journeys.json"):
         data = _load(os.path.join(side, name)) or {"found": []}
         out.update({f["name"]: f for f in data["found"]})
     return out
@@ -95,7 +94,7 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
         if hc is None or hc < 0:
             verdict = "not measured"
             if name in MUST_BE_ZERO and "the machine's load" in (h.get("note") or ""):
-                # 0112 Decided 13: a gate not measured because the machine was loaded is no pass
+                # a gate not measured because the machine was loaded is no pass
                 verdict = "**NOT MEASURED**"
                 problems.append(f"{name}: not measured ({labels[1]}): {h['note']}")
         elif bc is not None and bc >= 0 and hc > bc:
@@ -117,12 +116,12 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
             examples = h.get("examples") if isinstance(h.get("examples"), list) else []
             lines.append(f"- `{name}`: " + "; ".join(str(e) for e in examples) + (f" ({h['note']})" if h.get("note") else ""))
 
-    # B1. the journeys (0250): each step's right / wrong / missed on both versions, the head's rows in the breakage format
+    # B1. the journeys: each step's right / wrong / missed on both versions, the head's rows in the breakage format
     jb, jh = _load(os.path.join(base, "journeys.json")), _load(os.path.join(head, "journeys.json"))
     lines += ["", "## B1. The journeys", "", "A count above in table B fails like an invariant's (a step that broke).", ""]
     lines += journeys.lines(jb, jh, labels)
 
-    # B2. the jobs' resources (0218): each job's own peak memory and seconds, against its budget and the base
+    # B2. the jobs' resources: each job's own peak memory and seconds, against its budget and the base
     rb, rh = _load(os.path.join(base, "resources.json")), _load(os.path.join(head, "resources.json"))
     lines += ["", "## B2. The jobs' resources", ""]
     if rh:
@@ -149,7 +148,7 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
         problems.append("a snapshot is missing: no diff")
         lines.append("No diff: a snapshot is missing.")
 
-    # Lead changes to read (issue 0104): said under the verdict, never a failure on their own.
+    # Lead changes to read: said under the verdict, never a failure on their own.
     reading = [] if flagged is None else [f"**Needs reading: {flagged}** News lead change{'s' if flagged != 1 else ''}"
                                           + (" (C. The diff, News, \"" + diff.NEEDS_READING + "\")." if flagged else "."), ""]
     lines[2:2] = ["", "**Verdict: " + ("FAIL**: " + "; ".join(problems) if problems else "PASS**"), "", *reading]

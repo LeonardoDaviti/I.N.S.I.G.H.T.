@@ -1,8 +1,7 @@
-"""v10.36: related reading (news.related, GET /api/markx/posts/{id}/related) against the run's own _test database:
-the nearest posts by the stored vector, the nearest first, at the floor; never the post, its story's members, its own
-source's posts within a day (a thread), a title already listed, or a source past its share; a reading's explainer
-type marked. v10.37: a short report's page (one it links, stored as a post) listed first and the list seeded by the
-two's mean; under RELATED_LOOSE items at the floor, the nearest under it marked loose. Synthetic posts and vectors only."""
+"""Related reading (news.related, GET /api/markx/posts/{id}/related) on a _test database: the nearest posts by stored
+vector at the floor, never the post, its story's members, its source's thread, a listed title or a source past its
+share; a short report's linked page listed first and the list seeded by the two's mean; under RELATED_LOOSE items at
+the floor, the nearest under it marked loose. Synthetic posts and vectors only."""
 from __future__ import annotations
 
 import unittest

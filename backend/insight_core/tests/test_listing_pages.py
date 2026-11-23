@@ -1,9 +1,6 @@
-"""v10.35: a listing of other posts (a tag, category, topic or author archive) is never stored as a post.
-
-Production 2026-11-21: a WordPress blog's archive read its sitemap index's taxonomy files (wp-sitemap-taxonomies-
-post_tag-N.xml names "post"), and each tag page, listing one article with its title, opening and date, was stored as
-a post duplicating that article (2,594 at one blog on the server's copy). Markup shapes trimmed from WordPress, Ghost,
-Hugo and a JSON-LD author page.
+"""A listing of other posts (a tag, category, topic or author archive) is never stored as a post: a tag page listing
+one article with its title, opening and date must not duplicate that article. Markup shapes trimmed from WordPress,
+Ghost, Hugo and a JSON-LD author page.
 """
 from __future__ import annotations
 

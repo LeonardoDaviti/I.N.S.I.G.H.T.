@@ -34,17 +34,13 @@ function contextLine(target: IngestionTarget): string | null {
   return target.name || null;
 }
 
-/** Query keys a finished run makes stale (the running jobs too, issue 0195: the top bar's sign ends at once).
- *  Never `['feed']`: the reader shows a "N new posts" pill instead of reordering what is on screen (spec §F.3). */
+/** Query keys a finished run makes stale. Never `['feed']`: the reader shows a new-posts pill instead of reordering. */
 export const INGESTION_INVALIDATES = [UNREAD_COUNTS_KEY, SOURCES_HEALTH_KEY, RUNNING_JOBS_KEY] as const;
 
 /**
- * Start a fetch run, poll its job, toast the run report and refresh the counts
- * (spec §F.3). Each run shows one sonner toast that goes from "Fetching…" to the
- * report's headline, with a link to the job; `startText` replaces the "Fetching…"
- * line. `run` never throws: it resolves the
- * RunReport, or null when the request failed (the error is toasted and kept in
- * `lastError`). Several targets may run at once (one per health-table row).
+ * Start a fetch run, poll its job, toast the run report and refresh the counts: one toast per run, from
+ * "Fetching…" (or `startText`) to the report's headline. `run` never throws: it resolves the RunReport, or null
+ * when the request failed (toasted, kept in `lastError`). Several targets may run at once.
  */
 export function useIngestionRun(options: { onReport?: (report: RunReport, target: IngestionTarget) => void } = {}) {
   const api = useApi();

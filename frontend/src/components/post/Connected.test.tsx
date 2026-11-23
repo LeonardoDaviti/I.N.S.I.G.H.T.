@@ -7,7 +7,7 @@ import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 import type { ConnectedRow, PostConnected } from '../../services/api';
 
-// Connected on every post (issue 0125): Earlier, Later and Outside INSIGHT, the author's own links, no model.
+// Connected on every post (0125): Earlier, Later and Outside INSIGHT, the author's own links, no model.
 
 const POST = '00000000-0000-4000-8000-000000000001';
 const PART_ONE = '00000000-0000-4000-8000-000000000002';
@@ -86,7 +86,7 @@ describe('Connected (issue 0125)', () => {
     expect(page).toHaveAttribute('href', 'https://report.test/2026/the-report?gift=1');
     expect(page).toHaveAttribute('target', '_blank');
     expect(pages[0].querySelector('q')).toHaveTextContent(/^The report everyone cites/);
-    // Save any page fetches the source that owns it, on a click (issue 0122): nothing is fetched by itself.
+    // Save any page fetches the source that owns it only on a click (0122)
     expect(within(pages[0]).getByRole('link', { name: /Save/ }).getAttribute('href')).toMatch(/^\/save\?url=https%3A%2F%2Freport\.test/);
     expect(pages[1].querySelector('q')).toBeNull();
   });

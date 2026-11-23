@@ -1,22 +1,14 @@
-"""Freed memory goes back to the OS when an API process is idle (issue 0202).
+"""Freed memory goes back to the OS when an API process is idle (0202).
 
-A request that reads a lot (a track's page, an entity's page, the overview) frees what it built when it ends, but glibc
-keeps the freed pages inside its heaps: only the top of the main heap is ever given back by itself, so an API process's
-RSS rose to its largest request's high-water and stayed there (measured on a server-sized copy: 222 MB a process after a
-reading session, 142 MB once trimmed; the server's two processes reached 1.2 GB in a day). `malloc_trim(0)` hands every
-arena's free pages back (madvise), in a few milliseconds.
-
-Before trimming it collects reference cycles: psycopg's cursors sit in cycles (their Transformer and loaders) and a
-closed cursor's Transformer still holds its last result (libpq memory, all its rows), so a big query's rows stayed until
-the cyclic GC's next full pass (measured: a track page's process 220 MB, 183-223 MB trimmed alone, 130 MB collected and
-trimmed). `freeze_start()` (each process's start) moves what the start built to the GC's permanent generation, so that
-collection reads only what requests made: 2-9 ms instead of 40-60 ms (it holds the GIL).
+glibc keeps freed pages inside its heaps, so an API process's RSS stays at its largest request's high-water;
+`malloc_trim(0)` hands every arena's free pages back. Before trimming it collects reference cycles (psycopg's closed
+cursors hold their last result in cycles); `freeze_start()` moves what the start built to the GC's permanent generation
+so that collection stays cheap (it holds the GIL).
 
 `IdleTrim` (pure ASGI middleware, the outermost) counts the requests in flight; when the last one ends, the trimmer's
 thread waits `QUIET` seconds and, if no request started meanwhile and the process grew by `GROW_MB` or more since its
-last trim, collects and trims. It never runs during a request, and a poll that leaves nothing behind never trims.
-Nothing is kept but two numbers. `INSIGHT_API_TRIM=off` switches it off; where the C library has no malloc_trim
-(musl), it does nothing.
+last trim, collects and trims. It never runs during a request. `INSIGHT_API_TRIM=off` switches it off; without
+malloc_trim (musl) it does nothing.
 """
 from __future__ import annotations
 

@@ -47,17 +47,17 @@ function FeedNudge({ feed }: { feed: FoundFeed }) {
 
 function SavedResult({ result }: { result: SavedPage }) {
   const read = result.post_id ? <TextLink to={postHref(result.post_id, null)}>Read it</TextLink> : null;
-  // A followed source's page (issue 0122) is its post; any other page is the Saved source's.
+  // A followed source's page is its post; any other page is the Saved source's.
   const name = result.source ? sourceLabel(result.source.name) : 'Saved';
   const saved = result.source_id ? <TextLink to={sourceReadPath(result.source_id)}>{name}</TextLink> : name;
-  // Every save goes to Later at the time it was saved (issue 0022, owner's decision).
+  // Every save goes to Later at the time it was saved.
   const later = <TextLink to={LATER_PATH}>Later</TextLink>;
   if (result.status === 'already') {
     const title = result.fetched && result.source ? `Found in ${name}` : 'Already in INSIGHT';
     return <Notice tone="status" title={title} message={<>{result.title ? `${result.title}. ` : null}It’s in {later}. {read}</>} />;
   }
   if (result.source) {
-    // Looked for under its source first (issue 0122): the feed doesn't list it, so it is kept as the source's post.
+    // Looked for under its source first: the feed doesn't list it, so it is kept as the source's post.
     const why = result.fetched ? `${name}’s feed doesn’t list it, so it’s kept` : 'It’s kept';
     const text = result.readable === false ? ` (its text couldn’t be read${result.reason ? `: ${result.reason}` : ''})` : '';
     return (
@@ -81,9 +81,8 @@ function SavedResult({ result }: { result: SavedPage }) {
 }
 
 /**
- * `/save` (issue 0031): "Save to INSIGHT". From the bookmarklet (`?url=…&title=…`) it shows
- * the page's title and site and a Save button; from ⌘K, a field for the address. Only Save
- * (a POST) saves. Opened by the bookmarklet, its tab closes when done.
+ * `/save`: "Save to INSIGHT". From the bookmarklet (`?url=…&title=…`) the page's title, site and a Save button;
+ * from ⌘K, an address field. Only Save (a POST) saves; a bookmarklet's tab closes when done.
  */
 export default function SavePage() {
   const api = useApi();
@@ -97,7 +96,7 @@ export default function SavePage() {
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState<PageSource | null>(null);
   const url = given || typed.trim();
-  // A page of a source you follow (issue 0122): Save fetches that source first, and says so.
+  // A page of a source you follow: Save fetches that source first, and says so.
   const owner = useQuery({
     queryKey: ['saved-source', given],
     queryFn: () => api.pageSource(given),

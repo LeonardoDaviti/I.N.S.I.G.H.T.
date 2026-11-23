@@ -1,8 +1,6 @@
-"""Source hygiene (issue 0046): the quiet and never-opened marks on the health row, Keep and
-its 90-day return, and the Keep route.
-
-The marks over a fake schedule view (test_source_health's helpers and FixedClock); Keep
-end to end against a `_test` database (it commits); the route over a fake service.
+"""Source hygiene (0046): the quiet and never-opened marks on the health row, Keep and its 90-day return, and the
+Keep route. The marks over a fake schedule view; Keep end to end against a `_test` database (it commits); the route
+over a fake service.
 """
 from __future__ import annotations
 

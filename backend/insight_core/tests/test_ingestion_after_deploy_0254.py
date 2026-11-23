@@ -1,13 +1,13 @@
-"""Issue 0254: ingestion after the v10.27 deploy. Invented feeds and accounts only.
+"""Ingestion fixes (0254). Invented feeds and accounts only.
 
-1. parsing._identities: when most items link one page (a changelog, a news page), each item still has an address of
-   its own (the feed's with its guid, else its title and date); a guid every item shares names no item.
+1. parsing._identities: when most items link one page, each item still has an address of its own (the feed's with
+   its guid, else its title and date); a guid every item shares names no item.
 2. parsing.read_feed: one broken item (an unclosed CDATA) is skipped and reported, the rest read; a CDATA left open
    that runs into the next item hides nothing; a broken header still fails the feed.
 3. operations_service.stalled_fields: a source whose live fetch never worked but holds posts carries its posts and
-   its last error ("its live feed fails: ...", sourceList.stalledNote).
-4. kinds' test_read and feed_finder.test_read: a YouTube channel or an X account that the platform says is not there
-   is refused by POST /api/sources; any other failure is a warning.
+   its last error.
+4. kinds' test_read and feed_finder.test_read: a YouTube channel or an X account the platform says is not there is
+   refused by POST /api/sources; any other failure is a warning.
 """
 from __future__ import annotations
 
@@ -279,8 +279,8 @@ if __name__ == "__main__":
 
 
 class UndatedBacklog(unittest.TestCase):
-    """v10.30: a feed that dates only its recent items: its undated older items are no newer than the nearest dated
-    item on their newer side (never "this week" on a first fetch); undated items newer than all stay "seen"."""
+    """A feed that dates only its recent items: its undated older items are no newer than the nearest dated item on
+    their newer side (never "this week" on a first fetch); undated items newer than all stay "seen"."""
 
     def feed(self, items):
         body = "".join(f"<item><title>{t}</title><link>https://zq.example/{t}</link>"

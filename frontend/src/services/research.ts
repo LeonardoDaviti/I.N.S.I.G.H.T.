@@ -1,5 +1,5 @@
-// Research (issue 0162, Mark X): from a pasted post, a link, an entity, a name or a question, INSIGHT finds what it has,
-// the same announcement elsewhere, the maker, its channels, its papers and who discusses it. Calls and shapes.
+// Research (Mark X): from a post, a link, an entity, a name or a question, INSIGHT finds what it has, the same
+// announcement elsewhere, the maker, its channels, papers and who discusses it. Calls and shapes.
 import { request } from '../lib/request';
 import type { ScoutCandidate } from './scout';
 import type { Byline } from '../lib/byline';

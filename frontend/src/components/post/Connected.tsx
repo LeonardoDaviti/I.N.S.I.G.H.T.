@@ -15,19 +15,14 @@ import { LINE_NAME, LINE_TITLE } from '../../lib/story';
 import { SAVE_PATH } from '../../lib/savePage';
 
 /**
- * "Connected" on the post page (issue 0125), after the text and before its story: the author's own links, read by
- * rules, no model. Earlier: the stored posts it links, in the text's order; Later: the stored posts that link it,
- * oldest first; Outside INSIGHT: the pages it links that INSIGHT doesn't store, which open the page (Save any page
- * offers "Fetch <source>" when a followed source owns it, issue 0122: a click, nothing fetched by itself). Under a
- * row, in quotes, the line the author gave for it. Loaded after the post, never holding it; nothing shows while it
- * loads, when it fails or when the post has no connection. On a phone the groups fold, Earlier open. Its own chunk,
- * so the reader's initial JS does not grow.
+ * "Connected" on the post page, after the text and before its story: the author's own links, read by rules, no
+ * model. Earlier: the stored posts it links, in the text's order; Later: the stored posts that link it, oldest first;
+ * Outside INSIGHT: the pages it links that INSIGHT doesn't store (a click, nothing fetched by itself). Under a row,
+ * in quotes, the line the author gave for it. Loaded after the post, never holding it; nothing shows while it loads,
+ * when it fails or when there is no connection. On a phone the groups fold, Earlier open. Its own chunk.
  *
- * Above it (issue 0134), the Series line: "Part 3 of 4 in <name>" with the stored parts in order and prev / next, or
- * "Issue #136 of <name>" with the previous and next issues. The same-source links that are series navigation ("the
- * previous part") show there, not as Earlier or Later rows.
- *
- * Last (issue 0137), its full text's reference list, folded: "References · N", each opening its page.
+ * Above it, the Series line ("Part 3 of 4 in <name>" / "Issue #136 of <name>" with prev / next); same-source series
+ * navigation links show there, not as Earlier or Later rows. Last, the full text's reference list, folded.
  */
 export default function Connected({ postId }: { postId: string }) {
   const api = useApi();
@@ -161,7 +156,7 @@ function Group({ label, rows, more, open, onMore, outside = false }: {
   );
 }
 
-/** The full text's reference list (issue 0137): folded, every one listed when opened. */
+/** The full text's reference list: folded, every one listed when opened. */
 function References({ rows }: { rows: ConnectedReference[] }) {
   if (!rows.length) return null;
   return (

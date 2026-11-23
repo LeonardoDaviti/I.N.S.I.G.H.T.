@@ -1,7 +1,6 @@
-"""Issue 0241 (Stealth v10.26, 0237 #4): official channels that work as expected. The company's news section (one rule,
-discover_main_source.announcing), its site's news section as a candidate, a section proven by its path or its stream
-(never by the event's page under it), the review view paged with what waits first, and an X account the bridge could
-not read read again, never "gone". Invented names only."""
+"""Official channels (0241): the company's news section (discover_main_source.announcing), its site's news section as
+a candidate, a section proven by its path or its stream (never by the event's page under it), the review view paged
+with what waits first, and an X account the bridge could not read read again, never "gone". Invented names only."""
 from __future__ import annotations
 
 import json

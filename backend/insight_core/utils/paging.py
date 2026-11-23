@@ -1,5 +1,5 @@
-"""One page of a list the API ranks whole (issue 0195): News, Classics, the entity queue. The first page is the
-list's top rows as they were before paging; the cursor is the next row's offset, as search's best-order cursor."""
+"""One page of a list the API ranks whole: News, Classics, the entity queue. The first page is the list's top rows;
+the cursor is the next row's offset, as search's best-order cursor."""
 from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple, TypeVar

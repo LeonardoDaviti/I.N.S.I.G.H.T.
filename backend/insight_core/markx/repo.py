@@ -1,16 +1,10 @@
-"""Mark X Shadow's storage (issue 0086 A, migration 0068): every insert and read of the mx_* tables.
+"""Mark X's storage: every insert and read of the mx_* tables (issue 0086 A).
 
-Each function takes an open cursor and leaves the transaction to its caller (one batch, one
-transaction). Ids are uuids; rows come back as dicts.
-
-The rules the tables keep (0086, the build plan's corrections):
-  - **Keyed by posts and content, never by a Mark IX story id.** A task is unique per
-    (kind, guide, input_hash), and input_hash is the sha256 of the input alone, so a question built
-    from the same content is asked once whatever the subject ids passed with it.
-  - **Keep everything.** Nothing here deletes. A membership or connection that changes is closed
-    with valid_to (`close_membership`, `close_connection`) and a new one opened; a guide is never
-    edited (a changed guide is a new id); a second answer to an answered task is a call that changes
-    nothing; a reading or a post's mentions under one guide are written once.
+Each function takes an open cursor and leaves the transaction to its caller; ids are uuids, rows come back as dicts.
+Keyed by posts and content, never by a Mark IX story id: a task is unique per (kind, guide, input_hash), the sha256 of
+the input alone, so the same question is asked once whatever ids come with it. Nothing here deletes: a changed
+membership or connection is closed (valid_to) and a new one opened, a guide is never edited (a new id), a second
+answer to an answered task changes nothing, and a reading or mention set under one guide is written once.
 """
 from __future__ import annotations
 
@@ -22,15 +16,13 @@ from uuid import UUID
 
 from psycopg import Cursor
 
-LEASE_MINUTES = 30     # 0086 C
-MAX_ATTEMPTS = 3       # an invalid answer goes back to open; after 3 the task fails (0086 C)
-# 0252: a kind asked fewer times: a track verdict that is no verdict (validate.track_verdict_error) is asked once
-# more, then the task fails and its rows keep no verdict (stored invalid: never read as "out").
+LEASE_MINUTES = 30
+MAX_ATTEMPTS = 3       # an invalid answer goes back to open; after 3 the task fails
+# a track verdict that is no verdict is asked once more, then the task fails (stored invalid: never read as "out")
 KIND_ATTEMPTS = {"track": 2}
 
 
 def max_attempts(kind: Optional[str]) -> int:
-    """How many invalid answers a task of `kind` takes before it fails."""
     return KIND_ATTEMPTS.get(kind or "", MAX_ATTEMPTS)
 DIMENSIONS = 1024      # halfvec(1024): BGE-M3
 
@@ -56,7 +48,7 @@ def _one(cur: Cursor) -> Optional[Dict[str, Any]]:
     return rows[0] if rows else None
 
 
-# ---- settings (0069: the owner's, from the page) ----------------------------------------------------
+# ---- settings (the owner's, from the page) -----------------------------------------------------------------
 
 def get_setting(cur: Cursor, key: str, default: Any = None) -> Any:
     """A setting's value (JSON; null is a value), or `default` when it has no row."""
@@ -101,9 +93,9 @@ def guides(cur: Cursor, ids: Optional[Sequence[str]] = None) -> Dict[str, Dict[s
 def add_task(cur: Cursor, *, kind: str, guide: str, subject_kind: str, input: str, a: Id = None, b: Id = None,
              day: Optional[date] = None, priority: int = 0) -> Tuple[UUID, bool]:
     """A question: (its id, whether it is new). The same (kind, guide, input) is one task, whatever
-    `a`, `b` and `priority` say: the existing one is returned unchanged. 0210: a new task past its kind's daily
-    allowance is born held (markx/holds.py decides); one no feature reads is born closed (markx/consumers.py: failed,
-    with its reason; returned as not new: nothing is asked)."""
+    `a`, `b` and `priority` say: the existing one is returned unchanged. A new task past its kind's daily allowance
+    is born held (markx/holds.py); one no feature reads is born closed (markx/consumers.py: failed, with its reason;
+    returned as not new)."""
     from insight_core.markx import consumers, holds   # both read this module
     input_hash = sha256_hex(input)
     closed = consumers.born_closed(cur, kind)
@@ -128,15 +120,13 @@ def get_task(cur: Cursor, task_id: Id) -> Optional[Dict[str, Any]]:
 
 
 def task_for(cur: Cursor, *, kind: str, guide: str, input: str) -> Optional[Dict[str, Any]]:
-    """The task already asking this question, if any."""
     cur.execute("SELECT * FROM mx_tasks WHERE kind = %s AND guide = %s AND input_hash = %s",
                 (kind, guide, sha256_hex(input)))
     return _one(cur)
 
 
 def tasks_for(cur: Cursor, *, kind: str, guide: str, inputs: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-    """{input: the task already asking it} for many questions, in one read (v10.17, 0186: a page asked them one by
-    one)."""
+    """{input: the task already asking it} for many questions, in one read."""
     by_hash = {sha256_hex(i): i for i in inputs}
     if not by_hash:
         return {}
@@ -149,20 +139,16 @@ def lease_tasks(cur: Cursor, *, kinds: Sequence[str], limit: int, worker: str,
                 minutes: int = LEASE_MINUTES, windowed: Sequence[str] = (), days: Optional[int] = None,
                 fresh: Sequence[str] = (), fresh_hours: Optional[int] = None, fresh_share: float = 0.75,
                 fresh_dated_days: int = 7) -> List[Dict[str, Any]]:
-    """Lease up to `limit` open tasks of `kinds` (and leased ones whose lease ran out) to `worker` for
-    `minutes`, by priority then age: [{id, kind, guide, input, lease_until, a}] in that order. Rows another
-    transaction is leasing are skipped, never waited on. A task of a `windowed` kind (a post's: read, entities,
-    embed) is ranked by its post's age today, not the age it had when planned (a priority below 0 is a
-    caller's urgency and stays), and those of posts older than `days`
-    (None: no post is) come after every other (0121 Decided 4: a narrowed reading window leases inside it first).
-    0210: a held task (markx/holds.py) comes after every task that is not, and none of a stopped hold is leased.
+    """Lease up to `limit` open tasks of `kinds` (and leased ones whose lease ran out) to `worker` for `minutes`, by
+    priority then age: [{id, kind, guide, input, lease_until, a}] in that order. Rows another transaction is leasing
+    are skipped, never waited on. A task of a `windowed` kind (a post's) is ranked by its post's age today (a priority
+    below 0 is a caller's urgency and stays), and those of posts older than `days` come after every other. A held
+    task (markx/holds.py) comes after every other, and none of a stopped hold is leased.
 
-    0176 A, the fresh lane (`fresh`: its kinds; `fresh_hours`: None, no lane): a task of those kinds whose post (`a`)
-    was fetched or surfaced in the last `fresh_hours` and is dated in the last `fresh_dated_days` (an archive import is
-    not new) is fresh. A lease takes fresh tasks
-    first (in the order above), up to `fresh_share` of `limit` (at least one slot, and one slot left to the rest when
-    `limit` is 2 or more); then the rest in the order above; then fresh ones again when slots are left. So a big
-    backfill never holds a new post back, and new posts never take a whole lease while older work waits."""
+    The fresh lane (`fresh` kinds, `fresh_hours`; None: no lane): a task whose post was fetched or surfaced in the
+    last `fresh_hours` and is dated in the last `fresh_dated_days` is fresh. A lease takes fresh tasks first, up to
+    `fresh_share` of `limit` (at least one slot, and one left to the rest when `limit` >= 2), then the rest, then fresh
+    ones again: a backfill never holds a new post back, and new posts never take a whole lease."""
     lane = bool(fresh) and fresh_hours is not None and any(k in fresh for k in kinds)
     if not lane:
         return _lease(cur, kinds=kinds, limit=limit, worker=worker, minutes=minutes, windowed=windowed, days=days,
@@ -251,15 +237,14 @@ def fail_attempt(cur: Cursor, task_id: Id, error: str, max_attempts: int = MAX_A
 
 
 def open_counts(cur: Cursor, kinds: Sequence[str]) -> Dict[str, int]:
-    """{kind: open tasks} of `kinds` only (v10.13.3: a lease asks this, by the queue index, not the whole table)."""
+    """{kind: open tasks} of `kinds` only (by the queue index, not the whole table)."""
     cur.execute("SELECT kind, count(*) FROM mx_tasks WHERE status = 'open' AND kind = ANY(%s) GROUP BY kind",
                 (list(kinds),))
     return {kind: n for kind, n in cur.fetchall()}
 
 
 def queue_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
-    """{kind: {status: tasks}} (GET /api/markx/status): the kept totals (issue 0195, markx/kept_counts.py), equal to
-    the GROUP BY over every task they replace."""
+    """{kind: {status: tasks}}: the kept totals (markx/kept_counts.py), equal to a GROUP BY over every task."""
     from insight_core.markx import kept_counts
     return kept_counts.queue_counts(cur)
 
@@ -267,10 +252,8 @@ def queue_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
 # ---- calls ----------------------------------------------------------------------------------------
 
 def calls_days_floor(cur: Cursor, days: int) -> Optional[datetime]:
-    """v10.14: the start (midnight, the session's time zone, as created_at::date reads it) of the oldest of the `days`
-    newest days that have a call, or None when there is no call. A per-day sum from there (`created_at >=` it, the
-    created_at index) is the `GROUP BY created_at::date ORDER BY 1 DESC LIMIT days` of every call, without reading
-    them all: one index probe a day."""
+    """The start (midnight, the session's time zone) of the oldest of the `days` newest days that have a call, or
+    None: a per-day sum from there equals a GROUP BY over every call's day, one index probe a day."""
     cur.execute("""WITH RECURSIVE d(day, n) AS (
                      SELECT (SELECT max(created_at) FROM mx_calls)::date, 1
                      UNION ALL
@@ -332,19 +315,18 @@ def readings(cur: Cursor, post_ids: Iterable[Id], guide: str) -> Dict[UUID, Dict
 
 
 MENTION_FIELDS = ("span", "name", "name_key", "type", "role", "maker", "family", "version", "variant", "size", "build")
-MENTION_FIELDS_0133 = ("rule", "by_name", "ref")   # 0133: 'citation' for the rule's; a document's publisher as
-                                                   # written; the identifier the rule read (arXiv, DOI, a document link)
+MENTION_FIELDS_0133 = ("rule", "by_name", "ref")   # 'citation' for the rule's; a document's publisher as written;
+                                                   # the identifier the rule read (arXiv, DOI, a document link)
 
 
-WINDOW_N = 1000   # 0176: window w's mentions are numbered from w * WINDOW_N (tasks.WINDOW_N)
+WINDOW_N = 1000   # window w's mentions are numbered from w * WINDOW_N (tasks.WINDOW_N)
 
 
 def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions: Sequence[dict], win: int = 0,
                  current: bool = True) -> int:
     """A post's entities under `guide`, numbered in their order (n from 0): how many were written. A
-    post's mentions under one guide are written once: a later call adds none. 0176: a long post's are written once a
-    window (`win`), window w's numbered from w * WINDOW_N, so (post, guide, n) stays a mention's key and n its order
-    in the text, whichever window is answered first."""
+    post's mentions under one guide are written once: a later call adds none. A long post's are written once a
+    window (`win`), numbered from w * WINDOW_N, so (post, guide, n) stays a mention's key and n its text order."""
     cur.execute("SELECT 1 FROM mx_mentions WHERE post_id = %s AND guide = %s AND win = %s LIMIT 1", (post_id, guide, win))
     if cur.fetchone():
         return 0
@@ -354,11 +336,10 @@ def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions:
     if rows:
         cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, win, call_id, {', '.join(fields)}) "
                         f"VALUES ({', '.join(['%s'] * (5 + len(fields)))}) ON CONFLICT DO NOTHING", rows)
-    if not current:   # 0212: ent-v5 in Shadow: stored beside the current set, never made current here
+    if not current:   # a Shadow guide's set: stored beside the current set, never made current here
         return len(rows)
-    # 0133: the newest valid answer's set is the post's current one (mx_mentions_now); an empty answer counts too.
-    # 0176: a later window that adds mentions to the same set marks it changed (`at`: the readers of new sets read it
-    # again); the set's call stays its first answer's
+    # the newest valid answer's set is the post's current one (mx_mentions_now); an empty answer counts too. A later
+    # window that adds mentions marks the set changed (`at`); the set's call stays its first answer's
     cur.execute("""INSERT INTO mx_mention_sets (post_id, guide, call_id) VALUES (%s, %s, %s)
                    ON CONFLICT (post_id) DO UPDATE
                       SET guide = EXCLUDED.guide, at = now(),
@@ -370,7 +351,7 @@ def add_mentions(cur: Cursor, *, post_id: Id, guide: str, call_id: Id, mentions:
 
 
 def current_guide(cur: Cursor, post_id: Id) -> Optional[str]:
-    """0133: the guide of the post's current mention set (its newest valid entities answer), or None."""
+    """The guide of the post's current mention set (its newest valid entities answer), or None."""
     cur.execute("SELECT guide FROM mx_mention_sets WHERE post_id = %s", (post_id,))
     row = cur.fetchone()
     return row[0] if row else None
@@ -408,7 +389,7 @@ def put_embedding(cur: Cursor, *, post_id: Id, model: str, text_hash: str, vecto
 
 
 def embedding_builds(cur: Cursor, model: str) -> Dict[Optional[str], int]:
-    """{model_sha256: vectors} stored under `model` (one build per database: build plan corrections 6)."""
+    """{model_sha256: vectors} stored under `model` (one build per database)."""
     cur.execute("SELECT model_sha256, count(*) FROM mx_embeddings WHERE model = %s GROUP BY 1", (model,))
     return dict(cur.fetchall())
 
@@ -511,7 +492,7 @@ def current_members(cur: Cursor, story_id: Id) -> List[Dict[str, Any]]:
 
 
 def stories_of_post(cur: Cursor, post_id: Id) -> List[UUID]:
-    """The Mark X stories the post is current in (a post may be in several: 0074's edge model)."""
+    """The Mark X stories the post is current in (a post may be in several)."""
     cur.execute("SELECT story_id FROM mx_story_posts WHERE post_id = %s AND valid_to IS NULL ORDER BY valid_from, story_id",
                 (post_id,))
     return [r[0] for r in cur.fetchall()]
@@ -541,7 +522,6 @@ def close_connection(cur: Cursor, *, a_kind: str, a: Id, b_kind: str, b: Id, rel
 
 
 def current_connections(cur: Cursor, kind: str, thing: Id) -> List[Dict[str, Any]]:
-    """The current connections touching a post or story, either end."""
     cur.execute("""SELECT * FROM mx_connections WHERE valid_to IS NULL
                      AND ((a_kind = %s AND a = %s) OR (b_kind = %s AND b = %s))
                    ORDER BY valid_from, relation""", (kind, thing, kind, thing))

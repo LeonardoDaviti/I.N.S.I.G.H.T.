@@ -1,11 +1,8 @@
-"""Fetch state: the persisted per-source scheduling memory (table source_fetch_state).
+"""Fetch state: the persisted per-source scheduling memory (source_fetch_state), validators, cadence columns
+and the source health view.
 
-Replaces the Mark VIII settings.ops / settings.ingest_backoff JSONB blocks, which were
-written by read-modify-write across two connections and so could clobber each other.
-Every write here is a single UPSERT, and the failure counter is incremented in SQL.
-
-Every method takes the caller's cursor and never commits: the caller owns the
-transaction. Spec: plan/INSIGHT_mark_ix_plan.md §C.3.
+Every write is a single UPSERT and the failure counter is incremented in SQL (never read-modify-write).
+Every method takes the caller's cursor and never commits.
 """
 from __future__ import annotations
 
@@ -27,21 +24,18 @@ from insight_core.utils.url_normalization import normalize_url
 if TYPE_CHECKING:
     from insight_core.ingestion.schedule import FetchDecision
 
-# Tier boundaries in seconds, mirrored from ingestion/schedule.py (FAST_BELOW,
-# MEDIUM_UP_TO). Kept as literals so this module does not import the schedule at load
-# time; test_repo_fetch_state pins SQL tier == tier_for over the boundary cases.
+# Tier boundaries in seconds, mirrored from ingestion/schedule.py (FAST_BELOW, MEDIUM_UP_TO) as literals so
+# the schedule is not imported at load time; test_repo_fetch_state pins SQL tier == tier_for.
 FAST_BELOW_SECONDS = 12 * 3600
 MEDIUM_UP_TO_SECONDS = 7 * 24 * 3600
 
 MAX_ERROR_LENGTH = 2000
-# The newest page reads source health sums (issue 0032) and the newest posts whose moves say a source moved (0108):
-# defined with the kept statistics (repo_post_stats, issue 0195).
+# defined with the kept statistics (repo_post_stats)
 from insight_core.db import repo_post_stats  # noqa: E402
 from insight_core.db.repo_post_stats import MOVED_NEWEST, PAGE_READS_IN_HEALTH  # noqa: E402,F401
 
-# A post the owner opened (issue 0046): its page was opened or read for a while, or it was
-# put in Later, kept (starred) or left part-read. read_at alone is not an open: "mark read
-# up to here" sets it on posts never looked at. `p` is the post.
+# A post the owner opened: its page was opened or read a while, or it was put in Later, kept or left part-read.
+# read_at alone is not an open ("mark read up to here" sets it). `p` is the post.
 OPENED_POST_SQL = """(
     EXISTS (SELECT 1 FROM post_interactions i
              WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session'))
@@ -68,12 +62,12 @@ class FetchStateRow:
     last_decision_at: Optional[datetime] = None
     next_due_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    doctor_checked_at: Optional[datetime] = None    # the source doctor last looked (issue 0036)
+    doctor_checked_at: Optional[datetime] = None    # the source doctor last looked
     doctor_finding: Optional[Dict[str, Any]] = None  # what it found: {replacement, dismissed}
-    linked_wanted_at: Optional[datetime] = None   # a story linked one of its pages not stored (issue 0114)
+    linked_wanted_at: Optional[datetime] = None   # a story linked one of its pages not stored
     linked_url: Optional[str] = None
     linked_fetched_at: Optional[datetime] = None  # the last early fetch decided: one per interval
-    silent_checked_at: Optional[datetime] = None  # the doctor last looked where a silent source went (issue 0178)
+    silent_checked_at: Optional[datetime] = None  # the doctor last looked where a silent source went
     silent_finding: Optional[Dict[str, Any]] = None  # what it found: {moved, replacement, stopped, ...}
 
 
@@ -82,9 +76,8 @@ _SELECT_COLUMNS = ", ".join(_COLUMNS)
 
 
 def moved_to(handle: Optional[str], moved: Sequence[Optional[str]], followed: set) -> Optional[Dict[str, Any]]:
-    """Where a source's posts now live (issue 0108): the site the pages of half or more of its MOVED_NEWEST
-    newest posts moved to (metadata.moved_to), when it is another site than the source's own; `followed`
-    when a source of yours is at it. None otherwise."""
+    """Where a source's posts now live: the site half or more of its MOVED_NEWEST newest posts moved to, when it
+    is not the source's own, with `followed` when a source of yours is at it. None otherwise."""
     hosts = Counter(publication_of(host_of(address)) for address in moved if address)
     if not hosts:
         return None
@@ -117,13 +110,9 @@ def _error_text(error: Optional[str]) -> Optional[str]:
     return error if len(error) <= MAX_ERROR_LENGTH else error[:MAX_ERROR_LENGTH] + "..."
 
 
-# The cadence refresh. {source_filter} is either empty or "AND source_id = ANY(...)".
-# Migration 0019 runs a literal copy of this once, so the UI is not blank after deploy.
-#
-# cadence_sample_size counts DISTINCT publication timestamps, not posts: a feed that stamps
-# a whole batch with one time (4 live sources did on 2026-10-09) has a mean gap of 0, and
-# the backlog guard would then poll it hourly. One distinct timestamp is no cadence signal,
-# so such a source stays `unknown` (probation, schedule.PROBATION_INTERVAL) instead.
+# The cadence refresh. {source_filter} is either empty or "AND source_id = ANY(...)". Migration 0019 runs a
+# literal copy of this once. cadence_sample_size counts DISTINCT publication timestamps, not posts: a feed that
+# stamps a batch with one time has a mean gap of 0 and would be polled hourly, so it stays `unknown`.
 _REFRESH_CADENCE_SQL = """
 WITH ranked AS (
     SELECT source_id, published_at,
@@ -175,9 +164,8 @@ class FetchStateRepository:
         return {row.source_id: row for row in (_row(r) for r in cur.fetchall())}
 
     def pending_fetch_sources(self, cur: Cursor, since: datetime) -> List[Dict[str, Any]]:
-        """The enabled sources a run decided (after `since`) to fetch and has not tried yet: the
-        live fetches due now (issue 0107: an archive of the same host keeps out of their way).
-        {id, platform, handle_or_url, settings}."""
+        """The enabled sources a run decided (after `since`) to fetch and has not tried yet: the live fetches due
+        now. {id, platform, handle_or_url, settings}."""
         cur.execute(
             """
             SELECT s.id::text, s.platform, s.handle_or_url, s.settings
@@ -222,11 +210,10 @@ class FetchStateRepository:
         now: datetime,
         backoff: Callable[[int], timedelta],
     ) -> FetchStateRow:
-        """One atomic UPSERT; the failure counter is computed in SQL, never read-modify-write.
+        """One atomic UPSERT; the failure counter is computed in SQL.
 
         error: counter + 1, last_error/_at set, next_retry_at = now + backoff(new count).
-        healthy/empty: counter reset, next_retry_at cleared, last_success_at = now, and the
-        source doctor's finding cleared (the failure streak is over).
+        healthy/empty: counter reset, next_retry_at cleared, last_success_at = now, doctor finding cleared.
         unavailable: only last_attempt_at, last_outcome and last_error (+ trigger) move.
         """
         status = OutcomeStatus(_value(outcome.status))
@@ -282,7 +269,6 @@ class FetchStateRepository:
             )
             return _row(cur.fetchone())
 
-        # error
         cur.execute(
             """
             INSERT INTO source_fetch_state (source_id, last_attempt_at, last_outcome,
@@ -301,8 +287,7 @@ class FetchStateRepository:
             params,
         )
         failures = int(cur.fetchone()[0])
-        # The delay comes from the count the database returned, so two concurrent runs
-        # cannot both write a delay computed from a stale count.
+        # the delay comes from the count the database returned, so concurrent runs cannot use a stale count
         cur.execute(
             f"""
             UPDATE source_fetch_state SET next_retry_at = %s
@@ -329,7 +314,7 @@ class FetchStateRepository:
 
     def record_doctor(self, cur: Cursor, source_id: str, *, checked_at: datetime,
                       finding: Dict[str, Any]) -> None:
-        """The source doctor looked at checked_at and found `finding` (issue 0036)."""
+        """The source doctor looked at checked_at and found `finding`."""
         cur.execute(
             """
             INSERT INTO source_fetch_state (source_id, doctor_checked_at, doctor_finding, updated_at)
@@ -344,7 +329,7 @@ class FetchStateRepository:
 
     def record_silence(self, cur: Cursor, source_id: str, *, checked_at: datetime,
                        finding: Optional[Dict[str, Any]]) -> None:
-        """The source doctor looked where a silent source went (issue 0178); None: it is not silent (cleared)."""
+        """The source doctor looked where a silent source went; None: it is not silent (cleared)."""
         cur.execute(
             """
             INSERT INTO source_fetch_state (source_id, silent_checked_at, silent_finding, updated_at)
@@ -359,8 +344,8 @@ class FetchStateRepository:
         )
 
     def mark_stopped(self, cur: Cursor, source_id: str, *, last_post_at: Optional[datetime], at: datetime) -> bool:
-        """The owner says a silent source stopped (issue 0178): its silence is not shown again until it posts
-        after `last_post_at`. Nothing is switched off or deleted. False for no such source."""
+        """The owner says a silent source stopped: its silence is not shown again until it posts after
+        `last_post_at`. Nothing is switched off or deleted. False for no such source."""
         cur.execute("SELECT 1 FROM sources WHERE id = %s::uuid", (str(source_id),))
         if cur.fetchone() is None:
             return False
@@ -381,7 +366,6 @@ class FetchStateRepository:
 
     def last_post_at(self, cur: Cursor, source_id: str) -> Optional[datetime]:
         """When its newest post was published (surfaced, else fetched, if undated): health's last_post_at."""
-        # Issue 0195: the source's kept statistics (read live while its posts changed), as source health reads them.
         cur.execute(f"SELECT x.last_post_at FROM ({repo_post_stats.stats_sql('WHERE s.id = %s')}) x",
                     (str(source_id),))
         row = cur.fetchone()
@@ -400,10 +384,8 @@ class FetchStateRepository:
         return (cur.rowcount or 0) > 0
 
     def clear_failures(self, cur: Cursor, source_id: str, *, new_address: bool = False) -> None:
-        """A source switched to a new address starts clean: no failures, backoff or finding. At a new
-        address it has no successful read either (last_success_at cleared): the new address's first
-        read is a first fetch, its backlog never new to you (repo_posts ADDED_LATE_SLACK, issue 0039),
-        and it is due at once."""
+        """A source switched to a new address starts clean: no failures, backoff or finding. At a new address its
+        last_success_at is cleared too: the next read is a first fetch (its backlog never new to you), due at once."""
         cur.execute(
             """
             UPDATE source_fetch_state
@@ -417,7 +399,7 @@ class FetchStateRepository:
         )
 
     def load_validators(self, cur: Cursor, source_ids: Sequence[str]) -> Dict[str, Dict[str, Validators]]:
-        """{source_id: {url: Validators}}: what each source's addresses said last (issue 0044)."""
+        """{source_id: {url: Validators}}: what each source's addresses said last."""
         ids = [str(s) for s in source_ids]
         if not ids:
             return {}
@@ -453,9 +435,8 @@ class FetchStateRepository:
     ) -> int:
         """Recompute mean gap, sample size and tier from the latest `window` dated posts.
 
-        Sources with fewer than `min_samples` distinct publication timestamps get
-        tier 'unknown' and a NULL mean gap. `source_ids` scopes the refresh (tests use it
-        to touch only their scratch rows); None refreshes every source. Returns rows updated.
+        Sources with fewer than `min_samples` distinct publication timestamps get tier 'unknown' and a NULL mean
+        gap. `source_ids` scopes the refresh; None refreshes every source. Returns rows updated.
         """
         params: Dict[str, Any] = {
             "window": int(window),
@@ -477,17 +458,13 @@ class FetchStateRepository:
     def load_schedule_view(
         self, cur: Cursor, source_ids: Optional[Sequence[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Every source with its cadence columns, added date, post count, newest post, folders,
-        its newest page reads (`page_reads`: the metadata.page_read of its PAGE_READS_IN_HEALTH
-        newest page-read posts, newest first), how many of its posts were opened
-        (`opened_posts`, OPENED_POST_SQL, counted by repo_post_stats.opened_counts), when the owner last kept it (`tidy_kept_at`, issue
-        0046), whether its newest only_paid post was stored as a teaser (`paid_preview`, issue
-        0084) and fetch state.
+        """Every source with its cadence columns, added date, post count, newest post, folders, newest page reads
+        (`page_reads`, newest first), `opened_posts` (OPENED_POST_SQL), `tidy_kept_at`, `paid_preview` (its newest
+        only_paid post came as a teaser), `moved_to` and fetch state.
 
-        For GET /api/sources/health: feed each row to cadence_stats(row, row["state"]).
-        `settings` is merged with the platform defaults exactly as the runner's source
-        catalog merges it, so max_posts_per_fetch (and with it the backlog guard) agrees.
-        `source_ids` scopes the view (the cadence PUT returns one fresh row); None = all.
+        For GET /api/sources/health: feed each row to cadence_stats(row, row["state"]). `settings` is merged with
+        the platform defaults exactly as the runner's catalog merges it, so the backlog guard agrees.
+        `source_ids` scopes the view; None = all.
         """
         params: Dict[str, Any] = {}
         where = ""
@@ -497,8 +474,7 @@ class FetchStateRepository:
                 return []
             where = "WHERE s.id = ANY(%(ids)s::uuid[])"
         state_columns = ", ".join(f"st.{c}" for c in _COLUMNS)
-        # Issue 0195: the post statistics kept per source (repo_post_stats; a changed source read live), and the
-        # opened posts counted from the opened posts up: no subquery per source over every post.
+        # the kept per-source post statistics (repo_post_stats); opened posts counted from the opens up
         cur.execute(
             f"""
             WITH ps AS ({repo_post_stats.stats_sql(where)})
@@ -550,14 +526,11 @@ class FetchStateRepository:
                     "post_count": int(r[12] or 0),
                     "last_post_at": r[13],
                     "folders": [{"id": str(f["id"]), "name": f["name"]} for f in (r[14] or [])],
-                    # How the newest page-read posts were read, newest first (issue 0032).
                     "page_reads": list(r[15] or []),
-                    # Source hygiene (issue 0046): posts opened, and the owner's last Keep.
                     "opened_posts": opened.get(str(r[0]), 0),
                     "tidy_kept_at": r[17],
-                    # Its newest only_paid post came as a teaser (issue 0084): True, False or None.
+                    # True, False or None
                     "paid_preview": r[18],
-                    # Where its posts moved (issue 0108): {host, followed}, or None.
                     "moved_to": moved_to(r[2], r[19] or [], followed),
                     "state": _row(state_values) if state_values[0] is not None else None,
                 }
@@ -565,16 +538,14 @@ class FetchStateRepository:
         return rows
 
     def keep_source(self, cur: Cursor, source_id: str, at: datetime) -> bool:
-        """The owner kept a source marked quiet or never opened (issue 0046): the marks hide
-        for TIDY_KEEP_DAYS from `at`. False if no such source."""
+        """The owner kept a source marked quiet or never opened: the marks hide for TIDY_KEEP_DAYS from `at`.
+        False if no such source."""
         cur.execute("UPDATE sources SET tidy_kept_at = %s WHERE id = %s", (at, str(source_id)))
         return (cur.rowcount or 0) > 0
 
     def set_cadence_override(self, cur: Cursor, source_id: str, hours: Optional[float]) -> bool:
-        """Write sources.fetch_interval_hours_override (None clears it). False if no such source.
-
-        Range validation is the route's job; the column's CHECK (> 0) is the last line.
-        """
+        """Write sources.fetch_interval_hours_override (None clears it). False if no such source. Range validation
+        is the route's; the column's CHECK (> 0) is the last line."""
         cur.execute(
             "UPDATE sources SET fetch_interval_hours_override = %s, updated_at = now() WHERE id = %s",
             (None if hours is None else float(hours), str(source_id)),

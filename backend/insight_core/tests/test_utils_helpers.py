@@ -1,5 +1,4 @@
-"""The shared helpers (utils/json_safe, utils/env, strip_html): one copy each, and what each
-caller relied on before they were collapsed."""
+"""The shared helpers (utils/json_safe, utils/env, strip_html): one copy each, and what each caller relies on."""
 import os
 import unittest
 from datetime import date, datetime, timezone
@@ -49,7 +48,7 @@ class StripHtmlTests(unittest.TestCase):
         self.assertEqual(strip_html("<p>Use &lt;details&gt; here</p>"), "Use <details> here")
 
     def test_a_quoted_greater_than_sign_does_not_end_the_tag(self):
-        # Issue 0072: a utility class's ">" left 'a]:hidden">' in front of the stored text.
+        # a utility class's ">" must not leave 'a]:hidden">' in front of the stored text (0072)
         self.assertEqual(strip_html('<h1 class="max-md:[&amp;>a]:hidden"><span>A title</span></h1>'), "A title")
         self.assertEqual(strip_html("<a title='x > y' href=/p>Read</a>"), "Read")
         self.assertEqual(strip_html("<!-- it's a > note --><p>Hello, it's me</p>"), "Hello, it's me")

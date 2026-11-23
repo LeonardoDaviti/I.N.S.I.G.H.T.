@@ -4,41 +4,17 @@
     found["start"]   # "https://claude.com/blog": 95% of the linked articles are under /blog/
     found["pages"]   # [{url: .../resources/articles, prefix, found, holds: 26, ...}, ...]
 
-`linked` are the site's article addresses your sources linked (StoriesRepository.linked_articles,
-normalized as post_links keeps them). With none, Follow behaves as before (issues 0041, 0047).
+`linked` are the site's article addresses your sources linked (StoriesRepository.linked_articles).
 
-1. Where to start. For a home page, when SECTION_SHARE of the linked articles share a first path
-   segment that is not a date or a number (/blog/, not /2026/), the finder starts at that section
-   (it follows its redirect, /blog -> /resources/articles/): a feed there first, with the
-   feeds the home page names beside it (a newspaper's tech feed may hold fewer of the links
-   than its feed of everything), else page watching of it, with the pages the finder read.
-   A section that cannot be read, or lands on the home page, is no section: the finder took
-   the home page's links, as before. When the section gives nothing (no feed, no page with an
-   article), the pages the home page names are offered, as before: the finder read the home page
-   beside the section (its feeds, and FeedFinding.home_pages / home_menu), so it is not asked again.
-   Cost: the finder's requests from the section instead of the home page, the previews of the
-   pages offered, at most one article fetched (step 2), and, when the section has feeds, the
-   home page and its feed links once more.
-2. What each finding holds: the linked articles
-   - of a feed: its items read (the part the finder read to prove it), and the articles under
-     the section its items share (a feed carries only its latest items, so its items alone
-     would rank any feed below any section);
-   - of a page to follow: the articles under its path, on its host.
-   When no finding holds any article of the linked articles' main section, one of them is
-   fetched to see where it moved (/blog/x -> /resources/articles/x), and the linked articles are
-   read at their new address too: the one extra request.
-3. The ranking: the most held first; a tie goes to the narrower path (/resources/articles/ over
-   /resources/); then the order the finder or the preview gave. No site and no word is named.
-4. A page deeper than the home page, with no feed and no section to start from (an article,
-   /blog/<slug>), is offered its own section to follow (v10.13.5): the section page (/blog) and the
-   blog or news pages the finder read under that same section, those with articles. A page under an
-   account (huggingface.co/<org>) is never offered the site's blog that is another section.
-5. Scrape regardless of a feed (issue 0240, owner 2026-11-19): when nothing above is offered (no feed, or no feed
-   holding the linked articles, and no page), the pages that list the site's announcements are previewed one after
-   another (page_watch.list_offers: the linked articles' section, the page itself, its parent and section, its
-   sitemap's news / newsroom / press / blog sections, then those at the root), and the first that reads as a dated
-   stream (page_watch.dated_list) is offered. Beside a feed, only one holding linked articles. Not on a site that
-   rate-limits us. Cost: its sitemap (shared with the previews) and at most LIST_TRIES previews in LIST_BUDGET_S.
+1. Where to start: for a home page, the section SECTION_SHARE of the linked articles share (never a date or number);
+   its feeds with the home page's beside it, else page watching of it; a section that gives nothing falls back to
+   the home page's pages (already read beside it).
+2. What each finding holds: a feed's items plus the articles under its items' section; a page's articles under its
+   path. When none holds the main section's articles, one is fetched to see where the section moved.
+3. Ranking: the most held first, a tie to the narrower path, then the given order. No site or word is named.
+4. A page deeper than the home page with no feed is offered its own section's pages.
+5. With nothing offered, the site's announcement list pages are previewed (page_watch.list_offers) and the first
+   dated stream is offered; never on a site that rate-limits us.
 """
 from __future__ import annotations
 
@@ -86,8 +62,7 @@ def on_site(address: str, linked: Iterable[str]) -> List[str]:
 
 
 def main_section(articles: Sequence[str]) -> Optional[Tuple[str, int]]:
-    """(the first segment most articles share, how many), not a date or a number, the articles
-    one or more segments under it; None when no article is under a section."""
+    """(the first segment most articles share, how many), never a date or a number; None when none is."""
     firsts = Counter(parts[1][0] for url in articles if (parts := _split(url)) and len(parts[1]) >= 2
                      and not NUMBERISH.match(parts[1][0]))
     return firsts.most_common(1)[0] if firsts else None
@@ -118,8 +93,8 @@ def _under(url: str, place: Place, shapes: Optional[Set[str]] = None) -> bool:
 
 
 def _shape(segments: Sequence[str]) -> str:
-    """What an address's first segment is: "#" a date or a number, "" the article itself (at
-    the root), else the segment: a feed of /2026/10/x holds /2025/01/y, not /pricing/plans."""
+    """What an address's first segment is: "#" a date or a number, "" the article itself (at the root), else the
+    segment, so a feed of /2026/10/x holds /2025/01/y, not /pricing/plans."""
     if len(segments) <= 1:
         return ""
     return "#" if NUMBERISH.match(segments[0]) else segments[0]
@@ -135,9 +110,8 @@ def feed_shapes(items: Sequence[str]) -> Set[str]:
 
 
 def feed_place(items: Sequence[str]) -> Optional[Place]:
-    """The section a feed's items share: their most common host, and the longest path prefix
-    their directories share, cut before a date or a number (/2026/10/ is a day, not a section).
-    At the root, it holds only the shapes of its items (feed_shapes)."""
+    """The section a feed's items share: their most common host and the longest shared path prefix, cut before
+    a date or a number. At the root it holds only its items' shapes (feed_shapes)."""
     split = [parts for url in items if (parts := _split(url))]
     if not split:
         return None
@@ -187,9 +161,8 @@ def _moved_to(url: str, move: Optional[Move]) -> Optional[str]:
 
 def holds(articles: Sequence[str], *, place: Optional[Place] = None, items: Sequence[str] = (),
           move: Optional[Move] = None) -> int:
-    """How many of the articles a finding holds: one of its items, or under its place (with
-    items, a feed: at the root, only the shapes of its items); each article as linked or, when
-    its section moved, at its new address."""
+    """How many of the articles a finding holds: one of its items, or under its place; each article as linked or,
+    when its section moved, at its new address."""
     exact: Set[str] = {normalize_url(item) or item for item in items}
     shapes = feed_shapes(items) if items else None
 
@@ -207,11 +180,11 @@ def page_place(offer: Dict[str, Any]) -> Optional[Place]:
 
 
 def feed_row(feed: feed_finder.Feed, **more: Any) -> Dict[str, Any]:
-    """A feed as the answer lists it: {url, title}, and `moved_to` when its posts now live on another
-    site (issue 0108: the site, "blog.example"), `saved_search` when it reads as one (issue 0135)."""
+    """A feed as the answer lists it: {url, title}, `moved_to` when its posts now live on another site,
+    `saved_search` when it reads as one."""
     return {"url": feed.url, "title": feed.title, **({"moved_to": feed.moved_to} if feed.moved_to else {}),
             **({"saved_search": True} if feed.search else {}),
-            # The site's feed, not this page's (issue 0137 B2): "other_scope" or "stale".
+            # the site's feed, not this page's: "other_scope" or "stale"
             **({"not_this_page": feed.flag} if feed.flag else {}), **more}
 
 
@@ -262,9 +235,8 @@ def _others(found: Sequence[feed_finder.Feed], more: Sequence[feed_finder.Feed])
 
 
 def own_section(page: str, read: Sequence[str]) -> List[str]:
-    """The pages a page deeper than its home page can be followed by (v10.13.5): its section page
-    (/blog for /blog/<slug>), when the page is not the section itself, then the pages the finder read
-    (FeedFinding.pages) under that section on its site. None for a page with no section."""
+    """The pages a page deeper than its home page can be followed by: its section page (unless it is the section),
+    then FeedFinding.pages under that section on its site. None for a page with no section."""
     section = feed_finder.section_of(page)
     if not section:
         return []
@@ -282,18 +254,16 @@ def own_section(page: str, read: Sequence[str]) -> List[str]:
 
 async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Sequence[str],
                  known: Sequence[str] = ()) -> Dict[str, Any]:
-    """POST /api/sources/find-feed's answer: {status, feeds, homepage, pages, linked, start}, with
-    `reason` when none, `note` when only a saved search was found, and `watch` when every feed found is
-    the site's, not this page's (issue 0137: the page itself to follow, its preview). `known`: your
-    sources' addresses (a blocked page tries their shapes). ValueError for an empty address."""
+    """POST /api/sources/find-feed's answer: {status, feeds, homepage, pages, linked, start}, with `reason` when
+    none, `note` when only a saved search was found, `watch` when every feed is the site's, not this page's. `known`:
+    your sources' addresses. ValueError for an empty address."""
     address = web_address(url, "An address is needed to look for its feed")
     home = page_watch.is_home(address)
     articles = on_site(address, linked)
     start = start_section(address, articles)
     finding: FeedFinding = await find_feeds(http, registry, start or address, known)
     pages: List[Dict[str, Any]] = []
-    # A section that cannot be read (or lands on the home page, or another site) is no section:
-    # the finder took the home page's links and feeds, as for the home page.
+    # a section that cannot be read, or lands on the home page or another site, is no section
     read = (bool(finding.landed) and same_site(host_of(normalize_url(finding.landed)), host_of(normalize_url(address)))
             and not page_watch.is_home(finding.landed))
     if start and not read:
@@ -303,8 +273,7 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
     elif start and finding.status == "none":
         pages = await page_watch.offers(http, [finding.landed, *finding.pages], finding.menu)
         if not pages:
-            # The section gave nothing to follow: the pages the home page names (read beside
-            # the section, its feeds already looked for), as for the home page.
+            # the section gave nothing: the pages the home page names (already read beside it)
             logger.info("Where linked: %s gave nothing; the pages %s names instead", start, address)
             tried = {p.rstrip("/") for p in (start, finding.landed, *finding.pages, *finding.menu)}
             pages = await page_watch.offers(http, [p for p in finding.home_pages if p.rstrip("/") not in tried],
@@ -316,25 +285,21 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
         pages = await page_watch.offers(http, own_section(finding.landed or address, finding.pages))
     found = list(finding.feeds)
     if start and found:
-        # The section's feeds beside the home page's own: the narrower is not always the one
-        # holding the most (a newspaper's tech feed and its feed of everything).
+        # the section's feeds beside the home page's: the narrower does not always hold the most
         found += _others(found, await feed_finder.page_feeds(http, address))
     feeds = [feed_row(feed) for feed in found]
     move: Optional[Move] = None
     if articles:
         move = await where_moved(http, articles, found, pages)
         feeds, pages = rank(articles, found, pages, move)
-    # Issue 0240 (owner 2026-11-19: scrape regardless of a feed): no page offered and no feed, or none of the feeds
-    # holding the linked articles: the pages that list the site's announcements (page_watch.list_offers: the linked
-    # articles' section, the page itself, its section, its sitemap's news sections, /news, /newsroom, /press, /blog),
-    # the first that reads as a dated stream. Beside a feed, only one holding the linked articles. Never on a site
-    # that limits us.
+    # scrape regardless of a feed (0240): no page and no feed holding the linked articles, so the site's
+    # announcement list pages; beside a feed, only one holding linked articles; never on a site that limits us
     other_feed = bool(feeds) and bool(articles) and not any(row.get("holds") for row in feeds)
     if not pages and finding.reason != "rate-limited" and (finding.status == "none" or other_feed):
         tried = [*([start] if start else []), *finding.pages, *(finding.menu if home else ())]
         if not home and not start:
             tried = own_section(finding.landed or address, finding.pages)
-        # The linked articles' section first: for a home page, or the page's own section (v10.13.5).
+        # the linked articles' section first: for a home page, or the page's own section
         section = main_section(articles)
         first = [f"{parsed.scheme}://{parsed.netloc}/{section[0]}" for parsed in [urllib.parse.urlparse(address)]
                  if section and (home or feed_finder.section_of(address) == section[0].lower())]
@@ -342,16 +307,16 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
         if articles and listed:
             _, listed = rank(articles, found, listed, move)
         pages = [offer for offer in listed if not other_feed or offer.get("holds")]
-    # Every feed found is the site's, not this page's (issue 0137 B2): the page itself, to follow.
+    # every feed found is the site's, not this page's: the page itself, to follow
     watch = None
     if found and all(feed.flag for feed in found) and finding.landed and not page_watch.is_home(finding.landed):
         offered = await page_watch.offers(http, [finding.landed])
         watch = offered[0] if offered else None
     return {"status": finding.status, "feeds": feeds, "homepage": finding.status == "none" and home,
             "pages": pages, "linked": len(articles), "start": start,
-            # Where the address itself landed (issue 0172 b1: an old domain redirecting to a site you follow).
+            # where the address itself landed (an old domain redirecting to a site you follow)
             **({"landed": finding.landed} if finding.landed else {}),
-            # A feed was found whose items INSIGHT cannot read (issue 0135): never offered.
+            # a feed was found whose items INSIGHT cannot read: never offered
             **({"refused": finding.refused} if finding.refused else {}),
             **({"reason": finding.reason} if finding.reason else {}),
             **({"note": finding.note} if finding.note else {}),

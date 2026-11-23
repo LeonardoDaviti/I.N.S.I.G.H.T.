@@ -1,14 +1,9 @@
 """nitter_rss: X/Twitter accounts through a Nitter instance's /<user>/rss feed (cursor paging).
 
-An archive that continues below the stored tweets jumps by date: its first page is the
-bridge's search RSS, /<user>/search/rss?f=tweets&q=&until=<day> (until is exclusive), and
-later pages add the same min-id cursor as the feed's pager. Every page's checkpoint keeps
-search_until, so a resume stays on the search (checked on the owner's bridge, 2026-10-16).
-
-A tweet that is an X Article, which the bridge gives as its link alone, is read again by its status id
-(kinds/x_articles.py, v10.13.10): on a live fetch and an archive alike, at most x_articles.MAX_PER_FETCH a
-fetch (an archive: a page). One stored with its article is kept as stored, not looked up again (a preview: once
-a day); one stored as the link alone is looked up again, and the saver writes its article over it.
+An archive continuing below the stored tweets jumps by date: its first page is the search RSS
+(/<user>/search/rss?f=tweets&q=&until=<day>, until exclusive), later pages add the min-id cursor; the checkpoint keeps
+search_until so a resume stays on the search. X Article links are read by kinds/x_articles.py (MAX_PER_FETCH a
+fetch or archive page); one stored with its article is not looked up again (a preview: once a day).
 """
 from __future__ import annotations
 
@@ -38,13 +33,12 @@ from insight_core.utils.addresses import host_of
 
 logger = logging.getLogger("insight.ingestion.nitter_rss")
 
-# Which of these urls are stored with their X Article read, each as stored (blocking; run in a thread):
+# Which of these urls are stored with their X Article read (blocking; run in a thread):
 # PostsRepository.stored_x_articles.
 StoredArticles = Callable[[Sequence[str]], Dict[str, Dict[str, Any]]]
 
-# Your Nitter (issue 0137 B3), configured like the Telegram bridge: NITTER_HOSTS, a comma list of hosts or
-# origins, the first used for an x.com address pasted in the Add-source dialog ("nitter.local" when unset,
-# as before; set and empty: none). Every host listed is read as Nitter, beside the known ones.
+# Your Nitter: NITTER_HOSTS, hosts or origins, the first used for a pasted x.com address ("nitter.local" when unset;
+# set and empty: none). Every host listed is read as Nitter.
 KNOWN_NITTER_HOSTS = ("nitter.local", "nitter.net")
 NITTER_BASE_URL = "https://nitter.local"
 NITTER_ENV = "NITTER_HOSTS"
@@ -79,8 +73,7 @@ NITTER_PROFILE = PolitenessProfile(
     live_pages_rate_limited=True,
 )
 
-# A status id in your Nitter's own links: any id, an old tweet's too (an address on any host is a
-# tweet only with 15+ digits, url_normalization.TWEET_PATH, so other sites' /status/ pages aren't).
+# A status id in your Nitter's own links: any id (elsewhere a tweet needs 15+ digits: url_normalization.TWEET_PATH).
 STATUS_RE = re.compile(r"/status/(?P<post_id>\d+)")
 
 
@@ -111,7 +104,7 @@ def _username(source_url: str) -> str:
 
 class NitterRssKind(BaseKind):
     name = "nitter_rss"
-    chronological = True   # newest first: an archive back to a date stops past it (issue 0130 C)
+    chronological = True   # newest first: an archive back to a date stops past it
     available_basis = "estimate"   # the profile counter (replies and reposts included)
     profile = NITTER_PROFILE
 
@@ -159,7 +152,7 @@ class NitterRssKind(BaseKind):
             yield page
 
     async def test_read(self, source: Source) -> Optional[ReadCheck]:
-        """The account's feed read once through the bridge (issue 0254): Nitter answers 404 for no such account."""
+        """The account's feed read once through the bridge: Nitter answers 404 for no such account."""
         source_url = str(source["handle_or_url"])
         try:
             body, _ = await self.http.get_text(source_url)
@@ -244,7 +237,7 @@ class NitterRssKind(BaseKind):
                 post["external_id"] = external_id
         return posts, headers.get("min-id")
 
-    # ------------------------------------------------------------------ X Articles (v10.13.10)
+    # ------------------------------------------------------------------ X Articles
 
     async def read_article_post(self, post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """The tweet with its X Article (x_articles.with_article), or None when it is none or no route gave it."""

@@ -1,6 +1,6 @@
-"""The real-data check's markx.api_during_run (0112 Decided 13): the API is measured while Mark X decides, and a
-request over 1 s fails the merge. What counts is what the run adds: the same probes before and after the run are the
-machine's own slowness (other checks share the database), and only the slow requests over that rate count."""
+"""The real-data check's markx.api_during_run (0112): the API is measured while Mark X decides, and a request over 1 s
+fails the merge. Only what the run adds counts: the same probes before and after the run give the machine's own rate
+of slow requests."""
 from __future__ import annotations
 
 import json
@@ -40,8 +40,7 @@ class TheCheck(unittest.TestCase):
 
 
 class DuringTheFirstStart(unittest.TestCase):
-    """0121 Decided 8: the same gate during a deploy's first start after a rule change (the v10.0.1 review saw 2.0-5.8 s
-    stalls of the whole API during the first start's rebuild), with the same baseline-relative count."""
+    """The same gate during a deploy's first start after a rule change, with the same baseline-relative count (0121)."""
 
     def test_the_gate_fails_above_zero_whatever_main_does_and_main_may_not_have_it(self):
         self.assertIn("markx.api_during_rebuild", report.MUST_BE_ZERO)
@@ -145,7 +144,7 @@ class WhatTheRunAdds(unittest.TestCase):
         self.assertEqual(note["expected"], 0)
 
     def test_a_machine_as_slow_before_and_after_as_during_the_run_counts_none(self):
-        # the lab's 6 Nov check: other checks' story jobs made /api/feed slow, and /api/version waited behind it
+        # other checks' story jobs can make /api/feed slow, and /api/version wait behind it
         count, note = job_checks.added_by_run(rows(40, slow=20, failed=8), rows(38, slow=19, failed=8), rows(40, slow=20, failed=8))
         self.assertEqual(count, 0)
         self.assertAlmostEqual(note["baseline_rate"], 0.7)
@@ -166,9 +165,8 @@ class WhatTheRunAdds(unittest.TestCase):
 
 
 class AQuietMachineFirst(unittest.TestCase):
-    """A window with most requests slow and no run says nothing of a run (lab, 6 Nov, two checks at once: 37 of 40
-    slow before, 40 of 40 after): the run waits for a quiet window, and with none the invariant is not measured,
-    which the report fails, never passes."""
+    """A window with most requests slow and no run says nothing of a run: the run waits for a quiet window, and with
+    none the invariant is not measured, which the report fails, never passes."""
 
     def test_a_window_is_quiet_when_at_most_one_in_ten_is_slow(self):
         self.assertTrue(job_checks.quiet(rows(40, slow=4)))
@@ -177,8 +175,7 @@ class AQuietMachineFirst(unittest.TestCase):
         self.assertFalse(job_checks.quiet([]))   # no answer at all is no quiet machine
 
     def test_a_loaded_machine_is_not_measured_with_no_examples_and_the_report_reads_it(self):
-        """The 6 Nov check of 0121: the gate's not-measured result carried its seconds as its examples, and the report
-        (which lists a count of -1's examples) stopped with "'float' object is not iterable"."""
+        """The gate's not-measured result carries no examples the report could fail to iterate (0121)."""
         class Api:
             workers, env, log_name = 2, {}, "x.log"
             proc = type("P", (), {"poll": lambda self: None})()

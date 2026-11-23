@@ -1,6 +1,6 @@
-"""Issue 0170 (v10.15 D): Discover's "main source missing": the events whose actor's own channel you don't hold, the
-channel's section to follow, a followed site's other section, a disabled source that was the event's. The rules on
-plain rows, the test with a fake finder, and the scan on a database whose name ends in _test (synthetic data only)."""
+"""Discover's "main source missing" (0170): events whose actor's own channel you don't hold, the channel's section to
+follow, a followed site's other section. The rules on plain rows, the test with a fake finder, and the scan on a _test
+database."""
 from __future__ import annotations
 
 import asyncio
@@ -121,7 +121,7 @@ class Judge(unittest.TestCase):
         self.assertEqual(M.judge([e], {**MEMBERS, "x": x}), [])
 
     def test_a_switched_off_source_covering_the_page_is_never_suggested(self):
-        """Issue 0200 (v10.17.1): the owner switched it off; before, a `disabled` row asked to switch it on."""
+        """A source switched off by the owner makes no row asking to switch it on (0200)."""
         off = src("off", host="acme.example", watch="/blog/", enabled=False, name="Acme Blog")
         self.assertEqual(M.judge([ev()], {**MEMBERS, "off": off}), [])
         # the same source on: followed, no row either; nothing is ever `disabled`
@@ -304,14 +304,13 @@ class Scanned(_Api):
         self.assertEqual(self.rows(), [])
 
     def test_a_switched_off_source_on_the_section_is_never_suggested(self):
-        """Issue 0200: its channel is the owner's, switched off; the event is no row."""
+        """Its channel is the owner's, switched off: the event is no row (0200)."""
         self.site_source("https://acme.example/blog", enabled=False, settings={"page_watch": {}}, name="Acme Blog")
         self.event()
         self.assertEqual(self.rows(), [])
 
     def test_a_switched_off_sources_posts_are_no_voice_of_an_event(self):
-        """Issue 0200: a story of two voices, one of them switched off, is one voice here: no event, no row. The story
-        itself is unchanged (its members stay)."""
+        """A story of two voices, one switched off, is one voice: no row; the story is unchanged (0200)."""
         off = self.site_source("https://reporter-off.example/feed.xml", enabled=False, name="Reporter")
         story = self.event(sources=(self.source, off))
         self.assertEqual(self.rows(), [])
@@ -338,7 +337,7 @@ class Scanned(_Api):
         self.assertEqual([r for r in body["rows"] if r["actor"]["id"] == self.acme], [])
 
     def test_the_scan_never_reads_the_whole_entity_book(self):
-        """v10.17 (0186): the scan asks the book for what its stories name (identity.lazy_book)."""
+        """The scan asks the book for what its stories name (identity.lazy_book)."""
         from insight_core.markx import identity
         self.event()
         with mock.patch.object(identity, "load_book", side_effect=AssertionError("the whole book")):
@@ -346,10 +345,8 @@ class Scanned(_Api):
         self.assertEqual([r["key"] for r in got], ["main:acme.example/blog/"])
 
     def test_the_list_is_kept_and_made_by_the_jobs_process(self):
-        """0206: the list is kept (markx/kept_pages.py), not per API process. Nothing kept: the first open makes it and
-        keeps it; a later open sends it without a scan, even after an answer elsewhere; a source added (its input)
-        leaves the open with the newest kept list and wants the jobs process's "main_source" job, whose build (`keep`)
-        is then sent; a Not interested shows at once (the hidden rows are read with every answer)."""
+        """The list is kept (markx/kept_pages.py): the first open makes and keeps it, later opens send it unscanned;
+        a source added sends the newest kept list and wants the "main_source" job; Not interested shows at once (0206)."""
         from insight_core.markx import kept_pages
         self.cur.execute("DELETE FROM mx_kept_pages WHERE page = 'main_source'")
         self.cur.execute("DELETE FROM mx_jobs WHERE job = 'main_source'")

@@ -114,7 +114,7 @@ test('apiRestartLine: an API restart record says its times in the reader zone, n
   assert.equal(apiRestartLine(restart, 'Europe/Istanbul'), 'The API was restarted at 13:53 after 2 min of no answer');
   assert.equal(apiRestartLine(restart, 'UTC'), 'The API was restarted at 10:53 after 2 min of no answer');
   assert.equal(jobSummary(restart, 'Asia/Dubai'), 'The API was restarted at 14:53 after 2 min of no answer');
-  // a record written before 0124: its clock was the container's (UTC) in the message; the page writes it from its start
+  // an old record: its message had the container's (UTC) clock; the page writes it from its start
   const old = { ...restart, message: 'The API was restarted at 10:53 after 2 min of no answer',
     payload: { kind: 'restart', failing_seconds: 128 } } as JobRun;
   assert.equal(apiRestartLine(old, 'Asia/Dubai'), 'The API was restarted at 14:53 after 2 min of no answer');

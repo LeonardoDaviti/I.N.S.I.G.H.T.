@@ -1,8 +1,5 @@
-"""Teasers are tried again (issue 0062, item 2): a teaser whose page read failed is read again
-on its source's later fetches, at most MAX_PAGE_TRIES reads, RETRY_APART apart.
-
-No network: FakeHttp. The kind tests need no database; the store tests commit rows, so they run
-only against a *_test database (@requires_test_db).
+"""Teasers are tried again (0062): a teaser whose page read failed is read again on its source's later fetches, at most
+MAX_PAGE_TRIES reads, RETRY_APART apart. No network: FakeHttp; the store tests commit, so they run only on *_test.
 """
 from __future__ import annotations
 

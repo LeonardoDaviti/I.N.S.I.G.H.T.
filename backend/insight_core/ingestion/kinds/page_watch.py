@@ -1,46 +1,14 @@
-"""page_watch: a page without a feed, followed through its links and the site's sitemap (issue 0028).
+"""page_watch: a page without a feed, followed through its links and the site's sitemap.
 
-A source is platform rss, handle_or_url the listing page (https://www.anthropic.com/news) and
-settings.page_watch = {"prefix": "/news/"}; the setting is what selects this kind. The prefix
-is optional: by default it is the listing page's path ("/news" -> "/news/"), or for a site's
-home page the most common first segment of its deeper links. A listing page whose own path holds
-fewer than SECTION_MIN articles (its links and the sitemap's) is followed under the section its
-article links share instead (/resources/articles listing /post/<slug> -> "/post/", v10.13.10).
-
-The articles are the union of
-  - the listing page's same-host links under the prefix, in page order (newest first), and
-  - the sitemap's URLs under the prefix (robots.txt's Sitemap: lines, else /sitemap.xml; an
-    index is followed to at most MAX_SITEMAPS files, each read up to SITEMAP_MAX_BYTES; .gz
-    files are skipped),
-the listing page itself left out. A live fetch reads the ones not stored yet, listing links
-first, then the sitemap's by lastmod (newest first); an archive reads them all, one article
-page per archive page so the host gate spaces them.
-
-An article page is read with the full-text reader (extract_article_html). Its date is the
-page's own (article:published_time, JSON-LD datePublished, meta date, its one <time datetime>, a
-paper's scholarly meta date: citation_publication_date and the like, its address's day, its byline or one written
-date unless its address contradicts it: page_dating, issue 0228), else
-the sitemap's lastmod, else now: a sitemap's lastmod is often a redeploy date, not the
-publication's. A page with no article body, or with neither a date nor og:type article (a
-category page), is not a post. A live fetch remembers the pages it skipped for the process's
-life (one that failed, for a day) and reads at most SKIP_READS of them besides its posts, so
-they never use up its limit. A site that builds its pages with JavaScript yields no bodies,
-so no posts (the preview says so).
-
-A live fetch asks conditionally (issue 0044): when the listing page and every sitemap file the
-last fetch read answer 304, nothing changed and the fetch is no posts. Validators are kept only
-when every address read gave some and the fetch left no candidate unread (otherwise the next
-fetch must look again, so it reads in full).
-
-Its stored pages can be watched for changes (issue 0039, page_changes): page_post reads one
-again as a fetch does, and article_post keeps the date the page says it changed (metadata
-modified). A post found only in the sitemap is marked as backlog (repo_posts.BACKLOG_KEY): it is
-never "new to you", so a fetch reading the site's history does not fill the top of the feed.
-
-A news sitemap's <news:publication_date> is an entry's date before its lastmod (issue 0240). A site with no feed and
-no page offered is tried on the pages that list its announcements (issue 0240, `list_offers`, where_linked.follow's
-last step): the page, its section, its sitemap's news / newsroom / press / blog sections, those at its root; the first
-whose preview reads as a dated stream (`dated_list`) is offered.
+Selected by settings.page_watch = {"prefix": "/news/"} on an rss source whose handle_or_url is the listing page.
+The prefix defaults to the listing page's path (for a home page, the most common first segment of its deeper links;
+a listing with fewer than SECTION_MIN articles under its own path follows its article links' section). Articles are
+the listing's same-host links under the prefix (page order) plus the sitemap's URLs under it; a live fetch reads
+the unstored ones, conditionally (304 everywhere: no posts), an archive reads them all one page per archive page.
+An article is read with the full-text reader and dated by `page_dating`, else the sitemap's lastmod; a page with no
+article body, or with neither a date nor og:type article, is no post. Sitemap-only posts are backlog
+(repo_posts.BACKLOG_KEY), never "new to you". Entry points: the kind, `preview`, `offers` and `list_offers` (a site
+with no feed tried on its news / press / blog list pages).
 """
 from __future__ import annotations
 
@@ -70,27 +38,23 @@ from insight_core.utils.url_normalization import normalize_url
 logger = logging.getLogger("insight.ingestion.page_watch")
 
 MAX_SITEMAPS = 5          # sitemap files read per discovery (robots' ones, an index's children)
-# An archive reads the site's whole sitemap for the rest of its pages (issue 0130 B4): a site whose index has more
-# children than a live fetch reads (one a year, one a section) keeps its older pages there.
+# An archive reads the site's whole sitemap: an index may have more children than a live fetch reads.
 ARCHIVE_SITEMAPS = 60
 SITEMAP_MAX_BYTES = 5_000_000   # a sitemap is read up to this; a longer one keeps its first entries
-# The posts' sitemap files blog platforms write (an index's, WordPress's, Ghost's), read by an archive when
-# robots.txt names none and /sitemap.xml is missing (issue 0143).
+# The posts' sitemap files blog platforms write, read by an archive when robots.txt and /sitemap.xml give none.
 POST_SITEMAPS = ("sitemap_index.xml", "post-sitemap.xml", "sitemap-posts.xml", "wp-sitemap.xml", "sitemap.xml.gz")
 SKIP_READS = 10           # pages a live fetch may read that are no post or fail, besides its posts
 FAILED_RETRY_S = 24 * 3600   # a page that failed is read again after this; one that is no post, never
 PREVIEW_ITEMS = 5
 PREVIEW_READS = 8         # the first candidates a preview reads, to show PREVIEW_ITEMS posts
 PREVIEW_FAN_OUT = 4
-OFFER_BUDGET_S = 15.0     # the previews of a site's blog or news pages, run at once (issue 0041)
-# A menu link is offered as an article list (issue 0047) when its preview read this many posts
-# dated this recently (of the PREVIEW_READS read; a list may lead with its category pages).
+OFFER_BUDGET_S = 15.0     # the previews of a site's blog or news pages, run at once
+# A menu link is offered as an article list when its preview read this many posts dated this recently.
 MENU_POSTS = 3
 MENU_RECENT = timedelta(days=365)
 
-# The pages skipped by a live fetch (no post, or failed): url -> the time.monotonic() to read
-# it again. For the process's life: a run builds its own registry, so a kind's own set would
-# last one run (issue 0029).
+# The pages skipped by a live fetch (no post, or failed): url -> the time.monotonic() to read it again.
+# Module-level so it lasts the process, not one run's registry.
 SKIPPED: Dict[str, float] = {}
 
 LINK_RE = re.compile(r"""(?is)<a\b[^>]*?\bhref\s*=\s*["']([^"']+)["']""")
@@ -100,22 +64,19 @@ TITLE_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
 H1_RE = re.compile(r"(?is)<h1\b[^>]*>(.*?)</h1>")
 SITE_SUFFIX_RE = re.compile(r"\s+[|\\·–—-]\s+([^|\\·–—-]{1,40})$")    # "Title \ Anthropic"
 META_DATES = ("date", "dc.date", "pubdate")       # <meta name> dates, after the two above
-# The scholarly (Highwire / Google Scholar, Dublin Core, PRISM) <meta name> dates papers carry (arXiv,
-# bioRxiv, journals, proceedings), read after the dates above and before a date written in the text.
-# The first publication comes first: a paper's later version or its issue's cover never moves its date,
-# so the online date (arXiv's: the latest version's) is the last.
+# The scholarly <meta name> dates papers carry, read after the dates above and before a written date; the first
+# publication first, so a later version never moves a paper's date.
 SCHOLARLY_DATES = ("citation_publication_date", "citation_date", "dc.date.issued", "dcterms.issued",
                    "dc.date.created", "dcterms.created", "prism.publicationdate", "citation_cover_date",
                    "citation_online_date")
-# The forms they are written in, each a whole day (UTC): "2026/06/11", "2026-6-11", "2026 Jun 11",
-# "Jun 11, 2026", "11 June 2026". A year or a month alone ("2026", "2026/6") is no date: stored as the
-# 1st it would read as precise and sort the paper months early, so the next tag (or none) is used.
+# The forms they are written in, each a whole day (UTC). A year or a month alone is no date (it would read as
+# precise), so the next tag is used.
 SCHOLARLY_YMD_RE = re.compile(r"^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})$")
 SCHOLARLY_Y_MON_D_RE = re.compile(r"^(\d{4})\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})$")
 SCHOLARLY_D_MON_Y_RE = re.compile(r"^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?,?\s+(\d{4})$")
 SCHOLARLY_MON_D_Y_RE = re.compile(r"^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$")
-LISTING_MAX_BYTES = 4_000_000                     # a listing page is read up to this (groq.com's: 0.9 MB)
-# A date written on the page ("June 29, 2026", "Jun 29, 2026"): ai.meta.com's articles have no other.
+LISTING_MAX_BYTES = 4_000_000                     # a listing page is read up to this
+# A date written on the page ("June 29, 2026", "Jun 29, 2026").
 TEXT_DATE_RE = re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}, (?:19|20)\d\d\b")
 SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
 EPOCH = datetime.min.replace(tzinfo=timezone.utc)
@@ -128,8 +89,7 @@ def normalise_prefix(value: Any) -> str:
 
 
 def _clean(url: str, base: Optional[str] = None) -> Optional[str]:
-    """An absolute http(s) URL without its fragment or trailing slash; None for anything else
-    (a malformed one, "http://[x/", too)."""
+    """An absolute http(s) URL without its fragment or trailing slash; None for anything else."""
     try:
         absolute = urllib.parse.urldefrag(urllib.parse.urljoin(base or url, html.unescape(url.strip())))[0]
         parsed = urllib.parse.urlparse(absolute)
@@ -141,10 +101,8 @@ def _clean(url: str, base: Optional[str] = None) -> Optional[str]:
 
 
 def infer_prefix(listing_url: str, links: Sequence[str]) -> str:
-    """The listing page's path; for a home page, the most common first segment of its
-    same-host links two or more segments deep ("/" when it has none). Never a date (v10.15 c5): a path
-    stops above its first year segment (/blog/2026/11 -> "/blog/"), and links dated at the site's root
-    (/2026/<slug>) count for "/"."""
+    """The listing page's path; for a home page, the most common first segment of its same-host links two or
+    more segments deep ("/" when none). Never a date: a path stops above its first year segment."""
     path = urllib.parse.urlparse(listing_url).path.strip("/")
     if path:
         return stable_prefix(f"/{path}/")
@@ -155,8 +113,7 @@ def infer_prefix(listing_url: str, links: Sequence[str]) -> str:
     return f"/{first}/" if first else "/"
 
 
-# v10.15 c5: a year segment (/2026/) and what follows it (the month, the day) date a page, so a prefix ending in one
-# stops matching when the year turns: a prefix is the stable section above them.
+# A prefix ending in a year segment stops matching when the year turns: a prefix is the stable section above it.
 YEAR_RE = re.compile(r"^(?:19|20)\d\d$")
 
 
@@ -170,9 +127,8 @@ def stable_prefix(prefix: str) -> str:
     return f"/{'/'.join(segments)}/" if segments else "/"
 
 
-# v10.15 c7: a page whose address names an action (apply, sign up, subscribe, contact) is a form or a door, never a
-# post, wherever it sits (/news/<grant>/apply under a news section): its last path segment, as a whole word. The
-# actions of linked_rules.NOT_POST (the pages no source's post is) and the form actions it lacks.
+# A page whose last path segment is an action word (apply, sign up, contact) is a form, never a post, wherever it
+# sits: linked_rules.NOT_POST's actions plus the form actions it lacks.
 ACTION_WORDS = frozenset({
     "apply", "application", "applications", "login", "log-in", "signin", "sign-in", "signup", "sign-up", "register",
     "registration", "subscribe", "unsubscribe", "contact", "contact-us", "form", "forms", "rsvp", "waitlist",
@@ -194,8 +150,8 @@ FORM_TEXT_MAX = 1500      # ... when the page's article text around it is shorte
 
 
 def form_page(page: str, text: str) -> bool:
-    """Whether a page's body is a form (v10.15 c7): one of FORM_FIELDS fields or more to fill (never a comment or
-    a search form: an article's own) on a page of little article text (FORM_TEXT_MAX)."""
+    """Whether a page's body is a form: FORM_FIELDS fields or more to fill (not a comment or search form) on a
+    page of little article text (FORM_TEXT_MAX)."""
     if len(text) >= FORM_TEXT_MAX:
         return False
     for attrs, inner in FORM_RE.findall(page):
@@ -211,8 +167,7 @@ def form_page(page: str, text: str) -> bool:
     return False
 
 
-# v10.15 c10: a listing's later pages (/news/page/7, /blog/p/3, ?page=7, "News (Page 7)") are the listing again,
-# never an article to read or a section to offer.
+# A listing's later pages (/news/page/7, ?page=7) are the listing again, never an article or a section to offer.
 PAGINATION_SEGMENTS = frozenset({"page", "pages", "p"})
 PAGINATION_KEYS = frozenset({"page", "paged", "pg"})
 PAGINATION_TITLE_RE = re.compile(r"(?i)(?:\(\s*page\s+\d+\s*\)|\bpage\s+\d+\s+of\s+\d+\b)")
@@ -230,11 +185,9 @@ def pagination_page(url: str, title: str = "") -> bool:
     return bool(title and PAGINATION_TITLE_RE.search(title))
 
 
-# v10.35: a listing of other posts (a tag, category, topic or author archive) is no post, though it shows an
-# article's title, opening and date (a WordPress tag page listing one article; a sitemap's taxonomy files list them).
-# By its address: one of LISTING_SEGMENTS just before its last segment (/tag/<name>/), past the source's own prefix;
-# by its markup: WordPress's body class "archive", Ghost's tag/author templates, JSON-LD CollectionPage or
-# ProfilePage, or a feed of its own ("<page>/feed/", "<page>/index.xml"; never a comments feed).
+# A listing of other posts (a tag, category, topic or author archive) is no post, though it may show an article's
+# title and date. By its address (a LISTING_SEGMENT before its last segment, past the source's prefix) or its
+# markup (an archive body class, JSON-LD CollectionPage / ProfilePage, a feed of its own other than comments).
 LISTING_SITEMAP_RE = re.compile(r"(?i)taxonom|post_tag|(?:^|[-_])(?:tags?|categor(?:y|ies)|authors?|users?)(?:[-_.]|$)")
 LISTING_SEGMENTS = frozenset({"tag", "tags", "topic", "topics", "category", "categories", "author", "authors"})
 BODY_CLASS_RE = re.compile(r"""(?is)<body\b[^>]*\bclass\s*=\s*["']([^"']*)["']""")
@@ -247,8 +200,8 @@ MARKUP_HEAD = 400_000     # a page's markup read for these signs
 
 
 def listing_address(url: str, prefix: str = "") -> bool:
-    """Whether the address is a tag / category / topic / author archive (/tag/<name>/, /blog/author/<name>), the
-    source's own prefix aside (a watched /topics/ section's /topics/<slug> pages stay its articles)."""
+    """Whether the address is a tag / category / topic / author archive, the source's own prefix aside (a watched
+    /topics/ section's pages stay its articles)."""
     segments = parsing.path_segments(url)
     own = len([part for part in str(prefix or "").split("/") if part])
     return len(segments) >= 2 and len(segments) - 2 >= own and segments[-2].lower() in LISTING_SEGMENTS
@@ -259,10 +212,9 @@ SITE_PAGE_ADAPTERS = frozenset({"page_watch", "generic_rss"})
 
 
 def stored_listing(url: Optional[str], external_id: Optional[str], adapter: Optional[str], prefix: str = "") -> bool:
-    """Whether a stored post is a listing of other posts (v10.35), from what its row keeps (its markup is not): a page
-    of the site read as an article by page watch or a feed's archive (SITE_PAGE_ADAPTERS, its external_id a path)
-    at a listing address. Never a feed's own item, a saved page or a code host's release (/releases/tag/<v>: no
-    article_post's row). The item filter's `listing` rule asks it (utils/item_filter)."""
+    """Whether a stored post is a listing of other posts, from its row alone: a site page read as an article
+    (SITE_PAGE_ADAPTERS, external_id a path) at a listing address; never a feed item, saved page or release.
+    Asked by utils/item_filter's `listing` rule."""
     if not url or adapter not in SITE_PAGE_ADAPTERS or not external_id:
         return False
     # its external id a path (article_post's; a page that moved keeps the one it was first read at), never a guid
@@ -289,16 +241,14 @@ def listing_markup(page: str, url: str) -> bool:
 
 
 def not_post(page: str, url: str, post: Mapping[str, Any]) -> bool:
-    """Whether a page read as an article is none whatever it shows: a form (c7), a listing's numbered page (c10),
-    a page whose markup says it lists other posts (v10.35; a listing address is left out before it is read:
-    discovery's candidates, the archive's sitemap section). Page watch and the archive's sitemap pages ask it, and
-    a post's linked pages."""
+    """Whether a page read as an article is none whatever it shows: a form, a listing's numbered page, or markup
+    saying it lists other posts. Asked by page watch, the archive's sitemap pages and a post's linked pages."""
     return bool(action_page(url) or pagination_page(url, post.get("title") or "")
                 or form_page(page, post.get("content") or "") or listing_markup(page, url))
 
 
 def page_key(url: str) -> str:
-    """One key for one page's addresses (v10.15 c6): www. and the bare host are one, as ingestion normalises them."""
+    """One key for one page's addresses: www. and the bare host are one, as ingestion normalises them."""
     return normalize_url(url) or url
 
 
@@ -309,9 +259,8 @@ def twin(url: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(netloc=other))
 
 
-# v10.15 c8: a site's name after its titles ("Title | Blog", "Title - Acme Blog", "Title — Acme", "Title / Blog"),
-# learned across a section's titles: the trailing segment after a separator that most of them share.
-# The separator is spaced after it, before it too or not ("experiences- Acme Developers Blog").
+# A site's name after its titles ("Title | Blog", "Title — Acme"), learned across a section's titles: the trailing
+# segment after a separator most of them share. The separator is spaced after it, before it optionally.
 TITLE_SUFFIX_RE = re.compile(r"^(.*\S)\s*[|\\/·•–—-]\s+([^|\\/·•–—]{1,40}?)\s*$")
 
 
@@ -322,8 +271,7 @@ def title_suffix(title: str) -> Optional[Tuple[str, str]]:
 
 
 def site_suffixes(titles: Sequence[str]) -> set:
-    """The trailing segments (casefolded) that name the site: on two of these titles at least, and on half of them
-    or more. One title alone teaches nothing (its own og:site_name is page_title's)."""
+    """The trailing segments (casefolded) that name the site: on two of these titles at least, and half or more."""
     found = Counter(split[1].casefold() for title in titles if (split := title_suffix(title)))
     return {suffix for suffix, n in found.items() if n >= 2 and n * 2 >= len(titles)}
 
@@ -345,10 +293,8 @@ def name_titles(posts: Sequence[Dict[str, Any]], known: Sequence[str] = ()) -> N
                 post["title"] = strip_site_suffix(str(post["title"]), suffixes)
 
 
-# v10.13.10: a listing page whose own path holds fewer than SECTION_MIN articles (its links and the sitemap's)
-# is followed under the section its article links share instead (a /resources/articles page listing
-# /post/<slug>): the first segment shared by the most of its content links in the feed finder's article shape
-# (issue 0137 B2), at least SECTION_MIN of them, never a menu section.
+# A listing page whose own path holds fewer than SECTION_MIN articles is followed under the section its article
+# links share (at least SECTION_MIN of them, never a menu section).
 SECTION_MIN = 3
 MENU_SECTIONS = frozenset({
     "about", "author", "authors", "careers", "categories", "category", "company", "contact", "customers", "docs",
@@ -374,7 +320,7 @@ def section_prefix(listing_url: str, content_links: Sequence[str]) -> Optional[s
     firsts = Counter(parsing.path_segments(link)[0] for link in dict.fromkeys(content_links)
                      if publication_of(host_of(link)) == site and link.rstrip("/") != listing and article_shaped(link)
                      and parsing.path_segments(link)[0].lower() not in MENU_SECTIONS
-                     and not YEAR_RE.match(parsing.path_segments(link)[0]))   # never a year (v10.15 c5)
+                     and not YEAR_RE.match(parsing.path_segments(link)[0]))   # never a year
     if not firsts:
         return None
     first, count = firsts.most_common(1)[0]
@@ -386,7 +332,7 @@ class Discovery:
     prefix: str
     listed: Tuple[str, ...]                          # the listing page's article links, page order
     sitemap: Dict[str, Optional[datetime]]           # the sitemap's article URLs -> lastmod
-    title: str = ""                                  # the listing page's own title (v10.15 c8: the site's suffix)
+    title: str = ""                                  # the listing page's own title (for the site's suffix)
 
     def candidates(self) -> List[str]:
         """Listing links first (page order), then the sitemap's others by lastmod, newest first."""
@@ -396,12 +342,10 @@ class Discovery:
         return [*self.listed, *rest]
 
 
-# One run's reads of a site's robots.txt and sitemaps, by address: the previews of one offer
-# share them, so a site's sitemap is read once, not once per page previewed (issue 0047).
+# One run's reads of a site's robots.txt and sitemaps, by address, shared by an offer's previews.
 SiteReads = Dict[str, "asyncio.Future[Tuple[Any, str]]"]
 
-# Which of these urls a source's fetch leaves unread (blocking; run in a thread): PostsRepository.kept_urls(urls,
-# source_id), v10.15 item 5.
+# Which of these urls a source's fetch leaves unread (blocking; run in a thread): PostsRepository.kept_urls.
 KeptUrls = Callable[[Sequence[str], str], set]
 
 # GET an address, at most max_bytes of it: (the body, the final URL after redirects).
@@ -413,13 +357,9 @@ async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = Non
                    memory: Optional[AddressMemory] = None,
                    read: Optional[Dict[str, Conditional]] = None,
                    max_sitemaps: int = MAX_SITEMAPS) -> Discovery:
-    """The articles of a listing page. Raises when the listing page cannot be read; a missing
-    or broken sitemap is just no sitemap. `reads`: the run's shared robots and sitemap reads
-    (an offer's previews, issue 0047).
-
-    With memory every address is read through it, and memory.learned ends up holding the
-    addresses read (none at all when one of them gave no validators). read: answers already
-    in hand (discover_changed's), used instead of asking again."""
+    """The articles of a listing page. Raises when the listing page cannot be read; a missing or broken sitemap
+    is no sitemap. `reads`: the run's shared robots and sitemap reads. With memory every address is read through
+    it (memory.learned: the addresses read); `read`: answers already in hand (discover_changed's)."""
     pending, addresses = dict(read or {}), []
 
     async def get(url: str, max_bytes: int) -> Tuple[bytes, str]:
@@ -462,7 +402,7 @@ async def discover_changed(http: KindHttp, listing_url: str, prefix: Optional[st
 
 async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optional[str],
                     reads: Optional[SiteReads] = None, *, max_sitemaps: int = MAX_SITEMAPS) -> Discovery:
-    # Where the listing landed, not the address given: deepmind.google/discover/blog/ is /blog/.
+    # where the listing landed after redirects, not the address given
     body, landed = await get(listing_url, LISTING_MAX_BYTES)
     page = body.decode("utf-8", "replace")
     listing = _clean(landed) or landed
@@ -475,14 +415,14 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
     title = html.unescape(parsing.meta_content(page, "og:title")).strip() or (parsing.strip_html(tag.group(1)) if tag else "")
 
     def under(url: str, prefix: str) -> bool:
-        # Never a form (c7) or a numbered page of a listing (c10, v10.15).
+        # never a form or a numbered page of a listing
         path = urllib.parse.urlparse(url).path
         return (publication_of(host_of(url)) == site and url != listing and path.startswith(prefix)
                 and path + "/" != prefix and page_key(url) != listing_key
                 and not action_page(url) and not pagination_page(url) and not listing_address(url, prefix))
 
     async def found_under(prefix: str) -> Discovery:
-        # One page at www. and at the bare host is one candidate (v10.15 c6): its first address kept.
+        # one page at www. and at the bare host is one candidate: its first address kept
         first: Dict[str, str] = {}    # page key -> the address kept
         for url in links:
             if under(url, prefix):
@@ -495,13 +435,12 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
                 sitemap.setdefault(first.setdefault(page_key(url), url), parsing.parse_datetime_value(lastmod))
         return Discovery(prefix, listed, sitemap, title)
 
-    if prefix:   # the owner's prefix always wins, less any date it ends in (v10.15 c5)
+    if prefix:   # the owner's prefix always wins, less any date it ends in
         return await found_under(stable_prefix(normalise_prefix(prefix)))
     inferred = infer_prefix(listing, links)
     if not parsing.path_segments(listing) or len({page_key(url) for url in links if under(url, inferred)}) >= SECTION_MIN:
         return await found_under(inferred)
-    # The listing's own path holds few of its links: unless the sitemap fills it, the section its article links
-    # share, when that finds more (v10.13.10).
+    # the listing's own path holds few of its links: unless the sitemap fills it, the section its links share
     content = [url for href in LINK_RE.findall(MENU_BLOCK_RE.sub(" ", page)) if (url := _clean(href, landed))]
     section = section_prefix(listing, content)
     own = await found_under(inferred)
@@ -524,10 +463,8 @@ async def _shared(reads: Optional[SiteReads], url: str,
 
 async def sitemap_entries(http: KindHttp, listing: str, prefix: str, *, posts_only: bool = False,
                           max_files: int = MAX_SITEMAPS) -> List[Tuple[str, Optional[str]]]:
-    """(loc, lastmod) of the site's sitemap, as discovery reads it (robots.txt's Sitemap lines, else
-    /sitemap.xml; an index followed, at most `max_files` files). posts_only: of an index, only the children
-    naming posts, when it has any (issue 0108: a feed's archive reads a blog's post sitemap, not its tags or
-    authors)."""
+    """(loc, lastmod) of the site's sitemap (robots.txt's Sitemap lines, else /sitemap.xml; an index followed to
+    at most `max_files` files). posts_only: of an index, only the children naming posts, when it has any."""
     return await _sitemap_entries(http.get_start, http, listing, prefix, posts_only=posts_only, max_files=max_files)
 
 
@@ -541,8 +478,7 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
         robots = ""
     queue = [line.split(":", 1)[1].strip() for line in robots.splitlines()
              if line.lower().startswith("sitemap:")] or [f"{origin}/sitemap.xml"]
-    # An archive (posts_only) reads a gzip sitemap too, and when neither robots.txt nor /sitemap.xml gives one,
-    # the posts' files the blog platforms name (issue 0143).
+    # an archive (posts_only) reads gzip sitemaps too and, with none found, the blog platforms' posts files
     fallbacks = [f"{origin}/{name}" for name in POST_SITEMAPS] if posts_only else []
     section = prefix.strip("/").split("/")[0]
     entries: List[Tuple[str, Optional[str]]] = []
@@ -567,8 +503,7 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
         if root == "sitemapindex":
             # An index's children that name the section (or posts) first.
             children = [loc for loc, _ in locs if loc]
-            # v10.35: never a taxonomy's or the authors' file (WordPress's wp-sitemap-taxonomies-post_tag-1.xml
-            # names "post" too): each lists listing pages, no post.
+            # never a taxonomy's or the authors' file (its name may hold "post" too): they list listing pages
             children = [child for child in children if not LISTING_SITEMAP_RE.search(child.rsplit("/", 1)[-1])]
             if posts_only:
                 children = [child for child in children if "post" in child.rsplit("/", 1)[-1].lower()] or children
@@ -579,7 +514,7 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: st
 
 
 def _ungzip(body: Any) -> Any:
-    """A gzip sitemap's bytes unpacked (a sitemap.xml.gz, issue 0143); anything else as it is."""
+    """A gzip sitemap's bytes unpacked; anything else as it is."""
     if isinstance(body, bytes) and body[:2] == b"\x1f\x8b":
         import gzip
 
@@ -603,8 +538,7 @@ def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
             if not root:
                 root = name
             elif event == "end" and name in ("url", "sitemap"):
-                # A news sitemap's <news:publication_date> (issue 0240) is the article's own date: before its
-                # lastmod, often a redeploy's.
+                # a news sitemap's <news:publication_date> is the article's own date, before its lastmod
                 published = next((parsing.child_text(child, "publication_date") for child in node
                                   if parsing.local_name(child.tag) == "news"), None)
                 locs.append((parsing.child_text(node, "loc") or "", published or parsing.child_text(node, "lastmod")))
@@ -613,11 +547,11 @@ def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
     return root, locs
 
 
-FUTURE_SLACK = timedelta(days=1)   # v10.13.7: a page date past now + this is no post's date (an event, a sponsor)
+FUTURE_SLACK = timedelta(days=1)   # a page date past now + this is no post's date (an event)
 
 
-# How page_dating dated a page (v10.25, issue 0228), in the order of trust: the page's own markup, its address's day,
-# a date read from its body; HELD a body date that the address (or the web's age) contradicts: no date, not a guess.
+# How page_dating dated a page, in the order of trust (0228); HELD: a body date the address or the web's age
+# contradicts, so no date rather than a guess.
 DATED_BY_PAGE, DATED_BY_ADDRESS, DATED_BY_BODY, DATE_HELD = "page", "address", "body", "held"
 # No page was published before the first web page (1991-08-06): a body date before it is one the text names.
 WEB_BEGAN = datetime(1991, 8, 6, tzinfo=timezone.utc)
@@ -630,14 +564,12 @@ def page_date(page: str, url: Optional[str] = None) -> Optional[datetime]:
 
 def page_dating(page: str, url: Optional[str] = None) -> Tuple[Optional[datetime], Optional[str]]:
     """(the page's publication date, how it was read: DATED_BY_*), or (None, DATE_HELD | None). In the order of trust:
-      1. the page's markup: meta article:published_time, JSON-LD datePublished, meta date, its one <time datetime>,
-         then a paper's scholarly meta date (SCHOLARLY_DATES, the first publication first);
-      2. the day its address names (/2026/10/21/, /2008/Jul/7/: v10.13.7);
-      3. only then its body: the byline under its title (v10.15), else its one written date. A body date is the
-         weakest: an article quotes dates ("subscribers on May 31, 2020"), so it is held (v10.25, issue 0228) when
-         its address names a month it is not in, or when it is before the web began (WEB_BEGAN).
-    The <time> and the written date count only when the page has one (a tag or category page lists many); no date
-    more than FUTURE_SLACK ahead is taken."""
+      1. the page's markup: article:published_time, JSON-LD datePublished, meta date, its one <time datetime>,
+         then a scholarly meta date (SCHOLARLY_DATES);
+      2. the day its address names (/2026/10/21/, /2008/Jul/7/);
+      3. its body: the byline under its title, else its one written date; held when its address names another
+         month or it is before WEB_BEGAN (articles quote dates).
+    The <time> and the written date count only when the page has one; no date past FUTURE_SLACK is taken."""
     json_ld, times = JSON_LD_DATE_RE.search(page), {value.strip() for value in TIME_RE.findall(page)}
     one_time = times.pop() if len(times) == 1 else None
     values = (parsing.meta_content(page, "article:published_time"), json_ld and json_ld.group(1),
@@ -665,13 +597,12 @@ def page_dating(page: str, url: Optional[str] = None) -> Tuple[Optional[datetime
     return date, DATED_BY_BODY
 
 
-BYLINE_CHARS = 80   # v10.15 item 5: how near its one <h1> a page's byline date is written
+BYLINE_CHARS = 80   # how near its one <h1> a page's byline date is written
 
 
 def byline_date(page: str) -> Optional[datetime]:
-    """The date written right under the page's title (v10.15 item 5): its one <h1>, then within BYLINE_CHARS of
-    text ("Title / July 7, 2026 • 15 minute read"). A page that cards other dated posts below its own (related
-    posts) has several written dates; its byline is the one by its title. `page` without scripts and styles."""
+    """The date written within BYLINE_CHARS of text after the page's one <h1>, so related posts' dates below
+    never count. `page` without scripts and styles."""
     if len(H1_RE.findall(page)) != 1:
         return None
     after = page[page.lower().index("</h1") :] if "</h1" in page.lower() else ""
@@ -714,10 +645,8 @@ def _written_date(text: str) -> Optional[datetime]:
 
 
 def page_title(page: str, url: str) -> str:
-    """og:title, else <title>, else the first <h1>; less a " | Site" suffix: the og:site_name's
-    (or one that starts with it: "| Mistral AI" for "Mistral"), or any short one on a <title>.
-    An og:title that is only the site's name (a shop's blog: "Vuzix Corporation") is no
-    title; one that is the <title> word for word is read as the <title> (issue 0053)."""
+    """og:title, else <title>, else the first <h1>; less a " | Site" suffix (the og:site_name's, or one starting
+    with it, or any short one on a <title>). An og:title that is only the site's name is no title."""
     site = html.unescape(parsing.meta_content(page, "og:site_name")).strip()
     title, from_title_tag = html.unescape(parsing.meta_content(page, "og:title")).strip(), False
     tag = TITLE_RE.search(page)
@@ -741,35 +670,29 @@ def page_title(page: str, url: str) -> str:
 
 def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime], *,
               new: bool = False) -> Optional[Dict[str, Any]]:
-    """The post the page at url is, or None when it is no article (see the module docstring). A page whose markup
-    states no date is dated by its address (/2026/10/21/, /2008/Jul/7/: v10.13.5), then (v10.13.9) its address's
-    month, before the sitemap's lastmod. `new`: a page the watched listing shows now, dated now when nothing dates
-    it; any other page (the sitemap's, an archive's, a page read again) stays undated (None)."""
+    """The post the page at url is, or None when it is no article. Undated by its markup: its address's day, then
+    month, then the sitemap's lastmod. `new`: a page the listing shows now is dated now when nothing dates it; any
+    other page stays undated (None)."""
     date = page_date(page, url)
     if date is None and parsing.meta_content(page, "og:type").lower() != "article":
         return None
     date = date or (None if new else older_date(url)) or lastmod or (datetime.now(timezone.utc) if new else None)
     post = article_post(page, source_url, url, date, adapter=PageWatchKind.adapter_type)
-    # v10.15: a form (c7) or a listing's numbered page (c10) is no post, whatever its address says; v10.35: nor a
-    # listing of other posts.
     if post is not None and not_post(page, url, post):
         return None
     return post
 
 
 def older_date(url: str) -> Optional[datetime]:
-    """v10.13.9: an older page's sort hint by its address (originals_rules.address_hint: the day, else the month's
-    1st), when the page states no date."""
+    """An undated page's sort hint by its address (originals_rules.address_hint: the day, else the month's 1st)."""
     from insight_core.utils.originals_rules import address_hint
 
     return address_hint(url)
 
 
 async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: str) -> Optional[Dict[str, Any]]:
-    """One page of a website source read as its post (issue 0084 B: a page its posts link that no post
-    is): the article, its title and the date the page states (0070), marked backlog (an older page,
-    never new to you). None when the page has no article or no date of its own: stored at the time it
-    was read, an old page would sort as new. Raises what the request raises."""
+    """One page of a website source read as its post, marked backlog. None when the page has no article or no
+    date of its own (an old page would sort as new). Raises what the request raises."""
     page, _ = await http.get_text(url)
     date = page_date(page, url)
     if date is None or date > datetime.now(timezone.utc):
@@ -783,10 +706,8 @@ async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: s
 
 def article_post(page: str, source_url: str, url: str, date: Optional[datetime], *,
                  adapter: str, platform: str = "rss") -> Optional[Dict[str, Any]]:
-    """The post any article page is: its body (the full-text reader), title, date and images; None when the page
-    has no article body. Page watch and a saved page (issue 0031). v10.13.9: the date as given, None staying None
-    (never "now": an older page dated at its fetch sits under Today); a caller that reads a genuinely new page
-    passes now itself."""
+    """The post any article page is: its body (the full-text reader), title, date and images; None without an
+    article body. The date as given, None staying None (never "now"; a caller reading a new page passes now)."""
     content_html, fidelity = parsing.read_article_page(page, base_url=url)
     content = parsing.strip_html(content_html)
     if not content:
@@ -805,10 +726,10 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
         "date": date,
         "media_urls": media_urls,
         "categories": [],
-        # When the page says it last changed: what a watched page is checked by (issue 0039).
+        # when the page says it last changed: what a watched page is checked by
         "metadata": {"adapter": adapter, PAGE_READ_KEY: fidelity,
                      **({"modified": modified} if (modified := parsing.page_modified(page)) else {}),
-                     # A page that says it is for paying readers (issue 0167): its free part, marked
+                     # a page for paying readers: its free part, marked
                      **({"paywalled": True} if paywall.marker(page) else {})},
     }
 
@@ -840,7 +761,7 @@ async def preview(http: KindHttp, url: str, prefix: Optional[str] = None,
                 return None
 
     posts = [post for post in await asyncio.gather(*map(one, candidates[:PREVIEW_READS])) if post]
-    name_titles(posts, [found.title])   # the site's name off the titles (v10.15 c8)
+    name_titles(posts, [found.title])   # the site's name off the titles
     return {
         "prefix": found.prefix,
         "found": len(candidates),
@@ -851,19 +772,16 @@ async def preview(http: KindHttp, url: str, prefix: Optional[str] = None,
 
 
 def is_home(url: str) -> bool:
-    """Whether the address is a site's home page (no path): a poor page to follow (issue 0041)."""
+    """Whether the address is a site's home page (no path): a poor page to follow."""
     return not parsing.path_segments(parsing.web_address(url, "An address is needed"))
 
 
 async def offers(http: KindHttp, pages: Sequence[str], menu: Sequence[str] = ()) -> List[Dict[str, Any]]:
-    """The pages that can be followed instead of a home page (issue 0041), each {url, **preview},
-    the most articles first: the preview's count, among the pages it read an article from. The
-    previews run at once; one that fails or is not done within OFFER_BUDGET_S is left out.
-    When none of them is offered, the home page's menu links (issue 0047) are previewed in what
-    is left of the budget, and only an article list is offered (see _article_list)."""
+    """The pages that can be followed instead of a home page, each {url, **preview}, the most articles first. The
+    previews run at once within OFFER_BUDGET_S; with none offered, the home page's menu links are previewed in
+    what is left, and only an article list is offered (_article_list)."""
     deadline = asyncio.get_running_loop().time() + OFFER_BUDGET_S
     reads: SiteReads = {}
-    # A listing's numbered page (/news/page/7) is never a section to offer (v10.15 c10).
     pages = [page for page in pages if not pagination_page(page)]
     menu = [page for page in menu if not pagination_page(page)]
     found = [offer for offer in await _previews(http, pages, deadline, reads) if offer["items"]]
@@ -875,10 +793,8 @@ async def offers(http: KindHttp, pages: Sequence[str], menu: Sequence[str] = ())
 
 
 def _article_list(items: Sequence[Mapping[str, Any]], started: datetime) -> bool:
-    """Whether a preview's posts read as a list of articles to follow: at least MENU_POSTS of them
-    dated within MENU_RECENT. Pages of people or policies have dates too, old or few recent (a
-    leader's joining year, a policy's last update). A post with no date of its own is dated when
-    it was read, after the preview started: it is left out."""
+    """Whether a preview's posts read as a list of articles: at least MENU_POSTS dated within MENU_RECENT (pages
+    of people or policies have old or few dates). A post dated at its read, after the preview started, is left out."""
     recent = [date for item in items if (date := parsing.parse_datetime_value(item["published_at"]))
               and started - MENU_RECENT <= date < started]
     return len(recent) >= MENU_POSTS
@@ -907,8 +823,8 @@ async def _previews(http: KindHttp, pages: Sequence[str], deadline: float,
     return found
 
 
-# Issue 0240 (owner 2026-11-19: "I don't care if something has feed, we should scrape it regardless"): a site with no
-# feed and no page offered is tried on the pages that list its announcements before it is called unfollowable.
+# A site with no feed and no page offered is tried on the pages that list its announcements before it is called
+# unfollowable (0240).
 LIST_WORDS = frozenset({"news", "newsroom", "press", "blog"})   # what a site names its announcements' list pages
 ROOT_LISTS = ("news", "newsroom", "press", "blog")               # ... tried at its root, in this order
 LIST_SECTIONS = 2         # the sections its sitemap names by one of LIST_WORDS, the most addresses first
@@ -919,13 +835,10 @@ LIST_DATED = 2            # a list offered: this many of its preview's posts dat
 
 
 def list_pages(address: str, sitemap: Sequence[str] = ()) -> List[str]:
-    """The pages that may list a site's announcements (issue 0240), in the order tried: the page itself, its parent
-    path (/en/news for /en/news/<slug>) and its first segment's page (/blog for /blog/<slug>); the sections of
-    `sitemap` (the site's addresses) whose segment is one of LIST_WORDS (/company/newsroom), the most addresses first;
-    then, for a home page (or a feed address that stands for its site), the site's root ones (ROOT_LISTS). A page under
-    a section or an account (huggingface.co/<org>: feed_finder.section_of) keeps to it (v10.13.5): only its sitemap
-    sections under that section, never the site's root lists. Never a home page, never a numbered page of a list;
-    each once."""
+    """The pages that may list a site's announcements, in the order tried: the page itself, its parent path and its
+    first segment's page; `sitemap`'s sections named by a LIST_WORD, the most addresses first; then, for a home
+    page, ROOT_LISTS. A page under a section or an account (feed_finder.section_of) keeps to it. Never a home
+    page or a numbered list page; each once."""
     from insight_core.ingestion.feed_finder import section_of
     origin = parsing.origin_from_source(address, "")
     if not origin:
@@ -953,18 +866,17 @@ def list_pages(address: str, sitemap: Sequence[str] = ()) -> List[str]:
 
 
 def dated_list(items: Sequence[Mapping[str, Any]]) -> bool:
-    """Whether a preview's posts are a dated stream (issue 0240): LIST_DATED or more of them dated by their own pages
-    (post_from: the page's markup, its address, its sitemap entry; never the time it was read), and half or more."""
+    """Whether a preview's posts are a dated stream: LIST_DATED or more, and half or more, dated by their own pages
+    (never the time they were read)."""
     dated = sum(1 for item in items if item.get("published_at"))
     return dated >= LIST_DATED and 2 * dated >= len(items)
 
 
 async def list_offers(http: KindHttp, address: str, tried: Sequence[str] = (),
                       first: Sequence[str] = ()) -> List[Dict[str, Any]]:
-    """Issue 0240: the first of a site's list pages (`first`, then list_pages; less `tried`, the pages already
-    previewed) whose preview is a dated stream (dated_list), as [{url, **preview}]; [] when none is. The site's
-    sitemap is read once (its sections named by a list word), and shared with the previews. At most LIST_TRIES
-    previews, one after another, within LIST_BUDGET_S. Never raises for a site's failure."""
+    """The first of a site's list pages (`first`, then list_pages, less `tried`) whose preview is a dated stream,
+    as [{url, **preview}]; [] when none is. At most LIST_TRIES previews in turn within LIST_BUDGET_S; the sitemap
+    is read once and shared. Never raises for a site's failure."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + LIST_BUDGET_S
     reads: SiteReads = {}
@@ -1006,9 +918,9 @@ async def list_offers(http: KindHttp, address: str, tried: Sequence[str] = (),
 
 class PageWatchKind(BaseSourceAdapter):
     adapter_type = "page_watch"
-    conditional = True                  # fetch_latest takes memory= (issue 0044)
-    watches = True                      # its stored pages can be re-read for changes (issue 0039)
-    skips_stored = True                 # its archive leaves stored pages unread (issue 0130 B4)
+    conditional = True                  # fetch_latest takes memory=
+    watches = True                      # its stored pages can be re-read for changes
+    skips_stored = True                 # its archive leaves stored pages unread
     available_basis = "estimate"        # discovered candidate pages; some may be no post
     PAGE_SIZE = 1                       # one article page per archive page: the host gate spaces them
     PAGE_DELAY_SECONDS = 2
@@ -1020,9 +932,8 @@ class PageWatchKind(BaseSourceAdapter):
         self.kept_urls = kept_urls
 
     async def _stored(self, source: Source, candidates: Sequence[str]) -> set:
-        """The candidates a fetch leaves unread: stored already, at their address or at its www./bare twin (v10.15
-        c6). With kept_urls (PostsRepository.kept_urls), one another source holds counts only when this source
-        would not take it back (v10.15 item 5: a page in Saved, an aggregator's): reading it is what moves it."""
+        """The candidates a fetch leaves unread: stored already, at their address or its www./bare twin. With
+        kept_urls, one another source holds counts only when this source would not take it back."""
         if not candidates or not (self.kept_urls or self.stored_urls):
             return set()
         forms = {url: (url, twin(url)) for url in candidates}
@@ -1062,8 +973,7 @@ class PageWatchKind(BaseSourceAdapter):
 
     async def fetch_latest(self, source: Source, limit: int, *,
                            memory: Optional[AddressMemory] = None) -> List[Dict[str, Any]]:
-        """With memory (the runner's), the listing page and its sitemap files are asked
-        conditionally: when none changed, no posts."""
+        """With memory, the listing page and its sitemap files are asked conditionally: none changed, no posts."""
         found = await (self._discover(source) if memory is None else self._discover_changed(source, memory))
         if found is None:
             return []
@@ -1089,9 +999,9 @@ class PageWatchKind(BaseSourceAdapter):
                 SKIPPED[url] = time.monotonic() + FAILED_RETRY_S if page is None else math.inf
             else:
                 if url not in listed:
-                    post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
+                    post[BACKLOG_KEY] = True   # from the sitemap: never "new to you"
                 posts.append(post)
-        name_titles(posts, [found.title])   # the site's name off the titles (v10.15 c8)
+        name_titles(posts, [found.title])   # the site's name off the titles
         return posts
 
     def page_post(self, source: Source, url: str, page: str) -> Optional[Dict[str, Any]]:
@@ -1104,9 +1014,8 @@ class PageWatchKind(BaseSourceAdapter):
             "prefix": found.prefix, "listing_links": len(found.listed), "sitemap_urls": len(found.sitemap)})
 
     async def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: RateLimit):
-        """Every candidate of the listing page and the site's whole sitemap (ARCHIVE_SITEMAPS files), one article
-        page per archive page; the ones already stored are not read again, and the checkpoint counts why a
-        candidate added nothing (issue 0130 B4: stored, no post, unreadable)."""
+        """Every candidate of the listing page and the whole sitemap, one article page per archive page; stored
+        ones are not read again; the checkpoint counts why a candidate added nothing."""
         found = await self._archive_discovery(source)
         candidates = found.candidates()
         stored = await self._stored(source, candidates)
@@ -1118,7 +1027,7 @@ class PageWatchKind(BaseSourceAdapter):
             post = post_from(page, str(src["handle_or_url"]), url, found.sitemap.get(url))
             if post is not None:
                 post[BACKLOG_KEY] = True   # an archive's page: never new to you, undated sorts before the oldest
-                name_titles([post], [found.title])   # v10.15 c8
+                name_titles([post], [found.title])
             return post
 
         async for page in self.index_pages(source, candidates, target, checkpoint, fetch_one, stored=stored):

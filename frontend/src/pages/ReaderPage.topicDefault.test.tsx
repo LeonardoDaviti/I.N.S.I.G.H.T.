@@ -1,4 +1,4 @@
-// v10.12.1: a track that is a topic (Mark X on) opens on Topic unless the URL names a view, and the rail counts its
+// A topic track (Mark X on) opens on Topic unless the URL names a view, and the rail counts its
 // unread items plus its Discover suggestions; a plain folder opens on Stream with its sources' count. Synthetic data.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';

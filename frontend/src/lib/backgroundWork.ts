@@ -1,8 +1,6 @@
 /**
- * Background work (issue 0062): what INSIGHT does on its own, worded for the Ingestion overview.
- * Stories (the story job after each fetch run), the search index (re-indexed after an update
- * that changes how posts are indexed) and links (read once for the posts stored before stories).
- * Checkable, not controllable: these are lines, never buttons. Pure; `now` is injected.
+ * Background work: what INSIGHT does on its own (stories, the search index, links), worded for the Ingestion
+ * overview. Checkable, not controllable: lines, never buttons. Pure; `now` is injected.
  */
 import type { BackgroundProgress, BackgroundWorkResponse, StoriesRunSummary } from '../services/api';
 import { formatRelativeTime } from './dates.ts';
@@ -15,15 +13,12 @@ export interface BackgroundLine {
   key: 'stories' | 'search' | 'links';
   label: string;
   status: BackgroundStatus;
-  /** The state in a few words, beside the glyph. */
   word: string;
-  /** Quiet lines under it. */
   details: string[];
 }
 
-/** "38 posts grouped · 1,820 stories · 90 News stories, last 30 days · 175 Classics": the counts the run recorded.
- *  A run regroups only what new posts touch (issue 0072 A); the stories are all of them. News's count is every
- *  News story it keeps, the last 30 days, not this week's that News lists. */
+/** "38 posts grouped · 1,820 stories · 90 News stories, last 30 days · 175 Classics": the run's counts. A run
+ *  regroups only what new posts touch; News's count is every News story it keeps (30 days), not this week's. */
 export function storiesRunCounts(run: StoriesRunSummary): string {
   const parts: string[] = [];
   if (typeof run.posts === 'number') parts.push(`${plural(run.posts, 'post')} grouped`);
@@ -42,7 +37,7 @@ function lastRun(run: StoriesRunSummary, now: Date): string {
 function storiesLine(stories: BackgroundWorkResponse['stories'], now: Date): BackgroundLine {
   const run = stories.last_run;
   const base = { key: 'stories' as const, label: 'Stories' };
-  if (run?.rebuild) {   // new rules regroup every post in batches (issue 0072 A); the old stories are shown till then
+  if (run?.rebuild) {  // new rules regroup every post in batches; the old stories are shown till then
     const { done, total } = run.rebuild;
     return {
       ...base, status: 'running', word: `regrouping every post by new rules, ${formatCount(Math.min(done, total))} of ${formatCount(total)}`,

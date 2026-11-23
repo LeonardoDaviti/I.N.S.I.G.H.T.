@@ -1,32 +1,12 @@
-"""Mark X perspectives inside a story and the story sheet (issue 0119 B, 0120 v3.2f), in Shadow.
+"""Perspectives inside a story and the story sheet (0119 B); the decision run's `stage`, after entities and surges.
 
-The decision run's stage `perspectives_plan` (after `entities` and `surges`, so the members' mentions are linked),
-in the run's one snapshot, writing mx_perspectives, mx_sheets and tasks only:
-
-  B1. **Which stories:** the Mark X stories of the newest written News rows of the News window with 3 or more voices.
-      A story is judged again only when its member set changed since its sheet (the member set hash, `member_hash`).
-      A story waits while one of its members has an entities task not answered yet (the maker comes from them).
-  B2. **The inputs, by code** (the lab's persp32.Story, plan/research/lab/markx/proto, without its word lists and
-      handle maps): duplicates and near-copies folded (same source, same folded text or shingle Jaccard >= 0.6);
-      the original by links (the page most members link), by the maker (0090's maker field read through part A's
-      identity, `Makers`), by a page-kind member on the maker's page and by a link post carrying the maker's page
-      (repository and model page titles read); one original per page; when no member is the original, the page
-      members link is shown as the source page. The maker's own account is a hint for Haiku ("[the maker's own
-      account or staff]"), never a label. Members in published order (a saved page by its own date); "same" settled
-      by code where it is certain (nothing of its own, a copy, a bare link to a page already in the story).
-  B3. **`perspective` tasks** (persp-v1 = the lab's frozen persp_v32f_frozen.md, md5 ee89e27e...): one task a story,
-      or a group of at most PER_CALL members; a member the answer skips is asked again alone, at most twice (the
-      second time the same task reopened). The answer per member is checked by `final` (the lab's `final()`): every
-      span occurs in the member's text, facts not about the story dropped, a fact whose quantities all appear earlier
-      dropped, at most MAX_FACTS facts, the label order enforced, a one-line take is `same`.
-  B4. **One `sheet` task** (persp-merge-v1 = persp_merge_v1.md) a story with two or more fact lines, then the sheet
-      (`build_sheet`, the lab's `sheet()` as data): the original or source page, new facts merged with their members,
-      before the release, unconfirmed claims, opinions, related, "N more say the same".
-  B5. **Storage:** a perspective or sheet that changes opens a new row and closes the old one (valid_to); a member
-      gone from the story is closed. Nothing is deleted.
-
-Inputs are content only (the posts' texts and links, the code's findings): the same story asks the same question,
-whatever its ids. A member's key in the input is "<the story's first kept post, 8>:<the post, 8>", as the lab's.
+For the News window's stories of MIN_VOICES+ voices whose member set changed (`member_hash`), and none of whose
+members waits on an entities task: code folds duplicates, finds the original (links, the maker by identity: `Makers`)
+and settles certain "same" members (`Story`); Haiku labels the rest in `perspective` tasks of at most PER_CALL
+members, checked by `final` (spans must occur in the post's text); a `sheet` task merges the fact lines
+(`build_sheet`); an optional `dispute` task finds where sources differ. Inputs are content only, so the same story
+asks the same question whatever its ids. A changed perspective or sheet closes the old row and opens a new one;
+nothing is deleted. Writes mx_perspectives, mx_sheets and tasks only.
 """
 from __future__ import annotations
 
@@ -43,10 +23,10 @@ from insight_core.utils import voice
 
 LABELS = ("original", "new_facts", "opinion", "same", "not_this_story")
 WORTH = frozenset({"original", "new_facts", "opinion"})
-PER_CALL = 5             # members a perspective task judges (the lab's PER_CALL: long inputs mixed items up at 10)
+PER_CALL = 5             # members a perspective task judges (long inputs mixed items up at 10)
 RETRIES = 2              # a member a call skips is asked again alone, at most twice
 MAX_FACTS = 4            # facts a member keeps (the guide asks at most 4)
-MIN_VOICES = 3           # B1
+MIN_VOICES = 3
 VERSION = "persp-v1-code-1"   # the code steps' version: in the member hash, so a change re-plans every story
 PLATFORMS = {"reddit.com", "t.me", "youtube.com", "youtu.be", "news.ycombinator.com", "arxiv.org", "medium.com",
              "substack.com", "piped.video", "nitter.local"}   # hosts whose pages are a platform's, not an owner's
@@ -64,7 +44,7 @@ class Member:
     src: str                  # the source's id
     src_name: str
     kind: str
-    at: datetime              # its own date (Pairing's ordinary date: the frozen port's input)
+    at: datetime              # its own date (Pairing's ordinary date)
     published: Optional[datetime]
     title: str
     text: str
@@ -91,7 +71,7 @@ def load_members(cur: Any, ids: Iterable[Any]) -> Dict[str, Member]:
     return out
 
 
-# ---- the lab's text helpers (x1_persp, persp32) ---------------------------------------------------------
+# ---- text helpers -----------------------------------------------------------------------------------------
 
 def nurl(u: Optional[str]) -> str:
     u = re.sub(r"^https?://(www\.|m\.|mobile\.)?", "", (u or "").strip().lower())
@@ -159,27 +139,25 @@ def owner(u: Optional[str]) -> Optional[str]:
     return lab[-2] if len(lab) >= 2 else None
 
 
-# ---- the maker, by identity (part A) instead of the lab's word lists ------------------------------------
+# ---- the maker, by identity ----------------------------------------------------------------------------
 
 class Makers:
-    """Who makes what, read from the members' mentions (ent-v3, linked by part A) and the entity book: a mention's
-    stated maker, an org named as subject or actor, an entity's maker or its ancestors'. A page owner, an account or a
-    source's name is the maker when one of its handle forms is one of the maker's names (its aliases, squashed)."""
+    """Who makes what, from the members' mentions and the entity book: a mention's stated maker, an org named as
+    subject or actor, an entity's maker or its ancestors'. A page owner, an account or a source's name is the maker
+    when one of its handle forms is one of the maker's names."""
 
     def __init__(self, book: Any, mentions: Dict[str, List[Dict[str, Any]]]) -> None:
         self.book, self.mentions = book, mentions
-        ms = [m for got in mentions.values() for m in got]   # v10.17: what `hits` asks first, read in one go (a page's
-        book.prime(ids=[m.get("entity_id") for m in ms],     # book reads what it is asked: identity.lazy_book)
+        ms = [m for got in mentions.values() for m in got]   # what `hits` asks first, read in one go
+        book.prime(ids=[m.get("entity_id") for m in ms],
                    keys=[N.key(m.get(f)) for m in ms for f in ("maker", "name") if m.get(f)])
         self._makers = book.maker_roots()
         # the names an owner can match: an org's, or a cluster some entity names as its maker
         self._names = book.name_forms(keep=self._org_or_maker)
 
     def prepare(self, posts: Dict[str, "Member"]) -> None:
-        """v10.17 (0186): read ahead, in a few queries, what the Stories of these members will ask (a page's book asked
-        each name, owner and maker on its own: ~700 queries a News load, growing with its rows): the roots of
-        every owner their links and own pages name, the sources' names, the clusters' entities and names, their
-        parents and makers up the chain. A whole book holds them already (nothing read)."""
+        """Read ahead, in a few queries, what the Stories of these members will ask a lazy book (owners, source names,
+        entities, and their parents and makers up the chain), instead of a query per name (0186)."""
         b = self.book
         owners = {owner(u) for p in posts.values() for u in links(p) + sorted(own_pages(p))}
         forms = {f for o in owners if o for f in N.handle_forms(o)}
@@ -269,8 +247,7 @@ class Makers:
         return out
 
     def author_is(self, p: Member, mk: Optional[str]) -> bool:
-        """The member's source is the maker or the maker's (its name an entity whose maker or ancestor is `mk`, or one
-        of the maker's names)."""
+        """The member's source is the maker or the maker's."""
         if not mk:
             return False
         r = self.of_name(p.src_name)
@@ -279,15 +256,14 @@ class Makers:
         return self.is_maker(re.sub(r"\s+", "", (p.src_name or "").lower()), mk)
 
 
-# ---- one story's code steps (persp32.Story) -------------------------------------------------------------
+# ---- one story's code steps -------------------------------------------------------------------------------
 
 class Story:
     """by: post id -> Member; posts: the member ids; makers: who makes what (None: no maker is ever found)."""
 
     def __init__(self, posts: Sequence[str], by: Dict[str, Member], makers: Optional[Makers] = None) -> None:
         self.by, self.mk = by, makers
-        # v10.17 (0186): each member's words, shingles and link words worked out once (the steps compared every
-        # member with every earlier one, reading their texts again each time: a 60-member story read ~1,800 texts)
+        # each member's words, shingles and link words worked out once (the steps compare every pair)
         self._w: Dict[str, List[str]] = {}
         self._sh: Dict[str, Set[Tuple[str, ...]]] = {}
         self._lw: Dict[str, Set[str]] = {}
@@ -316,7 +292,6 @@ class Story:
         self._same()
         self._w, self._sh, self._lw = {}, {}, {}   # let them go: a page holds hundreds of stories at once
 
-    # the maker
     def _maker(self) -> Optional[str]:
         if self.mk is None:
             return None
@@ -436,7 +411,7 @@ class Story:
             else:
                 for p in pg:
                     pages[p] = i
-        self.hint: Dict[str, str] = {}                         # v3.2f: the maker's own account is a hint, not a label
+        self.hint: Dict[str, str] = {}                         # the maker's own account is a hint, not a label
         for i in [i for i in self.ids if self.code.get(i, ("", ""))[1] == "maker"]:
             del self.code[i]
             self.hint[i] = " [the maker's own account or staff]"
@@ -486,7 +461,6 @@ class Story:
                 if ml and any(u in pages for u in ml[:2]) and ow < 15:
                     self.code[i] = ("same", "links-source")
 
-    # the input
     def who(self, i: str) -> str:
         """The address, and for a repost or quote the account that wrote it."""
         P = self.by[i]
@@ -543,7 +517,7 @@ class Story:
         return next((i for i in self.ids if self.mid(i) == key), None)
 
 
-# ---- the final checks (persp32.final) ---------------------------------------------------------------------
+# ---- the final checks ---------------------------------------------------------------------------------------
 
 QTY = re.compile(r"(?<![\w.-])[$€]?\d+(?:[.,]\d+)?\s?(?:%|x|×|b|t|m|k|bn|billion|trillion|million|\$)?(?![\w.-])", re.I)
 
@@ -568,8 +542,9 @@ def repeated(f: Dict[str, Any], seen: str) -> bool:
 
 
 def final(st: Story, raw: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """The code steps and Haiku's answers ({member key: answer}) -> {member key: record}, the order enforced. A member
-    with no answer has no record."""
+    """The code steps and Haiku's answers ({member key: answer}) -> {member key: record}: spans must occur in the
+    member's text, off-story and repeated facts dropped, at most MAX_FACTS, the label order enforced, a one-line take
+    is `same`. A member with no answer has no record."""
     out: Dict[str, Dict[str, Any]] = {}
     for i in st.ids:
         k = st.mid(i)
@@ -603,7 +578,7 @@ def final(st: Story, raw: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]
     return out
 
 
-# ---- the sheet (persp32.merge_facts, sheet) -------------------------------------------------------------
+# ---- the sheet ----------------------------------------------------------------------------------------------
 
 def fact_lines(st: Story, fin: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     lines = []
@@ -681,16 +656,12 @@ def build_sheet(st: Story, fin: Dict[str, Dict[str, Any]], answer: Optional[Dict
 
 
 # ---- where sources differ (0273) ------------------------------------------------------------------------
-# One `dispute` question a story (dispute-v1), asked with its sheet when the story has lines from two or more sources:
-# the ORIGINAL (line 0, its text) and every member's facts and claims with their spans. The answer's differences are
-# kept only when the code can check them: two or more sides, each a value stated by its own lines, no source on two
-# sides, every side quoting its post (a line's span; line 0 a quote found in the ORIGINAL's text). A side whose lines
-# are all claims is shown as claimed.
+# One `dispute` question a story with lines from two or more sources. A difference is kept only when the code can
+# check it: two or more sides, no source on two sides, every side quoting its post (line 0: a quote in the ORIGINAL).
 
 DISPUTES = "stories.disputes"      # the switch (mx_settings): asked and shown only when "on"
-DISPUTES_DEFAULT = "off"           # 0273: measured blind 29 of 44 (66%), under the bar: off
-DISPUTES_PER_DAY = 300             # new dispute questions a day at most (a story is asked again only when its members'
-                                   # lines change: its input changes)
+DISPUTES_DEFAULT = "off"           # measured under the bar: plan/issues/0273
+DISPUTES_PER_DAY = 300             # new dispute questions a day at most
 DISPUTE_KINDS = ("number", "date", "status", "cause", "attribution", "other")
 
 
@@ -981,7 +952,7 @@ def one(cur: Any, story_id: str, st: Story, ask: Any, *, run_id: Any, mhash: str
                 return {"state": "sheet waiting", **stored}
         else:
             answer, call = got
-    disputes = None                                   # 0273: not asked (switched off, or no two sources' lines)
+    disputes = None                                   # not asked (switched off, or no two sources' lines)
     dlines, orig = dispute_lines(st, fin), dispute_original(st)
     dtext = dispute_input(st.subject(), orig, dlines) if disputes_on(cur) else None
     if dtext is not None:
@@ -1007,9 +978,8 @@ def one(cur: Any, story_id: str, st: Story, ask: Any, *, run_id: Any, mhash: str
 
 def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int] = None,
           book: Any = None) -> Dict[str, Any]:
-    """B1-B5 over the News window's stories of MIN_VOICES or more voices (`limit`: at most that many stories built).
-    `book`: the entity book as it is now (its entities, names, merges and pins), else a page's book read here when
-    needed (identity.lazy_book)."""
+    """The stage over the News window's stories of MIN_VOICES+ voices (`limit`: at most that many stories built).
+    `book`: the entity book, else a lazy one read here."""
     from insight_core.markx import identity
     stories = news_stories(cur, now)
     out: Counter = Counter()
@@ -1028,8 +998,6 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int
     if not eligible:
         return dict(out)
     waiting = entities_waiting(cur, sorted({p for ms in eligible.values() for p in ms}))
-    # v10.17.2 (0204): a page's book (the entities the stories' members name, not the whole book), read ahead as a
-    # News page reads it (Makers.prepare)
     book = identity.lazy_book(cur) if book is None else book
     makers = Makers(book, mentions_of(cur, sorted({p for ms in eligible.values() for p in ms})))
     makers.prepare({p: posts[p] for ms in eligible.values() for p in ms if p in posts})
@@ -1050,7 +1018,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, limit: Optional[int
         out[got["state"]] += 1
         for k in ("opened", "closed", "kept", "given_up"):
             out[k] += got.get(k, 0)
-    again = ask.reopen()                     # a skipped member's solo task, asked once more (after the run's own reopen)
+    again = ask.reopen()                     # a skipped member's solo task, asked once more
     if again.get("perspective"):
         out["reasked"] = again["perspective"]
     return dict(out)

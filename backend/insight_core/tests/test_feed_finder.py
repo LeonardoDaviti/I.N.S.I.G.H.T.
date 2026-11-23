@@ -49,7 +49,7 @@ def found(*feeds: tuple[str, str]) -> FeedFinding:
     return FeedFinding("found", tuple(Feed(url, title) for url, title in feeds))
 
 
-# The stories service of a library whose sources linked nothing (issue 0060).
+# The stories service of a library whose sources linked nothing.
 NO_LINKS = SimpleNamespace(linked_articles=lambda _address: [])
 
 
@@ -62,7 +62,7 @@ class FeedFinderTests(unittest.TestCase):
     def test_an_address_that_is_a_feed_is_the_feed_with_its_title(self):
         finding, http = find({"https://x.example/feed.xml": rss("X Weekly")}, "https://x.example/feed.xml")
         self.assertEqual(finding, FeedFinding("feed", (Feed("https://x.example/feed.xml", "X Weekly"),)))
-        self.assertEqual(http.requests, ["https://x.example/feed.xml", "https://x.example/0"])  # its items have no body: the first one's page is read once (issue 0108)
+        self.assertEqual(http.requests, ["https://x.example/feed.xml", "https://x.example/0"])  # a bodiless feed: its first page read once
 
     def test_https_is_added_when_the_address_has_no_scheme(self):
         finding, _ = find({"https://x.example/atom.xml": atom("X")}, "  x.example/atom.xml ")
@@ -87,7 +87,7 @@ class FeedFinderTests(unittest.TestCase):
         self.assertEqual(len(http.requests), 4, "the page, its two feeds and the first item's page (no body: 0108)")
 
     def test_a_visible_rss_link_is_found_relative_to_the_redirected_page(self):
-        # borretti.me: no <link rel="alternate">, only <a href="/feed.xml">RSS</a>.
+        # no <link rel="alternate">, only <a href="/feed.xml">RSS</a>
         finding, _ = find({
             "https://borretti.me/article/x": page(body='<a href="/about">About</a><a href="feed.xml">RSS</a>'),
             "https://www.borretti.me/article/feed.xml": rss("Fernando Borretti"),
@@ -115,7 +115,7 @@ class FeedFinderTests(unittest.TestCase):
             "https://x.example/feed/": rss("Blog"),
         }, "https://x.example/p")
         self.assertEqual(finding, found(("https://x.example/feed/", "Blog")))
-        self.assertEqual(http.requests, ["https://x.example/p", "https://x.example/feed/", "https://x.example/0"])  # its items have no body: the first one's page is read once (issue 0108)
+        self.assertEqual(http.requests, ["https://x.example/p", "https://x.example/feed/", "https://x.example/0"])  # a bodiless feed: its first page read once
 
     def test_base_href_resolves_relative_links(self):
         head = '<base href="https://cdn.example/site/"><link rel="alternate" type="application/rss+xml" href="rss.xml">'
@@ -142,7 +142,7 @@ class FeedFinderTests(unittest.TestCase):
         self.assertEqual(finding, found(("https://x.example/rss", "Site")))
 
     def test_the_section_and_home_pages_when_the_page_has_no_feed(self):
-        # Paul Graham's feed is only linked from his home page (and lives on another site).
+        # a feed linked only from the home page, on another site
         finding, http = find({
             "https://pg.example/essays/hackers.html": page(body="<p>An essay</p>"),
             "https://pg.example/essays/": page(),
@@ -154,7 +154,7 @@ class FeedFinderTests(unittest.TestCase):
                                              "https://pg.example/"])
 
     def test_a_company_homepage_leads_to_its_own_blog_on_a_subdomain(self):
-        # www.cloudflare.com has no feed; it links blog.cloudflare.com, whose feed is /rss/ (2026-10-28).
+        # a site with no feed links its blog subdomain, whose feed is /rss/
         finding, http = find({
             "https://www.cloud.example/": page(body='<a href="https://blog.cloud.example/">Blog</a>'
                                                     '<a href="https://blog.other.example/">Partner blog</a>'),
@@ -167,7 +167,7 @@ class FeedFinderTests(unittest.TestCase):
         self.assertNotIn("https://blog.other.example/", http.requests)
 
     def test_common_paths_are_tried_under_the_blog_too(self):
-        # stripe.com links "Blog" -> /blog, which advertises no feed; the feed is /blog/feed.rss (2026-10-28).
+        # "Blog" -> /blog advertises no feed; the feed is /blog/feed.rss
         finding, _ = find({
             "https://pay.example/": page(body='<a href="/blog">Blog</a>'),
             "https://pay.example/blog": page(body="<p>Posts</p>"),
@@ -225,7 +225,7 @@ class FeedFinderTests(unittest.TestCase):
                 finding, http = find({}, url)
                 self.assertEqual(finding, FeedFinding("direct"))
                 self.assertEqual(http.requests, [])
-        # A bridge's address is probed first (issue 0137 B3): one that answers is direct.
+        # a bridge's address is probed first: one that answers is direct
         finding, http = find({"https://nitter.local/nn_teacher/rss": atom("nn_teacher")}, "https://nitter.local/nn_teacher/rss")
         self.assertEqual((finding, http.requests), (FeedFinding("direct"), ["https://nitter.local/nn_teacher/rss"]))
 
@@ -308,7 +308,7 @@ class FindFeedRouteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, {"success": True, "status": "found", "feeds": [{"url": "https://x.example/feed", "title": "X"}],
                                 "homepage": False, "pages": [], "linked": 0, "start": None,
-                                "landed": "https://x.example/"})   # where the address landed (issue 0172 b1)
+                                "landed": "https://x.example/"})   # where the address landed
 
     def test_an_empty_address_is_a_400(self):
         status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": " "})
@@ -327,9 +327,8 @@ def dated_section(path: str, count: int, site: str = SHOP, published: str = "202
 
 
 class FollowTheBlogTests(unittest.TestCase):
-    """Issue 0041: a home page with no feed offers its own blog or news page to follow, the one
-    with the most articles first. stripe.com's home page would follow /customers/ (557 links,
-    0 articles); its /blog had 269 dated articles (2026-10-28)."""
+    """A home page with no feed offers its own blog or news page to follow, the one with the most articles first,
+    never a page of many links and no articles (0041)."""
 
     def ask(self, responses, url: str, **fake) -> dict:
         http = FakeHttp(responses, **fake)
@@ -375,7 +374,7 @@ class FollowTheBlogTests(unittest.TestCase):
         responses = {**dated_section("/blog", 2), f"{SHOP}/": page(body='<a href="/news">News</a>'), **dated_section("/news", 5)}
         responses[f"{SHOP}/blog"] = responses[f"{SHOP}/blog"].replace("<main>", '<main><a href="/news">News</a>')
         body = self.ask(responses, f"{SHOP}/blog")
-        # Issue 0240: the section itself is offered (its own dated list), never the /news it links.
+        # the section itself is offered (its own dated list), never the /news it links (0240)
         self.assertEqual((body["status"], body["homepage"]), ("none", False))
         self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/blog"])
 
@@ -388,11 +387,11 @@ class FollowTheBlogTests(unittest.TestCase):
         finding, _ = find({f"{SHOP}/": page(body='<a href="/blog/tag/launches">Blog</a><a href="/news">News</a>'
                                                  '<a href="/blog">Blog</a>'),
                            f"{SHOP}/news": page(), f"{SHOP}/blog": page()}, SHOP)
-        # The section before a page within it (cohere.com's "Blog" links /blog/tag/research first).
+        # the section before a page within it ("Blog" links /blog/tag/research first)
         self.assertEqual(finding, FeedFinding("none", pages=(f"{SHOP}/news", f"{SHOP}/blog")))
 
     def test_a_menu_item_named_blog_with_a_description_counts(self):
-        # harvey.ai's menu: "Blog →" over "Product updates, insights, …" in one link (2026-10-28).
+        # a menu's "Blog →" over a description in one link
         finding, _ = find({f"{SHOP}/": page(body='<a href="/blog"><span>Blog</span><svg></svg>'
                                                  '<p>Product updates, insights and stories</p></a>'
                                                  '<a href="/pricing"><span>Pricing</span><p>Our blog plans</p></a>'),
@@ -400,7 +399,7 @@ class FollowTheBlogTests(unittest.TestCase):
         self.assertEqual(finding.pages, (f"{SHOP}/blog",))
 
     def test_an_address_that_cannot_be_read_takes_the_home_pages_blog(self):
-        # A source's gone feed at the root (the source doctor): its home page's blog stands in.
+        # a source's gone feed at the root (the source doctor): its home page's blog stands in
         finding, _ = find({f"{SHOP}/": page(body='<a href="/blog">Blog</a>'), f"{SHOP}/blog": page()},
                           f"{SHOP}/rss")
         self.assertEqual(finding, FeedFinding("none", pages=(f"{SHOP}/blog",)))
@@ -416,10 +415,9 @@ def recent_section(path: str, count: int, days_ago: int = 3) -> dict:
 
 
 class BlogUnderAnotherNameTests(unittest.TestCase):
-    """Issue 0047: a home page that names no blog or news page may still have one under another
-    word: linear.app's "Now" (/now), reka.ai's "Reka Latest" (/news), atlassian.com's "AI blogs &
-    news" (2026-10-28). Its own menu links are previewed and the evidence chooses: the one that
-    reads as an article list, the most articles first. No word is added to BLOG_LINK_TEXTS."""
+    """A home page naming no blog may still have one under another word ("Now", "Latest"): its menu links are
+    previewed and the one that reads as an article list wins, most articles first; no word is added to
+    BLOG_LINK_TEXTS (0047)."""
 
     ask = FollowTheBlogTests.ask
 
@@ -435,7 +433,7 @@ class BlogUnderAnotherNameTests(unittest.TestCase):
         self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/latest", f"{SHOP}/stories"])
 
     def test_a_product_page_with_few_dated_links_is_not_offered(self):
-        # atlassian.com's /software: 572 links, one dated page among those read (2026-10-28).
+        # many links, one dated page among those read
         responses = {f"{SHOP}/": menu('<a href="/software">Software</a>'), **recent_section("/software", 2)}
         responses[f"{SHOP}/software"] = responses[f"{SHOP}/software"].replace(
             "</main>", "".join(f'<a href="/software/tool-{n}">Tool {n}</a>' for n in range(30)) + "</main>")
@@ -444,13 +442,13 @@ class BlogUnderAnotherNameTests(unittest.TestCase):
         self.assertEqual((body["status"], body["homepage"], body["pages"]), ("none", True, []))
 
     def test_a_page_of_people_with_old_dates_is_not_offered(self):
-        # ideo.com's /leaders: 25 pages, each dated by a joining year (2026-10-28).
+        # each page dated by a joining year
         body = self.ask({f"{SHOP}/": menu('<a href="/leaders">Leaders</a>'),
                          **recent_section("/leaders", 9, days_ago=400)}, SHOP)
         self.assertEqual(body["pages"], [])
 
     def test_a_page_of_policies_with_few_recent_dates_is_not_offered(self):
-        # 37signals.com's /policies: 3 dated pages among the 8 read, 2 updated this year (2026-10-28).
+        # 3 dated pages among the 8 read, 2 updated this year
         responses = {f"{SHOP}/": menu('<a href="/policies">Policies</a>'), **recent_section("/policies", 2),
                      **recent_section("/policies/old", 1, days_ago=1500)}
         responses[f"{SHOP}/policies"] = responses[f"{SHOP}/policies"].replace(
@@ -498,7 +496,7 @@ class BlogUnderAnotherNameTests(unittest.TestCase):
         self.assertEqual((finding.pages, finding.menu), ((f"{SHOP}/blog",), ()))
 
 
-# ---- issue 0108: a feed whose posts moved, and a blog on another domain ---------------------------
+# ---- a feed whose posts moved, and a blog on another domain (0108) ----------------------------
 
 from insight_core.tests.test_moved_pages import NEW, OLD, OLD_FEED, blog_post, empty_feed, stub  # noqa: E402
 
@@ -515,8 +513,8 @@ def blog_rss(title: str = "The Blog") -> str:
 
 
 def moved_site(**more) -> dict:
-    """The measured shape: a home page naming its own feed of empty entries, each post page a stub to the
-    blog's post, whose page names the blog's feed."""
+    """A home page naming its own feed of empty entries, each post page a stub to the blog's post, whose page names
+    the blog's feed."""
     return {HOME: page(f'<link rel="alternate" type="application/atom+xml" href="{OLD_FEED}">'),
             OLD_FEED: empty_feed(OLD, "https://home.example/posts/2020/08/another"), OLD: stub(),
             NEW: blog_post().replace("<head>", f'<head><link rel="alternate" type="application/rss+xml" href="{BLOG_FEED}">'),
@@ -524,7 +522,7 @@ def moved_site(**more) -> dict:
 
 
 class MovedFeedTests(unittest.TestCase):
-    """Decision 3: the finder looks past a feed whose posts have moved."""
+    """The finder looks past a feed whose posts have moved."""
 
     def test_the_moved_to_feed_comes_first_and_the_old_one_says_where_its_posts_live(self):
         finding, http = find(moved_site(), HOME)
@@ -576,8 +574,8 @@ def nav(*links: tuple[str, str], head: str = "", body: str = "") -> str:
 
 
 class BlogOnAnotherDomainTests(unittest.TestCase):
-    """Decision 4: the home page's menu link named Blog (or Writing, Posts, Essays) on another domain
-    is a candidate after the site's own feeds."""
+    """The home page's menu link named Blog (or Writing, Posts, Essays) on another domain is a candidate after the
+    site's own feeds."""
 
     def test_the_menu_blog_on_another_domain_comes_after_the_sites_own_feed(self):
         responses = {HOME: nav(("https://home.example/about/", "About"), ("https://blog.example", "Blog"),
@@ -623,7 +621,7 @@ class BlogOnAnotherDomainTests(unittest.TestCase):
         self.assertEqual(finding, found(("https://medium.com/feed/@writer", "Writer on Medium")))
 
     def test_the_moved_site_is_found_both_ways_once(self):
-        # The measured case: the site's feed (posts moved), and its menu's Blog link to where they moved.
+        # the site's feed (posts moved), and its menu's Blog link to where they moved
         responses = moved_site()
         responses[HOME] = nav(("https://www.blog.example", "Blog"),
                               head=f'<link rel="alternate" type="application/atom+xml" href="{OLD_FEED}">')
@@ -633,7 +631,7 @@ class BlogOnAnotherDomainTests(unittest.TestCase):
         self.assertEqual(finding.feeds[1].moved_to, "blog.example")
 
 
-# ---- v10.13.5: an account or project page on a platform ------------------------------------------
+# ---- an account or project page on a platform ------------------------------------------------------
 
 def items_rss(title: str, *links: str) -> str:
     entries = "".join(f"<item><title>{n}</title><link>{url}</link><description>x</description></item>"
@@ -658,8 +656,8 @@ HUB_BLOG_ELSEWHERE = {               # the platform's blog on a domain of its ow
 
 
 def hub_site(**more) -> dict:
-    """The measured shape: an account page with no feed; the home page names the platform's blog feed
-    (its items under /blog/) and links its blog, whose page names it too."""
+    """An account page with no feed; the home page names the platform's blog feed (items under /blog/) and links
+    its blog, whose page names it too."""
     return {f"{HUB}/": page(alternate("/blog/feed.xml"), '<a href="/blog">Blog</a>'),
             f"{HUB}/blog": page(alternate("/blog/feed.xml")),
             HUB_BLOG_FEED: items_rss("Hub - Blog", f"{HUB}/blog/a-launch-post", f"{HUB}/blog/another-post"),
@@ -667,7 +665,7 @@ def hub_site(**more) -> dict:
 
 
 class PlatformAccountTests(unittest.TestCase):
-    """An account or project page on a platform is never offered the platform's own blog (v10.13.5)."""
+    """An account or project page on a platform is never offered the platform's own blog."""
 
     def test_an_account_or_model_page_is_not_offered_the_platforms_blog_feed(self):
         for url in (f"{HUB}/example-org", f"{HUB}/example-org/widget-model"):
@@ -770,7 +768,7 @@ def publication(subdomain: str, name: str, custom_domain=None, optional: bool = 
 
 
 class SubstackProfileTests(unittest.TestCase):
-    """A Substack profile is offered the person's publications, never Substack's own feed (v10.13.10)."""
+    """A Substack profile is offered the person's publications, never Substack's own feed."""
 
     def assert_only_the_profile_asked(self, http):
         self.assertEqual(http.requests, [PROFILE_API])

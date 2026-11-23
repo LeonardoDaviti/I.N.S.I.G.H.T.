@@ -1,15 +1,8 @@
-"""v10.14: Mark X's slow spots at the scale of "every post read", each fixed without changing what it answers. Every
-fix is checked against the old behaviour on the same rows (an equivalence test), besides what it no longer reads:
-
-  - the planners' marks (plan_marks, migration 0108): a post passed over (its input is another post's task; for cite,
-    not a cue) is not read again while its text is unchanged; once it changes, it is read as before;
-  - the candidate finder: the embedded posts and the entity subjects read only within the pairs' reach of the new
-    posts (the old read every one); the waiting posts a page a run;
-  - a lease never plans relate or back while a decision run holds its lock (its uncommitted tasks made the lease's
-    insert wait until the run ended);
-  - /entities' book without the mention counts it never reads; the per-day call sums from the days they show.
-
-Synthetic data only; the DB tests run on a database whose name ends in _test, in a transaction rolled back."""
+"""Mark X's slow spots at the scale of "every post read", each fixed without changing what it answers: every fix is
+checked against the old behaviour on the same rows. The planners' marks (plan_marks, migration 0108: a passed-over
+post is not read again while its text is unchanged); the candidate finder reading only within the pairs' reach of the
+new posts; a lease never planning relate or back while a decision run holds its lock; /entities' book without the
+mention counts. Synthetic data; DB tests on a _test database, in a transaction rolled back."""
 from __future__ import annotations
 
 import json
@@ -92,8 +85,8 @@ class PlannerMarks(_Db):
                 self.assertEqual(b in seen, again, change)
 
     def test_the_tasks_planned_are_the_same_as_without_marks(self):
-        """Equivalence: on the same posts (repeats, reposts across sources, a page smaller than the repeats), the
-        tasks added call by call are the ones the planner added before 0108."""
+        """Equivalence: on the same posts (repeats, reposts across sources, a page smaller than the repeats), the tasks
+        added call by call are the ones the planner added before 0108."""
         rnd = random.Random(14)
         for n in range(60):
             if rnd.random() < 0.4:
@@ -267,13 +260,12 @@ class APageARun(_Api):
 
 
 class LeaseDuringARun(_Api):
-    """The relate and back planners of a lease rest while a decision run holds its lock: the run plans them in its
-    own long transaction, and a lease inserting one of the same questions waited until the run ended (6 to 57 s on
-    the server, every 5 minutes)."""
+    """The relate and back planners of a lease rest while a decision run holds its lock: the run plans them in its own
+    long transaction, and a lease inserting one of the same questions would wait until the run ended."""
 
     def test_relate_and_back_are_not_planned_while_a_run_holds_the_lock(self):
         relate, back, read = mock.Mock(return_value=0), mock.Mock(return_value=0), mock.Mock(return_value=0)
-        from insight_core.markx import consumers   # 0210: back is off (not shipped); this test is about its planner on
+        from insight_core.markx import consumers   # back is off (not shipped); this test is about its planner on
         with self.conn.transaction():
             consumers.set_on(self.cur, "back", True)
         self.addCleanup(consumers.forget)
@@ -288,7 +280,7 @@ class LeaseDuringARun(_Api):
             with self.conn.transaction():
                 self.assertFalse(jobs.decision_running(self.cur))
             self.lease("relate,back,read")
-        self.assertEqual((relate.call_count, back.call_count), (0, 1))   # v10.22: relate is planned in the background
+        self.assertEqual((relate.call_count, back.call_count), (0, 1))   # relate is planned in the background
 
     def test_the_lease_no_longer_waits_on_the_runs_uncommitted_task(self):
         """The shape of the wait: the run inserted a relate question and holds it uncommitted; a lease planning
@@ -326,8 +318,8 @@ class Readers(_Db):
         self.assertTrue(full.types and not light.types)
         now = T0 + 2 * D
         got = entity_views.entity_list(self.cur, now=now)
-        # v10.16 (0177): the list reads only the entities its rows name, their makers' and families'; with the whole
-        # book it answers the same
+        # the list reads only the entities its rows name, their makers' and families'; with the whole book it answers
+        # the same
         with mock.patch.object(entity_views, "_list_book", lambda cur, rows: full):
             self.assertEqual(json.dumps(got, default=str, sort_keys=True),
                              json.dumps(entity_views.entity_list(self.cur, now=now), default=str, sort_keys=True))
@@ -350,7 +342,7 @@ class Readers(_Db):
             types.setdefault(eid, {})[t] = types.get(eid, {}).get(t, 0) + n
             if s and identity.schemas_type(t) in identity.PRODUCT_TYPES:
                 subject[eid] = subject.get(eid, 0) + s
-        self.assertEqual({k: dict(v.items()) for k, v in b.types.items()}, types)   # v10.22: TypeCounts
+        self.assertEqual({k: dict(v.items()) for k, v in b.types.items()}, types)   # TypeCounts
         self.assertEqual(b.subject, subject)
         self.assertTrue(subject)
 

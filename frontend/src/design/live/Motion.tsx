@@ -21,11 +21,8 @@ const ENTER: Keyframe[] = [{ opacity: 0, transform: 'scale(0.97)' }, { opacity: 
 const REDUCED: Keyframe[] = [{ opacity: 0 }, { opacity: 1 }];
 const REDUCED_MS = 150;
 
-/**
- * The motion tokens, read live, with a replay (P12). The replay is the one
- * thing here that moves, and only when asked; under reduced motion it plays
- * what the app plays then: a short fade.
- */
+/** The motion tokens, read live, with a replay (the one thing here that moves, only when asked; under reduced
+ *  motion it plays the app's short fade). */
 export default function Motion({ rules }: { rules?: string }) {
   useRootClass();
   const reduced = useReducedMotion();

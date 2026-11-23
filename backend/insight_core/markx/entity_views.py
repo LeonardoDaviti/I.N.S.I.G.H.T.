@@ -1,17 +1,8 @@
-"""What the Mark X page reads about entities (issue 0119 A3, 0115 as decided): the list, an entity's page, the review
-queue and its history. Read only; everything is read through the merges (redirects) and the owner's splits (pins), so
-an answer in the queue shows at once.
-
-  - **The list** (`entity_list`): one list over the News window (30 days), ranked like News: distinct voices, then
-    reports (posts where it is the subject or the actor) against mentions, then the newest post. Each row: name,
-    type, maker, the exact version, sources and posts, its Mark X stories, its 3 newest posts, when last seen, and its
-    surges. Read state never hides anything: a read post is only marked read.
-  - **The page** (`entity_page`): every post in every role, the role on each line, grouped by its Mark X stories
-    ordered like News (voices, then the newest post), the posts in no story last; every source with its counts; the
-    family and its versions as links (a family's page lists every version).
-  - **The queue** (`queue`): the open items, each with both names, 2 posts each, the proposal and its evidence; and
-    the history: answered items and the merges (automatic ones can be undone). 0164 A: each side carries its group
-    (`group`: the cluster's shown name and type, names and sides) and an alias item what `same` would do (`join`).
+"""What the Mark X page reads about entities: the list (`entity_list`, ranked like News over its 30-day window), an
+entity's page (`entity_page`, every post in every role, grouped by story) and the review queue (`queue`) with its
+history, plus their kept copies (`kept_list`, `kept_queue`, `kept_entity_page`, built ahead by `keep_pages`). Read
+only, except the kept pages; everything is read through the merges (redirects) and the owner's pins, so an answer in
+the queue shows at once. Read state never hides anything.
 """
 from __future__ import annotations
 
@@ -39,16 +30,15 @@ ACCURACY = {
 
 
 def _guide() -> List[str]:
-    """0133: every entities guide; the views read each post's current set (mx_mentions_now) whichever it is."""
+    """Every entities guide; the views read each post's current set (mx_mentions_now) whichever it is."""
     from insight_core.markx import schemas
     return schemas.mention_guides()
 
 
 def _rows(cur: Any, guide: List[str], since: Optional[datetime], entity_ids: Optional[Iterable[str]] = None):
     """Current mentions with their post's time, source and read state: (post, n, role, entity, at, source id, read,
-    guide). 0232: of `entity_ids`, the mentions linked to them (by the entity index) and, apart, the ones pinned to
-    them linked elsewhere: one OR of the two read every mention (a sequential scan of mx_mentions, 1.5M rows on the
-    server-shaped clone: 0.65 s for any page, the largest entity's or one of 5 posts)."""
+    guide). With `entity_ids`: the mentions linked to them and, as a separate UNION arm, the ones pinned to them (one
+    OR of the two scans every mention: 0232)."""
     where, params = ["m.guide = ANY(%s)", "m.entity_id IS NOT NULL"], [guide]
     if since is not None:
         where.append(pairing.post_date_within("p", "%s::timestamptz"))
@@ -96,9 +86,7 @@ def _ent_view(book: I.Book, eid: str, facts: Optional[Dict[str, Any]] = None) ->
     from insight_core.markx import schemas
     e = book.ents[eid]
     root = book.root(eid) == eid
-    # 0164: a cluster is shown under its root's shown name and type (by evidence), its maker as the maker's entity
-    # (the stated maker's name read through its alias: "Zentra AI" shows as the org Zentra when they are one)
-    # v10.35: a root's maker is the one its names state (I.cluster_maker: a merged name's stated maker kept)
+    # a cluster shows its root's name and type; its maker is the maker its names state, read through its alias
     stated = I.cluster_maker(book, eid) if root else e.maker
     mk = I.maker_root(book, stated) if stated else None
     out = {"id": e.id, "name": book.label(eid) if root else e.name,
@@ -107,7 +95,7 @@ def _ent_view(book: I.Book, eid: str, facts: Optional[Dict[str, Any]] = None) ->
            "level": e.level, "version": e.version, "variant": e.variant, "size": e.size, "build": e.build,
            "status": e.status, "family": _family_of(book, eid)}
     f = (facts or {}).get(eid)
-    if f is not None:   # 0184: what it is, and its maker when made with none (markx/entity_facts.py)
+    if f is not None:   # what it is, and its maker when made with none (markx/entity_facts.py)
         out["what"] = f.what
         if not out["maker"] and f.maker:
             out["maker"], out["maker_id"] = f.maker, f.maker_id
@@ -131,9 +119,7 @@ def _when(at: Optional[datetime], now: datetime) -> Optional[str]:
 
 
 def _list_book(cur: Any, rows: Iterable[Tuple]) -> I.Book:
-    """v10.16: the book the list reads (it was the whole book: 250k entities at the server's scale, most of /entities'
-    5 s): every merge and pin, and the entities of the clusters its rows name. `_list_more` adds what the shown rows
-    read besides (their makers' and families' entities)."""
+    """The book the list reads: every merge and pin, and only the entities of the clusters its rows name."""
     b = I.Book()
     cur.execute("SELECT from_id::text, to_id::text, automatic FROM mx_entity_redirects WHERE undone_at IS NULL")
     b.redirect = I.Redirects({f: (t, auto) for f, t, auto in cur.fetchall()})
@@ -144,8 +130,7 @@ def _list_book(cur: Any, rows: Iterable[Tuple]) -> I.Book:
 
 
 def _list_more(cur: Any, book: I.Book, eids: Iterable[str]) -> None:
-    """The entities `_ent_view` reads of these rows' besides their own: each stated maker's (through its alias) and
-    each version's family, as their clusters' roots."""
+    """Reads into `book` the entities `_ent_view` needs besides the rows' own: their makers and families."""
     eids = [e for e in eids if e in book.ents]
     keys = sorted({k for k in (N.key(book.ents[e].maker) for e in eids if book.ents[e].maker) if k} - set(book.alias))
     if keys:
@@ -164,7 +149,7 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
     guide = _guide()
     since = now - timedelta(days=WINDOW_DAYS)
     rows = _rows(cur, guide, since)
-    book = _list_book(cur, rows)   # v10.14: no mention count; v10.16: only the entities the rows name
+    book = _list_book(cur, rows)
     agg: Dict[str, Dict[str, Any]] = {}
     for pid, n, role, eid, at, src, read, g in rows:
         eid = book.root(book.pins.get((pid, g, n), eid))
@@ -186,7 +171,7 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
     surge = S.surging(cur, book, since=since.date())
     items = []
     from insight_core.markx import entity_facts
-    facts = entity_facts.read(cur, [eid for eid, _ in top])   # 0184: one query by the page's ids (off: none)
+    facts = entity_facts.read(cur, [eid for eid, _ in top])
     for eid, a in top:
         sids = Counter(s for p in a["posts"] for s in story_of.get(p, ()))
         last = max(at for at, _ in a["posts"].values())
@@ -198,19 +183,18 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
                                   "read": read} for p, (_at, read) in newest[eid]],
                       "surges": surge.get(eid, [])[:3]})
     return {"window_days": WINDOW_DAYS, "total": len(agg), "items": items, "accuracy": ACCURACY,
-            "queue": open_count(cur), "flagged": flagged_count(cur)}   # 0222: the owner is asked only the flagged
+            "queue": open_count(cur), "flagged": flagged_count(cur)}   # the owner is asked only the flagged
 
 
 def named_now(cur: Any, book: I.Book) -> Set[str]:
-    """0138: the entities (roots) some post's current reading names (mx_mentions_now, through the owner's pins). An
-    entity only an earlier guide named has its page (with those posts) but is listed nowhere else. A document's
-    publisher named by a current mention's `by` counts as named. Kept on the book (one read a request)."""
+    """The roots some post's current reading names (a mention's `by` publisher counts); an entity only an earlier
+    guide named keeps its page but is listed nowhere else. Cached on the book."""
     got = getattr(book, "_named_now", None)
     if got is not None:
         return got
-    if isinstance(book, I.LazyBook):   # v10.17 (0186): a page asks it of a few roots: answered per root, not a read
-        got = I._Has(lambda root: bool(_names_now(cur, book, [root])),   # of every current mention (830k on the
-                     lambda roots: _names_now(cur, book, roots))          # server); `want` asks many at once
+    if isinstance(book, I.LazyBook):   # a page asks a few roots: answered per root, not by reading every mention
+        got = I._Has(lambda root: bool(_names_now(cur, book, [root])),
+                     lambda roots: _names_now(cur, book, roots))
         book._named_now = got   # type: ignore[attr-defined]
         return got
     cur.execute("SELECT post_id::text, guide, n, entity_id::text, by_name FROM mx_mentions_now WHERE guide = ANY(%s) "
@@ -226,8 +210,7 @@ def named_now(cur: Any, book: I.Book) -> Set[str]:
 
 
 def _names_now(cur: Any, book: Any, roots: Sequence[Optional[str]]) -> Set[str]:
-    """The `roots` in named_now's set (a page's book): a current mention linked or pinned into the cluster, or a
-    current mention's `by` one of its aliases."""
+    """The `roots` in named_now's set, asked per root (a lazy book)."""
     roots = {r for r in roots if r}
     lead = {i: r for r in roots for i in book._leading_to(r) if I._UUID.match(i)}
     if not lead:
@@ -244,7 +227,7 @@ def _names_now(cur: Any, book: Any, roots: Sequence[Optional[str]]) -> Set[str]:
     rest = roots - out
     if rest:
         by = book.__dict__.get("_by_keys")
-        if by is None:   # the keys of the current mentions' `by` names (the documents' publishers), read once a request
+        if by is None:   # the current mentions' `by` keys, read once a request
             cur.execute("SELECT DISTINCT by_name FROM mx_mentions_now WHERE guide = ANY(%s) AND by_name IS NOT NULL",
                         (_guide(),))
             by = book.__dict__["_by_keys"] = {k for k in (N.key(b) for (b,) in cur.fetchall()) if k}
@@ -256,9 +239,8 @@ def _names_now(cur: Any, book: Any, roots: Sequence[Optional[str]]) -> Set[str]:
 
 
 def older_posts(cur: Any, book: I.Book, members: Set[str]) -> List[Dict[str, Any]]:
-    """0138: the posts that named one of `members` under an earlier guide (mx_mentions, every guide), each with the
-    guide, the words, and what its current reading names as its subjects instead: [{id, title, source, at, url,
-    guide, span, now: [{id, name, type}]}], newest first."""
+    """The posts that named one of `members` under any guide, with what their current reading names as subjects
+    instead: [{id, title, source, at, url, guide, span, now: [{id, name, type}]}], newest first."""
     from insight_core.markx.news import _posts
     ids = sorted(members)
     if not ids:
@@ -289,9 +271,8 @@ def older_posts(cur: Any, book: I.Book, members: Set[str]) -> List[Dict[str, Any
 
 
 def original(cur: Any, book: I.Book, root: str) -> Dict[str, Any]:
-    """0138: the entity's original and its other addresses (markx/entity_addresses.py): {original: {url, kind, rule,
-    post: {id, title} when stored, collected: when Collect originals stored it} or None, addresses: [{kind, url,
-    rule}], cited: the pages its posts cite (0229: [{url, kind, rule}], never its original)}."""
+    """The entity's original and other addresses (markx/entity_addresses.py): {original: {url, kind, rule, post,
+    asked} or None, addresses, maker_candidates, cited: the pages its posts cite, never its original}."""
     from insight_core.markx import entity_addresses as EA
     from insight_core.utils import entity_originals as R
     from insight_core.utils.url_normalization import normalize_url
@@ -317,8 +298,8 @@ def original(cur: Any, book: I.Book, root: str) -> Dict[str, Any]:
 
 
 def maker_candidates(book: I.Book, root: str, owners: Iterable[Optional[str]]) -> List[Dict[str, Any]]:
-    """v10.13.5: who may make it, proposed by its platform pages' owners (rule `repo`), never asserted: [{name, id: the
-    org or person entity of that name run together (handle suffixes aside) or None, agrees: it is the stated maker}]."""
+    """Who may make it, proposed by its platform pages' owners, never asserted: [{name, id: the org or person entity
+    of that name or None, agrees: it is the stated maker}]."""
     from insight_core.utils import entity_originals as R
     stated = set()
     e = book.ents.get(root)
@@ -329,7 +310,7 @@ def maker_candidates(book: I.Book, root: str, owners: Iterable[Optional[str]]) -
     out: List[Dict[str, Any]] = []
     for owner in sorted({o for o in owners if o}, key=str.casefold):
         forms = set(N.handle_forms(owner)) | {N.squash(owner.casefold())}
-        ids = sorted(x for x in book.by_squashed_key(forms) if book.root(x) == x   # v10.17 (0186): by the index
+        ids = sorted(x for x in book.by_squashed_key(forms) if book.root(x) == x
                      and book.ents[x].type in ("org", "person") and book.ents[x].status != "not_entity")
         out.append({"name": owner, "id": ids[0] if ids else None,
                     "agrees": R.owner_agrees(owner, stated, N.squash)})
@@ -337,16 +318,14 @@ def maker_candidates(book: I.Book, root: str, owners: Iterable[Optional[str]]) -
 
 
 def _members(book: I.Book, root: str) -> Set[str]:
-    return set(book.cluster(root))   # v10.17 (0186): the entities whose merges lead to root, not a walk of the book
+    return set(book.cluster(root))
 
 
 def family_versions(book: Any, versions: List[Dict[str, Any]],
                     posts: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
-    """v10.30 (0259): a family's versions as a reader counts them: each row's version as a version reads it
-    (names.clean: a model id's "5-1" is 5.1 when the family lists 5.1), a row whose version is a ratio ("5:1") left out (no version of the
-    family), and a variant that is a setting of its version (names.setting: "Nimbus 5.2 (max)", "Nimbus 5 low") listed
-    under that version's row (`settings`), not as a version of its own, when the family lists that version; one it
-    does not list stays a row. The order kept."""
+    """A family's versions as a reader counts them (0259), order kept: versions cleaned (names.clean: an id's "5-1"
+    is 5.1), ratios ("5:1") left out; a listed version's settings ("Nimbus 5 low") go under its row (`settings`), its
+    builds (GGUF, NVFP4) under `builds`, and the same version written two ways under the most-posted row (`same`)."""
     known = {N.vt(v["version"]) for v in versions if v["level"] == "version" and not v["variant"] and v["version"]}
     rows: List[Dict[str, Any]] = []
     for v in versions:
@@ -368,8 +347,7 @@ def family_versions(book: Any, versions: List[Dict[str, Any]],
             top.setdefault("settings", []).append({"id": v["id"], "name": v["name"], "variant": v["variant"]})
             continue
         out.append(v)
-    # v10.35: a build of a version (GGUF, NVFP4, quantised weights: the name states a build) is listed under the
-    # row of the same version and variant that states none (`builds`), as its settings are, not as a version of its own.
+    # a build goes under the row of the same version and variant that states none
     def same(v: Dict[str, Any]) -> Tuple[Any, str]:
         return (N.vt(v["version"]) if v["version"] else None, (v["variant"] or "").strip().lower())
     base = {}
@@ -383,16 +361,12 @@ def family_versions(book: Any, versions: List[Dict[str, Any]],
             top.setdefault("builds", []).append({"id": v["id"], "name": v["name"], "build": book.ents[v["id"]].build})
             continue
         kept.append(v)
-    # v10.35: two rows of one version and variant, neither a build, are one version written two ways ("Fable 5.0" and
-    # "Fable 5": N.vnorm; "claude-fable-5-1", the model id, and "Fable 5.1" once names.clean reads 5.1): the row of
-    # the most posts (`posts`; then the order) lists the others under it (`same`), not as versions of their own.
+    # one version written two ways ("Fable 5.0" / "Fable 5"): the row of most posts lists the others under `same`
     def spelled(v: Dict[str, Any]) -> Tuple[Any, str, str]:
         return (N.vnorm(N.vt(v["version"])), (v["variant"] or "").strip().lower(),
                 N.squash(N.nk(book.ents[v["id"]].size) or ""))
     def spelled_apart(a: Any, b: Any) -> bool:
-        # only a version written two ways ("5.0" / "5", the id's "5-1" / "5.1"), by one maker: two names stating the
-        # same version are two things until identity says one (measured: "HP Z6" / "Nikon Z6", "Fourier GR-1" /
-        # "ArcFlash Labs GR-1" in one family)
+        # only spellings by one maker: two names stating the same version ("HP Z6" / "Nikon Z6") stay two things
         written = (N.vt(a.version), N.nk(a.variant)) != (N.vt(b.version), N.nk(b.variant))
         return written and (not a.maker or not b.maker or I.same_maker(book, a.maker, b.maker))
     posts = posts or {}
@@ -416,33 +390,30 @@ def entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                 by_limit: Optional[int] = None, offer_sample: bool = False,
                 replies: bool = False, stories_limit: Optional[int] = None,
                 loose_limit: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """The entity's page. Issue 0195: `stories_limit` story blocks and `loose_limit` loose posts are listed (None:
-    all), `stories_total` and `loose_total` count them all; the timeline and the sample read every story."""
+    """The entity's page: `stories_limit` story blocks and `loose_limit` loose posts listed (None: all),
+    `stories_total` and `loose_total` count them all; the timeline and the sample read every story."""
     got = _entity_page(cur, entity_id, now=now, by_limit=by_limit, offer_sample=offer_sample, replies=replies,
                        stories_limit=stories_limit, loose_limit=loose_limit)
     return None if got is None else got[0]
 
 
-# ---- the kept page (issue 0198) ------------------------------------------------------------------------------
+# ---- the kept page (0198) ------------------------------------------------------------------------------------
 
 ENTITY_PAGES = 300   # the kept entity pages: the newest built stay (a cache: the rest are built again when opened)
-# 0232: a request's limits are capped (out of range: clamped) and one kept page an entity serves them all, built at
-# the caps and cut to each request's limits (`_cut`). Before, a page asked with its own limits was built every time
-# (Qwen's page with ?stories_limit=5&loose_limit=10: 7.4 s each request), and nothing capped them.
-STORIES_CAP = 200     # story blocks a page lists at most (the page asks 50 more at a time)
-LOOSE_CAP = 500       # posts in no story listed at most
-BY_CAP = 500          # the entity's own (by) posts listed loose at most (the page's "Show all")
-DEFAULTS = {"by": 50, "stories": 20, "loose": 30}   # the route's defaults (PP.BY_LIMIT; issue 0195; 0277: were 50, 100)
-PAGE_SHAPE = "9"      # v10.35: a story's `about` (stories about it first), the timeline's release rule; a version's `same` (one version written two ways); a version's `builds`; a story's `joined` (its release group). 0272: `brief.numbers`. 0269: a brief line's `note` (0261: `brief`). 0232: the answer's shape, in the kept key (a field the frontend reads added, renamed or gone:
-#                       bump it): a page kept by the previous code is sent only while its shape is this one
-HOT_PAGES = 20        # 0232: the most opened entity pages the jobs process builds after a run or a deploy
+# one kept page an entity serves every request: built at the caps, cut to each request's clamped limits (`_cut`)
+STORIES_CAP = 200
+LOOSE_CAP = 500
+BY_CAP = 500          # the entity's own (by) posts listed loose at most
+DEFAULTS = {"by": 50, "stories": 20, "loose": 30}   # the route's defaults (PP.BY_LIMIT)
+PAGE_SHAPE = "9"      # the answer's shape, in the kept key: bump it when a field the frontend reads is added, renamed
+#                       or gone (a page kept by the previous code is sent only while its shape is this one)
+HOT_PAGES = 20        # the most opened entity pages the jobs process builds after a run or a deploy
 HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)
 
 
 def limits(by_limit: Optional[int] = None, stories_limit: Optional[int] = None,
            loose_limit: Optional[int] = None) -> Tuple[int, int, int]:
-    """0232: a request's (by, stories, loose) limits: None the route's default, each clamped into its range (by
-    0..BY_CAP, stories 1..STORIES_CAP, loose 1..LOOSE_CAP)."""
+    """A request's (by, stories, loose) limits: None the route's default, each clamped into its range."""
     def clamp(v: Optional[int], default: int, low: int, cap: int) -> int:
         return default if v is None else max(low, min(cap, int(v)))
     return (clamp(by_limit, DEFAULTS["by"], 0, BY_CAP), clamp(stories_limit, DEFAULTS["stories"], 1, STORIES_CAP),
@@ -455,18 +426,14 @@ def _page_key(entity_id: str, replies: bool) -> str:
 
 
 def _full(cur: Any, entity_id: str, *, now: datetime, replies: bool):
-    """(`_entity_page` every request's limits are cut from (`_cut`), its `until`), or None: the story blocks up to
-    STORIES_CAP, the by posts up to BY_CAP and the loose posts up to LOOSE_CAP + BY_CAP (what a request listing fewer
-    by posts reads further down)."""
+    """(`_entity_page` at the caps, its `until`), or None: what every request's page is cut from (`_cut`)."""
     return _entity_page(cur, entity_id, now=now, by_limit=BY_CAP, offer_sample=True, replies=replies,
                         stories_limit=STORIES_CAP, loose_limit=LOOSE_CAP + BY_CAP)
 
 
 def _cut(full: Dict[str, Any], by: int, stories: int, loose: int, whole: bool = False) -> Dict[str, Any]:
-    """`entity_page` at these limits (by <= BY_CAP, stories <= STORIES_CAP, loose <= LOOSE_CAP) from `_full`'s
-    answer: its first `stories` blocks; its loose posts without the by posts past `by`, the first `loose` of them;
-    loose_total as the build counts it (every loose post but the by posts past `by`).
-    0277: unless `whole` (the page's "all" links), the long lists are cut too (`_short`)."""
+    """`entity_page` at these limits, cut from `_full`'s answer (loose_total counted as a build at them would);
+    unless `whole` (the page's "all" links), the long lists are cut too (`_short`)."""
     from insight_core.markx import person_page as PP
     seen, kept = 0, []
     for ln in full["loose"]:
@@ -483,18 +450,13 @@ def _cut(full: Dict[str, Any], by: int, stories: int, loose: int, whole: bool = 
     return page if whole else _short(page)
 
 
-# 0277: the default answer's long lists. Anthropic's page on the server was 2.5 MB: 1.1 MB the 1,053 posts citing it,
-# 1.06 MB the 50 stories' 1,527 posts, 300 kB a timeline of 920 events of which 8 are shown first, 150 + 104 kB its
-# 863 works (twice). Each list is cut to what the page shows first, its total beside it; `whole` (?all=true, the
-# page's "all" links) answers every one. Cut from the one kept page: nothing more is built, held or kept.
+# the default answer's long lists cut to what the page shows first, each total beside it (big pages were MBs: 0277)
 SHORT = {"story_posts": 6, "citing": 20, "recommending": 20, "works": 30, "relations": 60}
 
 
 def _short(page: Dict[str, Any]) -> Dict[str, Any]:
-    """The page with each story's posts cut to SHORT["story_posts"] (its original first, then the posts about the
-    entity, shown in the block's order; `posts_total`), the posts citing or recommending it and its works (published,
-    the rabbit hole's) to their first ones (`<list>_total`; the rabbit hole's `missing`: its works not stored, counted),
-    and the timeline to its top events (`items_all`: whether every event is listed)."""
+    """The page with its long lists cut to SHORT (story posts: the original, then posts about it, first), each with a
+    `<list>_total`; the timeline cut to its top events (`items_all`)."""
     out = dict(page)
     n = SHORT["story_posts"]
     blocks = []
@@ -521,7 +483,7 @@ def _short(page: Dict[str, Any]) -> Dict[str, Any]:
         most = set(sorted(range(len(rels)), key=lambda i: (-(rels[i].get("posts") or 0), i))[:SHORT["relations"]])
         out["relations"] = [r for i, r in enumerate(rels) if i in most]
     out["relations_total"] = len(rels) if isinstance(rels, list) else 0
-    # a surge's posts (65 kB of ids on Anthropic's page) are read by no view of the page
+    # a surge's post ids are read by no view of the page
     out["surges"] = [{k: v for k, v in s.items() if k != "post_ids"} for s in page.get("surges") or []]
     tl = page.get("timeline")
     if isinstance(tl, dict) and isinstance(tl.get("items"), list):
@@ -531,16 +493,8 @@ def _short(page: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def page_inputs(cur: Any, entity_id: str) -> Tuple[Optional[str], Optional[List[Any]]]:
-    """(the newest decision run's id, what an entity's page reads that changes between runs), or None for the second
-    when there is no run or no such entity; a few indexed reads. Besides the run (stories, memberships, connections,
-    surges, the entity book, the queue, its timeline):
-      - the cluster's current mentions (count, newest), read through its merges;
-      - the old stories offered to label and their labels (person_page.offer; the page's own offers too);
-      - Mark IX's story job's last pass (a post in no Mark X story shows its Mark IX story);
-      - what the owner changed (kept_pages.owner_marks: labels, merges, pins, sources, handles, fixes).
-    The page's clock (a new day; an old story's edge) is its kept row's `until`. A worker's other answers and new
-    posts by its sources or citing its handles are read by the next decision run (each answer asks for one; one runs
-    at least hourly): the kept page shows them from that run on."""
+    """(the newest decision run's id, what an entity's page reads that changes between runs), the second None when
+    there is no run or no such entity. Anything else shows from the next run on."""
     from insight_core.markx import kept_pages, repo
     last = repo.last_run(cur)
     if last is None:
@@ -560,15 +514,14 @@ def page_inputs(cur: Any, entity_id: str) -> Tuple[Optional[str], Optional[List[
     samples, sample_labels, story_job = cur.fetchone()
     from insight_core.markx import entity_brief
     return str(last["id"]), [root, members, mentions, sample_labels, story_job, kept_pages.owner_marks(cur),
-                             entity_brief.stamp(cur, root), samples]   # 0261: the brief's reports and points
+                             entity_brief.stamp(cur, root), samples]
 
 
 def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None, replies: bool = False,
                      stories_limit: Optional[int] = None, loose_limit: Optional[int] = None,
                      now: Optional[datetime] = None, whole: bool = False) -> Optional[bytes]:
-    """GET /api/markx/entities/{id}: the page's bytes (kept_pages.encode of `entity_page` with its sample offered, at
-    the request's `limits`), cut from the entity's one kept page (`kept_full`); the open counted (the jobs process
-    builds the most opened pages before anyone asks: `keep_pages`). None: no such entity."""
+    """GET /api/markx/entities/{id}: the page's bytes at the request's `limits`, cut from the entity's one kept page
+    (`kept_full`); counts the open (`keep_pages` builds the most opened ahead). None: no such entity."""
     from insight_core.markx import kept_pages
     now = now or datetime.now(timezone.utc)
     by, stories, loose = limits(by_limit, stories_limit, loose_limit)
@@ -581,10 +534,9 @@ def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None
 
 def kept_full(cur: Any, entity_id: str, *, replies: bool = False, now: Optional[datetime] = None,
               any_code: bool = False) -> Optional[bytes]:
-    """The bytes of the entity's `_full` page: the kept ones while its inputs (`page_inputs`) and its clock (`until`)
-    are the same (0232, `any_code`: kept by the previous code too, in the same shape), else built and kept (the
-    newest ENTITY_PAGES pages stay). Kept only when the inputs read after the build are the ones read before (but the
-    offers it made itself): a page built while an input changed is answered, not kept. None: no such entity."""
+    """The bytes of the entity's `_full` page: the kept ones while its inputs (`page_inputs`) and clock (`until`)
+    hold (`any_code`: also kept by the previous code, same shape), else built and kept. A page whose inputs changed
+    during the build (but its own offers) is answered, not kept. None: no such entity."""
     import logging
     import time
     from insight_core.markx import kept_pages
@@ -616,19 +568,13 @@ def kept_full(cur: Any, entity_id: str, *, replies: bool = False, now: Optional[
     return body
 
 
-# ---- the list, the queue's first page and the most opened pages, kept by the jobs process (0216 item 5, 0232) ------
-# The list (3.6-4 s on the server) and the queue's first page (2.7 s) were built on every open; an entity's page at its
-# first open after each decision run and after each deploy (4-7.5 s). The jobs process (jobs.KEPT_VIEWS "entities")
-# builds them after each decision run and first after a deploy, and the routes send what it kept (kept_or_build: built
-# as before when nothing is kept for their inputs).
-#   - The list and the queue are stamped by what changes them: the run (everything the entities and surges stages
-#     write), the owner's marks (labels, merges, pins, sources, handles, fixes), the mentions' current sets (a worker's
-#     entities answer), the queue's rows (answers, flags and their notes, closings); the list may lag behind the
-#     posts' titles and read flags (the loose part) within KEPT_LAG, and its clock ("N days ago", the window's edge).
-#   - Any other queue page is built live, as before.
+# ---- the list, the queue's first page and the most opened pages, kept by the jobs process (0232) ----------------
+# Built after each decision run and after a deploy (jobs.KEPT_VIEWS "entities"); the routes send the kept copy, else
+# build. Stamped by the run, the owner's marks, the mentions' current sets and the queue's rows; the list may lag the
+# posts' titles, read flags and its clock by KEPT_LAG. Any other queue page is built live.
 
 LIST_SHAPE = "1"                    # the list's answer's shape, in its key (see PAGE_SHAPE)
-QUEUE_SHAPE = "1"                   # the queue's
+QUEUE_SHAPE = "1"
 QUEUE_KEPT = {"limit": 50, "offset": 0, "view": "flagged"}   # the queue's page kept: the page's first, by default
 KEPT_LAG = timedelta(minutes=15)    # the list is sent at most this old (its titles, read flags and window's edge)
 KEPT_GAP = 60.0                     # the jobs process builds the list and the queue again at most this often
@@ -645,8 +591,7 @@ def _queue_key() -> str:
 
 
 def _queue_marks(cur: Any) -> List[Any]:
-    """What the owner's, Claude's and the runs' writes of mx_entity_queue change: the open, answered, closed and
-    flagged counts, their newest times, and the open flagged items' notes."""
+    """A stamp of mx_entity_queue: its counts, newest times and the flagged items' notes."""
     cur.execute("""SELECT count(*), count(answer), count(closed_at), max(created_at), max(answered_at), max(closed_at),
                           count(*) FILTER (WHERE flagged_at IS NOT NULL AND answer IS NULL AND closed_at IS NULL),
                           max(flagged_at),
@@ -657,8 +602,7 @@ def _queue_marks(cur: Any) -> List[Any]:
 
 
 def kept_inputs(cur: Any, *, queue_page: bool = False) -> Any:
-    """The list's (or the queue's first page's) kept_pages.Inputs: strict, the newest run, the owner's marks, the
-    mentions' current sets and the queue's rows; loose (the list only), the posts' and read state's kept inputs."""
+    """The list's (or the queue's first page's) kept_pages.Inputs; the loose part (posts, reads) for the list only."""
     from insight_core.markx import kept_pages, repo
     last = repo.last_run(cur)
     cur.execute("SELECT count(*), max(at) FROM mx_mention_sets")
@@ -675,8 +619,7 @@ def _list_until(now: datetime) -> datetime:
 
 
 def kept_list(cur: Any, *, now: Optional[datetime] = None) -> bytes:
-    """GET /api/markx/entities: the kept list's bytes (by this code or, its inputs the same, the code before a
-    deploy), else `entity_list` built and kept."""
+    """GET /api/markx/entities: the kept list's bytes, else `entity_list` built and kept."""
     from insight_core.markx import kept_pages
     now = now or datetime.now(timezone.utc)
     return kept_pages.kept_or_build(cur, "entities", _list_key(), lambda: kept_inputs(cur),
@@ -684,8 +627,7 @@ def kept_list(cur: Any, *, now: Optional[datetime] = None) -> bytes:
 
 
 def kept_queue(cur: Any, *, limit: int, offset: int, view: str) -> Any:
-    """GET /api/markx/entities/queue: the kept first page's bytes for QUEUE_KEPT's parameters, else `queue` (any other
-    page is built live, as before)."""
+    """GET /api/markx/entities/queue: the kept first page's bytes for QUEUE_KEPT's parameters, else `queue` live."""
     from insight_core.markx import kept_pages
     if {"limit": limit, "offset": offset, "view": view} != QUEUE_KEPT:
         return queue(cur, limit=limit, offset=offset, view=view)
@@ -705,10 +647,8 @@ def _hot(cur: Any) -> List[Tuple[str, bool]]:
 
 
 def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
-    """The jobs process's look: whether the list or the queue's first page is not kept for its inputs now by this
-    code (or lags past its loose part, or ends its KEPT_LAG before the next looks), or a most opened page has no row
-    of the newest run by this code (a run or a deploy since; a page an owner's mark made stale between runs is built
-    when opened, as before). Before any decision run, nothing (as News: nothing to keep)."""
+    """Whether the jobs process has work: the list or the queue's first page not kept for its inputs by this code
+    (or expiring before the next look), or a most opened page due (`_hot_due`). False before any decision run."""
     from insight_core.markx import kept_pages, repo
     now = now or datetime.now(timezone.utc)
     last = repo.last_run(cur)
@@ -726,11 +666,8 @@ def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
 
 
 def _hot_due(cur: Any, run_id: Any, now: datetime) -> List[Tuple[str, bool]]:
-    """v10.38: the most opened pages (`_hot`) with no row of the newest run by this code sent until after the next
-    looks: the ones the jobs process builds (`kept_missing` asks whether any; `keep_pages` builds these only). One
-    build a run: a page an input made stale between runs (an automatic merge anywhere is an owner mark; on the server
-    ~21 an hour, so every page) is built when opened, as before 0232. Before, every look the list was due for (each
-    current mention set changes it: every ~90 s while the worker answers) built all HOT_PAGES again (20-45 cpu-s)."""
+    """The most opened pages (`_hot`) with no row of the newest run by this code valid past the next look. One build
+    a run: a page made stale between runs is built when opened (rebuilding on every input change cost too much)."""
     from insight_core.markx import kept_pages
     hot = _hot(cur)
     if not hot:
@@ -744,10 +681,8 @@ def _hot_due(cur: Any, run_id: Any, now: datetime) -> List[Tuple[str, bool]]:
 
 
 def keep_pages(cur: Any, *, now: Optional[datetime] = None, budget: float = HOT_SECONDS) -> Dict[str, Any]:
-    """In the jobs process (jobs.Jobs.entities), in one snapshot: the list and the queue's first page when not kept
-    for their inputs, then the most opened entity pages with no row of the newest run (`_hot_due`; most opened first,
-    within `budget` seconds: the rest are built when opened or at the next build). Each by the routes' own path
-    (`entity_list`, `queue`, `kept_full`), kept as the routes keep them."""
+    """In the jobs process (jobs.Jobs.entities), one snapshot: builds the list and the queue's first page when not
+    kept, then the due hot pages (`_hot_due`) within `budget` seconds, each by the routes' own path."""
     import time
     from insight_core.markx import kept_pages
     now = now or datetime.now(timezone.utc)
@@ -791,8 +726,7 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None, budget: float = HOT_
 
 
 def _until(now: datetime, every: Sequence[Dict[str, Any]], offer_sample: bool) -> datetime:
-    """When the page's clock next changes what it shows: the next day (its surges are read by day, its offers counted
-    a day), or the moment an old story becomes old enough to be offered (person_page.offer's edge)."""
+    """When the page's clock next changes it: the next day, or when a story becomes old enough to be offered."""
     from insight_core.markx.story_window import RECENT
     day = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     edge = now - timedelta(days=RECENT)
@@ -810,9 +744,8 @@ class _Kinded:
 
 
 def story_dating(ps: Sequence[str], at: Any, kind: Any) -> Tuple[Set[str], Any]:
-    """v10.35: (the background posts of a story's `ps`, its start), by the rule Mark X stores a story's first_at by
-    and News leads a row by (story_rules.background, 0263: a Saved page dated more than 72 h before the story's first
-    post of a voice neither dates nor leads it). `at`, `kind`: a post's date and its source's kind."""
+    """(the background posts of a story's `ps`, its start), by the rule Mark X dates and News leads a story by
+    (story_rules.background). `at`, `kind`: a post's date and its source's kind."""
     from insight_core.utils.story_rules import background
     times = {p: at(p) for p in ps}
     bg = background([_Kinded(p, kind(p)) for p in ps], times)
@@ -820,17 +753,14 @@ def story_dating(ps: Sequence[str], at: Any, kind: Any) -> Tuple[Set[str], Any]:
 
 
 def story_entries(cur: Any, members: Dict[str, List[str]], voices: Dict[str, int]) -> List[List[str]]:
-    """v10.35: the entity page's Mark X entries, each [its lead story, *the stories joined into it]: the stories one
-    current same_release chain joins (graph.release_groups, 0236) are one entry, as they are one News row, led by
-    News's launch order (news.launch_order: the maker's own story, a release first, then most voices), else the one
-    of most voices; every other story its own entry."""
+    """The entity page's Mark X entries, each [lead story, *joined stories]: one same_release group
+    (graph.release_groups) is one entry, as it is one News row, led by news.launch_order, else most voices."""
     from insight_core.markx import graph
     from insight_core.markx import news as NW
     sids = sorted(s for s, ps in members.items() if ps)
     out, seen = [], set()
     groups = [g for g in ([s for s in g if s in voices] for g in graph.release_groups(cur, sids)) if len(g) >= 2]
-    # v10.40: every group's stories built in one call, as News builds its rows' (a call a group read the book's makers
-    # and the members' texts again each time: Anthropic's page on the server copy, 29 groups, 10.2 s of its 16 s)
+    # every group's facts in one call (a call per group was most of a big page's time)
     facts = NW._story_facts(cur, {s for g in groups for s in g}) if groups else {}
     for g in groups:
         order = NW.launch_order({s: facts[s] for s in g if s in facts}, {s: voices[s] for s in g})
@@ -841,8 +771,7 @@ def story_entries(cur: Any, members: Dict[str, List[str]], voices: Dict[str, int
 
 
 def covered(ix_posts: Sequence[str], entries: Sequence[Set[str]]) -> bool:
-    """v10.35: a Mark IX story is the group of a Mark X entry holding most of its posts (more than half): it is listed
-    once, as that Mark X story (its posts in no Mark X story are the page's loose posts)."""
+    """Whether a Mark X entry holds more than half of a Mark IX story's posts (then it is listed once, as that)."""
     n = len(set(ix_posts))
     return bool(n) and any(2 * len(set(ix_posts) & e) > n for e in entries)
 
@@ -856,7 +785,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     from insight_core.markx.news import _posts
     now = now or datetime.now(timezone.utc)
     guide = _guide()
-    book = I.lazy_book(cur)   # v10.17 (0186): what the page asks of the book, not the whole book
+    book = I.lazy_book(cur)
     if entity_id not in book.ents:
         return None
     root = book.root(entity_id)
@@ -869,15 +798,14 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
         ln["roles"].add(role or "mention")
         ln["as"].add(book.ents[eid].name if eid in book.ents else "")
     current = bool(lines)
-    # 0144 B1: the sources that are this person or org; their posts are on the page with role `by`
+    # the sources that are this person or org: their posts are on the page with role `by`
     selves = PP.by_sources(cur, book, root, members)
     mine = PP.by_posts(cur, [s["id"] for s in selves["by"]])
     for pid, (at, src, read) in mine.items():
         ln = lines.setdefault(pid, {"roles": set(), "at": at, "source_id": src, "read": read, "as": set()})
         ln["roles"].add("by")
-    # 0168 A-B: the posts citing the entity's known handles (the owner's yes, its own sources' accounts) by the
-    # handle rule: a repost or quote of theirs is `by` (their own post, the original of its story), a status link or
-    # "@h said" `source`, an @mention `mention`; a reply to them is hidden unless asked (`replies`)
+    # posts citing its known handles: a repost or quote is `by`, a status link or "@h said" `source`, an @mention
+    # `mention`; a reply to them is hidden unless asked (`replies`)
     from insight_core.markx import handles as HD
     known = HD.entity_handles(cur, book, root, members, selves["by"])
     cited = HD.posts_citing(cur, known, exclude_sources=[s["id"] for s in selves["by"]])
@@ -894,13 +822,12 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
         ln["as"] |= {"@" + h.split(":", 1)[1] for h in ref["handles"]}
         if ref["role"] == "by":
             mine.setdefault(pid, (ref["at"], ref["source_id"], ref["read"]))
-    # 0144 B2: every Mark X story of these posts and, for a post in none, its Mark IX story, each with all its posts
     x_of, x_members = PP.mark_x_stories(cur, lines)
     ix_of, ix_stories = PP.mark_ix_stories(cur, [p for p in lines if not x_of.get(p)])
     shown = {p for ps in x_members.values() for p in ps} | {p for st in ix_stories.values() for p in st["posts"]}
     posts = _posts(cur, set(lines) | shown)
     heads = _story_heads(cur, x_members)
-    page_original = original(cur, book, root)   # 0138; v10.35: its stored post leads every story holding it
+    page_original = original(cur, book, root)   # its stored post leads every story holding it
     release = ((page_original.get("original") or {}).get("post") or {}).get("id")
 
     def at_of(pid: str) -> Any:
@@ -933,15 +860,13 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
 
     def head(sid: str, ps: List[str], mark: str, headline: Optional[str], *, root_post: Optional[str] = None,
              origin_url: Optional[str] = None, joined: Sequence[str] = ()) -> Dict[str, Any]:
-        """A block's own fields (what the order, the timeline and the sample read), without its posts' lines.
-        v10.35: dated and led as News dates and leads a story (`story_dating`: a background page neither dates nor
-        leads it; the entity's release page leads it when held); no headline: its lead's title, as News names it."""
+        """A block's own fields without its posts' lines, dated and led as News does (`story_dating`)."""
         bg, first_at = story_dating(ps, at_of, lambda p: (posts.get(p) or {}).get("kind"))
         orig = PP.original_of(ps, at_of, set(mine), root_post, origin_url, release, bg)
         title = (posts.get(orig["post"]) or {}).get("title") or (posts.get(root_post) or {}).get("title")
         return {"story": sid, "mark": mark, "headline": headline or title or None, "joined": list(joined),
                 "voices": voice.count((voice.Said(source_of(p), (posts.get(p) or {}).get("kind")) for p in ps
-                                       if source_of(p)), voice.Policy.MARKX),   # 0189: a saved page is none
+                                       if source_of(p)), voice.Policy.MARKX),
                 "newest": max(at_of(p) for p in ps), "first_at": first_at, "original": orig}
     # (head, the block's arguments) of every story; the blocks listed are built in full, the rest only headed
     from insight_core.markx import timeline as TL
@@ -961,8 +886,7 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
               "origin_url": st["origin_url"], "origin_title": st["origin_title"]}
         specs.append((head(sid, st["posts"], "ix", kw["headline"], root_post=st["root"], origin_url=st["origin_url"]),
                       (sid, st["posts"], "ix"), kw))
-    # v10.35: the stories about it first (its timeline's stops: the stored stop answer, else its share of the members
-    # whose subject or actor it is, timeline.stops_of), then those that only name it; each by voices, then the newest
+    # the stories about it first (timeline.stops_of), then those that only name it; each by voices, then the newest
     stops = TL.stops_of(cur, book, root, {a[0]: list(a[1]) for _h, a, _k in specs},
                         {p: at_of(p) for _h, a, _k in specs for p in a[1]},
                         {p for p, ln in lines.items() if ln["roles"] & set(ROLE_REPORT)})
@@ -973,7 +897,6 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     listed = specs if stories_limit is None else specs[:stories_limit]
     blocks = [block(*args, **kw) for _h, args, kw in listed]
     in_story = set(x_of) | set(ix_of)
-    # 0144 B4: the loose posts by role: subject and actor, then by, then the other roles, then mentions
     loose_all = sorted((p for p in lines if p not in in_story),
                        key=lambda p: (PP.loose_order(lines[p]["roles"]), -lines[p]["at"].timestamp(), p))
     groups_n = {"report": 0, "by": 0, "other": 0, "mention": 0}
@@ -1000,9 +923,9 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
     e = book.ents[root]
     fam_root = root if e.level in ("family", "thing") else (_family_of(book, root) or {}).get("id")
     versions = []
-    # v10.35: an org's or a person's things are not its versions (Anthropic listed 404 things: code flags, skills)
+    # an org's or a person's things are not its versions
     if fam_root and (book.shown_type(fam_root) or book.ents[fam_root].type) not in ("org", "person"):
-        kids = [x for x in book.with_parent_in(fam_root)   # v10.17 (0186): asked of the book, not walked
+        kids = [x for x in book.with_parent_in(fam_root)
                 if book.root(x) == x and book.ents[x].status != "not_entity"]
         versions = sorted(({"id": x, "name": book.label(x), "version": book.ents[x].version,
                             "variant": book.ents[x].variant, "level": book.ents[x].level} for x in kids),
@@ -1010,27 +933,26 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
                                                for x in (book.ents[v["id"]].version_key or ())), v["name"]),
                           reverse=True)
     named = named_now(cur, book)
-    versions = [v for v in versions if v["id"] in named]   # 0138: never a version no current reading names
-    # 0165 A: a product's components (things under it, not versions) are listed apart, with their posts
+    versions = [v for v in versions if v["id"] in named]   # never a version no current reading names
+    # a product's components (things under it, not versions) are listed apart, with their posts
     from insight_core.markx import components as C, stops as ST
     comps = [c for c in C.components_of(book, root) if c in named]
     versions = [v for v in versions if v["id"] not in set(comps)]
-    versions = family_versions(book, versions, _post_counts(cur, book, [v["id"] for v in versions]))   # v10.30 (0259)
+    versions = family_versions(book, versions, _post_counts(cur, book, [v["id"] for v in versions]))
     comp_posts = _post_counts(cur, book, comps)
     maker = book.root(e.parent) if e.parent and e.level in ("family", "thing") else None
     since = (now - timedelta(days=WINDOW_DAYS)).date()
     from insight_core.markx import entity_brief, entity_facts
-    facts = entity_facts.read(cur, [root], senses=True)   # 0184: what it is, and the name's other senses
+    facts = entity_facts.read(cur, [root], senses=True)
     page_entity = _ent_view(book, root, facts)
     if maker not in book.ents and page_entity.get("maker_id") in book.ents:
-        # v10.35: a version's (or a thing's with no maker parent) maker is the one its names state, as its entity
-        # shows it (`_ent_view`: I.cluster_maker, else its facts'); the parent is a maker only for a family or thing
+        # a version's maker is the one its names state (`_ent_view`); the parent is a maker only for a family or thing
         maker = page_entity["maker_id"]
     if root in facts and facts[root].senses:
         page_entity["senses"] = facts[root].senses
     page = {"entity": page_entity, "asked": entity_id, "redirected": root != entity_id,
-            "current": current, **({} if current else {"older": older_posts(cur, book, members)}),   # 0138
-            **page_original,   # 0138: its original first, and its other addresses
+            "current": current, **({} if current else {"older": older_posts(cur, book, members)}),
+            **page_original,
             "aliases": sorted(book.ents[m].name for m in members),
             "maker": {"id": maker, "name": book.label(maker)} if maker in book.ents else None,
             "family": ({"id": fam_root, "name": book.label(fam_root)} if fam_root and fam_root != root else None),
@@ -1038,32 +960,31 @@ def _entity_page(cur: Any, entity_id: str, *, now: Optional[datetime] = None,
             "components": [{"id": c, "name": book.label(c), "type": book.shown_type(c), "posts": comp_posts.get(c, 0)}
                            for c in sorted(comps, key=lambda c: (-comp_posts.get(c, 0), book.label(c) or ""))],
             "timeline": TL.of_entity(cur, book, root, stories=[{**h, "members": a[1]} for h, a, _k in specs],
-                                     original_post=release),   # 0165 C
-            "version_line": TL.version_line(cur, book, root) if ST.config().get("version_line") else None,   # 0220
-            "relations": _relations(cur, book, root, members),     # 0220: the relations posts state, the measured ones
+                                     original_post=release),
+            "version_line": TL.version_line(cur, book, root) if ST.config().get("version_line") else None,
+            "relations": _relations(cur, book, root, members),
             "stories": blocks, "loose": [line(p) for p in (loose if loose_limit is None else loose[:loose_limit])],
-            "loose_counts": groups_n,   # 0144 B2-B4
-            "stories_total": len(every), "loose_total": len(loose),   # issue 0195
-            "by": {"sources": selves["by"], "proposed": selves["proposed"], "posts": len(mine)},   # 0144 B1
+            "loose_counts": groups_n,
+            "stories_total": len(every), "loose_total": len(loose),
+            "by": {"sources": selves["by"], "proposed": selves["proposed"], "posts": len(mine)},
             "handles": {"known": known,
                         "posts": len([p for p, r in cited.items() if r["role"] != "reply" or replies]),
-                        "replies": hidden_replies, "replies_shown": replies},   # 0168
+                        "replies": hidden_replies, "replies_shown": replies},
             "sample": PP.offer(cur, root, {s: h["first_at"] for s, h in x_heads.items()}, now)
-            if offer_sample else [],                                                                  # 0144 C
+            if offer_sample else [],
             "sources": sorted(sources.values(), key=lambda s: (-s["posts"], s["name"] or "")),
-            **_documents(cur, book, members, lines, line),   # 0133: publisher, works, citing and recommending posts
-            "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),   # 0138 E3
+            **_documents(cur, book, members, lines, line),
+            "rabbit_hole": _rabbit_hole(cur, book, root, members, len(lines)),
             "surges": S.surging(cur, book, since=since).get(root, []), "accuracy": ACCURACY,
             "queue": queue_about(cur, book, root),
-            "brief": entity_brief.view(cur, root, names=[book.ents[m].name for m in members])}   # 0261, 0269
+            "brief": entity_brief.view(cur, root, names=[book.ents[m].name for m in members])}
     if CONTEXT_ON:
-        _with_contexts(cur, book, members, page)   # 0222: the sentences around the mention under each post
+        _with_contexts(cur, book, members, page)
     return page, _until(now, every, offer_sample)
 
 
 def _relations(cur: Any, book: I.Book, root: str, members: Set[str]) -> List[Dict[str, Any]]:
-    """0220: its current stated relations (markx/graph.py, the ones switched on), one row a relation, direction and
-    other thing (two edges to one group are one row, its posts together), oldest first:
+    """Its current stated relations (markx/graph.py), one row per relation, direction and other root:
     [{relation, direction, other {id, name, type}, since, posts}]."""
     from insight_core.markx import graph
     rows: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
@@ -1084,7 +1005,7 @@ def _relations(cur: Any, book: I.Book, root: str, members: Set[str]) -> List[Dic
     return sorted(out, key=lambda x: (x["relation"], x["direction"], x["since"] or "", x["other"]["name"] or ""))
 
 
-# ---- the mention's context under each post (issue 0222) ---------------------------------------------------------
+# ---- the mention's context under each post (0222) ---------------------------------------------------------------
 
 CONTEXT_ON = True        # the measurement's switch (the page built with and without it)
 CONTEXT_CHARS = 30000    # a post's text read at most (its first characters: a mention further in shows no context)
@@ -1112,9 +1033,8 @@ def _in_address(low: str, at: int) -> bool:
 
 
 def _find(low: str, terms: Sequence[str]) -> Optional[Tuple[int, int]]:
-    """The first occurrence (start, end) in `low` of the first term found, in the terms' order (the post's own
-    spans first), whole words where the term starts or ends with a word character; one in the text before one inside
-    a web address (that only when the text names it nowhere else)."""
+    """(start, end) of the first term found in `low`, in the terms' order, as whole words; an occurrence inside a web
+    address only when the text has no other."""
     in_address = None
     for t in terms:
         tl = t.lower().strip()
@@ -1130,9 +1050,8 @@ def _find(low: str, terms: Sequence[str]) -> Optional[Tuple[int, int]]:
 
 def mention_context(text: Optional[str], terms: Sequence[str], window: int = CONTEXT_WINDOW
                     ) -> Optional[List[Dict[str, Any]]]:
-    """The 2-4 sentences of `text` closest to the first mention of `terms`, as parts [{t, m?}] (m: a mention of a
-    term, highlighted), at most `window` characters (cut with an ellipsis); None when no term occurs in the text (the
-    post's title stands alone)."""
+    """The 2-4 sentences around the first mention of `terms`, as parts [{t, m?}] (m: highlighted), at most `window`
+    characters; None when no term occurs."""
     if not text or not terms:
         return None
     low = text.lower()
@@ -1192,9 +1111,8 @@ def mention_context(text: Optional[str], terms: Sequence[str], window: int = CON
 
 
 def _contexts(cur: Any, members: Set[str], book: I.Book, want: Dict[str, Set[str]]) -> Dict[str, Any]:
-    """{post: mention_context} of the posts shown (`want`: {post: the names its line says it is about}): each post's
-    own spans of the cluster's names first, then those names, then the cluster's names; its text's first
-    CONTEXT_CHARS read (one query for the shown posts, never the full text sent)."""
+    """{post: mention_context} of the shown posts (`want`: {post: the names its line shows}); terms tried: the post's
+    own spans, then those names, then the cluster's names. Reads each text's first CONTEXT_CHARS."""
     from insight_core.utils.post_parts import Body, shown
     ids = sorted(want)
     if not ids:
@@ -1223,8 +1141,7 @@ def _contexts(cur: Any, members: Set[str], book: I.Book, want: Dict[str, Set[str
 
 
 def _with_contexts(cur: Any, book: I.Book, members: Set[str], page: Dict[str, Any]) -> None:
-    """Each shown line about the entity gets `context` (its mention's sentences, `_contexts`); the stories' posts,
-    the loose posts, the citing and recommending ones."""
+    """Sets `context` (`_contexts`) on each shown line about the entity."""
     lines = [ln for b in page["stories"] for ln in b["posts"]] + page["loose"] + page.get("citing", []) + \
         page.get("recommending", [])
     want: Dict[str, Set[str]] = {}
@@ -1238,7 +1155,7 @@ def _with_contexts(cur: Any, book: I.Book, members: Set[str], page: Dict[str, An
 
 
 def _post_counts(cur: Any, book: I.Book, roots: Iterable[str]) -> Dict[str, int]:
-    """{root: the posts naming its cluster now} (0165 A: a product's components block)."""
+    """{root: the posts naming its cluster now}."""
     roots = set(roots)
     members = sorted(m for r in roots for m in book.cluster(r))
     if not members:
@@ -1254,16 +1171,14 @@ def _post_counts(cur: Any, book: I.Book, roots: Iterable[str]) -> Dict[str, int]
 
 
 def _rabbit_hole(cur: Any, book: I.Book, root: str, members: Set[str], posts: int) -> Optional[Dict[str, Any]]:
-    """0138 E3: the entity's world (markx/rabbit_hole.py) when it is an org, person or document with 2+ works or 10+
-    posts, else None."""
+    """The entity's world (markx/rabbit_hole.py), or None."""
     from insight_core.markx import rabbit_hole
     by, works = published_edges(cur, book, members)
     return rabbit_hole.of(cur, book, root, works=works, people=by + works, posts=posts)
 
 
 def published_edges(cur: Any, book: I.Book, members: Set[str]) -> Tuple[List[str], List[str]]:
-    """0133: (who published these entities, what they published): the current `published` edges' other ends, as
-    roots, most posts first."""
+    """(who published these entities, what they published), as roots, most edges first."""
     ids = sorted(members)
     if not ids:
         return [], []
@@ -1277,7 +1192,7 @@ def published_edges(cur: Any, book: I.Book, members: Set[str]) -> Tuple[List[str
             by[ra] += 1
         if a in members and rb not in members:
             works[rb] += 1
-    named = named_now(cur, book)   # 0138: an edge's other end no current reading names is not shown
+    named = named_now(cur, book)   # an end no current reading names is not shown
     order = lambda c: [e for e, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0])) if e in book.ents and e in named]
     return order(by), order(works)
 
@@ -1302,7 +1217,7 @@ def open_count(cur: Any) -> int:
 
 
 def flagged_count(cur: Any) -> int:
-    """0222: the open items Claude's review flagged for the owner (all the owner is asked by default)."""
+    """The open items Claude's review flagged for the owner (all the owner is asked by default)."""
     cur.execute("SELECT count(*) FROM mx_entity_queue WHERE flagged_at IS NOT NULL AND answer IS NULL AND closed_at IS NULL")
     return cur.fetchone()[0]
 
@@ -1313,9 +1228,8 @@ VIEWS = ("flagged", "all")
 
 
 def _voids(cur: Any, book: I.Book, rows: Sequence[Tuple]) -> Dict[str, str]:
-    """0222: {item id: why} of the open alias items whose Haiku answer (or second opinion) no longer holds: the posts
-    its question showed of a side are no longer that side's (identity.void_opinions; read, nothing written). Such an
-    item's answer is never shown nor banded; the next run closes it and asks the pair again."""
+    """{item id: why} of the open alias items whose Haiku answer no longer holds: the posts it was shown of a side are
+    no longer that side's (identity.void_opinions; read only). Such an answer is never shown nor banded."""
     calls: Dict[str, List[str]] = defaultdict(list)
     for r in rows:
         ev = r[7] or {}
@@ -1348,9 +1262,8 @@ GROUP_NAMES = 8
 
 
 def group(book: I.Book, eid: str) -> Dict[str, Any]:
-    """0164 A: the cluster an item's name is in, as the card shows it ("Zentra Vela is part of Zentra AI (Zentra,
-    Zentra AI, ...)"): its root's shown name and type, its names (up to GROUP_NAMES, versions last) and its sides
-    (Book.sides: the product family names, the org or person names)."""
+    """The cluster an item's name is in, as the queue card shows it: its root's name and type, its names (up to
+    GROUP_NAMES, versions last) and its sides (Book.sides)."""
     r = book.root(eid)
     cache = book.__dict__.setdefault("_groups", {})
     key = (r, getattr(book.redirect, "rev", None))
@@ -1368,9 +1281,9 @@ def group(book: I.Book, eid: str) -> Dict[str, Any]:
 
 
 def join(cur: Any, book: I.Book, a: Optional[str], b: Optional[str], cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """0164 A: what `same` would do to an alias item's two groups (entity_answers.join_plan): None when the roots
-    merge as ever; else {mixes, only_names (only the two names join), apart: [{name, from}] (who stays apart from
-    whom), needs_choice (the owner's own merge holds a name there, or the two names are of two kinds)}."""
+    """What `same` would do to an alias item's two groups (entity_answers.join_plan): None when the roots simply
+    merge; else {mixes, only_names, apart: [{name, from}], needs_choice (an owner's merge holds a name there, or the
+    names are of two kinds)}."""
     from insight_core.markx import entity_answers as A, entity_repair as R
     if not a or not b or a not in book.ents or b not in book.ents:
         return None
@@ -1411,37 +1324,37 @@ def _examples(cur: Any, eids: Iterable[str], guide: str, n: int = 2) -> Dict[str
 
 def _item(cur: Any, book: I.Book, r: Tuple, ex: Dict[str, List[Dict[str, Any]]],
           joins: Dict[str, Any], void: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """One queue row (QUEUE_COLS) as the queue shows it (`ex`: its entities' examples; `joins`: join()'s cache;
-    `void`: `_voids`, the items whose answer is about other posts: shown with no answer, no confidence, no band)."""
+    """One queue row (QUEUE_COLS) as the queue shows it (`ex`: examples; `joins`: join()'s cache; `void`: `_voids`,
+    shown with no answer, confidence or band)."""
     qid, kind, a, b, proposal, reason, conf, ev, ans, at, created, _call, flagged_at, flagged_by, flag_note = r
     ev = dict(ev or {})
     why_void = (void or {}).get(qid)
-    if why_void:   # 0222: never shown on a stale verdict
+    if why_void:   # never shown on a stale verdict
         ev.update(judge=None, second=None, disagree=None)
         conf = None
     judge = ev.get("judge") if isinstance(ev.get("judge"), dict) else None
     opinion = None
     if kind == "alias":
-        # v10.18: who says what, truthfully: Haiku's answer with its own confidence, or a name rule's proposal (a rule
-        # has no confidence; the 0.97 stored on rule-proposed items was a constant for the chain guard's order)
+        # Haiku's answer with its own confidence, or a name rule's proposal (a rule has no confidence; the stored one
+        # on rule-proposed items is a constant for the chain guard's order)
         conf = float(judge["confidence"]) if judge and judge.get("confidence") is not None else None
         opinion = ({"by": "haiku", "relation": judge.get("relation"), "confidence": conf, "rules": ev.get("rules") or []}
                    if judge else {"by": "rule", "rules": ev.get("rules") or []} if ev.get("rules") else None)
     return {"id": qid, "kind": kind, "a": _side(book, a, ex), "b": _side(book, b, ex), "proposal": proposal,
-            "join": join(cur, book, a, b, joins) if kind == "alias" and ans is None else None,   # 0164 A
+            "join": join(cur, book, a, b, joins) if kind == "alias" and ans is None else None,
             "reason": reason, "confidence": conf, "answer": ans, "answered_at": at, "created_at": created,
-            "opinion": opinion, "void": why_void,   # 0222
-            "flag": {"at": flagged_at, "by": flagged_by, "note": flag_note} if flagged_at else None,   # 0222
-            # 0130 A1: the measured band Haiku's `same` falls in (none for a rule's proposal or another answer)
+            "opinion": opinion, "void": why_void,
+            "flag": {"at": flagged_at, "by": flagged_by, "note": flag_note} if flagged_at else None,
+            # the measured band Haiku's `same` falls in (none for a rule's proposal or another answer)
             "band": I.band_of(conf) if opinion and opinion["by"] == "haiku" and opinion["relation"] == "same" else None,
             "evidence": {"judge": ev.get("judge"), "rules": ev.get("rules"), "senses": ev.get("senses"),
-                         "reasons": ev.get("reasons"), "second": ev.get("second"),      # 0130 A2
+                         "reasons": ev.get("reasons"), "second": ev.get("second"),
                          "disagree": ev.get("disagree"), "second_asked": ev.get("second_asked"),
                          "mentions": [{k: m.get(k) for k in ("n", "span", "type", "maker")}
                                       for m in ev.get("mentions") or []],
                          "split_runs": ev.get("split_runs"), "runs": ev.get("runs"),
-                         "asked_because": ev.get("asked_because"),   # 0165 B: why a rename was asked
-                         # 0168 C: a handle question's (or a handle-named alias's) pairs
+                         "asked_because": ev.get("asked_because"),
+                         # a handle question's (or a handle-named alias's) pairs
                          **({k: ev.get(k) for k in ("platform", "handle", "display", "pairs", "total", "first",
                                                     "last", "alias_of", "named_by_handle")}
                             if ev.get("handle") else {})}}
@@ -1449,28 +1362,21 @@ def _item(cur: Any, book: I.Book, r: Tuple, ex: Dict[str, List[Dict[str, Any]]],
 
 def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50, limit: Optional[int] = None,
           offset: int = 0, view: str = "all") -> Dict[str, Any]:
-    """The review queue: {open, answered, merges, counts, accuracy}. Issue 0195: with `limit`, `open` is the page of
-    `limit` open items from `offset` (counts.open still counts every open item) and `next_offset` the next page's
-    (None at the end); only the shown items are built.
-
-    0222: `view` 'flagged' lists only the open items Claude's review flagged for the owner (the owner's default: every
-    other item is decided by its measured band, or stays apart or held and is asked again); 'all' every open item
-    (the operator's view). counts.flagged counts the flagged ones; in the flagged view counts.open is every open row.
-    An item whose Haiku answer is about posts its sides no longer hold shows no answer (`void`, `_voids`)."""
+    """The review queue: {open, answered, merges, counts, accuracy}. With `limit`, `open` is that page from `offset`
+    (counts.open counts every open item; `next_offset`: None at the end); only the shown items are built.
+    `view` 'flagged' (the owner's default) lists only the items Claude's review flagged; 'all' every open item."""
     if view not in VIEWS:
         raise ValueError(f"view: one of {', '.join(VIEWS)}")
     guide = _guide()
-    book = book or I.lazy_book(cur)   # v10.17 (0186): what the queue's items ask of the book
-    # Issue 0206: paged in SQL. The open items are read as their ids and sides only (the narrow rows the named test
-    # needs: every open item is counted), the answered ones `history` at most; only the rows shown are read whole
-    # (their reasons and evidence: 28.9 MB for 12,572 open items on the server before 0195, all read on every page).
-    order = "answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at, id"   # ties by id (were unordered)
+    book = book or I.lazy_book(cur)
+    # paged in SQL: every open item read as ids and sides only (to count and test it); only the shown rows read whole
+    order = "answered_at DESC NULLS LAST, confidence DESC NULLS LAST, created_at, id"
     flagged = view == "flagged"
     cur.execute(f"""SELECT id::text, a::text, b::text FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NULL
                        {"AND flagged_at IS NOT NULL" if flagged else ""}
                      ORDER BY {"flagged_at DESC, " if flagged else ""}{order}""")
     sides = cur.fetchall()
-    named = named_now(cur, book)   # 0138: an item about an entity no current reading names waits, unshown
+    named = named_now(cur, book)   # an item about an entity no current reading names waits, unshown
     if isinstance(named, I._Has):
         named.want({book.root(x) for _q, a, b in sides for x in (a, b) if x})
     open_ids = [q for q, a, b in sides if all(book.root(x) in named for x in (a, b) if x)]
@@ -1496,7 +1402,7 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50, limit: 
                           r.kind FROM mx_entity_redirects r ORDER BY r.at DESC LIMIT %s""", (history,))
     merges = [{"id": rid, "from": {"id": f, "name": book.ents[f].name if f in book.ents else None},
                "to": {"id": t, "name": book.ents[t].name if t in book.ents else None}, "by": by, "automatic": auto,
-               "at": at, "undone_at": undone, "confidence": (ev or {}).get("confidence"), "kind": kind}   # 0165 B
+               "at": at, "undone_at": undone, "confidence": (ev or {}).get("confidence"), "kind": kind}
               for rid, f, t, by, auto, at, undone, ev, kind in cur.fetchall()]
     cur.execute("""SELECT count(*) FILTER (WHERE automatic AND undone_at IS NULL),
                           count(*) FILTER (WHERE automatic AND undone_by = 'owner') FROM mx_entity_redirects""")
@@ -1511,8 +1417,7 @@ def queue(cur: Any, *, book: Optional[I.Book] = None, history: int = 50, limit: 
 
 
 def queue_about(cur: Any, book: I.Book, root: str) -> List[Dict[str, Any]]:
-    """The open items whose side `a` or `b` is `root` itself, as queue()'s `open` shows them: the entity page's
-    questions (issue 0195: only these are built, not every open item of the queue). 0222: flagged ones first."""
+    """The entity page's questions: the open items with `root` as a side, flagged first."""
     guide = _guide()
     cur.execute(f"""SELECT {QUEUE_COLS} FROM mx_entity_queue WHERE closed_at IS NULL AND answer IS NULL
                       AND (a = %s::uuid OR b = %s::uuid)
@@ -1529,15 +1434,13 @@ def queue_about(cur: Any, book: I.Book, root: str) -> List[Dict[str, Any]]:
     return [_item(cur, book, r, ex, joins, void) for r in mine]
 
 
-THINGS_SHOWN = 12   # 0250: a story page's things at most
+THINGS_SHOWN = 12   # a story page's things at most
 THING_ROLES = ("subject", "actor", "compared", "predecessor", "venue", "source", "recommended", "mention")
 
 
 def story_things(cur: Any, post_ids: Iterable[str], *, shown: int = THINGS_SHOWN) -> List[Dict[str, Any]]:
-    """0250: "Things in this story": the entities its members' current readings name (through the merges and pins),
-    each with the best role a member gives it (subject first: THING_ROLES' order) and how many members name it, ranked
-    by that role, then that count, then name: [{id, name, type, maker, maker_id, role, posts}], `shown` at most. An
-    entity marked not one is left out."""
+    """"Things in this story": the entities its members name, by best role (THING_ROLES), then posts, then name;
+    `shown` at most."""
     ids = sorted(set(post_ids))
     if not ids:
         return []
@@ -1568,13 +1471,13 @@ def story_things(cur: Any, post_ids: Iterable[str], *, shown: int = THINGS_SHOWN
 
 def post_entities(cur: Any, post_id: str) -> Dict[int, Optional[str]]:
     """{mention n: the entity it shows under (root, through pins)} for the post page's panel."""
-    book = I.lazy_book(cur)   # v10.17 (0186): the merges and pins, not the whole book
-    cur.execute("SELECT n, entity_id::text, guide FROM mx_mentions_now WHERE post_id = %s", (post_id,))   # 0133
+    book = I.lazy_book(cur)
+    cur.execute("SELECT n, entity_id::text, guide FROM mx_mentions_now WHERE post_id = %s", (post_id,))
     return {n: book.root(book.pins.get((post_id, g, n), eid)) if eid else None for n, eid, g in cur.fetchall()}
 
 
 def surging_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, List[Dict[str, Any]]]:
-    """{post: the surges it is evidence of, [{id, name, day, voices}]}: the News rows' "surging" mark (0119 A2)."""
+    """{post: the surges it is evidence of, [{id, name, day, voices}]}: the News rows' "surging" mark."""
     ids = sorted(set(post_ids))
     if not ids:
         return {}
@@ -1584,7 +1487,7 @@ def surging_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, List[Dict[str,
     rows = cur.fetchall()
     if not rows:
         return {}
-    book = I.lazy_book(cur)   # v10.17 (0186): the surging entities' clusters, not the whole book
+    book = I.lazy_book(cur)
     book.prime(ids=[eid for eid, _d, _v, _p in rows])
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for eid, day, voices, pid in rows:

@@ -10,7 +10,7 @@ import type { MarkxSourceCard, MarkxSourcePage, MarkxSourceRow, MarkxSourcesList
 import { makeFakeApi as makeApi } from '../../../test/fakeApi';
 import { renderWithProviders } from '../../../test/render';
 
-// the sources methods live outside createApi (api.ts' 0132 B block), so the fake takes them untyped
+// the sources methods live outside createApi, so the fake takes them untyped
 const makeFakeApi = (methods: Record<string, unknown>) => makeApi(methods as Parameters<typeof makeApi>[0]);
 
 const cell = (value: unknown, n = 20, too_few = false) => ({ value, n, too_few });

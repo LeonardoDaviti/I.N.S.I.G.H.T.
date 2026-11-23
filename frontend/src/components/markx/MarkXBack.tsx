@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { markxBackApi, type MarkxBackLabel, type MarkxBackRow } from '../../services/api';   // 0136
+import { markxBackApi, type MarkxBackLabel, type MarkxBackRow } from '../../services/api';
 import { Button, TextLink } from '../ui';
 import { postBylineTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
@@ -75,16 +75,14 @@ function Row({ row }: { row: MarkxBackRow }) {
   );
 }
 
-/**
- * Back in the news (issue 0136, Shadow): old Mark IX stories with a fresh development, judged by Haiku three times.
- * Shown on /markx only, never in Mark IX's News, and only while its feature is on (0233: off, as its bar failed, it
- * renders nothing); each row takes the owner's label, and the running precision is shown.
- */
+/** Back in the news (Shadow): old Mark IX stories with a fresh development, judged by Haiku three times. On /markx
+ *  only, and only while its feature is on (off: renders nothing); each row takes the owner's label, with the running
+ *  precision. */
 export default function MarkXBack() {
   const query = useQuery({ queryKey: ['markx-back'], queryFn: () => markxBackApi.list(), staleTime: 60_000 });
   if (!query.data) return null;   // loading or failed: Mark X News stands alone
   const { on, items, precision, measured, counts } = query.data;
-  if (!on || !precision) return null;   // 0233: its feature is off (its bar failed): not shown at all
+  if (!on || !precision) return null;   // its feature is off (its bar failed): not shown at all
   if (!items.length && !counts.candidates) return null;
   return (
     <section aria-label="Back in the news" className="mb-8">

@@ -1,12 +1,9 @@
-"""v10.12.1: a topic track's reading views list only the posts in the track (0145), not every post of its sources.
+"""A topic track's reading views list only the posts in the track, not every post of its sources (issue 0145).
 
-The owner (2026-11-10): "I added some sources in the track, but it fetches all the posts from those sources into the
-track, but I want only posts relevant to that track." While Mark X is on, a track with a description reads, in Stream,
-By source, Unread, All, Later, Kept and History, only its items: active sources' posts judged in, posts joined by
-INSIGHT, and the posts the owner marked ✓ (`tracks.placed`, places `track` and `joined`). The reader asks with
-`all_sources=1` for the folder's every post, as before. A plain folder, or Mark X off: no restriction.
-
-The reader's query stays Mark IX's: this module only names the post ids (FeedScope.only). Read-only.
+While Mark X is on, a folder with a description reads, in every feed view, only its items (`track_posts`: placed in
+the track or joined, or the owner's ✓); `all_sources=1` asks for the folder's every post. A plain folder, or Mark X
+off: no restriction. The reader's query stays Mark IX's: this module only names the post ids (FeedScope.only).
+Read only.
 """
 from __future__ import annotations
 
@@ -31,7 +28,7 @@ def track_posts(cur: Cursor, folder_id: Any) -> Optional[List[str]]:
     t = tracks.get(cur, folder_id)
     if not tracks.is_topic(t):
         return None
-    kept = track_kept.posts_in(cur, t, IN_TRACK)   # 0270: the kept placement (live only when it is not kept)
+    kept = track_kept.posts_in(cur, t, IN_TRACK)   # the kept placement (live only when it is not kept)
     if kept is not None:
         return kept
     return [it["post_id"] for it in tracks.placed(cur, t)["items"] if it["place"] in IN_TRACK]

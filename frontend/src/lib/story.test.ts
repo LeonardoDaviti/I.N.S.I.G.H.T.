@@ -52,7 +52,7 @@ test('a story, a suggestion and a classic name a source without a display name b
     'theatlantic.com, Mar 2026');
 });
 
-// ---- stories as trees (issue 0064) -------------------------------------------------------------
+// ---- stories as trees (0064) -------------------------------------------------------------------
 
 type Reason = 'address' | 'repost' | 'thread' | 'quote' | 'citation' | 'copy' | 'time' | 'none';
 const at = (h: number) => new Date(Date.UTC(2026, 9, 26, h)).toISOString();
@@ -90,13 +90,13 @@ test('storyTree: an outside page origin heads the list, its citers under it', ()
   assert.deepEqual(originLabel(story.origin), { site: 'anthropic.com', title: 'Claude Fable 5', linkedBy: 'linked by 3' });
   assert.equal(originHref(story.origin), '/save?url=https%3A%2F%2Fwww.anthropic.com%2Fnews%2Fclaude-fable-5&title=Claude+Fable+5');
   assert.equal(originLabel({ url: 'https://openai.com/index/gpt-6-astra', title: null, linked_by: 10 }).title, 'openai.com/index/gpt-6-astra');
-  // Issue 0126: a gift link opens the article; the label reads the address without its token.
+  // A gift link opens the article; the label reads the address without its token.
   const gifted = { url: 'https://paper.example.com/a', title: null, linked_by: 2, href: 'https://paper.example.com/a?gift=abc' };
   assert.equal(originHref(gifted), '/save?url=https%3A%2F%2Fpaper.example.com%2Fa%3Fgift%3Dabc');
   assert.equal(originLabel(gifted).title, 'paper.example.com/a');
 });
 
-// ---- X: reposts, quotes and threads (issue 0066) ------------------------------------------------
+// ---- X: reposts, quotes and threads (0066) ----------------------------------------------------
 
 test('a thread is one item: "Thread · 6 posts", its replies a list in their order, a quote of it under its root', () => {
   // oddlogic_games, 27 Oct: "software is dead. sad." and five replies to itself, two of them in one hour's tie.
@@ -125,7 +125,7 @@ test('storyTree: no tree (before the job drew it, News) lists the posts flat, as
   assert.deepEqual(lines(storyTree(story, 'a')), ['b', 'c']);
 });
 
-// ---- what reading v9.9 would show (issue 0068) -------------------------------------------------------
+// ---- reposts and thread replies on the post page (0068) -----------------------------------------
 
 test('storyTree: a line at the deepest indent names its parent, which a phone shows instead of more indent (Ghostty)', () => {
   // mitchellh.com's post, @toolsmith_pete and Mat Duggan under it, Andrew Nesbitt's "A GitHub for maintainers" under Duggan.

@@ -1,8 +1,6 @@
-"""Mark X entity identity fixes (issue 0164), with invented names: the name and type shown by evidence (1), a product
-family never merged into an org and a version's family never an org (2), families split by a maker or brand prefix
-joined (3), an org and its suffixed name never joined by a rule (4: the suffix repair dropped, 0203); each with what it must
-not do (two makers, a version guard, the owner's answers), and the repair of data already made (undos are redirects
-undone, never deletions)."""
+"""Entity identity fixes (0164), invented names: the shown name and type by evidence, a product family never merged
+into an org, families split by a maker or brand prefix joined, an org and its suffixed name never joined by a rule;
+each with what it must not do, and the repair of data already made (undos are redirects undone, never deletions)."""
 from __future__ import annotations
 
 import json
@@ -21,7 +19,7 @@ def v(family, version, variant=None):
 
 
 def base_on():
-    """0230's switches on (entity_bands.json `families`: off until measured)."""
+    """The `families` switches on (entity_bands.json: off until measured, 0230)."""
     return mock.patch.object(I, "families_on", lambda: {"maker": True, "stem": True, "namesakes": True})
 
 
@@ -39,7 +37,7 @@ class Guards(unittest.TestCase):
         book.redirect["z"] = ("f", False)                        # the owner merged it into the family
         p = I.Pooled(*I.pair("o", "z"))
         d = I.decide_pair(book, p, {"handle"}, set(), None, None)
-        self.assertEqual(d.tier, "ask")                              # v10.18: Haiku decides a rule's mixed pair
+        self.assertEqual(d.tier, "ask")                              # Haiku decides a rule's mixed pair
         d = I.decide_pair(book, p, {"handle"}, set(), self.same(0.97), "c")
         self.assertEqual((d.tier, d.reason), ("queue", "type"))
         self.assertIn("org_family", d.reasons)
@@ -100,8 +98,8 @@ class _Cur:
 
 
 class MergeKeeper(unittest.TestCase):
-    """v10.35: a merge keeps the more general thing (a version or variant over its build), then the larger cluster,
-    then the older; a merged name's stated maker stays the cluster's."""
+    """A merge keeps the more general thing (a version or variant over its build), then the larger cluster, then
+    the older; a merged name's stated maker stays the cluster's."""
     ent, book = base.Rules.ent, base.Rules.book
 
     def _mini_and_gguf(self):
@@ -164,7 +162,7 @@ class MergeKeeper(unittest.TestCase):
         self.assertEqual(entity_views._ent_view(book, "a")["maker"], "Zentra")   # a member: its own
 
     def test_the_more_mentioned_cluster_keeps_over_an_older_misspelling(self):
-        """v10.35: "Kimik 3" (older, written once) and "Kimi K3" (written 40 times): the name written keeps."""
+        """"Kimik 3" (older, written once) and "Kimi K3" (written 40 times): the name written more keeps."""
         a = self.ent("a", "Kimik 3", "model")
         b = self.ent("b", "Kimi K3", "model", maker="Moonshot AI")
         a.first_seen, b.first_seen = T0 - D, T0
@@ -176,7 +174,7 @@ class MergeKeeper(unittest.TestCase):
 
 
 class GenericPrefix(unittest.TestCase):
-    """v10.35: a bare name several makers' names are with their maker in front is no one maker's thing."""
+    """A bare name several makers' names carry with their maker in front is no one maker's thing."""
     ent, book = base.Rules.ent, base.Rules.book
 
     def _linux(self):
@@ -210,8 +208,8 @@ class GenericPrefix(unittest.TestCase):
 
 
 class Tick:
-    """A clock that moves a second each time it is read (entity_repair's `time`): a sweep given a deadline 3.5 s
-    ahead does exactly one step (v10.24, 0221: a step starts only when the last one's seconds are left)."""
+    """A clock that moves a second each time it is read: a sweep given a deadline 3.5 s ahead does one step (a step
+    starts only when the last one's seconds are left, 0221)."""
 
     def __init__(self):
         self.t = 0.0
@@ -226,8 +224,7 @@ class Tick:
 
 class Fixes(base._Db):
     def linked(self, **kw):
-        """A run whose repairs are off: the data as linked before a repair could see it (v10.24, 0221: the repairs
-        run after the linking, in the same run; these fixtures are the data they then find)."""
+        """A run whose repairs are off: the data as linked, before a repair in the same run sees it (0221)."""
         off = {k: False for k in R.STEPS}
         with mock.patch.object(R, "config", lambda: {**off, "shown": True}):
             return self.stage(**kw)
@@ -283,7 +280,7 @@ class Fixes(base._Db):
     # ---- 2 ----------------------------------------------------------------------------------------------------
 
     def legacy_owner_same(self, a, b):
-        """The owner's `same` as it was applied before 0164 A: the two roots merged, whatever their clusters."""
+        """The owner's `same` applied as before 0164 A: the two roots merged, whatever their clusters."""
         x, y = I.pair(a, b)
         I.queue_item(self.cur, kind="alias", a=x, b=y, proposal="same", reason="test", conf=None, evidence={},
                      call_id=None, run_id=None)
@@ -435,9 +432,8 @@ class Fixes(base._Db):
     # ---- 0218: the shown names' sweep resumes ----------------------------------------------------------------------
 
     def test_the_shown_sweep_over_every_cluster_resumes_where_it_stopped_single_names_too(self):
-        """A sweep with the time for one step does one step (the next clusters of several names and the single names
-        before them) and the next run resumes after it: every cluster once, the single names never all at a sweep's
-        start; the same names and types as a sweep without a deadline. v10.24 (0221): past its deadline, none."""
+        """A sweep with the time for one step does one step and the next run resumes after it: every cluster once,
+        the same names and types as a sweep without a deadline; past its deadline, none (0218, 0221)."""
         names = ["Kip", "Kip Marlow", "Zentra", "Zentra Devs", "Orbis", "Lumen", "Tarn", "Vesk", "Quill", "Brae"]
         for n, name in enumerate(names):
             self.mentions(self.post(n % 3, T0 + n * H), (name, "org" if n % 3 else "person", "subject"))
@@ -476,7 +472,7 @@ class Fixes(base._Db):
 
 
     def test_a_sweep_of_single_names_steps_and_resumes_too(self):
-        """0218: no cluster of several names (the server-sized copy has none): SHOWN_SINGLES single names a step."""
+        """No cluster of several names: SHOWN_SINGLES single names a step (0218)."""
         from insight_core.markx import schemas
         for n, name in enumerate(["Kip", "Zentra", "Orbis", "Lumen", "Tarn", "Vesk", "Quill"]):
             self.mentions(self.post(n % 3, T0 + n * H), (name, "org", "subject"))
@@ -498,8 +494,8 @@ class Fixes(base._Db):
     # ---- 4c: a cluster rooted on a build -----------------------------------------------------------------------
 
     def _rooted_on_a_build(self):
-        """The data as merged before v10.35: "Inkling" redirected into "Thinking Machines Inkling", a 975B GGUF
-        checkpoint (the older side kept), with a quantisation already under the checkpoint."""
+        """Legacy data: "Inkling" redirected into "Thinking Machines Inkling", a GGUF checkpoint (the older side kept),
+        with a quantisation already under the checkpoint."""
         ps = [self.post(n, T0 + n * H) for n in range(3)]
         self.mentions(ps[0], ("Inkling", "model", "subject"))
         self.mentions(ps[1], ("Thinking Machines Inkling", "model", "subject"))
@@ -565,8 +561,7 @@ class Fixes(base._Db):
         self.assertEqual(self.book().root(ink), tmi)
 
     def test_4c_a_cluster_rooted_on_a_name_seldom_written_re_roots_on_the_name_written(self):
-        """v10.35: "Kimik 3" (one post, older) took "Kimi K3" (three posts) by rule:squash before the keeper read
-        mentions: the cluster re-roots on Kimi K3, one thing still."""
+        """"Kimik 3" (one post, older) took "Kimi K3" (three posts) by rule:squash: the cluster re-roots on Kimi K3."""
         ps = [self.post(n, T0 + n * H) for n in range(4)]
         self.mentions(ps[0], ("Kimik 3", "model", "subject"))
         for p in ps[1:]:
@@ -587,8 +582,8 @@ class Fixes(base._Db):
         self.assertEqual(again["reroot"]["rerooted"], 0)                  # idempotent
 
     def test_4c_a_minority_root_never_re_roots_on_a_name_of_another_type(self):
-        """v10.35: the org "Vantor AI" (one post) took the model "Vantor" (three): an org's page never turns a
-        model's; left as it is, counted."""
+        """The org "Vantor AI" (one post) took the model "Vantor" (three): an org's page never turns a model's; left
+        as it is, counted."""
         ps = [self.post(n, T0 + n * H) for n in range(4)]
         self.mentions(ps[0], ("Vantor AI", "org", "subject"))
         for p in ps[1:]:
@@ -603,8 +598,8 @@ class Fixes(base._Db):
         self.assertEqual(self.book().root(model), org)
 
     def test_4e_a_bare_name_several_makers_names_were_merged_into_is_cut_out(self):
-        """v10.35: "SUSE Linux" took "Linux", then "Amazon Linux" and "Oracle Linux" (rule:maker_prefix): the
-        maker-prefix merges are undone, nothing deleted; an owner's merge stays."""
+        """"SUSE Linux" took "Linux", then "Amazon Linux" and "Oracle Linux" (rule:maker_prefix): the maker-prefix
+        merges are undone, nothing deleted; an owner's merge stays."""
         names = (("Linux", None), ("SUSE Linux", "SUSE"), ("Amazon Linux", "Amazon"), ("Oracle Linux", "Oracle"))
         for n, (name, maker) in enumerate(names):
             self.mentions(self.post(n, T0 + n * H), (name, "software", "subject", maker))
@@ -629,8 +624,8 @@ class Fixes(base._Db):
         self.assertEqual(again["generic"]["undone"], 0)                    # idempotent
 
     def test_the_repairs_go_a_step_at_a_time_and_the_next_run_resumes_at_the_step_left(self):
-        """v10.24 (0221): the repairs run with what the stage's budget has left; a step starts only when the seconds
-        it took the last time are left, and the next run begins at the first step this one could not start."""
+        """The repairs run with what the stage's budget has left; a step starts only when its last seconds are left,
+        and the next run begins at the first step this one could not start (0221)."""
         z, vela, zv, v5 = self._org_and_family()
         took = {"org_family": 1.0, "generic": 1.0, "product_accounts": 1.0, "reparent": 5.0, "families": 1.0, "family_home": 1.0,
                 "names": 1.0, "levels": 1.0, "reroot": 1.0}
@@ -650,9 +645,8 @@ class Fixes(base._Db):
         self.assertEqual(third["product_accounts"]["merged"], 0)                 # idempotent
 
     def test_the_full_pass_leaves_the_steps_after_it_what_they_took_the_last_time(self):
-        """v10.24 (0221): a full pass half done lasts days on the server; it stops early by what the repairs' next
-        step, a step of the shown names and the invariants took in the last run (a guess for what never ran), and
-        each of those leaves the ones after it theirs."""
+        """A half-done full pass stops early by what the repairs' next step, a shown-names step and the invariants
+        took in the last run, each leaving the ones after it theirs (0221)."""
         from insight_core.markx import entity_stage, repo
         self.assertEqual(entity_stage.after_pass(self.cur), (entity_stage.REPAIR_GUESS, entity_stage.SHOWN_GUESS,
                                                              entity_stage.INVARIANTS_GUESS))
@@ -754,7 +748,7 @@ class Fixes(base._Db):
 
 
 class Namesakes(unittest.TestCase):
-    """0230 (no database): the collision question's sample and when it is asked again."""
+    """No database: the collision question's sample and when it is asked again (0230)."""
 
     def test_the_sample_shows_the_suspects_and_the_oldest_post_first(self):
         from datetime import datetime, timezone

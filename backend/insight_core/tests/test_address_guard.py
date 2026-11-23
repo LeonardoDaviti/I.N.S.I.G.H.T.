@@ -1,6 +1,5 @@
-"""Issue 0187: where INSIGHT's outgoing requests may go (AddressGuard, under KindHttp and the media proxy), and
-how much of an answer they read (MAX_BODY_BYTES). Against a local server named by a fake DNS: nothing leaves
-the machine."""
+"""Where INSIGHT's outgoing requests may go (0187: AddressGuard, under KindHttp and the media proxy), and how much of
+an answer they read (MAX_BODY_BYTES). Against a local server named by a fake DNS: nothing leaves the machine."""
 from __future__ import annotations
 
 import asyncio

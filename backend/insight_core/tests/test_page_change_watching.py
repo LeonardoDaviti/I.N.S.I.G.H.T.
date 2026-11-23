@@ -1,9 +1,7 @@
-"""Watching pages for changes (issue 0039), and "new to you is new".
-
-The text summary and the page's own modified date (pure); the cheap checks in order over a fake
-network; the runner over in-memory ports; and, against the scratch database, the saver (an
-update brought back, a tiny change kept silently, a page new to you), the due order and the
-reader's sort key and Updated filter.
+"""Watching pages for changes (0039), and "new to you is new": the text summary and the page's own modified date
+(pure); the cheap checks in order over a fake network; the runner over in-memory ports; and, on the scratch database,
+the saver (an update brought back, a tiny change kept silently, a page new to you), the due order and the reader's sort
+key and Updated filter.
 """
 from __future__ import annotations
 
@@ -507,8 +505,8 @@ MIGRATION_0043 = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0043_know
 
 @requires_test_db
 class KnownNewsTests(unittest.TestCase):
-    """Issue 0058: a page another of your sources linked before it was first seen is known news,
-    not new to you; the saver and migration 0043 apply the same condition."""
+    """A page another of your sources linked before it was first seen is known news, not new to you; the saver and
+    migration 0043 apply the same condition (0058)."""
 
     def setUp(self):
         self.repo = PostsRepository(db_url())

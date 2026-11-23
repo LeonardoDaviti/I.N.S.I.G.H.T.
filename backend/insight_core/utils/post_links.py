@@ -1,18 +1,11 @@
-"""The outside links inside a post (issue 0050), and the small facts about an address the
-story rules read: whether it is a home page, whether it reads like an article, its section. What
-an address's host, site and publication are, and whether it is a tweet: utils/addresses.py.
+"""The outside links inside a post (`links`), and the small facts about an address the story rules read: whether it
+is a home page, whether it reads like an article, its section. What an address's host, site and publication are:
+utils/addresses.py.
 
-A post's links are read from its HTML (`content_html`; a YouTube description counts when it is
-stored as HTML), made absolute against the post's own address and normalized as posts are
-(0049, `url_normalization`). Not kept: links to the post's own publication (its host, issue 0070:
-another publication on its site is cited), media files, and links back into the platform the post
-came from (Reddit's `[comments]` and user pages, t.me, x.com),
-except a link to a tweet (issue 0066): on X, another post is a connection (a quote, a reply's link).
-A source's signature (a link in 25% of its posts, 4 or more) can only be told over all of its
-posts: the story job marks those (`post_links.boilerplate`).
-
-Ported from the prototype (`plan/research/dedup-prototype/links.py`), the reference for these
-rules.
+A post's links are read from its HTML, made absolute against the post's own address and normalized as posts are
+(`url_normalization`). Not kept: links to the post's own publication, media files, and links back into the platform
+the post came from (Reddit's `[comments]`, t.me, x.com), except a link to a tweet: on X, another post is a
+connection. A source's signature links can only be told over all of its posts: the story job marks those.
 """
 from __future__ import annotations
 
@@ -33,9 +26,8 @@ TAG = re.compile(r'<[^>]+>')
 MEDIA = re.compile(r'\.(jpe?g|png|gif|webp|svg|mp4|webm|mp3|m4a|pdf)$', re.I)
 LINK_TEXT_MAX = 300   # not measured
 
-# The kinds of source whose posts are a platform's, not articles (issue 0070): their HTML says who and
-# what (a Reddit author, a link post's words, a quoted tweet, a link preview: StoriesRepository reads it),
-# and a post of 3+ links among them can be about one story (story_rules.group).
+# The kinds of source whose posts are a platform's, not articles: their HTML says who and what (a Reddit author, a
+# quoted tweet, a link preview), and a post of 3+ links among them can be about one story (story_rules.group).
 PLATFORM_KINDS = ("x", "telegram", "reddit", "hn")
 # The kind of place a source is, as the voice and share rules need it (not the fetch kind).
 _KIND_PATTERNS = (
@@ -47,11 +39,11 @@ _KIND_PATTERNS = (
 )
 # A Reddit post's author, as its feed writes it: "submitted by <a href=".../user/name">".
 REDDIT_AUTHOR = re.compile(r'submitted by\s*(?:&#32;)?\s*<a href="https://www\.reddit\.com/user/([^"/]+)')
-# A quoted tweet, as Nitter writes it (issue 0066): the quote's address in the <cite> of its <blockquote>.
+# A quoted tweet, as Nitter writes it: the quote's address in the <cite> of its <blockquote>.
 QUOTED = re.compile(r'<blockquote>.*?<cite>\s*<a\b[^>]*?href=["\']([^"\']+)["\']', re.I | re.S)
-# A page's own words in a post (issue 0070): Nitter's quote of a tweet (its author in bold, its text,
-# then a <footer> citing it), and a link preview, as the Telegram bridge writes one (a <blockquote>
-# citing the page: its site in <cite>, then its title in bold and its description).
+# A page's own words in a post: Nitter's quote of a tweet (its author in bold, its text, then a <footer> citing it),
+# and a link preview as the Telegram bridge writes one (a <blockquote> citing the page: its site in <cite>, then its
+# title in bold and its description).
 QUOTE_TEXT = re.compile(r'<blockquote>\s*<b>[^<]*</b>(.*?)<footer>\W*<cite>\s*<a\b[^>]*?href=["\']([^"\']+)["\']', re.I | re.S)
 PREVIEW = re.compile(r'<blockquote cite=["\']([^"\']+)["\']>\s*<cite>\s*<b>([^<]*)</b>\s*</cite>\s*</br>'
                      r'(?:\s*<b>([^<]*)</b>\s*</br>)?([^<]*)', re.I)
@@ -61,31 +53,28 @@ LINE_END = re.compile(r'<br\s*/?>|</br>|</p\s*>', re.I)
 BY_ACCOUNT = re.compile(r'\(@[^)\s]+\)')
 # An article-like address: a date in the path, or a slug of 4+ words.
 ARTICLE = re.compile(r'(/(19|20)\d\d[/-]|[a-z0-9]+(-[a-z0-9]+){3,})')
-# A site's section (issue 0060): the first path segment SECTION_SHARE of its articles share, at least
-# SECTION_MIN of them, never one that orders by time or by number (/2026/, /10/, /2026-10-31/).
-# Follow starts there (ingestion/where_linked.py); Discover suggests it (issue 0065).
-SECTION_SHARE = 0.6   # measured (0060): 27 of the lab's top 60 Discover sites have one section holding 60%+
+# A site's section: the first path segment SECTION_SHARE of its articles share, at least SECTION_MIN of them, never
+# one that orders by time or by number (/2026/, /10/). Follow starts there; Discover suggests it.
+SECTION_SHARE = 0.6   # measured: plan/issues/0060
 SECTION_MIN = 2       # not measured
 NUMBERISH = re.compile(r"^\d[\d_.-]*$")
-# A language tag's shape (issue 0067): en, ru-RU, zh-hans, en_US, es-419. Many sections share it (/ai/, /us/,
-# huggingface.co/ai-sage), so a first segment of this shape is read as a language only when a section and a
-# page follow it, never a date or a number: openai.com/ru-RU/index/x, not arstechnica.com/ai/2026/10/x.
+# A language tag's shape: en, ru-RU, zh-hans, en_US, es-419. Many sections share it (/ai/, /us/), so a first segment
+# of this shape is read as a language only when a section and a page follow it, never a date or a number.
 LANGUAGE = re.compile(r"^[a-z]{2}(?:[-_](?:[a-z]{2}|[a-z]{4}|\d{3}))?$", re.I)
 
 
 @dataclass(frozen=True)
 class PostLink:
-    url: str              # normalized (0049)
+    url: str              # normalized
     site: str             # site_of(its host)
     position: int         # 0: the post's first outside link
     text: Optional[str]   # the link's own words
-    # The address as the post wrote it, when its compared form dropped an access token or a share mark (issue
-    # 0126): a gift link opens the article with it. None otherwise.
+    # The address as the post wrote it, when its compared form dropped an access token or a share mark: a gift link
+    # opens the article with it. None otherwise.
     shared: Optional[str] = None
-    # "reference": every place it is linked is inside the text's references or bibliography (issue 0137 B8);
-    # stored as boilerplate, so no story, News or Discover rule reads it. "mention" (0235): an @handle in an X or
-    # Bluesky post's text, as the account's address (`mentions`); stored as boilerplate too, read only by Discover and
-    # the scout's match finder (kind = 'mention'). "link" otherwise.
+    # "reference": every place it is linked is inside the text's references or bibliography; "mention": an @handle in
+    # an X or Bluesky post's text, as the account's address. Both stored as boilerplate, so no story or News rule
+    # reads them (Discover and the scout read mentions). "link" otherwise.
     kind: str = "link"
 
 
@@ -107,16 +96,13 @@ def is_home(url: str) -> bool:
     return "/" not in rest and "?" not in rest and "#" not in rest
 
 
-# A reference page's path segment (issue 0051): a vocabulary of page kinds, not a list of sites.
+# A reference page's path segment: a vocabulary of page kinds, not a list of sites.
 REFERENCE = re.compile(r"/(docs?|documentation|products?|pricing|support|help|api|reference|release-notes"
                        r"|changelog|wiki|articles|collections|download|login|signup)(/|$)")
 
 
-# A licence or a legal page (issue 0111): a licences section or a LICENSE file, and a page whose last segment
-# names terms, privacy or the like. Measured on the server's copy and the lab (2026-11-05): of the kept link targets
-# linked by 2+ sources, 12 and 10 have the shape, all licences or terms; it takes 2 classics on each (a Creative
-# Commons and an Apache licence). Wider shapes were tried: a /legal/ or /terms/ segment anywhere took a news
-# site's legal section and a glossary's entries, a /policies/ one a regulator's code of practice.
+# A licence or a legal page: a licences section or a LICENSE file, and a page whose last segment names terms,
+# privacy or the like. Wider shapes took news sites' legal sections (measured: plan/issues/0111).
 LEGAL = re.compile(r"/licen[cs]es?(/|$)|/(licen[cs]e|copying)([.\-][^/]*)?$|/(terms|terms-of-service|terms-of-use|tos"
                    r"|privacy|privacy-policy|consumer-terms|commercial-terms|usage-polic(y|ies)|acceptable-use(-policy)?"
                    r"|cookie-policy|cookies|copyright|dmca|imprint|impressum|eula)/?$", re.I)
@@ -132,11 +118,8 @@ def is_reference(url: str) -> bool:
 
 
 def titled_link_text(text: Optional[str]) -> bool:
-    """Link words that name a page: 3+ words starting with a capital or a digit, not an address and
-    not cut mid-sentence. Measured on the server's data (2026-10-30, issue 0051): link words in the
-    middle of a sentence ("over 100,000 commits", "full paper on arXiv") named the top classics
-    badly; with this rule 20 of the top 30 titles were right, against 16, and the rest show the
-    page's address."""
+    """Link words that name a page: 3+ words starting with a capital or a digit, not an address and not cut
+    mid-sentence (link words mid-sentence named pages badly; measured: plan/issues/0051)."""
     if not text or re.match(r"https?://", text) or len(text.split()) < 3:
         return False
     return (text[0].isupper() or text[0].isdigit()) and not text.rstrip().endswith((",", ";", ":"))
@@ -166,9 +149,9 @@ def quoted_tweet(content_html: Optional[str]) -> Optional[str]:
 
 
 def quoted_words(content_html: Optional[str]) -> Dict[str, str]:
-    """The pages a post quotes, normalized, each with its own words as quoted (issue 0070), plain
-    text a line a line: a quoted tweet's text; a link preview's title, not one that only repeats the
-    site's name, or for a post's preview (titled by its account, BY_ACCOUNT) its description."""
+    """The pages a post quotes, normalized, each with its own words as quoted, plain text a line a line: a quoted
+    tweet's text; a link preview's title, not one that only repeats the site's name, or for a post's preview (titled
+    by its account, BY_ACCOUNT) its description."""
     found: Dict[str, str] = {}
     for text, url in QUOTE_TEXT.findall(content_html or ""):
         found.setdefault(normalize_url(html.unescape(url)) or "", text)
@@ -208,9 +191,9 @@ def decoded_html(content_html: Optional[str]) -> Optional[str]:
 
 
 def body_hrefs(content_html: Optional[str], content: Optional[str] = None) -> List[str]:
-    """Every link target of a post's text as the reader gets it (issue 0057): the HTML's hrefs,
-    entities decoded; with no HTML, the bare addresses of the plain text (without trailing
-    punctuation). Each once, first seen first; any platform, the post's own site included."""
+    """Every link target of a post's text as the reader gets it: the HTML's hrefs, entities decoded; with no HTML,
+    the bare addresses of the plain text (without trailing punctuation). Each once, first seen first; any platform,
+    the post's own site included."""
     content_html = decoded_html(content_html)   # escaped HTML (Reddit's): the reader decodes it too
     if content_html:
         found = (html.unescape(m.group(1)).strip() for m in HREF.finditer(content_html))
@@ -225,8 +208,8 @@ def body_hrefs(content_html: Optional[str], content: Optional[str] = None) -> Li
     return out
 
 
-# A full text's reference list (issue 0137 B8, N13): a heading so named, up to the next heading of its level or
-# higher, or an element whose class or id says so, to its end. Its links are references, not ordinary links.
+# A full text's reference list: a heading so named, up to the next heading of its level or higher, or an element
+# whose class or id says so, to its end. Its links are references, not ordinary links.
 REFERENCE_HEADINGS = frozenset({
     "references", "reference", "reference list", "bibliography", "works cited", "cited works", "literature",
     "literature cited", "references cited", "notes and references", "references and notes", "sources and references",
@@ -274,7 +257,7 @@ def reference_spans(content_html: Optional[str]) -> List[tuple]:
     return spans
 
 
-# A search engine's or a site's search page (issue 0137 B8): a query, not a page; never kept.
+# A search engine's or a site's search page: a query, not a page; never kept.
 SEARCH_PARAMS = frozenset({"q", "query", "term", "terms", "search", "as_q", "keyword", "keywords", "text"})
 SEARCH_SEGMENTS = frozenset({"search", "results", "scholar", "find"})
 
@@ -296,7 +279,7 @@ def is_search_link(url: str) -> bool:
     return not segments or bool(set(segments) & SEARCH_SEGMENTS)
 
 
-# ---- @mentions (0235): an account named in an X or Bluesky post's text is a link to that account -----------------
+# ---- @mentions: an account named in an X or Bluesky post's text is a link to that account -----------------
 # An X handle: 1-15 letters, digits or _; a Bluesky handle: a domain (alice.bsky.social, example.com). Never one
 # running on into more of a handle, an address or a second @ (an email's, a fediverse handle's).
 X_HANDLE = re.compile(r"@([A-Za-z0-9_]{1,15})(?![A-Za-z0-9_@]|\.[A-Za-z0-9])")
@@ -363,17 +346,16 @@ def post_author(platform: str, post_url: Optional[str]) -> Optional[str]:
 
 def extract_links(content_html: Optional[str], post_url: Optional[str], kind: str,
                   content: Optional[str] = None) -> List[PostLink]:
-    """The outside links of one post, first seen first, each address once (its gift link kept, 0126), then (0235) the
-    accounts an X or Bluesky post @mentions (`mentions`; from `content`, its plain text, when it has no HTML: a Bluesky
-    post's). Escaped HTML is decoded first, as the reader does (issue 0125: Reddit's posts had no links kept)."""
+    """The outside links of one post, first seen first, each address once (its gift link kept), then the accounts an
+    X or Bluesky post @mentions (`mentions`; from `content` when it has no HTML). Escaped HTML is decoded first, as
+    the reader does."""
     content_html = decoded_html(content_html)
-    mentioning = mention_platform(kind, post_url)   # 0235
+    mentioning = mention_platform(kind, post_url)
     if not content_html:
         return _with_mentions([], plain_text(None, content), mentioning, post_url)
     own = normalize_url(post_url) or ""
-    # Its own publication (issue 0070: another publication on its site, a Substack writer another, is
-    # cited), and where it was read from too: a tweet's address is x.com, but your Nitter's profiles
-    # are its own.
+    # Its own publication (another publication on its site is cited), and where it was read from too: a tweet's
+    # address is x.com, but your Nitter's profiles are its own.
     mine = {publication_of(host_of(own)), publication_of(host_of(post_url))}
     platform = PLATFORM_SITES.get(kind, frozenset())
     seen = set()
@@ -396,7 +378,7 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
         if url in at and out[at[url]].kind == "reference" and not cited(match.start()):
             out[at[url]] = dataclasses.replace(out[at[url]], kind="link")   # linked in the text too: a link
         if url in at and out[at[url]].shared is None and has_query_mark(absolute):
-            # A later link to the page by a gift link: the one kept for clicking (issue 0126).
+            # A later link to the page by a gift link: the one kept for clicking.
             out[at[url]] = dataclasses.replace(out[at[url]], shared=absolute)
         if not url or url in seen or url == own:
             continue

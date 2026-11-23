@@ -1,14 +1,5 @@
-"""0181 (Stealth v10.16)'s routes: own round-ups (no bearer: the app's own; 404 when Mark X is off, as every
-/api/markx path). Included into markx/api.py's router. No route builds a round-up (owner 2026-11-12: never in the
-API): the stored issues are built by the candidates job's step (units.issues_step), in its own process; the routes
-read stored rows.
-
-GET /api/markx/roundups/of?posts=<id>,<id>         the round-ups carrying these posts as an item ("also in
-                                                   round-ups"): [{post, source, title, url, at, n, item, carries}]
-GET  /api/markx/roundups/issues                    the stored own round-ups (units.issues): {daily, weekly (the
-                                                   latest of each, with items), past: [...], tz_offset_minutes}
-GET  /api/markx/roundups/issues/{id}               one stored issue with its items
-GET|POST /api/markx/roundups/settings              {tz_offset_minutes}: where the issues' days and weeks begin
+"""The routes of own round-ups, included into markx/api.py's router (no bearer: the app's own; 404 when Mark X is
+off). No route builds a round-up: the candidates job's step does (units.issues_step); the routes read stored rows.
 """
 from __future__ import annotations
 

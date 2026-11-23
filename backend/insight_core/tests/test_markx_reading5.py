@@ -1,9 +1,8 @@
-"""Issue 0212 (v10.21): ent-v5, one reading of a post, in Shadow: the guide and schema, the checks (per section; the
-entities entry by entry, 0213), the planner (new posts only, a window each, only while the switch is shadow or on),
-the one adapter (a reading row in read-v3's shape, mentions not made current in Shadow), the one preference list of
-the reading pickers, the switch (on: ent-v5 first, its sets current, the old kinds not asked of what it reads; back:
-the old sets current again) and the /markx comparison. Fixed answers; synthetic posts with invented names; the
-database tests roll back."""
+"""ent-v5, one reading of a post (0212): the guide and schema, the checks (per section; the entities entry by entry),
+the planner (new posts only, a window each, only while the switch is shadow or on), the one adapter (a reading row in
+read-v3's shape), the reading pickers' one preference list, the switch (on: ent-v5's sets current and the old kinds
+not asked; back: the old sets current again) and the /markx comparison. Fixed answers; invented names; DB tests roll
+back."""
 from __future__ import annotations
 
 import unittest
@@ -20,7 +19,7 @@ WINDOW = ("Platform: site | Source: Example\nTitle: T\nWindow: 2 of 3 of the pos
 
 def reading(**over):
     r = {"kind": "report", "events": "one", "lang": "en", "type_why": "reports a release", "event_type": "model_release",
-         "origin": "other", "items": [], "mentions": []}
+         "subtype": "new_model", "origin": "other", "items": [], "mentions": []}
     r.update(over)
     return r
 
@@ -37,7 +36,10 @@ def answer(**over):
 class TheGuideAndSchema(unittest.TestCase):
     def test_the_kind_its_guide_and_the_guide_is_d7_without_citations_or_relations(self):
         k = schemas.KINDS["reading"]
-        self.assertEqual((k.guide, k.subject, k.schema), ("ent-v5", "post", schemas.READING_V5_SCHEMA))
+        self.assertEqual((k.guide, k.subject, k.schema), ("ent-v6", "post", schemas.READING_V6_SCHEMA))   # v10.42
+        self.assertEqual(schemas.answer_guides("reading"), ("ent-v6", "ent-v5"))   # ent-v5's tasks still answered
+        self.assertEqual(schemas.schema_for("reading", "ent-v5"), schemas.READING_V5_SCHEMA)
+        self.assertIn("### Subtype", schemas.guide_body("ent-v6"))
         body = schemas.guide_body("ent-v5")
         self.assertIn("Decide origin in this order", body)
         self.assertIn("type_why", body)
@@ -127,7 +129,7 @@ class InShadow(_Db):
         self.assertEqual(R.mode(self.cur), "off")
         self.mode("shadow")
         n = self.plan()
-        self.cur.execute("SELECT a::text, count(*) FROM mx_tasks WHERE kind = 'reading' AND guide = 'ent-v5' GROUP BY a")
+        self.cur.execute("SELECT a::text, count(*) FROM mx_tasks WHERE kind = 'reading' AND guide = 'ent-v6' GROUP BY a")
         got = dict(self.cur.fetchall())
         self.assertEqual(set(got), {new})                                    # no archive re-read
         self.assertEqual(got[new], n)
@@ -200,6 +202,50 @@ class InShadow(_Db):
     def test_the_switch_refuses_an_unknown_mode(self):
         with self.assertRaises(ValueError):
             R.set_mode(self.cur, "sometimes")
+
+    def test_ent_v6_stores_the_subtype_under_ent_v5s_rows_and_a_post_asked_under_ent_v5_is_not_asked_again(self):
+        old = self.post(0, T0, title="Acme released Orbit-7", text="Acme released Orbit-7, a model, today. More words.")
+        self.mode("on")
+        repo.add_task(self.cur, kind="reading", guide="ent-v5", subject_kind="post", input="old input", a=old)
+        new = self.post(1, T0, title="Acme released Orbit-7 GGUFs", text="Acme released Orbit-7 GGUF quants. Words.")
+        self.plan()
+        self.cur.execute("SELECT a::text, guide FROM mx_tasks WHERE kind = 'reading' ORDER BY guide")
+        self.assertEqual(self.cur.fetchall(), [(old, "ent-v5"), (new, "ent-v6")])   # no re-read of ent-v5's post
+        self.read(new, answer(reading=reading(subtype="build")))
+        r = next(iter(repo.readings(self.cur, [new], "ent-v5").values()))["reading"]
+        self.assertEqual((r["event_type"], r["subtype"]), ("model_release", "build"))
+        got = event_types.of_posts(self.cur, [new])[new]
+        self.assertEqual((got.type, got.subtype), ("model_release", "build"))
+        self.assertEqual(repo.current_guide(self.cur, new), "ent-v5")
+
+
+class TheSubtype(unittest.TestCase):
+    """v10.42 (ent-v6): the reading's subtype, checked against its event type; ent-v5's open tasks answer as before."""
+    def check(self, r, guide="ent-v6"):
+        return validate.check("reading", answer(reading=r), POST, guide)[1]
+
+    def test_a_subtype_its_type_allows_passes_and_one_it_does_not_is_refused(self):
+        self.assertIsNone(self.check(reading(subtype="build")))
+        self.assertIsNone(self.check(reading(event_type="research_result", subtype="method")))
+        self.assertIsNone(self.check(reading(event_type="incident", subtype="security")))
+        self.assertIn("not one of a model_release", self.check(reading(subtype="security")))
+        self.assertIn("subtype", self.check(reading(subtype="quant")))                 # outside the closed list
+
+    def test_null_only_for_types_without_subtypes(self):
+        self.assertIsNone(self.check(reading(event_type="business_event", subtype=None)))
+        self.assertIn("null for a model_release", self.check(reading(subtype=None)))
+        r = reading()
+        del r["subtype"]
+        self.assertIn("subtype", self.check(r))                                         # ent-v6 must answer it
+        self.assertIsNone(self.check(r, "ent-v5"))                                      # ent-v5's tasks never did
+
+    def test_the_seam_gives_the_subtype_of_the_reading_that_gave_the_type(self):
+        got = event_types.from_reading(reading(subtype="method", event_type="research_result"), "ent-v5")
+        self.assertEqual((got.type, got.subtype), ("research_result", "method"))
+        self.assertIsNone(event_types.from_reading({"event_type": "model_release"}, "read-v3").subtype)
+        self.assertEqual(set(schemas.SUBTYPES), set(schemas.SUBTYPE_TYPES))
+        for types in schemas.SUBTYPE_TYPES.values():
+            self.assertTrue(set(types) <= set(schemas.EVENT_TYPES))
 
 
 if __name__ == "__main__":

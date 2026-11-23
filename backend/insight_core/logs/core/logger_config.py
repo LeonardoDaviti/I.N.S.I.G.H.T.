@@ -7,17 +7,12 @@ from .log_filters import *
 
 
 class SharedRotatingFileHandler(logging.handlers.WatchedFileHandler):
-    """A log file many processes append to, rotated by size by whichever of them finds it full (issue 0188).
+    """A log file many processes append to, rotated by size by whichever of them finds it full.
 
-    The files under logs/ live in the volume both containers mount, and every process writes them: the API's uvicorn
-    processes and its supervisor, the scheduler, each Mark X job's process. With RotatingFileHandler each process
-    rotated on its own idea of the size and renamed the file under the others, which went on writing into the renamed
-    file (it grew past its limit) or clobbered the backups (lines lost). Here:
-      - WatchedFileHandler: each write goes to the file now at the path; a process whose file was rotated away
-        reopens the new one before its next line (writes are O_APPEND, so lines of several processes never overlap);
-      - the rotation (path -> .1 -> ... -> .backupCount) is done under an flock on `<path>.lock`, after reading the
-        size at the path again, so one process rotates once however many find the file full.
-    Kept files, not stdout only: the Ingestion tab's log view and the API watchdog read these files."""
+    Every process of both containers writes these files (RotatingFileHandler let each rotate the file under the
+    others). Each write goes to the file now at the path (WatchedFileHandler, O_APPEND), and the rotation runs under
+    an flock on `<path>.lock` after re-reading the size, so it happens once. The Ingestion tab's log view and the API
+    watchdog read these files."""
 
     def __init__(self, filename, maxBytes=0, backupCount=0, encoding=None, delay=False):
         super().__init__(filename, mode="a", encoding=encoding, delay=delay)
@@ -69,14 +64,11 @@ class LoggerConfig:
 
     def _setup_logging(self):
 
-        # Clear any existing handlers
         logging.getLogger().handlers.clear()
 
-        # Configure root logger
         root_logger = logging.getLogger()
         root_logger.setLevel(self.log_level)
 
-        # Set up different types of handlers
         self._setup_console_handler()
         self._setup_application_handler()
         self._setup_error_handler()
@@ -89,15 +81,12 @@ class LoggerConfig:
         """Set up console output handler with Unicode support."""
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO if not self.debug_mode else logging.WARNING)
-        
-        # Create a formatter that avoids emoji characters
+
         console_formatter = logging.Formatter(
             fmt='%(levelname)s - %(name)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         console_handler.setFormatter(console_formatter)
-        
-        # Add to root logger
         logging.getLogger().addHandler(console_handler)
 
     def _setup_application_handler(self):
@@ -106,8 +95,6 @@ class LoggerConfig:
             'logs/core/application.log', maxBytes=10_000_000, backupCount=3)
         app_handler.setLevel(self.log_level)
         app_handler.setFormatter(LogFormatters.get_file_formatter())
-        
-        # Add to root logger
         logging.getLogger().addHandler(app_handler)
     
     def _setup_error_handler(self):
@@ -117,8 +104,6 @@ class LoggerConfig:
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(LogFormatters.get_error_formatter())
         error_handler.addFilter(ErrorOnlyFilter())
-        
-        # Add to root logger
         logging.getLogger().addHandler(error_handler)
     
     def _setup_connector_handlers(self):
@@ -131,8 +116,6 @@ class LoggerConfig:
             handler.setLevel(self.log_level)
             handler.setFormatter(LogFormatters.get_file_formatter())
             handler.addFilter(PlatformFilter(connector))
-            
-            # Add to root logger
             logging.getLogger().addHandler(handler)
     
     def _setup_operation_handlers(self):
@@ -145,8 +128,6 @@ class LoggerConfig:
             handler.setLevel(self.log_level)
             handler.setFormatter(LogFormatters.get_file_formatter())
             handler.addFilter(OperationFilter(operation))
-            
-            # Add to root logger  
             logging.getLogger().addHandler(handler)
 
 def setup_logging(debug_mode=False):

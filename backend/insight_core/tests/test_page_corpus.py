@@ -1,9 +1,6 @@
-"""The shared reader on a corpus of real article pages (issue 0032; see _page_corpus).
-
-Every reader change runs against every page, so a fix for one site cannot silently break
-another. A failure names the page, the expectation and what the reader kept. A known gap
-(expectations.json "known_gaps") is expected to fail; one that passes fails the test too,
-so the gap is removed and the expectation guards from then on.
+"""The shared reader on a corpus of real article pages (0032; see _page_corpus): every reader change runs against every
+page, so a fix for one site cannot silently break another. A known gap is expected to fail; one that passes fails the
+test too, so the gap is removed and the expectation guards from then on.
 """
 from __future__ import annotations
 

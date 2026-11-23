@@ -1,8 +1,5 @@
-"""GET /api/feed and PUT /api/feed/read: real services on the scratch database, over ASGI.
-
-One test per listing filter (all, source, track, date, unread, cursor) against the one post
-listing, and one for the read-state route (single, bulk, through). Rows are committed, so
-the class only runs against a `_test` database; every assertion is scoped to its own rows.
+"""GET /api/feed and PUT /api/feed/read over ASGI: one test per listing filter and one for the read-state route. Rows
+are committed, so the class only runs against a `_test` database; every assertion is scoped to its own rows.
 """
 import sys
 import unittest
@@ -167,7 +164,7 @@ class FeedListingRouteTests(unittest.TestCase):
         self.read(ids=marked["ids"], read=False)
         self.assertEqual(self.ids(scope=scope, filter="unread"), [p4, p3, p2, p1])
 
-    # ---- Later (issue 0022) ----------------------------------------------------------
+    # ---- Later -----------------------------------------------------------------------
 
     def later(self, **payload):
         status, _, body = call(main.app, "PUT", "/api/feed/later", json_body=payload)
@@ -250,14 +247,14 @@ class FeedListingRouteTests(unittest.TestCase):
                 (source, f"https://test.invalid/mark-ix/post/{uuid.uuid4().hex}", tweet, tweet),
             )
             post_id = str(cur.fetchone()[0])
-            PostPartsRepository.write(cur, [post_id])   # as a save parses it (issue 0076)
+            PostPartsRepository.write(cur, [post_id])   # as a save parses it
         short = "Our new model is out today and it is better at everything."
 
         feed_title = next(item["title"] for item in self.feed(scope=f"source:{source}")["items"] if item["id"] == post_id)
         status, _, body = call(main.app, "GET", f"/api/posts/item/{post_id}")
         self.assertEqual(status, 200, body)
         self.assertEqual((feed_title, body["post"]["title"]), (short, short))
-        # Issue 0070: the title is the text's first sentence, so the body under it starts after it.
+        # the title is the text's first sentence, so the body under it starts after it
         self.assertEqual(body["post"]["content"], tweet[len(short):].strip(), "the rest of the body is served in full")
 
     def test_read_state_rejects_a_mixed_or_empty_body(self):

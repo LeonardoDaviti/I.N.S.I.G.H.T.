@@ -67,11 +67,8 @@ function Row({ row, onUndo, undoing }: { row: OfficialRow; onUndo: (row: Officia
 /** The rows a "Show more" asks for at once. */
 export const OFFICIAL_PAGE = 50;
 
-/**
- * A group of rows; a collapsed group shows a "Show N …" button first. Issue 0241: the view sends a page of rows (what
- * waits for you first), so a group may hold more than it shows (`count`, from the server's counts): "Show N more"
- * asks for the next ones of its states.
- */
+/** A group of rows; a collapsed group shows a "Show N …" button first. The view sends a page of rows, so a group may
+ *  hold more than it shows (`count`): "Show N more" asks for the next ones of its states. */
 function Group({ group, rows, count, onUndo, undoingId }: {
   group: OfficialGroup; rows: OfficialRow[]; count: number; onUndo: (row: OfficialRow) => void; undoingId: string | null;
 }) {
@@ -132,10 +129,10 @@ function Group({ group, rows, count, onUndo, undoingId }: {
 }
 
 /**
- * Discover → "Official channels" (issue 0196): the channels the official-channels job found for the actors of your
- * stories (an X account, a Telegram or YouTube channel, a site's section, a repository's releases): why, where it was
- * found, how it is the actor's, what reading it found, and the worker's judgement. In Shadow nothing is added; when the
- * job is on, the channels it added automatically have Undo. Shows nothing when there is nothing.
+ * Discover → "Official channels": the channels the official-channels job found for your stories' actors (an X
+ * account, a Telegram or YouTube channel, a site's section, a repository's releases), with why, where, how it was
+ * checked and the worker's judgement. In Shadow nothing is added; when on, auto-added channels have Undo. Shows
+ * nothing when there is nothing.
  */
 export default function OfficialChannels() {
   const api = useApi();

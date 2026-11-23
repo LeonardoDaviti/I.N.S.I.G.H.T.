@@ -1,29 +1,18 @@
-"""A source's item filter (issue 0196, Stealth v10.18): which of a followed source's items are kept but hidden.
+"""A source's item filter: which of a followed source's items are kept but hidden (0196).
 
 A release feed that also publishes its automatic builds (per-commit `b12361`, nightlies, `-alpha.N`) would flood the
-feed: measured on 18 public release feeds, one engine's feed carried 16.3 items a day, 99% builds. The worker
-proposes a rule when a channel is added (the `source_judge` question's `filter`, guide source-judge-v2); this module
-checks it, keeps it and applies it, by code, to every new item. Any source may have one; the owner may set or clear it.
+feed. The worker proposes a rule when a channel is added (`source_judge`'s `filter`); this module checks it
+(`check`), keeps it (`put`) and applies it, by code, to every new item (`mark`) and to stored posts when it changes
+(`remark`). Any source may have one; the owner may set or clear it.
 
     rule = {"kind": "releases" | "builds" | "mixed", "hide": [{"field": "tag" | "title", "regex": "...", "why": "..."}]}
 
-  - **Listing pages** (v10.35): a rule may also say `"listing": true`: it hides the source's stored listing pages (a
-    tag, category, topic or author archive its archive or page watch read as an article), as
-    page_watch.stored_listing decides. INSIGHT sets it itself (`by` insight) on a source the first time one of its
-    posts is one (`mark`, at store time: a page that slipped past the fetch's checks), and keeps it through every
-    later rule of the source (`put`: the worker's or the owner's; clearing a rule leaves {"kind": "listing"}).
-    scripts/hide_listing_pages.py applies it once to the posts stored before.
-
-  - `tag` is a release's tag, read from its address (`.../releases/tag/<tag>`); `title` the item's title.
-  - **Checks** (`check`): at most HIDE_MAX patterns, each compiles, is at most REGEX_CHARS long, holds no literal digit
-    (a shape, `^b\\d+$`, never one version, `v1\\.2`), hides at least one item read, never one the answer keeps (its
-    examples of real releases), and never a plain release (`v1.0.0`, `2.3.1`, `Release 1.0`: PLAIN). The spec's "at
-    most 95% of the items read" is replaced by PLAIN: a releases Atom feed holds its newest 10 items only, and an
-    engine's newest 10 are all builds, so a right rule hides all of them.
-  - **Kept** in source_filters (one current row a source; a new rule supersedes the old one, keep everything).
-  - **Applied** at store time (repo_posts.save_batch, ingestion's one save path: `mark`) and to a source's stored posts
-    when its rule changes (`remark`). A hidden post is stored as any post with `posts.filtered_by` = the rule's row;
-    the feeds and unread counts (repo_reader.NOT_STORY_ONLY) and Mark X's reading planners skip it. Nothing is deleted.
+A rule may also say `"listing": true`: it hides the source's stored listing pages (page_watch.stored_listing).
+INSIGHT sets it itself on a source the first time one of its posts is one, and keeps it through every later rule
+(clearing a rule leaves {"kind": "listing"}). `check`: at most HIDE_MAX patterns, each compiles, at most REGEX_CHARS,
+no literal digit (a shape, never one version), hides at least one item read, never one the answer keeps, never a
+plain release (PLAIN). A hidden post is stored as any post with `posts.filtered_by` = the rule's row; feeds, unread
+counts and Mark X's planners skip it. Nothing is deleted; a new rule supersedes the old row.
 """
 from __future__ import annotations
 
@@ -97,7 +86,7 @@ def check(rule: Any, items: Sequence[Dict[str, Any]], keep: Iterable[str] = ()) 
     answer says are real releases (never hidden)."""
     if not isinstance(rule, dict):
         return "the filter: not an object"
-    if rule.get("kind") not in KINDS + (LISTING_KIND,):   # v10.35: the listing flag alone, as GET shows it
+    if rule.get("kind") not in KINDS + (LISTING_KIND,):   # the listing flag alone, as GET shows it
         return f"the filter's kind: one of {', '.join(KINDS)}"
     hide = rule.get("hide")
     if not isinstance(hide, list) or len(hide) > HIDE_MAX:
@@ -207,7 +196,7 @@ def remark(cur: Any, source_id: str) -> int:
 def put(cur: Any, source_id: str, rule: Optional[Dict[str, Any]], *, by: str, guide: Optional[str] = None,
         task_id: Optional[str] = None) -> Optional[str]:
     """The source's new rule (None: none), the old one superseded, its posts marked again. Returns the new row's id.
-    A listing flag the old rule had is kept (v10.35): clearing the rule leaves the flag alone ({"kind": "listing"})."""
+    A listing flag the old rule had is kept: clearing the rule leaves the flag alone ({"kind": "listing"})."""
     old = current(cur, [source_id]).get(str(source_id))
     if old is not None and (old["rule"] or {}).get("listing") and not (rule or {}).get("listing"):
         rule = {**(rule or {"kind": LISTING_KIND, "hide": []}), "listing": True}
@@ -223,7 +212,7 @@ def put(cur: Any, source_id: str, rule: Optional[Dict[str, Any]], *, by: str, gu
 
 
 def put_listing(cur: Any, source_id: str) -> Optional[str]:
-    """The source's rule with the listing flag (v10.35, `by` insight): its current rule kept as it is plus the flag,
+    """The source's rule with the listing flag (`by` insight): its current rule kept as it is plus the flag,
     or {"kind": "listing"} when it has none; its posts marked again. None when its rule has the flag already."""
     old = current(cur, [source_id]).get(str(source_id))
     if old is not None and (old["rule"] or {}).get("listing"):

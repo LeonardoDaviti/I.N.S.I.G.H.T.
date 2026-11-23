@@ -28,7 +28,7 @@ function entryLine(entry: ArchiveCatalogEntry, now: Date, state?: 'queued' | 'in
   const stored = formatCount(entry.stored_posts ?? 0);
   const parts = [
     entry.platform,
-    // A feed the smart archiver measured (issue 0143): stored of the site's estimate, "19 of ~34 stored".
+    // a feed the smart archiver measured: stored of the site's estimate, "19 of ~34 stored"
     catalogCoverage(entry.coverage) ?? (
       typeof entry.available_posts === 'number' ? `${stored} of ${formatCount(entry.available_posts)} stored` : `${stored} stored`),
   ];
@@ -41,11 +41,8 @@ function entryLine(entry: ArchiveCatalogEntry, now: Date, state?: 'queued' | 'in
   return parts.join(' · ');
 }
 
-/**
- * Sources → ingestion → archive: every enabled source with what it stores, what
- * it has and how many older posts are not archived; the one picked (`?source=`) gets the sheet's archive
- * controls plus the pacing a long backfill needs.
- */
+/** Sources → ingestion → archive: every enabled source with what it stores, what it has and how many older posts
+ *  are not archived; the one picked (`?source=`) gets the sheet's archive controls plus the backfill pacing. */
 export default function IngestionArchive() {
   const api = useApi();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -57,7 +54,7 @@ export default function IngestionArchive() {
     staleTime: 30_000,
   });
   const entries = useMemo(() => catalog.data?.sources ?? [], [catalog.data]);
-  // Issue 0130 B5: the archives a restart interrupted, resumed in one tap; the queued ones run in turn.
+  // the archives a restart interrupted, resumed in one tap; the queued ones run in turn
   const interrupted = catalog.data?.interrupted ?? [];
   const queuedIds = new Set((catalog.data?.queued ?? []).map((row) => row.source_id));
   const [resuming, setResuming] = useState(false);
@@ -127,7 +124,7 @@ export default function IngestionArchive() {
         ) : (
           <ul className="max-h-[36rem] divide-y divide-line overflow-y-auto border-y border-line">
             {shown.map((entry) => {
-              // The id only when there is no name at all: it is never a URL, so it would win over a derived one.
+              // the id only when there is no name at all: it is never a URL, so it would win over a derived one
               const name = sourceLabel(entry.display_name || entry.source_id);
               const glyph = archiveGlyph(entry.archive_status);
               const isSelected = entry.source_id === selectedId;

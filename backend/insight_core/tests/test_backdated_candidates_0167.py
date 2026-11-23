@@ -1,9 +1,6 @@
-"""Backdated archive items reach the candidate finder by their own date (issue 0167, part 2).
-
-An archive brings a company's page weeks after its story: stored now (fetched_at), dated then (published_at), never
-surfaced (an archive's pages are no news to you: save_batch(live=False)). Mark X's time of a post is its surfacing,
-else its date (pairing.post_date), so the page is paired with the story's posts of its own days, and the story's
-Mark IX members, read when the page's vector arrives. Rolled back after each test (test_markx_candidates' fixture).
+"""Backdated archive items reach the candidate finder by their own date (0167, part 2). An archived page is stored
+now, dated then, never surfaced; Mark X's time of a post is its surfacing, else its date (pairing.post_date), so the
+page is paired with the story's posts of its own days when its vector arrives. Rolled back after each test.
 """
 from __future__ import annotations
 

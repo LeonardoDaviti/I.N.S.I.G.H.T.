@@ -12,20 +12,17 @@ import {
 } from './briefWords';
 
 /**
- * The track briefer's reading views (issue 0245, frontend v10.28): the quick look on top of a track, the weekly
- * issue with its date strip, and the tables with filter chips. Everything comes from the backend's typed rows; no
- * word here is about one track. P6: no metadata on top (no model, no counts beyond "N new"), citations are quiet
- * superscript links to the posts (0002).
+ * The track briefer's reading views: the quick look on top of a track, the weekly issue with its date strip, and
+ * the tables with filter chips. Everything comes from the backend's typed rows; no word here is about one track. No
+ * metadata on top; citations are quiet superscript links to the posts.
  */
 
 const postHref = (id: string) => `/posts/${encodeURIComponent(id)}`;
-const QUICK_ROWS = 5;   // v10.29: the quick look shows a kind's newest rows; "see all" opens the rest
+const QUICK_ROWS = 5;   // the quick look shows a kind's newest rows; "see all" opens the rest
 
 
-/**
- * The ↗ to a thing's newest post, in INSIGHT (v10.29): a post's own address can be a feed bridge's (a Nitter or
- * Telegram bridge on the server's network) that the reader's device cannot open; the post page links its original.
- */
+/** The ↗ to a thing's newest post, in INSIGHT: a post's own address can be a server-side feed bridge's that the
+ *  reader's device cannot open; the post page links its original. */
 function OpenThing({ thing, name }: { thing: Thing; name: string }) {
   const post = thing.posts[0];
   if (!post) return null;
@@ -141,10 +138,9 @@ function PostList({ posts, label }: { posts: ThingPost[]; label: string }) {
 }
 
 /**
- * The quick look (0245 moment A) at the top of a track: "since <day> · N new", what changed (when the points are
- * newer than every new row), the new things by kind, the posts that gave no row. "Nothing new since <day>" when
- * empty. When the points are older than the newest find (`stale`), they are not shown here: the page shows them
- * after its posts, "as of <day>" (0002: never a stale brief above fresh posts).
+ * The quick look at the top of a track: "since <day> · N new", what changed, the new things by kind, the posts that
+ * gave no row; "Nothing new since <day>" when empty. Points older than the newest find (`stale`) are not shown here:
+ * the page shows them after its posts, "as of <day>" (never a stale brief above fresh posts).
  */
 export function QuickLookPanel({ look, stale = look.stale, onSeeAll, onOpenIssue, now }: {
   look: QuickLook; stale?: boolean; onSeeAll?: (kind: string) => void; onOpenIssue?: (week: string) => void; now?: Date;
@@ -272,7 +268,7 @@ function DateStrip({ weeks, week, onWeek }: { weeks: string[]; week: string; onW
 
 const issueKey = (id: string, week: string) => ['markx-track-issue', id, week] as const;
 
-/** The weekly issue (0245 moment B): Monday-Sunday, what changed, things by kind, "Also in the track", "updated". */
+/** The weekly issue: Monday-Sunday, what changed, things by kind, "Also in the track", "updated". */
 export function WeekIssueView({ trackId, weeks, initial }: { trackId: string; weeks: string[]; initial: string | null }) {
   const [week, setWeek] = useState<string | null>(initial ?? weeks[0] ?? null);
   const query = useQuery({
@@ -315,8 +311,8 @@ export function WeekIssueView({ trackId, weeks, initial }: { trackId: string; we
 const tableKey = (id: string, kind: string, params: Record<string, string>) =>
   ['markx-track-things', id, kind, params] as const;
 
-/** The tables (0245 moment C): every row of a kind, newest first, filter chips from its typed fields, sortable; v10.41:
- * a search box (every word across a row and its posts' titles, numbers whole) and the entities its posts name. */
+/** The tables: every row of a kind, newest first, filter chips from its typed fields, sortable, a search box (every
+ *  word across a row and its posts' titles) and the entities its posts name. */
 export function ThingTables({ trackId, kinds, kind: initial }: { trackId: string; kinds: Array<{ kind: string; header: string }>; kind?: string }) {
   const [kind, setKind] = useState(initial && kinds.some((k) => k.kind === initial) ? initial : kinds[0]?.kind ?? '');
   const [chosen, setChosen] = useState<FilterChipDef[]>([]);

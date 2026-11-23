@@ -5,22 +5,17 @@ import { cn } from '../../lib/utils';
 import { buttonVariants } from '../ui';
 
 /**
- * The post's actions, icon-only, in the post page's sticky band left of Aa (v10.42), so
- * they stay at hand down the whole post:
- * open the original, open its discussion (when the feed names one, e.g. the
- * Hacker News thread), read later (the clock) and keep (the star), both offered
- * here whatever the read state (issue 0022), copy the text. Each has a tooltip and an
- * aria-label. Press feedback is the shared `scale(0.97)`, but only for a pointer
- * press: a key press (`:focus-visible`) does not move the button.
+ * The post's actions, icon-only, in the post page's sticky band left of Aa: open the original, open its discussion
+ * (when the feed names one), read later and keep (whatever the read state), copy the text. Each has a tooltip and an
+ * aria-label.
  */
-// Concatenated, not merged: tailwind-merge would drop the base focus outline.
-// `[&:active:not(:focus-visible)]` outranks the base `active:` scale, so a key
-// press (Space/Enter on a focus-visible button) does not scale.
+// Concatenated, not merged: tailwind-merge would drop the base focus outline. `[&:active:not(:focus-visible)]`
+// outranks the base `active:` scale, so a key press does not scale the button.
 const ICON_ACTION = [
   buttonVariants({ variant: 'ghost', size: 'icon' }),
   '[&:focus-visible:active]:scale-100 motion-reduce:[&:active]:scale-100',
   '[&_svg]:!h-[1.125rem] [&_svg]:!w-[1.125rem]',
-  // The band's height (2rem, as Back and Aa), and narrower under 360px so the row never overflows.
+  // the band's height (2rem, as Back and Aa), narrower under 360px so the row never overflows
   '!h-8 !w-8 max-[359px]:!w-7',
 ].join(' ');
 

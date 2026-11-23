@@ -1,8 +1,6 @@
-"""A small web server on 127.0.0.1 and a fake DNS, for AddressGuard's tests (issue 0187).
-
-The guard refuses 127.0.0.1, so the tests name the server by made-up hosts the fake DNS points at it
-(origin.test, other.test: listed as bridges) and at addresses the guard must refuse (metadata.test ->
-169.254.169.254 ...). Nothing leaves the machine: a refused host is never connected to.
+"""A small web server on 127.0.0.1 and a fake DNS, for AddressGuard's tests (0187): the guard refuses 127.0.0.1, so
+the tests name the server by made-up hosts the fake DNS points at it, and at addresses the guard must refuse. Nothing
+leaves the machine: a refused host is never connected to.
 """
 from __future__ import annotations
 

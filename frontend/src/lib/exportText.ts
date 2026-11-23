@@ -1,7 +1,4 @@
-/**
- * Settings → Data's words (issue 0079): sizes, times, the export's link and the
- * restore command. Pure, so `node --test` checks them.
- */
+/** Settings → Data's words: sizes, times, the export's link and the restore command. Pure. */
 import type { ExportInfo } from '../services/api';
 
 /** 1,234,567,890 → "1.2 GB" (decimal units, as a file manager shows them). */
@@ -26,8 +23,8 @@ export function formatDuration(seconds: number): string {
 
 const dayMonth = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
 
-/** What the estimate is from (issue 0105): "from the rows stored now", or "from the last export, 5 Nov:
- *  243 MB in about 28 seconds"; null when the API doesn't say. */
+/** What the estimate is from: "from the rows stored now", or "from the last export, 5 Nov: 243 MB in about 28
+ *  seconds"; null when the API doesn't say. */
 export function estimateBasis(info: Pick<ExportInfo, 'estimate_basis' | 'last_export'>): string | null {
   const last = info.last_export;
   if (info.estimate_basis === 'last_export' && last) {

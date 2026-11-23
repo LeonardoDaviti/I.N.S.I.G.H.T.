@@ -1,7 +1,4 @@
-/**
- * Source schedule presentation (Mark IX §F.3): due times, backoff, how often a source is fetched,
- * intervals and the status order. Pure; `now` is injected.
- */
+/** Source schedule presentation: due times, backoff, cadence, intervals and the status order. Pure; `now` injected. */
 import type { HealthStatus, SourceHealthRow } from '../services/api';
 import { toDate } from './dates.ts';
 import { formatHours, formatSpan } from './duration.ts';
@@ -67,7 +64,6 @@ export function statusRank(status: string): number {
 }
 
 
-/** Worst first: status order, most failures, soonest due (none last), name. Returns a new array. */
 
 /** Did the source's last attempt fail? `last_outcome` decides; without it, an error
  *  newer than the last success (or with no success at all) counts. */
@@ -80,10 +76,8 @@ export function lastAttemptFailed(row: Pick<SourceHealthRow, 'last_outcome' | 'l
 }
 
 /**
- * The status a row shows, derived from its last attempt. A source whose last fetch
- * failed is failing (or backing off while a retry is scheduled) even when the
- * backend's schedule calls it due or scheduled; due/scheduled are for healthy
- * sources only. Disabled, unavailable, error and backoff pass through.
+ * The status a row shows, from its last attempt: a source whose last fetch failed is failing (or backing off)
+ * even when the schedule calls it due; due/scheduled are for healthy sources only.
  */
 export function effectiveHealthStatus(row: SourceHealthRow, now: Date = new Date()): HealthStatus {
   if (row.status !== 'due' && row.status !== 'deferred') return row.status;
@@ -92,7 +86,6 @@ export function effectiveHealthStatus(row: SourceHealthRow, now: Date = new Date
   return retry && retry.getTime() - now.getTime() >= MINUTE ? 'backoff' : 'error';
 }
 
-/** Rows with `status` replaced by `effectiveHealthStatus`; unchanged rows keep identity. */
 export function withEffectiveStatus(rows: readonly SourceHealthRow[], now: Date = new Date()): SourceHealthRow[] {
   return rows.map((row) => {
     const status = effectiveHealthStatus(row, now);

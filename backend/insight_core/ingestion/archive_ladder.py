@@ -1,29 +1,11 @@
-"""The smart archiver (issue 0143): a feed's whole history, by the site's platform and a ladder of strategies.
+"""The smart archiver: a feed's whole history, by the site's platform and a ladder of strategies (0143).
 
-A feed lists its latest posts (often 10 to 30). What else a site holds is found by its platform's known behaviour,
-a class, never a site:
-
-1. **The fingerprint** (`fingerprint`): the platform a feed and its site are built with, from what the archive reads
-   anyway: the feed's generator, namespaces and item addresses, the home page's `<meta name=generator>`, its asset
-   paths and `link rel` tags, and its response headers. One row of PLATFORMS per platform: adding one is a row and
-   a fixture.
-2. **The ladder** (STRATEGIES, in order): the feed's own paging (RFC 5005 `rel=next` / `prev-archive`, a
-   platform's page parameter), the platform's archive API (WordPress REST, Blogger's JSON feed, the newsletter
-   platform's archive on any domain), the sitemap read well (robots, indexes, the posts' file, gzip; issue 0108),
-   the blog's listing pages (`rel=next`, `/page/N/`, read by the shape the feed's items have), and, opt-in per
-   source (`settings.archive.web_archive`), the Web Archive's address index (CDX). Each is probed with a request
-   or two (`Ladder.probe`): its outcome is recorded (`more:<n>`, `no_paging`, `paging_same`, `no_api`,
-   `api_refused:<status>`, `no_sitemap`, `sitemap_no_posts`, `listing_unread`, `listing_no_posts`, `off`,
-   `blocked`, ...) with the site's size it saw (`estimate`).
-3. **Coverage** (`coverage_status`): "archived" only when the stored posts reach 95% of the largest trustworthy
-   estimate, or every strategy was tried and none finds more; else "partial", with each strategy's reason.
-4. **The learned order** (`ordered`): per platform, which strategy gave posts (system_settings `archive_learned`,
-   counts); a new source of that platform tries the best one first. Never per site.
-
-An archive runs the strategies that found more, in order (GenericRssKind.archive_pages); each skips the addresses
-already seen or stored and stops once the seen addresses reach 95% of the estimate. A post found by address is read
-as an archived post is (`_sitemap_post`: the page's body, title and date), a feed or API page's posts as the feed's
-(teasers read in full by 0140's rules). Every request of a probe is counted (`requests`) and spaced PROBE_GAP_S.
+Behaviour is per platform, never per site: `fingerprint` names the platform (one PLATFORMS row each) from the feed,
+the home page and headers; the ladder (STRATEGIES) probes feed paging, the platform's API, the sitemap, listing
+pages and the opt-in Web Archive index, a request or two each (`Ladder.probe`), recording each outcome and the size
+it saw. `coverage_status` says "archived" at COVERED_SHARE of the largest trustworthy estimate, or when nothing
+finds more; `ordered` tries first what gave a platform's sources posts (system_settings archive_learned).
+GenericRssKind.archive_pages runs the strategies that found more. Probe requests are counted and spaced PROBE_GAP_S.
 """
 from __future__ import annotations
 
@@ -53,7 +35,7 @@ LISTING_PROBES = 4            # listing addresses a probe reads at most
 WP_PER_PAGE = 50
 BLOGGER_PER_PAGE = 150
 LEARNED_KEY = "archive_learned"   # system_settings: {platform: {strategy: posts}}
-# v10.13.9: why an archive stopped or a strategy was refused (the checkpoint's "stopped", a probe's outcome)
+# why an archive stopped or a strategy was refused (the checkpoint's "stopped", a probe's outcome)
 FOREIGN_SITE = "foreign_site"     # the sitemap, listing or checkpoint names another site than the source's own
 LOW_YIELD = "low_yield"           # LOW_YIELD_PAGES pages read, under LOW_YIELD_SHARE of them a post
 OWNER_STOP = "stopped_by_owner"   # POST /api/archive/{id}/stop: the owner stopped it (never resumed by itself)
@@ -72,8 +54,7 @@ WEB_ARCHIVE = "web_archive"
 STRATEGIES = (FEED_PAGES, API, SITEMAP, LISTING, WEB_ARCHIVE)
 TRUSTWORTHY = (API, SITEMAP, LISTING, FEED_PAGES)   # the estimates coverage counts (CDX lists dead pages too)
 
-# An address's last word that names a list or the site's own page, never a post: /blog/, /archive/, /about/.
-# (As a folder, a section word is a post's: /blog/<slug>, /notes/2026/<slug>, /projects/<slug>.)
+# An address's last word that names a list or the site's own page, never a post (as a folder it may be a post's).
 LIST_WORDS = frozenset({
     "blog", "blogs", "archive", "archives", "posts", "post", "articles", "notes", "writing", "writings", "essays",
     "news", "page", "pages", "tags", "categories", "topics", "authors", "about", "contact", "search", "subscribe",
@@ -236,11 +217,9 @@ def channel_link(feed_text: str) -> Optional[str]:
 
 
 def source_site(feed_url: str, feed_text: str = "", items: Sequence[str] = ()) -> str:
-    """The site an archive reads (v10.13.9): the source's own publication, never the host its items link. The
-    feed's items' host when it is the feed's own site (a feed at feeds.<site> of posts at <site>); else the feed's
-    channel link when it is on the feed's site, or is a home page (a feed served by a feed host for its blog); else
-    the feed's own host. A link blog whose items link a newspaper, or a feed of a code host's pages made elsewhere,
-    archive their own site, never the one their items name."""
+    """The site an archive reads: the source's own publication, never the host its items link (a link blog). The
+    items' host when it is the feed's own site; else the channel link when on the feed's site or a home page; else
+    the feed's own host."""
     own = parsing.origin_from_source(feed_url, "")
     feed_host = host_of(feed_url)
     for item in items:
@@ -412,8 +391,8 @@ def best_estimate(estimates: Mapping[str, Any]) -> Optional[int]:
 
 
 def coverage_status(stored: int, smart: Mapping[str, Any]) -> str:
-    """not_archived / archived / partial (issue 0143): archived when the stored posts reach COVERED_SHARE of the
-    estimate, or every strategy was tried and none finds more; else partial."""
+    """not_archived / archived / partial: archived when the stored posts reach COVERED_SHARE of the estimate, or
+    every strategy was tried and none finds more; else partial."""
     if stored <= 0:
         return "not_archived"
     estimate = smart.get("estimate")
@@ -540,7 +519,7 @@ class Ladder:
         self.headers = dict(headers or {})
         self.links = [p["url"] for p in feed if isinstance(p.get("url"), str) and p["url"].startswith("http")]
         self.held = {normalize_url(link) for link in self.links} - {None}
-        # v10.13.9: the source's own site, never the first item's host (a link blog's items link other sites)
+        # the source's own site, never the first item's host (a link blog's items link other sites)
         self.site = site or source_site(self.feed_url, self.feed_text, self.links)
         self.own_links = [link for link in self.links if same_site(host_of(link), host_of(self.site))]
         self.shape = post_shape(self.own_links)
@@ -883,8 +862,8 @@ def _post(source_url: str, url: str, guid: str, title: str, content_html: str, d
         "title": title,
         "content": parsing.strip_html(content_html),
         "content_html": content_html,
-        # v10.13.9: no date stays undated (never the fetch's "now"): a backlog post, the saver sorts it before the
-        # source's oldest; the address's day, else its month's 1st (originals_rules.address_hint), is its sort hint
+        # no date stays undated (never "now"): the saver sorts it before the source's oldest; the address's day
+        # (originals_rules.address_hint) is its sort hint
         "date": date or address_hint(url),
         "media_urls": parsing.extract_html_image_urls(content_html),
         "categories": [],

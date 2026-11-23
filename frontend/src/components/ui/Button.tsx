@@ -9,11 +9,8 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>, Va
   asChild?: boolean;
 }
 
-/**
- * The one button: see `buttonVariants` in ./styles for the variants. A `danger`
- * button leads with the monochrome destructive mark "×" (as ConfirmDialog's
- * title does), so every destructive confirmation reads the same.
- */
+/** The one button (variants: `buttonVariants` in ./styles). A `danger` button leads with the destructive mark "×",
+ *  as ConfirmDialog's title does. */
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   { className, variant, size, asChild = false, type, children, ...props },
   ref,

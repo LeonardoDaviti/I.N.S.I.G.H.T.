@@ -1,10 +1,6 @@
-"""A blog that moved (issue 0108): a post page that is a redirect stub is read at the address it
-points to, once, and the post is one page with the post stored there.
-
-Fixtures are written from the shapes measured on a real moved site (a Jekyll site whose posts are
-574-byte stubs: a meta refresh, a canonical link and a `location=` script, all to the same article on
-the blog's new domain); every name here is neutral. No network: FakeHttp. The store tests commit rows,
-so they run only against a *_test database (@requires_test_db).
+"""A blog that moved (0108): a post page that is a redirect stub (a meta refresh, a canonical link and a `location=`
+script, all to the article on the blog's new domain) is read at the address it points to, once, and the post is one
+page with the post stored there. No network: FakeHttp; the store tests commit, so they run only on a *_test database.
 """
 from __future__ import annotations
 
@@ -36,7 +32,7 @@ ESSAY = "A paragraph of the essay as the blog keeps it, sentence after sentence.
 
 
 def stub(target: str = NEW, *, refresh: bool = True, canonical: bool = True, script: bool = True) -> str:
-    """A redirect stub as the measured site writes it (each of its three pointers optional)."""
+    """A redirect stub (each of its three pointers optional)."""
     head = (f'<link rel="canonical" href="{target}"/>' if canonical else "") + \
         '<meta http-equiv="content-type" content="text/html; charset=utf-8" />' + \
         (f'<meta http-equiv="refresh" content="0;url={target}" />' if refresh else "")
@@ -211,7 +207,7 @@ class MovedStoreTests(unittest.IsolatedAsyncioTestCase):
         read = full_text.with_full_text({"url": OLD, "content": "", "metadata": {}}, f"<p>{ESSAY}</p>", ESSAY, None, None, NEW)
         post_id = self._upsert(read)
         self.assertEqual(self._row(post_id), (OLD, OLD, NEW_NORMALIZED, NEW_NORMALIZED, len(ESSAY)))
-        # The feed brings its empty entry again: the body, the canonical and the move stay.
+        # the feed brings its empty entry again: the body, the canonical and the move stay
         self._upsert({"url": OLD, "content": "", "metadata": {}})
         self.assertEqual(self._row(post_id), (OLD, OLD, NEW_NORMALIZED, NEW_NORMALIZED, len(ESSAY)))
 
@@ -257,8 +253,8 @@ NOW = datetime(2026, 11, 5, 12, tzinfo=timezone.utc)
 
 
 class EmptyReadOfAPostWithNoBodyTests(unittest.IsolatedAsyncioTestCase):
-    """Decision 2: a page read that yields nothing longer, on a post with no body, is a failed try
-    (0062 reads it again later); a post with a body and a page with nothing longer is unchanged."""
+    """A page read that yields nothing longer, on a post with no body, is a failed try (read again later); a post with
+    a body and a page with nothing longer is unchanged."""
 
     def _kind(self, http: FakeHttp, due: list | None = None, stored: set | None = None) -> GenericRssKind:
         return GenericRssKind(http, stored_urls=lambda urls: set(stored or ()) & set(urls),
@@ -298,8 +294,7 @@ class EmptyReadOfAPostWithNoBodyTests(unittest.IsolatedAsyncioTestCase):
 
 @requires_test_db
 class MovedSourceRowTests(unittest.TestCase):
-    """Decision 6: a source whose posts moved says so on its row (the health row's `moved_to`); nothing
-    is disabled or deleted."""
+    """A source whose posts moved says so on its health row (`moved_to`); nothing is disabled or deleted."""
 
     def setUp(self):
         self.url = db_url()
@@ -365,8 +360,7 @@ class MovedSourceRowTests(unittest.TestCase):
 
 @requires_test_db
 class MovedClassicTests(unittest.TestCase):
-    """Decision 1: Classics count a page that moved once, as the post stored where it moved (a full run
-    and a batch alike)."""
+    """Classics count a page that moved once, as the post stored where it moved (a full run and a batch alike)."""
 
     def setUp(self):
         import uuid

@@ -1,23 +1,15 @@
-"""Heartbeats (issue 0188): insight-ingestion's loops say they are alive in a file each, in the logs volume both
-containers mount, so its Docker healthcheck and the API's /api/status read the truth instead of grepping /proc for
-a process name (which a hung loop keeps).
+"""Heartbeats: insight-ingestion's loops say they are alive in a file each, in the logs volume both containers mount,
+so its Docker healthcheck and the API's /api/status read the truth (a hung loop keeps its process name).
 
-  - "scheduler": run_scheduler.py's event loop, every BEAT_SECONDS from a task of its own (an ingestion tick may run
-    long; the loop answering is what this says, the ingestion's freshness is /api/status's own check).
-  - "markx": Mark X's job loop (markx/jobs.py Runner), after each look; a look can wait for a job's process up to
-    a decision run and the Labels build after it (HARD_LIMIT each), so its limit is longer. Cleared at the scheduler's start, written only while the loop runs.
+  - "scheduler": run_scheduler.py's event loop, every BEAT_SECONDS from a task of its own.
+  - "markx": Mark X's job loop (markx/jobs.py Runner), after each look; cleared at the scheduler's start, written only
+    while the loop runs.
 
     python -I insight_core/utils/heartbeat.py   # the healthcheck: exit 1 when a heartbeat is stale
 
-0216: a beat may carry its process's own numbers (`stats`: utils/peak.own, {rss_mb, hwm_mb, cpu_s}) on a second line,
-so the scheduler parent's memory and CPU are read by a GET (/api/status, GET /metrics) without touching the process.
-Each API process has a beat too, "api-<pid>", written by the API's supervisor (scripts/api_supervisor.py) for its
-numbers only: no healthcheck reads those.
-`processes()` reads every beat with its numbers. 0233 (0225 #18, ghost processes): the writer of a set of beats owns
-their end: the supervisor writes the beats of uvicorn's processes alive now and removes every other "api-" beat in the
-same step (`only`), so a process that ended (killed by the open-files guard, a restarted worker, the previous
-container's after a restart, uvicorn's own pid beaten before its workers were up) is never listed. Before, the reader
-removed an API beat only an hour (API_GONE) after its last write, and /api/status listed the dead processes till then.
+A beat may carry its process's own numbers (`stats`: utils/peak.own) on a second line, read by `processes()` for
+/api/status and /metrics. Each API process has a beat too, "api-<pid>", written by scripts/api_supervisor.py for its
+numbers only; the writer of a set of beats owns their end (`only` removes the beats of processes that ended).
 
 Standard library only, and no import of insight_core: the healthcheck starts a Python each minute.
 """
@@ -45,7 +37,7 @@ def _path(name: str) -> str:
 
 
 def beat(name: str, now: Optional[float] = None, stats: Optional[Dict[str, Any]] = None) -> None:
-    """`name` is alive now; 0216: with its process's own numbers (`stats`, one JSON line). Never raises (a full disk
+    """`name` is alive now; with its process's own numbers (`stats`, one JSON line). Never raises (a full disk
     never stops a loop)."""
     try:
         os.makedirs(folder(), exist_ok=True)
@@ -97,7 +89,7 @@ def ages(now: Optional[float] = None) -> Dict[str, Optional[float]]:
 
 
 def only(prefix: str, names: Any) -> int:
-    """0233: the beats named `prefix`... other than `names` removed (their processes ended): how many. The writer of
+    """The beats named `prefix`... other than `names` removed (their processes ended): how many. The writer of
     those beats calls it with the names it just wrote. Never raises."""
     keep = set(names)
     gone = 0
@@ -117,8 +109,8 @@ def only(prefix: str, names: Any) -> int:
 
 
 def processes(now: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
-    """0216: every beat in the folder, {name: {age, rss_mb, hwm_mb, cpu_s}} (the numbers its process wrote; only `age`
-    for a beat without): the loops' and each API process's ("api-<pid>"; 0233: only the live ones, `only`)."""
+    """Every beat in the folder, {name: {age, rss_mb, hwm_mb, cpu_s}} (the numbers its process wrote; only `age` for a
+    beat without): the loops' and each live API process's ("api-<pid>")."""
     now = time.time() if now is None else now
     out: Dict[str, Dict[str, Any]] = {}
     try:

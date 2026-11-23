@@ -1,13 +1,8 @@
-"""v10.17 (issue 0186): no API request reads the whole entity book. The News page read it twice a load (250k entities
-on the server, 20 s), the entity, post and story pages, Discover's main source and the entity queue once each. A
-request asks a page's book (identity.lazy_book) for what it shows; only the jobs (the decision run's stages, the
-planners, the command line) read the whole book. Two guards, so a new route that reads it fails here:
-
-  - every call of identity.load_book (and of read_ents without ids, the whole read) is in a job function listed in
-    JOBS, read from the source;
-  - every GET route of the app (its OpenAPI paths), and the owner's entity answers, run over a seeded world with
-    load_book and the whole read recording: none is called.
-Invented names only; a _test database."""
+"""No API request reads the whole entity book (0186): a request asks a page's book (identity.lazy_book) for what it
+shows; only the jobs (the decision run's stages, the planners, the command line) read the whole book. Two guards, so
+a new route that reads it fails here: every identity.load_book call (and read_ents without ids) is in a job listed in
+JOBS, read from the source; and every GET route of the app, plus the owner's entity answers, run over a seeded world
+with those reads recording: none is called. Invented names; a _test database."""
 from __future__ import annotations
 
 import ast
@@ -68,9 +63,8 @@ def whole_reads():
 
 
 def forget_voice_suggestions():
-    """GET /api/voices/suggestions computes the suggestions in the background and keeps them, committed, for a day:
-    a later module's suggestions() would read those (its own new sources not in them) instead of computing again.
-    Wait for that run, drop the route's service and the kept suggestions."""
+    """GET /api/voices/suggestions keeps its background answer, committed, for a day, which a later module would read
+    instead of computing: wait for that run, drop the route's service and the kept suggestions."""
     import psycopg
     from insight_core.routers import voices as route
     from insight_core.services.voices_service import SUGGESTIONS_KEY

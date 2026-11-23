@@ -1,23 +1,10 @@
 """telegram_rss: Telegram channels through an RSS bridge (tg.i-c-a.su, the self-hosted one).
 
-The bridge answers "Too many requests" (FLOOD_WAIT) when paged quickly, so live pages are
-rate limited too (live_pages_rate_limited) and a live fetch reads only the pages it needs
-for `limit`. That JSON answer is raised as HttpError(status=429), so the caller slows down. The source URL's query (e.g. ?limit=50, the bridge's page size) is kept on
-every page URL.
-
-The bridge dates an edited post by its edit (issue 0135: posted 2 Sep, shown 20 Sep). A channel's
-message numbers grow with the time each was posted, so a post dated after a newer-numbered post
-carries an edit time: it takes the newest date it can have, the earliest date of the posts numbered
-after it (message_order_dates), and keeps the bridge's in metadata.bridge_date. The MTProto path
-(telegram_mtproto) reads Telegram's own message date, never the edit date.
-
-A forwarded message's item carries the bridge's forward header as <source url="https://t.me/<channel>/<post>">
-title</source> (issue 0178); it is kept as metadata.forwarded_from {username, name, post, url} (forwarded_from), the
-MTProto adapter's shape, so Mark X's voice rule (voice.counted_source) can match the channel's account.
-
-The bridge the Add-source dialog builds a channel's address on (issue 0135): TELEGRAM_RSS_HOSTS, a
-comma list of hosts or origins, the first one used ("telegram.local" when unset; set and empty: none,
-and the dialog says so). Every host listed is read as a bridge, beside the known ones.
+The bridge answers its flood limit as JSON when paged quickly: raised as HttpError(status=429), and live pages are
+rate limited too; a live fetch reads only the pages `limit` needs. The source URL's query (?limit=N) is kept on every
+page. The bridge dates an edited post by its edit, so dates are put back in message order (message_order_dates,
+the bridge's kept in metadata.bridge_date). A forward's <source> becomes metadata.forwarded_from in the MTProto
+shape. TELEGRAM_RSS_HOSTS lists the bridges (the first builds new addresses; set and empty: none).
 """
 from __future__ import annotations
 
@@ -62,8 +49,8 @@ def configured_bridges(env: Mapping[str, str] = os.environ) -> Optional[List[str
 
 
 def bridge_origin(env: Mapping[str, str] = os.environ) -> Optional[str]:
-    """The bridge a channel's address is built on: the first configured, DEFAULT_BRIDGE when
-    TELEGRAM_RSS_HOSTS is unset, None when it is set and empty (no bridge)."""
+    """The bridge a channel's address is built on: the first configured, DEFAULT_BRIDGE when unset, None when set
+    and empty."""
     bridges = configured_bridges(env)
     if bridges is None:
         return DEFAULT_BRIDGE
@@ -76,10 +63,9 @@ TELEGRAM_RSS_HOSTS = frozenset({*KNOWN_BRIDGE_HOSTS,
 
 
 def message_order_dates(posts: List[Dict[str, Any]], newer: Optional[datetime] = None) -> Optional[datetime]:
-    """Dates the bridge gave as an edit time put back in message order (issue 0135), in place: a post
-    dated after a post numbered after it takes the earliest date of those (`newer`: the earliest date
-    of the posts numbered after this page's), its bridge date kept in metadata.bridge_date. Returns
-    the earliest date of the page and the posts after it, for the next (older) page."""
+    """Edit-time dates put back in message order, in place: a post dated after a higher-numbered post takes the
+    earliest date of those (`newer`: from the newer pages), its bridge date kept in metadata.bridge_date. Returns the
+    earliest date so far, for the next (older) page."""
     floor = newer
     for post in sorted(posts, key=lambda p: int(p.get("external_id") or 0), reverse=True):
         date = post.get("date")
@@ -101,18 +87,15 @@ TELEGRAM_RSS_PROFILE = PolitenessProfile(
 )
 
 CANONICAL_RE = re.compile(r"^https://t\.me/(?P<username>[^/]+)/(?P<post_id>\d+)$")
-# The bridge's forward (issue 0178): <source url="https://t.me/<channel>/<post>">Channel title</source>, the
-# channel's username when it has one, else its numeric id (a private channel: no account to match).
+# The bridge's forward: <source url="https://t.me/<channel>/<post>">Channel title</source>, a username or a numeric id.
 FORWARD_RE = re.compile(r"^https?://(?:t|telegram)\.me/(?:s/)?(?P<channel>[A-Za-z0-9_]+)/(?P<post>\d+)/?(?:[?#].*)?$")
 USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
 
 
 def forwarded_from(origin: Optional[Mapping[str, Any]], own: str = "") -> Optional[Dict[str, Any]]:
-    """A bridge item's forward header (its <source>, parsing.rss_source) as metadata.forwarded_from, the shape
-    the MTProto adapter stores: {username, name, post, url} (username: the channel's, so Pairing's voice rule
-    matches t.me/<username>, Mark IX's account form), {channel_id, name, post, url} for a channel known by id
-    only. `name` is the channel's title, else "@username". None for no forward, one from the channel itself
-    (`own`, its username), or a source that is no Telegram post."""
+    """A bridge item's forward header (parsing.rss_source) as metadata.forwarded_from, the MTProto shape:
+    {username | channel_id, name, post, url}, `name` the title else "@username". None for no forward, a forward from
+    the channel itself (`own`), or a source that is no Telegram post."""
     if not origin:
         return None
     match = FORWARD_RE.match(str(origin.get("url") or "").strip())
@@ -135,7 +118,7 @@ def forwarded_from(origin: Optional[Mapping[str, Any]], own: str = "") -> Option
 
 class TelegramRssKind(BaseKind):
     name = "telegram_rss"
-    chronological = True   # newest first: an archive back to a date stops past it (issue 0130 C)
+    chronological = True   # newest first: an archive back to a date stops past it
     available_basis = "upper_bound"   # the newest post number; deleted posts still count
     profile = TELEGRAM_RSS_PROFILE
 
@@ -190,7 +173,7 @@ class TelegramRssKind(BaseKind):
         collected = initial_collected
         pages_fetched = initial_pages
         page = max(1, start_page)
-        newer: Optional[datetime] = None   # the earliest date of the pages read so far (issue 0135)
+        newer: Optional[datetime] = None   # the earliest date of the pages read so far
 
         while collected < target:
             page_posts = await self.fetch_page(source_url, page)
@@ -236,7 +219,7 @@ class TelegramRssKind(BaseKind):
             payload = json.loads(body)
             errors = payload.get("errors", payload)
             if "too many requests" in str(errors).lower():
-                # The bridge answers its flood limit as a JSON body, not a 429 (issue 0016).
+                # the bridge answers its flood limit as a JSON body, not a 429
                 raise HttpError(f"HTTP 429 from {page_url(source_url, page)}: {errors}", status=429)
             raise ValueError(errors)
         origin = parsing.origin_from_source(source_url, parsing.TELEGRAM_BASE_URL)

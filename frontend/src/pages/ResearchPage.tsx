@@ -244,10 +244,8 @@ function Start() {
 }
 
 /**
- * Research (issue 0162, Mark X): `/research` starts one (a textarea: a link, a name, a pasted post or a question;
- * `?seed=` fills it), `/research/:runId` is a run's page, kept: In INSIGHT, the same announcement elsewhere, the
- * maker (with "These are <name>: yes / no"), channels to follow (Follow / Not this one), papers, discussion found, and
- * what could not be read and why; Watch this makes a track of it; Run again shows what is new.
+ * Research (Mark X): `/research` starts one (a link, a name, a pasted post or a question; `?seed=` fills it),
+ * `/research/:runId` is a run's page, kept. Watch this makes a track of it; Run again shows what is new.
  */
 export default function ResearchPage() {
   const { runId } = useParams();

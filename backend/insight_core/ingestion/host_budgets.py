@@ -1,40 +1,13 @@
-"""Each host's budget, learned from the limits an archive meets (issue 0107).
+"""Each host's budget (N requests per M-minute window), learned from the limits an archive meets (0107).
 
-A host that limits us (HTTP 429) usually allows N requests per window of M minutes and then
-refuses until the window refills (a self-hosted bridge whose upstream sessions ran out, a site's
-API quota). 0016's learned gap only doubles after a 429; it never learns N per M, so an archive
-spends the budget as fast as the floor allows and hits the wall. This module learns it.
-
-A measure is taken over one busy stretch:
-- **the window's budget**: the requests that went through from a recovery to the next limit. A
-  recovery is the first success after a limit, or an archive's start (provisional: the window may
-  already be partly spent, which only makes that measure smaller);
-- **the window's length**: from that recovery to the next one. Not from the 429 to the first
-  success: that is the window minus the time spent using it, so pacing to it would hit the limit
-  again.
-
-Only archives take measures (they ask continuously, so a stretch is busy); a live fetch in the
-same process only counts against the stretch an archive is measuring. An hourly fetch alone is no
-busy window. Requests made by another process are not counted, so a measure can only come out
-smaller than the host allows, never larger.
-
-Once one window is measured (issue 0107's follow-up), a later limit is measured from the start of the
-window it hit, not from the stretch's: that window began with the request its budget's count back (the
-host allowed that many in it), so a stretch slower than the host allows, over several windows, still
-measures one window. The archive's wait then aims at that window's refill (`refill_wait`): each
-measure brackets the window between its latest refusal and its recovery, and the wait goes PROBE_S
-past the latest refusal known, at most to the narrowest recovery measured; a refusal past that falls
-back to the 5, 10, 20, 40 min ladder (the host allows less now). So the second measure is within
-PROBE_S of the window, where the ladder overshot it by up to its last wait.
-
-After LEARN_AFTER measures, an archive paces to ARCHIVE_SHARE of the budget per window: the fewest
-requests measured, over the narrowest window of those measures when their brackets agree (every
-refusal before every recovery), else the slowest measure. The rest is left for the live fetches of
-that host. Measures older than MEASURE_MAX_AGE are forgotten: the host may allow more by then (a
-bridge given more sessions).
-
-Kept per host in system_settings (`host_budget:<host>`) by DbHostBudgetStore (ports.py), so the
-API's archive and the scheduler's continuation of it measure the same host together.
+The learned gap (gates) only doubles after a 429; this learns N per M. A measure is one busy stretch: the budget is
+the requests through from a recovery (first success after a limit, or an archive's start) to the next limit; the
+window is recovery to recovery (not 429 to success, which would undershoot). Only archives take measures; live
+fetches in the same process only count; other processes' requests are unseen, so a measure can only be smaller
+than the host allows. Once a window is known, later limits are measured from that window's start and the wait aims
+at its refill (`refill_wait`). After LEARN_AFTER measures an archive paces to ARCHIVE_SHARE of the budget; measures
+older than MEASURE_MAX_AGE are forgotten. Kept per host in system_settings (`host_budget:<host>`) by
+DbHostBudgetStore, shared by the API's archive and the scheduler's continuation of it.
 """
 from __future__ import annotations
 
@@ -122,9 +95,8 @@ def _fresh(record: Optional[Record], now: datetime) -> List[Record]:
 
 
 def _budget(host: str, record: Optional[Record], now: datetime) -> Optional[LearnedBudget]:
-    """What the record's fresh measures give, or None when it has none: the fewest requests measured, over
-    the narrowest window of those measures when each one's latest refusal came before each one's recovery
-    (one window, bracketed ever closer); else the slowest measure (the host changed)."""
+    """What the record's fresh measures give, or None: the fewest requests over the narrowest window when every
+    refusal came before every recovery (one window, bracketed); else the slowest measure (the host changed)."""
     measures = _fresh(record, now)
     if not measures:
         return None
@@ -188,7 +160,7 @@ class HostBudgets:
             return None
         now = self.clock()
         measures = list(record.get("measures") or [])
-        # From the start of the window the limit hit (the stretch's recovery unless one window was known).
+        # from the start of the window the limit hit (the stretch's recovery unless one window was known)
         started = _parse(record.get("window_started")) or _parse(record.get("recovered_at"))
         refused, budget = _parse(record.get("refused_at")), record.get("budget")
         measured = started is not None and isinstance(budget, int) and budget >= 1
@@ -219,17 +191,15 @@ class HostBudgets:
         budget, started = (count[1], record.get("recovered_at")) if ours else (None, None)
         known = _budget(host, record, now)
         if ours and known is not None and len(count[2]) >= known.requests:
-            # The window it hit began with the request its budget's count back (issue 0107's follow-up).
+            # the window it hit began with the request its budget's count back
             budget, started = known.requests, _iso(count[2][-known.requests])
         await self._save(host, {**record, "limited_at": _iso(now), "budget": budget, "window_started": started,
                                 "refused_at": _iso(now)})
 
     def refill_wait(self, host: str) -> Optional[float]:
-        """Seconds until the refill of the window a limit hit, once one window is measured (issue 0107's
-        follow-up): the window's start, plus PROBE_S past the latest refusal known (this limit's or a
-        measure's), at most the narrowest window measured; at least MIN_WAIT_S. None for an unmeasured host,
-        a window whose start this process didn't see, or a refusal already past the window measured (the
-        5, 10, 20, 40 min ladder then: the host allows less now)."""
+        """Seconds until the refill of the window a limit hit, once one window is measured: PROBE_S past the latest
+        refusal known, at most the narrowest window measured, at least MIN_WAIT_S. None for an unmeasured host, an
+        unseen window start, or a refusal past the measured window (the caller's wait ladder then)."""
         record = self._records.get(host) or {}
         now = self.clock()
         known = _budget(host, record, now)

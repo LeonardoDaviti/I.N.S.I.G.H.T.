@@ -1,12 +1,9 @@
-"""0148 (Stealth v10.14)'s routes: the track scout (Shadow; the app's own; 404 when Mark X is off, as every /api/markx
-path). Included into markx/api.py's router.
+"""The track scout's routes (the app's own; 404 when Mark X is off). Included into markx/api.py's router.
 
-GET  /api/markx/tracks/{id}/scout                 the Topic view's "Sources for this track" block (markx/scout.page);
-                                                  a run with reads or judge questions due is advanced in the background
-POST /api/markx/tracks/{id}/scout                 the owner's "Find sources for this track": a run started, its reads in
-                                                  the background -> {id, candidates}
-GET  /api/markx/scout/suggestions                 every track's suggested sources (Discover's rows under the track's name)
-POST /api/markx/scout/candidates/{id}/follow      {as: active | passive} -> {source_id, as} (the add path's address)
+GET  /api/markx/tracks/{id}/scout                 the "Sources for this track" block; a due run advances in the background
+POST /api/markx/tracks/{id}/scout                 start a run, its reads in the background -> {id, candidates}
+GET  /api/markx/scout/suggestions                 every track's suggested sources
+POST /api/markx/scout/candidates/{id}/follow      {as: active | passive} -> {source_id, as}
 POST /api/markx/scout/candidates/{id}/not         "Not this one" -> {answer}
 """
 from __future__ import annotations

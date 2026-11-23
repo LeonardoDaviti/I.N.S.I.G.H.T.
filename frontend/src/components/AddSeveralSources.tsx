@@ -23,8 +23,8 @@ const INSIGHT_OPML = 'https://insight.local/opml';
 const MAX_LINES = 50;
 const AT_ONCE = 4;
 
-/** Every outline with an address, and the track to suggest: the name of the one parent they
- *  all share, if they do. Null when the file holds no outlines with an address. */
+/** Every outline with an address, and the track to suggest (the name of the one parent they all share, if any);
+ *  null when the file holds no outlines with an address. */
 function readOpml(text: string): { lines: { address: string; imported: Imported }[]; track: string | null } | null {
   const doc = new DOMParser().parseFromString(text, 'text/xml');
   if (doc.getElementsByTagName('parsererror').length) return null;
@@ -54,8 +54,7 @@ type Found =
   | { kind: 'direct' }
   | { kind: 'unchecked' }
   | { kind: 'page-looking' }
-  // followed: a site's blog or news page offered for its home page (issue 0041); homepage: the
-  // home page itself, the last resort.
+  // followed: a site's blog or news page offered for its home page; homepage: the home page itself, the last resort
   | { kind: 'page'; prefix: string; found: number; followed?: string; homepage?: boolean }
   | { kind: 'already'; here?: boolean }
   | { kind: 'unreadable' };
@@ -96,11 +95,8 @@ interface AddSeveralSourcesProps {
   onAdded: (added: AddedSource[], close: boolean) => void;
 }
 
-/**
- * Add several sources at once (issue 0035): a paste box (or an OPML file) of addresses, each
- * resolved by the feed finder four at a time; a page without a feed is previewed for page
- * watching. The ticked rows are added with one track for all, if chosen.
- */
+/** Add several sources at once: a paste box (or an OPML file) of addresses, each resolved by the feed finder four at
+ *  a time; a page without a feed is previewed for page watching. The ticked rows are added with one optional track. */
 export default function AddSeveralSources({ existingAddresses, onBack, onClose, onAdded }: AddSeveralSourcesProps) {
   const api = useApi();
   const tracks = useFolders();
@@ -113,7 +109,7 @@ export default function AddSeveralSources({ existingAddresses, onBack, onClose, 
   const [track, setTrack] = useState('');
   const [newTrack, setNewTrack] = useState('');
   const [error, setError] = useState<string | null>(null);
-  // Bumped to drop every answer still on its way (Stop, Cancel, a new list).
+  // bumped to drop every answer still on its way (Stop, Cancel, a new list)
   const run = useRef(0);
   useEffect(() => () => { run.current += 1; }, []);
 
@@ -162,14 +158,14 @@ export default function AddSeveralSources({ existingAddresses, onBack, onClose, 
       const line = list[index];
       const known = imported.get(sameAddress(line));
       if (existing.has(sameAddress(line))) { settle(index, { kind: 'already' }, line); return; }
-      // INSIGHT's own export: the owner chose to follow this page, so it is not looked up again.
+      // INSIGHT's own export: the owner chose to follow this page, so it is not looked up again
       if (known?.pageWatchPrefix !== undefined) { await followPage(index, withScheme(line), known.pageWatchPrefix); return; }
       const finding = await api.findFeed(line);
       if (!live()) return;
       if (!finding.success) settle(index, { kind: 'unchecked' }, line);
       else if ((finding.status === 'feed' || finding.status === 'found') && finding.feeds?.length) settle(index, { kind: 'feed', feeds: finding.feeds }, finding.feeds[0].url);
       else if (finding.status === 'direct') settle(index, { kind: 'direct' }, line);
-      // A home page: the site's blog or news page with the most articles, already previewed.
+      // a home page: the site's blog or news page with the most articles, already previewed
       else if (finding.pages?.length) settle(index, { kind: 'page', prefix: finding.pages[0].prefix, found: finding.pages[0].found, followed: finding.pages[0].url }, finding.pages[0].url);
       else await followPage(index, line, undefined, finding.homepage);
     };
@@ -213,7 +209,7 @@ export default function AddSeveralSources({ existingAddresses, onBack, onClose, 
       const page = found.kind === 'page';
       const address = page ? withScheme(row.chosen) : row.chosen;
       const feedTitle = found.kind === 'feed' ? found.feeds.find((f) => f.url === row.chosen)?.title : undefined;
-      // A site's blog followed keeps the pasted address as its name ("stripe.com").
+      // a site's blog followed keeps the pasted address as its name ("stripe.com")
       const name = (feedTitle || row.imported.name || (found.kind === 'page' && found.followed ? siteName(row.line) : '')).trim();
       const r = await api.addSource({
         platform: 'rss', handle_or_url: address, display_name: name, fetch_delay_seconds: 1,
@@ -234,7 +230,7 @@ export default function AddSeveralSources({ existingAddresses, onBack, onClose, 
   };
 
   const cancel = () => {
-    // Adding: stop after the one in flight; what was added is still handed over (addTicked).
+    // adding: stop after the one in flight; what was added is still handed over (addTicked)
     if (adding) { run.current += 1; return; }
     onClose();
   };

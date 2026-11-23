@@ -1,7 +1,6 @@
-// v10.12.1: a topic track's Stream lists only the posts in the track (the server decides; the reader asks with
-// all_sources=1 for every post of its sources), the toolbar counts its own unread items, a quiet line says how many of
-// its sources' posts are still being judged, and the switch "All posts from its sources" is kept in the URL. A plain
-// folder has no switch. Synthetic data.
+// A topic track's Stream lists only the track's posts (`all_sources=1` asks for every post of its sources), the
+// toolbar counts its own unread items, a quiet line says how many are still being judged, and the switch is kept
+// in the URL. A plain folder has no switch. Synthetic data.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

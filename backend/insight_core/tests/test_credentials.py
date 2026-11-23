@@ -1,8 +1,5 @@
-"""Connections: the encrypted credentials store (Mark IX §10.1).
-
-No network: Substack answers through FakeHttp, Telegram through fake clients. The DB-backed
-classes commit rows to `credentials`, so they only run against a *_test database and wipe
-the table around each test.
+"""Connections: the encrypted credentials store. No network: Substack answers through FakeHttp, Telegram through fake
+clients. The DB-backed classes commit rows to `credentials`, so they only run against a *_test database.
 """
 from __future__ import annotations
 
@@ -222,7 +219,7 @@ class SubstackSeamTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(_credential_notice(object()))
 
     def test_the_health_row_says_paid_posts_are_previews_where_you_dont_pay(self):
-        # Issue 0084: paid_preview (the schedule view) is the newest only_paid post's paywalled.
+        # paid_preview (the schedule view) is the newest only_paid post's paywalled (0084)
         kind = SubstackKind(FakeHttp(), sid=SID)
         self.assertEqual(_kind_reading_notice(kind, {"paid_preview": True}), PREVIEW_NOTICE)
         self.assertEqual(PREVIEW_NOTICE, "Paid posts: preview only (no subscription)")
@@ -452,7 +449,7 @@ class CredentialsServiceTests(unittest.TestCase):
         return next(p for p in listing["providers"] if p["provider"] == provider)
 
     def test_listing_names_the_providers_with_something_to_add(self):
-        # YouTube reads public feeds, so it has no row; Reddit ended its feeds and needs an app (issue 0242).
+        # YouTube reads public feeds, so it has no row; Reddit needs an app (0242)
         listing = self.service.list()
         self.assertEqual([p["provider"] for p in listing["providers"]], ["substack", "telegram", "reddit"])
         sid = self._field(self._provider(listing, "substack"), "sid")
@@ -460,7 +457,7 @@ class CredentialsServiceTests(unittest.TestCase):
         self.assertNotIn("env", sid)
 
     def test_the_reddit_app_is_saved_and_tested_by_asking_a_token(self):
-        # Issue 0242: three fields; Test asks Reddit for an application-only token (FakeHttp, no network).
+        # three fields; Test asks Reddit for an application-only token (FakeHttp, no network)
         from insight_core.ingestion.kinds.reddit import REFUSED_CREDENTIALS, TOKEN_URL
         from insight_core.ingestion.http import HttpError
 
@@ -571,7 +568,7 @@ class CredentialsServiceTests(unittest.TestCase):
         self.assertNotIn("AUTHORISED-SESSION", json.dumps([result, view, self.service.list()]))
 
     def test_the_code_can_reach_another_api_process(self):
-        """0112 Decided 11: two API processes. The code and the password land on a service that never sent it."""
+        """Two API processes: the code and the password land on a service that never sent it."""
         self._with_api()
         self.script["code"] = TelegramPasswordNeeded()
         run(self.service.login_start("+15551234567"))

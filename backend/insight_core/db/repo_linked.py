@@ -1,23 +1,11 @@
-"""Linked, not stored (issue 0084 B, decision 1): per followed source, its own pages that stored posts
-link and that no stored post is.
+"""Linked, not stored: per followed (enabled) source, its own pages that stored posts link and no stored post is.
 
-One function, `linked_not_stored`, for the Archive section's count, the job that fetches them, and
-0114's wanted links (the same set with `since`: only the links of posts published since then). And
-`page_source`, the same rule for one address: the followed source a page you save belongs to (issue 0122).
-
-- **Whose page** a link is: utils/linked_rules.OwnPages, learned from every source's stored posts (the
-  shapes of its post pages on its publication; on a platform, the account it follows, as 0065 reads it).
-  A followed source is an enabled one.
-- **The links**: every stored post's kept links (post_links, not a source's signature), and each post's
-  links to its own publication, which post_links never keeps (linked_rules.own_links, read from the
-  stored HTML), its signature left out.
-- **Not stored**: no post is at that address (normalized_url, or its url normalized when it has none:
-  issue 0129), was moved there (metadata.moved_to, issue 0108), or names it as its canonical address.
-- **One page at two hosts** (issue 0129): a source's page at two of its publications (its platform's
-  address and its own domain) is one page (OwnPages.same_page), counted by its distinct linking posts,
-  at the address OwnPages.preferred puts first; a post of the source stored at either is it stored.
-
-Read only; takes the caller's cursor.
+`linked_not_stored` serves the Archive section's count, the job that fetches them, and wanted links (`since`);
+`page_source` is the same rule for one address. Whose page a link is: utils/linked_rules.OwnPages, learned
+from every source's stored posts. The links: every kept link plus each post's links to its own publication
+(linked_rules.own_links, from stored HTML). Not stored: no post is at the address, moved there or names it as
+canonical. A source's page at two of its publications is one page (OwnPages.same_page). Read only; takes the
+caller's cursor.
 """
 from __future__ import annotations
 
@@ -48,7 +36,7 @@ class LinkedPage:
     posts: int                                # stored posts linking it
     first_linked_at: Optional[datetime]       # the first of them, by its date
     last_linked_at: Optional[datetime]
-    by: Tuple[str, ...] = ()                  # the linking posts (issue 0114: is one of them in a story?)
+    by: Tuple[str, ...] = ()                  # the linking posts
 
 
 def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None,
@@ -62,7 +50,7 @@ def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None
         return {}
     own, addresses, homes = _own_pages(cur, followed)
 
-    # A page is its OwnPages.same_page key: one page at two of a source's publications is one (0129).
+    # a page is its OwnPages.same_page key: one page at two of a source's publications is one
     links: Dict[PageKey, Dict[str, Optional[datetime]]] = defaultdict(dict)   # page -> {linking post: its date}
     forms: Dict[PageKey, Set[str]] = defaultdict(set)                          # page -> its addresses seen
 
@@ -89,8 +77,7 @@ def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None
             for url in urls:
                 if url not in noise:
                     keep(url, post_id, dates[post_id])
-    # Stored: at an address seen, or a post of the source at another of its forms (a page at its own
-    # domain stored, linked at its platform's address).
+    # stored: at an address seen, or a post of the source at another of its forms
     stored = {own.same_page(url) for url in _stored(cur, sorted({url for urls in forms.values() for url in urls}))}
     stored |= {own.same_page(url) for sid in wanted for url in addresses.get(sid, ())}
     out: Dict[str, List[LinkedPage]] = defaultdict(list)
@@ -108,8 +95,7 @@ def linked_not_stored(cur: Cursor, *, source_ids: Optional[Iterable[str]] = None
 
 
 def page_source(cur: Cursor, url: str) -> Optional[str]:
-    """The followed (enabled) source whose post page this address is (OwnPages.owner, the rule above),
-    else None. Issue 0122: a page you save is first looked for under its source."""
+    """The followed (enabled) source whose post page this address is (OwnPages.owner), else None."""
     followed = _followed(cur)
     if not followed or not normalize_url(url):
         return None
@@ -146,8 +132,8 @@ def _own_pages(cur: Cursor, followed: Dict[str, Tuple[str, Optional[str], Option
 
 def _own_links(cur: Cursor, hosts: List[str], since: Optional[datetime]
                ) -> Iterable[Tuple[Dict[str, List[str]], Dict[str, Optional[datetime]]]]:
-    """Per source, ({post: its links to its own publication}, {post: its date}) of the posts on these
-    hosts with HTML, a batch of rows at a time (the HTML stays in the database's pages until read)."""
+    """Per source, ({post: its links to its own publication}, {post: its date}) of the posts on these hosts with
+    HTML, a batch of rows at a time."""
     if not hosts:
         return
     cur.execute(f"""SELECT p.source_id::text, p.id::text, COALESCE(p.normalized_url, p.url), p.content_html, {POST_DATE}
@@ -178,14 +164,13 @@ def _stored(cur: Cursor, urls: List[str]) -> Set[str]:
         return set()
     cur.execute("SELECT normalized_url FROM posts WHERE normalized_url = ANY(%s)", (urls,))
     stored = {url for (url,) in cur.fetchall()}
-    # A post stored with no normalized address (1,146 of 49k on the server's copy, 2026-11-05): its
-    # address, normalized as the links are.
+    # a post stored with no normalized address: its address, normalized as the links are
     wanted = set(urls)
     cur.execute("SELECT url FROM posts WHERE normalized_url IS NULL")
     stored |= {url for (raw,) in cur.fetchall() if (url := normalize_url(raw)) in wanted}
     cur.execute("SELECT metadata->>'moved_to' FROM posts WHERE metadata->>'moved_to' = ANY(%s)", (urls,))
     stored |= {url for (url,) in cur.fetchall()}
-    # A canonical address other than the post's own (128 of 49k posts on the server's copy).
+    # a canonical address other than the post's own
     cur.execute("SELECT canonical_url FROM posts WHERE canonical_url IS DISTINCT FROM normalized_url AND canonical_url <> url")
     stored |= {url for (canonical,) in cur.fetchall() if (url := normalize_url(canonical)) in wanted}
     return stored

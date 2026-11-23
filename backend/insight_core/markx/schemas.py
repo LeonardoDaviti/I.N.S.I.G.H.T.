@@ -1,16 +1,9 @@
-"""Mark X Shadow's task kinds (issue 0086 C): each kind's guide, subject and answer schema.
+"""Mark X's task kinds: each kind's guide, subject and answer schema (KINDS), and the guide switches.
 
-A guide is a file in markx/guides/<id>.md, copied from the prototype (scrubbed: no channel, account or
-subreddit names) and loaded into mx_guides at start by its sha256 (`load_guides`). A changed guide is a
-new id and a new file; an id's body is never edited (mx_guides refuses it).
-
-The answer schemas are JSON Schema, in the subset scripts/markx-worker checks before it posts (type, enum,
-const, required, properties, additionalProperties, items, min/maxItems, min/maxLength, minimum/maximum,
-pattern, anyOf/oneOf). They catch the shape; the checks that read the input (spans, versions, figures,
-cited keys) are the server's, in markx/validate.py.
-
-A new kind (S2's `embed`) adds one entry to KINDS (and a guide file when it has one); nothing else here
-changes. mx_tasks.kind is not checked by the database, so a kind needs no migration.
+A guide is a file markx/guides/<id>.md, loaded into mx_guides by its sha256 (`load_guides`); a changed guide is a
+new id and a new file (an id's body is never edited). The answer schemas are JSON Schema in the subset
+scripts/markx-worker checks before it posts; they catch the shape, and the checks that read the input are
+markx/validate.py's. A new kind is one entry in KINDS (mx_tasks.kind needs no migration).
 """
 from __future__ import annotations
 
@@ -30,37 +23,36 @@ ACTIONS = ["released", "announced", "launched", "acquired", "raised", "published
 
 ENTITY_TYPES = ["org", "person", "model", "product", "software", "paper", "dataset", "event", "place", "law", "other"]
 ENTITY_ROLES = ["subject", "actor", "compared", "predecessor", "venue", "mention"]
-# 0133 (ent-v4): `paper` becomes `document` (a paper, filing, report, forecast, law text, book, video, course); two roles:
-# `source` (the post relays or cites its claim, data or forecast as evidence: an org, a person or a document) and
-# `recommended` (a work the post recommends or reads, not cited as evidence: a document only). ent-v3's sets above
-# stay its schema's.
+# ent-v4's sets: `document` (a paper, filing, report, law text, book, video, course) and two roles: `source` (cited as
+# evidence: an org, a person or a document) and `recommended` (a work recommended, not cited: a document only).
+# ent-v3's sets above stay its schema's.
 ENTITY_TYPES_V4 = ["org", "person", "model", "product", "software", "document", "dataset", "event", "place", "law", "other"]
 ENTITY_ROLES_V4 = ENTITY_ROLES + ["source", "recommended"]
 TYPE_READS = {"paper": "document"}       # a stored ent-v3 type as every reader reads it (no row rewritten)
 
 
 def entity_type(t: Optional[str]) -> Optional[str]:
-    """0133: a stored type as it is read (ent-v3's `paper` is a `document`)."""
+    """A stored type as it is read (ent-v3's `paper` is a `document`)."""
     return TYPE_READS.get(t, t) if t else t
 
 
 def stored_types(types: Any) -> list:
-    """0133: the stored values of these read types (`document` is also ent-v3's `paper`), for a filter."""
+    """The stored values of these read types (`document` is also ent-v3's `paper`), for a filter."""
     out = list(types)
     out += [k for k, v in TYPE_READS.items() if v in out and k not in out]
     return out
 ENTITY_RELATIONS = ["released", "announced", "acquired", "invested_in", "partnered_with", "sued", "hired", "joined",
                     "left", "leads", "based_on", "beats", "part_of",
-                    "published"]   # v10.10.1: ent-v4.2's guide asks for it (a issues or publishes document b)
+                    "published"]   # a issues or publishes document b
 MAX_ENTITIES = 20
 
 # The judge's seven relations (judge-*-v1, judge-story-v1, connect-v1), and those that make a post "about" a story.
 RELATIONS = ["same_event", "development", "reaction", "mention", "digest_item", "different", "cant_tell"]
 ABOUT = ["same_event", "development", "reaction"]
 
-READ_HEADLINE_WORDS = 25     # 0086 C (the guide asks for 20)
+READ_HEADLINE_WORDS = 25     # the guide asks for 20
 STORY_HEADLINE_WORDS = 14    # card and headline: what the guides ask
-HEADLINE_WORDS = STORY_HEADLINE_WORDS + 2   # the headline check's slack, as readings have (0121 Decided 2)
+HEADLINE_WORDS = STORY_HEADLINE_WORDS + 2   # the headline check's slack, as readings have
 BRIEFING_LINES = (5, 7)      # fewer when the day has fewer stories
 TRANSLATE_LENGTH = (0.5, 2.0)
 
@@ -90,7 +82,7 @@ READ_SCHEMA = {
     },
 }
 
-# 0127 (v10.3): read-v3, a reading plus the post's event type and origin (the duplicates fold's input, markx/folds.py).
+# read-v3: a reading plus the post's event type and origin (the duplicates fold's input, markx/folds.py).
 EVENT_TYPES = ["model_release", "product_release", "research_result", "business_event", "policy_legal", "incident",
                "public_statement", "promotion_event", "leak_rumour", "opinion_analysis", "tutorial_explainer", "digest",
                "community_post", "other"]
@@ -118,8 +110,8 @@ ENTITIES_SCHEMA = {
     },
 }
 
-# 0133: ent-v4's answer: ent-v3's shape with the new sets, and `by` (a document's publisher or author, as the post
-# names it: identity makes it a `published` edge).
+# ent-v4's answer: ent-v3's shape with the new sets, and `by` (a document's publisher or author, as the post names
+# it: identity makes it a `published` edge).
 ENTITIES_V4_SCHEMA = {
     "type": "object",
     "required": ["entities"],
@@ -132,9 +124,8 @@ ENTITIES_V4_SCHEMA = {
     },
 }
 
-# 0133 v4.2: the second question (cite-v1): every document and cited org or person, nothing else; at most 30. A
-# document is a source, recommended or subject (a subject is dropped in the merge, ent42.merge_cite); an org or a
-# person is a source only (validate._cite).
+# the second question (cite-v1): every document and cited org or person, at most 30. A document is a source,
+# recommended or subject (a subject is dropped in ent42.merge_cite); an org or person is a source only.
 CITE_TYPES = ["document", "org", "person"]
 CITE_ROLES = ["source", "recommended", "subject"]
 CITE_MAX = 30
@@ -148,9 +139,9 @@ CITE_SCHEMA = {
                            "type": {"enum": CITE_TYPES}, "role": {"enum": CITE_ROLES}, "by": _STR_OR_NULL}}}},
 }
 
-# 0212 (v10.21): ent-v5, one reading of a post: read-v3's reading (`reading`, without `main`), read-v2's `main` (as
-# `event`), ent-v4.2's entities, and the claims slot (0152: not asked yet). A later window's `reading` and `event` are
-# null (validate sets them so). Entities may leave out the fields with no value (read as null).
+# ent-v5, one reading of a post: read-v3's reading (`reading`, without `main`), read-v2's `main` (as `event`),
+# ent-v4.2's entities, and the claims slot (not asked yet). A later window's `reading` and `event` are null.
+# Entities may leave out the fields with no value (read as null).
 READING_V5_SCHEMA = {
     "type": "object",
     "required": ["reading", "event", "entities"],
@@ -166,6 +157,31 @@ READING_V5_SCHEMA = {
     },
 }
 
+# v10.42 (ent-v6): the reading's `subtype`, the finer kind of a release, a technical post or an incident (a new model
+# vs a quant or adapter of an existing one, a method vs a benchmark, ...), each allowed only under its event types; null
+# for every other type. validate._reading5 refuses a subtype its event type does not allow.
+SUBTYPE_TYPES: Dict[str, Tuple[str, ...]] = {
+    "new_model": ("model_release",),
+    "build": ("model_release", "product_release"),
+    "dataset": ("model_release", "research_result"),
+    "product": ("product_release",),
+    "software": ("product_release",),
+    "method": ("research_result", "tutorial_explainer", "product_release", "model_release"),
+    "benchmark": ("research_result",),
+    "finding": ("research_result",),
+    "guide": ("tutorial_explainer",),
+    "security": ("incident",),
+    "failure": ("incident",),
+}
+SUBTYPES = list(SUBTYPE_TYPES)
+_V5_READING = READING_V5_SCHEMA["properties"]["reading"]["anyOf"][1]
+READING_V6_SCHEMA = {
+    **READING_V5_SCHEMA,
+    "properties": {**READING_V5_SCHEMA["properties"], "reading": {"anyOf": [{"type": "null"}, {
+        "type": "object", "required": _V5_READING["required"] + ["subtype"],
+        "properties": {**_V5_READING["properties"], "subtype": {"enum": SUBTYPES + [None]}}}]}},
+}
+
 JUDGE_SCHEMA = {
     "type": "object",
     "required": ["relation", "confidence"],
@@ -173,10 +189,9 @@ JUDGE_SCHEMA = {
                    "reason": _STR},
 }
 
-# 0258 (v10.30): judge-read-v2's answer (join, pair) also quotes the POST it judged: `post_quote`, a short verbatim
-# phrase of the post's title or text its verdict rests on, and for an "about" verdict optionally `story_quote`, one of
-# the STORY's. validate._judge_read checks each is in its own block of this question: an answer written from another
-# question of its batch quotes a post this one does not show, and is refused (asked again by the retry path).
+# judge-read-v2 (join, pair) also quotes the POST it judged: `post_quote`, a short verbatim phrase its verdict rests on,
+# and for "about" optionally `story_quote`. validate._judge_read checks each is in its own block of this question: an
+# answer written from another question of its batch quotes a post this one does not show, and is refused.
 JUDGE_QUOTE_CHARS = 300
 JUDGE_V2_SCHEMA = {
     "type": "object",
@@ -216,7 +231,7 @@ EMBED_SCHEMA = {
     "properties": {"vector": {"type": "string", "minLength": 2732, "maxLength": 2732}},
 }
 
-# 0119 A1: the entity identity judge (alias-v1, the lab's eid_judge.md) and the collision judge (collide-v1, eid_collide.md v4).
+# the entity identity judge (alias-v1) and the collision judge (collide-v1).
 ALIAS_RELATIONS = ["same", "other_version", "part", "different", "cant_tell"]
 ALIAS_SCHEMA = {
     "type": "object",
@@ -225,7 +240,7 @@ ALIAS_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
-# 0201 (v10.18): alias-v2, the question for pairs alias-v1 left unsure: each side's facts first, then the relation.
+# alias-v2, the question for pairs alias-v1 left unsure: each side's facts first, then the relation.
 _SIDE = {"type": "object", "properties": {"what": _STR, "kind": {"type": ["string", "null"]},
                                          "maker": {"type": ["string", "null"]}}}
 ALIAS_V2_SCHEMA = {
@@ -235,7 +250,7 @@ ALIAS_V2_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
-# 0165 B: two entities of one maker, one older, that shared evidence says may be one thing renamed (rename-v1).
+# two entities of one maker, one older, that shared evidence says may be one thing renamed (rename-v1).
 RENAME_RELATIONS = ["renamed", "successor", "part", "different", "cant_tell"]
 RENAME_SCHEMA = {
     "type": "object",
@@ -244,7 +259,7 @@ RENAME_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
-# 0165 C: what happened to a thing in a story about it, a stop on its timeline (stop-v1, markx/stops.py).
+# what happened to a thing in a story about it, a stop on its timeline (stop-v1, markx/stops.py).
 STOP_KINDS = ["teaser", "preview", "launch", "availability", "update", "weights", "benchmark", "ranking", "adoption",
               "research", "incident", "deal", "analysis", "other"]
 STOP_SCHEMA = {
@@ -253,7 +268,7 @@ STOP_SCHEMA = {
     "properties": {"evidence": _STR, "about": {"type": "boolean"}, "stop": {"enum": STOP_KINDS}},
 }
 
-COLLIDE_MENTIONS = 8          # mentions a collision question shows (the lab's MAXM)
+COLLIDE_MENTIONS = 8          # mentions a collision question shows
 COLLIDE_RUNS = 3              # asked three times; a split two runs make goes to the queue (never applied by itself)
 COLLIDE_SCHEMA = {
     "type": "object",
@@ -270,8 +285,8 @@ COLLIDE_SCHEMA = {
     },
 }
 
-# 0184 (v10.18): collide-v2, the same question with each sense's identity facts (markx/entity_facts.py): a superset
-# of collide-v1's answer (its readers read `m` and `what` as before).
+# collide-v2, the same question with each sense's identity facts (markx/entity_facts.py): a superset of collide-v1's
+# answer.
 FACT_KINDS = ["person", "org", "model", "product", "software", "dataset", "paper", "event", "place", "project", "law",
               "other"]
 COLLIDE2_SCHEMA = {
@@ -292,9 +307,8 @@ COLLIDE2_SCHEMA = {
     },
 }
 
-# 0250 (v10.28): the collide kind deepened for a bare name several makers state (collide-makers-v1, a guide variant):
-# two maker groups of one name, each with its samples, types, dates and co-mentioned names: one thing whose maker
-# names differ (an owner change, a founder, a foundation, a legal name) or different things sharing the name?
+# collide-makers-v1 (a guide variant): two maker groups of one bare name, each with its samples, types, dates and
+# co-mentioned names: one thing whose maker names differ, or different things sharing the name?
 COLLIDE_MAKERS_VERDICTS = ["same", "different", "cant_tell"]
 _PAIR_SIDE = {"type": "object", "properties": {"what": _STR, "kind": {"enum": FACT_KINDS}}}
 COLLIDE_MAKERS_SCHEMA = {
@@ -306,10 +320,8 @@ COLLIDE_MAKERS_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
 }
 
-# 0119 B (0120 v3.2f): what each member of a story adds (persp-v1, the lab's persp_v32f_frozen.md) and the sheet's
-# merged facts (persp-merge-v1, persp_merge_v1.md). Loose, as the lab's answer check was (members with a known label;
-# groups as a list): a fact without its span, a line number out of range, a member not asked are the final checks'
-# to drop (markx/perspectives.py), never a reason to ask again.
+# what each member of a story adds (persp-v1) and the sheet's merged facts (persp-merge-v1). Loose: a fact without
+# its span, a line number out of range, a member not asked are dropped by markx/perspectives.py, never asked again.
 PERSPECTIVE_LABELS = ["original", "new_facts", "opinion", "same", "not_this_story"]
 _BOOL_OR_NULL = {"type": ["boolean", "null"]}
 PERSPECTIVE_SCHEMA = {
@@ -337,8 +349,8 @@ SHEET_SCHEMA = {
                        "correction": _BOOL_OR_NULL}}}},
 }
 
-# 0273: where a story's sources differ (dispute-v1). Loose as the sheet's: a side whose lines or quote the code cannot
-# check is dropped by perspectives.disputes_of, never a reason to ask again.
+# where a story's sources differ (dispute-v1). Loose as the sheet's: a side whose lines or quote the code cannot check
+# is dropped by perspectives.disputes_of, never asked again.
 DISPUTE_SCHEMA = {
     "type": "object",
     "required": ["disputes"],
@@ -350,7 +362,7 @@ DISPUTE_SCHEMA = {
                            "quote": _STR_OR_NULL}}}}}}},
 }
 
-# 0131 (Stalker's first edges): how a newer post relates to an older one (relate-v1, the lab's frozen G2 judge v3).
+# how a newer post relates to an older one (relate-v1).
 RELATE_RELATIONS = ["same_event", "follows_up", "next_version", "builds_on", "refers_back", "background", "unrelated"]
 RELATE_SCHEMA = {
     "type": "object",
@@ -359,9 +371,9 @@ RELATE_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 100}},
 }
 
-# 0219: how a later story about a thing relates to an earlier story about the same thing (chain-v1, markx/graph.py's
-# story chains). next_version is never one of them: a successor is an entity relation, by rule (0131).
-# v10.38 (chain-v3): same_release also covers sibling things one release launches together (graph.chain_siblings).
+# how a later story about a thing relates to an earlier one about the same thing (chain, markx/graph.py's story
+# chains). next_version is never one of them: a successor is an entity relation, by rule. same_release also covers
+# sibling things one release launches together (graph.chain_siblings).
 CHAIN_RELATIONS = ["same_release", "same_event", "follows_up", "development", "reaction", "builds_on", "unrelated"]
 CHAIN_SCHEMA = {
     "type": "object",
@@ -371,8 +383,8 @@ CHAIN_SCHEMA = {
 }
 
 
-# 0234 (v10.25): what a post says of a thing and the predecessor its reading names (derive-v1, markx/graph.py's
-# based_on edges from new posts): `derived` alone makes the edge.
+# what a post says of a thing and the predecessor its reading names (derive-v1, graph.py's based_on edges): `derived`
+# alone makes the edge.
 DERIVE_RELATIONS = ["derived", "replaces", "compared", "other"]
 DERIVE_SCHEMA = {
     "type": "object",
@@ -381,7 +393,7 @@ DERIVE_SCHEMA = {
                    "confidence": {"type": "number", "minimum": 0, "maximum": 100}},
 }
 
-# 0136 (back in the news): a verdict per new post (back-v1, the lab's frozen back_v3c.md); code makes the candidate's.
+# back in the news: a verdict per new post (back-v1); code makes the candidate's.
 BACK_VERDICTS = ["development", "retold", "related", "unrelated"]
 BACK_SCHEMA = {
     "type": "object",
@@ -399,9 +411,8 @@ TRANSLATE_SCHEMA = {
     "properties": {"title_en": _STR, "text_en": _STR},
 }
 
-# 0132 B: a source's stance and framing (stance-v1, the lab's sources_bias_v1.md). Loose on the quotes: a quote not
-# found in its post is the grounding's to drop (validate.stance_grounded: a pattern keeps 2+ exact quotes from 2
-# posts, or isn't shown), never a reason to ask again.
+# a source's stance and framing (stance-v1). Loose on the quotes: a quote not found in its post is dropped by
+# validate.stance_grounded, never asked again.
 STANCE_KINDS = ["stance", "framing", "selection", "tone", "interest"]
 STANCE_VOICES = ["official", "staff_or_insider", "analyst", "commentator", "aggregator", "news_outlet", "unclear"]
 STANCE_PATTERNS = 4
@@ -422,8 +433,7 @@ STANCE_SCHEMA = {
     },
 }
 
-# 0145 (tracks as topics): the judge's verdict on one post for one track (track-v1; 0207: track-v2). The checks that read the input (one
-# line) are validate's. (0145's subtopics-v1 proposals are replaced by 0207's clustering; their rows are kept.)
+# the judge's verdict on one post for one track (track-v1, v2). The checks that read the input are validate's.
 TRACK_WHY_CHARS = 300
 TRACK_SCHEMA = {
     "type": "object",
@@ -431,20 +441,19 @@ TRACK_SCHEMA = {
     "properties": {"in": {"type": "boolean"}, "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                    "subtopic": _STR_OR_NULL, "why": {"type": "string", "minLength": 1}},
 }
-# v10.41 (track-v3, track-check-v2): the verdict follows a fit stated before it. `subject` the post's main subject,
-# `fits` whether `Belongs:` asks for it, `matches` the words of `Belongs:` it is an instance of (copied), `excluded` the
-# words of `Not:` it is (copied). validate._track_v3 checks that `in` agrees with them and that the quotes are the
-# question's own: a verdict that contradicts its own stated fit is no verdict (asked again, then invalid; never counted).
+# track-v3, track-check-v2: the verdict follows a fit stated before it. `subject` the post's main subject, `fits`
+# whether `Belongs:` asks for it, `matches` / `excluded` the words of `Belongs:` / `Not:` it is (copied).
+# validate._track_v3 checks that `in` agrees with them and that the quotes are the question's own: a verdict that
+# contradicts its own stated fit is no verdict.
 TRACK_SCHEMA_V3 = {
     "type": "object",
     "required": ["subject", "fits", "matches", "excluded", "in", "confidence", "why"],
     "properties": {"subject": {"type": "string", "minLength": 1}, "fits": {"type": "boolean"},
                    "matches": _STR_OR_NULL, "excluded": _STR_OR_NULL, **TRACK_SCHEMA["properties"]},
 }
-# 0207: the sub-topics the clustering found, named (subtopics-v2: each group keyed g1..gK in the question, its name and
-# a one-line definition), the posts placed into them (subtopic-place-v1: each post p1..pN into s1..sK or none), and
-# a sub-topic's digest (digest-v1: 2-4 points, each citing the question's posts [n] it
-# rests on). The checks that read the input (the keys, the post numbers) are validate's.
+# the sub-topics the clustering found, named (subtopics-v2: groups g1..gK), the posts placed into them
+# (subtopic-place-v1: p1..pN into s1..sK or none), and a sub-topic's digest (digest-v1: 2-4 points, each citing the
+# posts [n] it rests on). The checks that read the input are validate's.
 SUBTOPIC_NAME_CHARS, SUBTOPIC_DEFINITION_CHARS = 60, 200
 SUBTOPIC_NAMES_SCHEMA = {
     "type": "object",
@@ -473,12 +482,10 @@ DIGEST_SCHEMA = {
         "properties": {"text": {"type": "string", "minLength": 1, "maxLength": DIGEST_POINT_CHARS},
                        "cites": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}}}}}},
 }
-# 0245 (built 0249, the general track briefer): a track's kinds of thing proposed from its description
-# (track-schema-v1: 1-3 kinds, up to 8 fields each, typed; code adds `practice_or_claim`), the things one post (or one
-# window of it) describes (track-things-v1: each value with its quote; numbers and money typed; checked value by value
-# in code, markx/track_things.salvage: a bad value is dropped with its reason, never the answer), and whether two
-# practices that share an entity are one claim (track-same-v1). The brief's "what changed" is the `digest` kind's
-# second guide (digest-v2, DIGEST_SCHEMA: its cites are the question's rows [n]).
+# the general track briefer: a track's kinds of thing proposed from its description (track-schema-v1: 1-3 kinds, up to
+# 8 typed fields each; code adds `practice_or_claim`), the things one post (or window) describes (track-things: each
+# value with its quote, checked value by value in track_things.salvage: a bad value is dropped, never the answer), and
+# whether two rows are one thing (track-same). The brief's "what changed" is the digest kind's digest-v2.
 THING_TYPES = ["text", "number", "money", "link", "enum"]
 THING_NAME = "^[a-z][a-z0-9_]{0,39}$"
 THING_KINDS, THING_FIELDS, THING_ENUM = (1, 3), 8, (2, 10)
@@ -499,8 +506,8 @@ TRACK_SCHEMA_SCHEMA = {
                                           "key": {"type": "boolean"},
                                           "about": _STR_OR_NULL}}}}}}},
 }
-# v10.41 (FIX 6): the owner's schema edit may give a kind more fields than Haiku proposes (fields are the owner's
-# decision: a suggested field added to a full kind); track_things.set_schema checks against this one.
+# the owner's schema edit may give a kind more fields than Haiku proposes (fields are the owner's decision);
+# track_things.set_schema checks against this one.
 OWNER_FIELDS = 16
 OWNER_SCHEMA_SCHEMA = {
     **TRACK_SCHEMA_SCHEMA,
@@ -510,8 +517,8 @@ OWNER_SCHEMA_SCHEMA = {
                        "fields": {**TRACK_SCHEMA_SCHEMA["properties"]["kinds"]["items"]["properties"]["fields"],
                                   "maxItems": OWNER_FIELDS}}}}},
 }
-# v10.41 (FIX 6): the fields a track's records miss (track-fields-v1, the track_schema kind's second guide; never
-# applied: markx/track_fields.py shows them as suggestions the owner adds or dismisses).
+# the fields a track's records miss (track-fields-v1, the track_schema kind's second guide; never applied:
+# markx/track_fields.py shows them as suggestions the owner adds or dismisses).
 TRACK_FIELDS_SCHEMA = {
     "type": "object",
     "required": ["fields"],
@@ -537,7 +544,7 @@ TRACK_SAME_SCHEMA = {
     "required": ["same", "why"],
     "properties": {"same": {"type": "boolean"}, "why": {"type": "string", "minLength": 1, "maxLength": 300}},
 }
-# 0147 (track recall): a track's example posts (probes-v1): 12-20 that belong, up to 4 near-misses that don't.
+# a track's example posts (probes-v1): 12-20 that belong, up to 4 near-misses that don't.
 PROBES_MIN, PROBES_MAX, NEAR_MAX, PROBE_CHARS = 12, 20, 4, 300
 PROBES_SCHEMA = {
     "type": "object",
@@ -546,8 +553,8 @@ PROBES_SCHEMA = {
                               "items": {"type": "string", "minLength": 1}},
                    "near_misses": {"type": "array", "maxItems": NEAR_MAX, "items": {"type": "string", "minLength": 1}}},
 }
-# 0148 (track scout): the sources Haiku names for a track's sphere (scout-v1): 20-30 asked, 5-30 taken, each a platform
-# class INSIGHT reads, its address or handle and why. Never trusted as is: each is test-read (markx/scout.py).
+# the sources Haiku names for a track's sphere (scout-v1): each a platform class INSIGHT reads, its address or handle
+# and why. Never trusted as is: each is test-read (markx/scout.py).
 SCOUT_PLATFORMS = ["site", "reddit", "youtube", "telegram", "x", "hn", "code", "hub", "paper", "podcast", "newsletter"]
 SCOUT_MIN, SCOUT_MAX, SCOUT_ADDRESS_CHARS, SCOUT_WHY_CHARS = 5, 30, 300, 300
 SCOUT_SCHEMA = {
@@ -558,7 +565,7 @@ SCOUT_SCHEMA = {
         "properties": {"name": _STR_OR_NULL, "platform": {"enum": SCOUT_PLATFORMS},
                        "address": {"type": "string", "minLength": 1}, "why": _STR_OR_NULL}}}},
 }
-# 0162 (research): are two accounts one person or org (identity-v1)? Asked only for a pair the plain rules leave unclear.
+# are two accounts one person or org (identity-v1)? Asked only for a pair the plain rules leave unclear.
 IDENTITY_ANSWERS = ["yes", "no", "unsure"]
 IDENTITY_SCHEMA = {
     "type": "object",
@@ -566,10 +573,9 @@ IDENTITY_SCHEMA = {
     "properties": {"same": {"enum": IDENTITY_ANSWERS}, "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                    "why": {"type": "string", "minLength": 1}},
 }
-# 0171 (research's web search by the worker): the accounts and sites a maker has on the web, found by Claude's web search
-# on the owner's device (websearch-v1, its web search tool only). Candidates only: each is read and judged by research's
-# same-identity rules or the `identity` question; a name alone never counts. `queries`: what was searched (at most
-# WEBSEARCH_QUERIES, research's per-run cap of web searches).
+# the accounts and sites a maker has on the web, found by Claude's web search on the owner's device (websearch-v1).
+# Candidates only: each is read and judged by research's same-identity rules or the `identity` question; a name alone
+# never counts. `queries`: what was searched (at most WEBSEARCH_QUERIES).
 WEBSEARCH_QUERIES, WEBSEARCH_MAX = 5, 15
 WEBSEARCH_URL_CHARS, WEBSEARCH_TITLE_CHARS, WEBSEARCH_WHY_CHARS, WEBSEARCH_QUERY_CHARS = 500, 300, 300, 200
 WEBSEARCH_SCHEMA = {
@@ -582,9 +588,9 @@ WEBSEARCH_SCHEMA = {
                            "why": {"type": "string", "minLength": 1}}}},
         "queries": {"type": "array", "maxItems": WEBSEARCH_QUERIES, "items": {"type": "string", "minLength": 1}}},
 }
-# 0173 (source judge): "Is this worth it?" on the owner's tap (source-judge-v1): one candidate source, its newest items and
-# what INSIGHT measured; a verdict with its reasons and the items it relied on. How it reads (full, teasers, a paywall)
-# is measured by code and never asked (0149 E8: the model fails at it).
+# "Is this worth it?" on the owner's tap (source-judge-v1): one candidate source, its newest items and what INSIGHT
+# measured; a verdict with its reasons and the items it relied on. How it reads (full, teasers, a paywall) is measured
+# by code, never asked (the model fails at it).
 SOURCE_VERDICTS = ["follow", "maybe", "skip"]
 SOURCE_ORIGINAL = ["low", "medium", "high"]
 SOURCE_REASONS_MAX, SOURCE_REASON_CHARS, SOURCE_EXAMPLES_MAX = 4, 240, 4
@@ -600,10 +606,9 @@ SOURCE_JUDGE_SCHEMA = {
         "fits": {"type": "boolean"},
         "original": {"enum": SOURCE_ORIGINAL}},
 }
-# 0196 (official channels): source-judge-v2 is v1 with, for a feed whose items mix releases and automatic builds (a
-# code host's releases, a nightly channel), an item filter it proposes: `filter` {kind, hide [{field, regex, why}],
-# keep [item ids of real releases]}, checked by validate._source_judge (utils/item_filter.check) and applied by
-# code to every new item when the channel is added. Optional: absent or null for any other source.
+# source-judge-v2: v1 with, for a feed mixing releases and automatic builds, an item filter it proposes: `filter`
+# {kind, hide [{field, regex, why}], keep [item ids]}, checked by validate._source_judge (utils/item_filter.check) and
+# applied by code to every new item when the channel is added. Absent or null for any other source.
 SOURCE_FILTER_SCHEMA = {
     "anyOf": [{"type": "null"}, {
         "type": "object", "required": ["kind", "hide", "keep"],
@@ -614,8 +619,8 @@ SOURCE_FILTER_SCHEMA = {
                                           "regex": {"type": "string", "minLength": 1, "maxLength": 120},
                                           "why": {"type": "string", "minLength": 1, "maxLength": 200}}}},
                        "keep": {"type": "array", "maxItems": 10, "items": {"type": "string", "pattern": "^i[0-9]{1,2}$"}}}}]}
-# 0275: a question the reader asked, answered only from the posts it shows (question-v1, markx/questions.py): each
-# sentence with the numbers of the posts it rests on; `answerable` false (no sentences) when the posts don't say.
+# a question the reader asked, answered only from the posts it shows (question-v1, markx/questions.py): each sentence
+# with the numbers of the posts it rests on; `answerable` false (no sentences) when the posts don't say.
 QUESTION_SENTENCES = 6
 QUESTION_SENTENCE_CHARS = 400
 QUESTION_SCHEMA = {
@@ -629,9 +634,8 @@ QUESTION_SCHEMA = {
 }
 SOURCE_JUDGE_V2_SCHEMA = {**SOURCE_JUDGE_SCHEMA,
                           "properties": {**SOURCE_JUDGE_SCHEMA["properties"], "filter": SOURCE_FILTER_SCHEMA}}
-# 0196 (official channels): who announces an event and where (websearch-official-v1, the `websearch` kind's second
-# guide: Claude's web search tool on the owner's device). Candidates only: the maker is written through identity's facts
-# and each channel is proven by code (owned, a dated stream, announcements) before anything is followed.
+# who announces an event and where (websearch-official-v1, the websearch kind's second guide). Candidates only: the
+# maker is written through identity's facts and each channel is proven by code before anything is followed.
 OFFICIAL_CHANNEL_KINDS = ["x", "telegram", "youtube", "site_section", "releases", "repository", "site", "page", "other"]
 OFFICIAL_SCHEMA = {
     "type": "object",
@@ -654,8 +658,8 @@ OFFICIAL_SCHEMA = {
         "why_not": _STR_OR_NULL,
         "queries": {"type": "array", "maxItems": WEBSEARCH_QUERIES, "items": {"type": "string", "minLength": 1}}},
 }
-# 0174 (news sections): Mark X News divided into 3-8 sections Haiku titles (news-sections-v1), every row (keyed r1..rN in
-# the question) in exactly one. Sphere-agnostic: no fixed list of sections in code, the titles are the answer's.
+# Mark X News divided into 3-8 sections Haiku titles (news-sections-v1), every row (r1..rN) in exactly one. No fixed
+# list of sections in code: the titles are the answer's.
 NEWS_SECTIONS = (3, 8)
 NEWS_SECTION_TITLE_CHARS, NEWS_SECTION_TITLE_WORDS = 40, 4
 NEWS_SECTIONS_SCHEMA = {
@@ -667,8 +671,8 @@ NEWS_SECTIONS_SCHEMA = {
                        "row_ids": {"type": "array", "minItems": 1,
                                    "items": {"type": "string", "pattern": "^r[0-9]{1,4}$"}}}}}},
 }
-# 0197 (news placement): the rows added since the last sectioning, each placed into one of its sections (keyed s1..sM in
-# the question) or "new" (none fits: it waits for the next full sectioning), news-place-v1. Every row once (validate.py).
+# the rows added since the last sectioning, each placed into one of its sections (s1..sM) or "new" (it waits for the
+# next full sectioning), news-place-v1. Every row once (validate.py).
 NEWS_PLACE_SCHEMA = {
     "type": "object",
     "required": ["placements"],
@@ -678,10 +682,9 @@ NEWS_PLACE_SCHEMA = {
                        "section": {"type": "string", "pattern": "^(s[0-9]{1,2}|new)$"}}}}},
 }
 
-# 0181: a round-up's items (units, markx/units.py), ~20 a question: each its type, a short headline and whether it
-# only continues the item before it. The types are read-v3's for one item, with `promo` (an ad; the author's own book,
-# talk, event list or sign-up; a bare link said nothing about) in place of `promotion_event`, and no `digest` (an item
-# is one thing). Which of them are news: markx/event_types.py (UNIT_NEWS).
+# a round-up's items (units, markx/units.py), ~20 a question: each its type, a short headline and whether it only
+# continues the item before it. The types are read-v3's, with `promo` in place of `promotion_event` and no `digest`.
+# Which of them are news: markx/event_types.py (UNIT_NEWS).
 UNIT_TYPES = [t for t in EVENT_TYPES if t not in ("digest", "promotion_event")] + ["promo"]
 UNIT_HEADLINE_WORDS = 14
 UNITS_PER_QUESTION = 20
@@ -695,8 +698,8 @@ UNIT_TYPES_SCHEMA = {
                        "continues": {"type": "boolean"}}}}},
 }
 
-# 0208 (News ranked for the reader): how significant a News row's event is for people in its field, whatever its
-# loudness (significance-v1, one row a question, asked again only when the row's members change: markx/significance).
+# how significant a News row's event is for people in its field, whatever its loudness (significance-v1, asked again
+# only when the row's members change: markx/significance).
 SIGNIFICANCE_EVENTS = ["new_method", "new_model", "new_tool", "release_update", "research_result", "benchmark",
                        "product_launch", "deal_funding", "policy_legal", "security_incident", "outage", "people",
                        "opinion_analysis", "tutorial", "other"]
@@ -718,8 +721,8 @@ SIGNIFICANCE_SCHEMA = {
         "scope": {"enum": SIGNIFICANCE_SCOPE},
         "why": {"type": "string", "minLength": 1, "maxLength": 400}},
 }
-# 0208 (Analysis): significance-v2 also names the posts shown that are an expert breakdown (their keys [1]..[6] as numbers),
-# which a News row shows apart from its reports (news_rank.analysis). A row is asked again once under the new guide.
+# significance-v2 also names the posts shown that are an expert breakdown (keys [1]..[6] as numbers), which a News row
+# shows apart from its reports (news_rank.analysis).
 SIGNIFICANCE_V2_SCHEMA = {
     **SIGNIFICANCE_SCHEMA,
     "required": SIGNIFICANCE_SCHEMA["required"] + ["breakdowns"],
@@ -742,65 +745,60 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("read", "read-v2", "post", READ_SCHEMA),
     Kind("entities", "ent-v3", "post", ENTITIES_SCHEMA),
     Kind("check", "judge-raw-v1", "post_story", JUDGE_SCHEMA),
-    Kind("join", "judge-read-v2", "post_story", JUDGE_V2_SCHEMA),   # 0258: v2 quotes the post (v1's tasks kept:
+    Kind("join", "judge-read-v2", "post_story", JUDGE_V2_SCHEMA),   # v2 quotes the post (v1's tasks kept:
     Kind("pair", "judge-read-v2", "post_post", JUDGE_V2_SCHEMA),    # EARLIER_GUIDES)
     Kind("merge", "judge-story-v1", "story_story", JUDGE_SCHEMA),
     Kind("connect", "connect-v1", "story_story", JUDGE_SCHEMA),
     Kind("card", "card-v1", "story", CARD_SCHEMA),
-    Kind("headline", "headline-v2", "story", HEADLINE_SCHEMA),     # v10.39: core members; who acted, its date
+    Kind("headline", "headline-v2", "story", HEADLINE_SCHEMA),     # core members; who acted, its date
     Kind("briefing", "briefing-v1", "day", BRIEFING_SCHEMA),
     Kind("translate", "translate-v1", "post", TRANSLATE_SCHEMA),
-    Kind("embed", "embed-v1", "post", EMBED_SCHEMA),   # S2: answered by an embedder, at POST /api/markx/embeddings
-    Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # 0119 A1: are two names one thing?
-    Kind("alias2", "alias-v1", "entity_entity", ALIAS_SCHEMA),       # 0130 A2: the second opinion (other posts)
-    Kind("alias3", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # 0201: the unsure queue's question (each side's facts)
-    Kind("alias4", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # 0201: the same, for a class asked with its own model
-    Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # 0119 A1: one name, several things?
-    Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # 0165 B: one thing under an earlier name?
-    Kind("stop", "stop-v1", "story", STOP_SCHEMA),                   # 0165 C: a thing's stop in a story (stops.py)
-    Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # 0119 A1: a name's vector (the alias candidates)
-    Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # 0119 B3: what each member of a story adds
-    Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # 0119 B4: the story sheet's facts, merged
-    Kind("dispute", "dispute-v1", "story", DISPUTE_SCHEMA),          # 0273: where the story's sources differ
-    Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # 0127: event type and origin (the fold)
-    Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # 0131: a newer post and an older one (Stalker)
-    Kind("chain", "chain-v4", "story_story", CHAIN_SCHEMA),          # 0219: a later story and an earlier one, one thing
-                                                                     # (v10.34: v2, a result made with it is no release;
-                                                                     # v10.38: v3, sibling things of one release;
-                                                                     # v10.40: v4, a project made with it is builds_on)
-    Kind("derive", "derive-v1", "entity_entity", DERIVE_SCHEMA),     # 0234: is a thing made from its predecessor?
-    Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
-    Kind("back", "back-v1", "story", BACK_SCHEMA),                   # 0136: an old Mark IX story back in the news
-    Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # 0133 v4.2: ent-v4.2's second question (ent42.py)
-    Kind("track", "track-v3", "post_track", TRACK_SCHEMA_V3),        # 0145: does a post belong in a track (tracks.py); 0207: v2; v10.41: v3
-    Kind("subtopics", "subtopics-v2", "track", SUBTOPIC_NAMES_SCHEMA),   # 0207: the sub-topics found, named (0145's v1
-                                                                         # proposed them; its rows are kept)
-    Kind("digest", "digest-v1", "track", DIGEST_SCHEMA),             # 0207: a sub-topic's digest with citations
-    Kind("subtopic_place", "subtopic-place-v1", "track", SUBTOPIC_PLACE_SCHEMA),   # 0207: posts into the sub-topics
-    Kind("probes", "probes-v1", "track", PROBES_SCHEMA),             # 0147: a track's example posts (track recall)
-    Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),                # 0148: sources for a track's sphere (scout.py)
-    Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # 0162: two accounts, one maker? (research.py)
-    Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),   # 0171: a maker's accounts, by web search
-    Kind("source_judge", "source-judge-v2", "source_candidate", SOURCE_JUDGE_V2_SCHEMA),   # 0173; 0196: + item filter
-    Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),   # 0174: News in titled sections
-    Kind("news_place", "news-place-v1", "news_run", NEWS_PLACE_SCHEMA),   # 0197: new rows into those sections
-    Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # 0181: a round-up's items: type, headline
-    Kind("significance", "significance-v2", "story", SIGNIFICANCE_V2_SCHEMA),   # 0208: a News row's significance,
-                                                                                # its breakdowns (v2; v1 rows kept)
-    Kind("reading", "ent-v5", "post", READING_V5_SCHEMA),           # 0212: read, read3 and entities in one reading
-    Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),   # 0245: a track's kinds and fields
-    Kind("track_things", "track-things-v3", "post_track", TRACK_THINGS_SCHEMA),   # 0245; 0261: v2; v10.41: v3 (a catalog one row)
-    Kind("track_same", "track-same-v2", "thing_thing", TRACK_SAME_SCHEMA),   # 0245: two rows, one thing? (v10.41: every kind)
-    Kind("question", "question-v1", "question", QUESTION_SCHEMA),   # 0275: the reader's question, from their posts
+    Kind("embed", "embed-v1", "post", EMBED_SCHEMA),   # answered by an embedder, at POST /api/markx/embeddings
+    Kind("alias", "alias-v1", "entity_entity", ALIAS_SCHEMA),        # are two names one thing?
+    Kind("alias2", "alias-v1", "entity_entity", ALIAS_SCHEMA),       # the second opinion (other posts)
+    Kind("alias3", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # the unsure queue's question (each side's facts)
+    Kind("alias4", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # the same, for a class asked with its own model
+    Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # one name, several things?
+    Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # one thing under an earlier name?
+    Kind("stop", "stop-v1", "story", STOP_SCHEMA),
+    Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # a name's vector (the alias candidates)
+    Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # what each member of a story adds
+    Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # the story sheet's facts, merged
+    Kind("dispute", "dispute-v1", "story", DISPUTE_SCHEMA),
+    Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # event type and origin (the fold)
+    Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # a newer post and an older one
+    Kind("chain", "chain-v4", "story_story", CHAIN_SCHEMA),          # a later story and an earlier one, one thing
+    Kind("derive", "derive-v1", "entity_entity", DERIVE_SCHEMA),     # is a thing made from its predecessor?
+    Kind("stance", "stance-v1", "source", STANCE_SCHEMA),
+    Kind("back", "back-v1", "story", BACK_SCHEMA),                   # an old story back in the news
+    Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # ent-v4.2's second question (ent42.py)
+    Kind("track", "track-v3", "post_track", TRACK_SCHEMA_V3),        # does a post belong in a track (tracks.py)
+    Kind("subtopics", "subtopics-v2", "track", SUBTOPIC_NAMES_SCHEMA),
+    Kind("digest", "digest-v1", "track", DIGEST_SCHEMA),
+    Kind("subtopic_place", "subtopic-place-v1", "track", SUBTOPIC_PLACE_SCHEMA),
+    Kind("probes", "probes-v1", "track", PROBES_SCHEMA),             # a track's example posts (track recall)
+    Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),
+    Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # two accounts, one maker? (research.py)
+    Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),
+    Kind("source_judge", "source-judge-v2", "source_candidate", SOURCE_JUDGE_V2_SCHEMA),   # + an item filter
+    Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),
+    Kind("news_place", "news-place-v1", "news_run", NEWS_PLACE_SCHEMA),
+    Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # a round-up's items: type, headline
+    Kind("significance", "significance-v2", "story", SIGNIFICANCE_V2_SCHEMA),   # a News row's significance and
+                                                                                # its breakdowns
+    Kind("reading", "ent-v6", "post", READING_V6_SCHEMA),           # read, read3 and entities in one reading, + subtype
+    Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),
+    Kind("track_things", "track-things-v3", "post_track", TRACK_THINGS_SCHEMA),   # a catalog is one row
+    Kind("track_same", "track-same-v2", "thing_thing", TRACK_SAME_SCHEMA),   # two rows, one thing?
+    Kind("question", "question-v1", "question", QUESTION_SCHEMA),   # the reader's question, from their posts
 )}
 
 
-# ---- 0133: the entities guide switch ---------------------------------------------------------------------
-# The `entities` kind's guide is the owner's choice (mx_settings ENTITIES_GUIDE, set on the /markx Worker tab): each
-# arm is a guide, the characters of the post its input shows, whether the citation rule runs with its answers, and
-# its answer schema. No row (the default): ent-v3 at 1,500 characters, no rule, exactly as before 0133. A guide is a
-# new task (tasks are unique per kind, guide and input), so switching plans new tasks and rewrites no row.
-# KINDS["entities"].guide stays ent-v3: the readers that name it read ent-v3's rows, as before.
+# ---- the entities guide switch ------------------------------------------------------------------------------
+# The `entities` kind's guide is the owner's choice (mx_settings ENTITIES_GUIDE, the /markx Worker tab): each arm is a
+# guide, the characters of the post its input shows, whether the citation rule runs, and its answer schema. No row:
+# ent-v3 at 1,500 characters, no rule. A guide is a new task (tasks are unique per kind, guide and input), so
+# switching plans new tasks and rewrites no row. KINDS["entities"].guide stays ent-v3 (its readers read ent-v3's rows).
 
 @dataclass(frozen=True)
 class Arm:
@@ -812,10 +810,10 @@ class Arm:
 
 ENTITIES_GUIDE = "entities_guide"
 ENTITY_ARMS: Dict[str, Arm] = {a.guide: a for a in (
-    Arm("ent-v3", 1500, False, ENTITIES_SCHEMA),          # the default (the deploy changes nothing)
-    Arm("ent-v4", 6000, True, ENTITIES_V4_SCHEMA),        # the lab's guide (a placeholder until out/entv41_v1 passes)
-    Arm("ent-v3-6k", 6000, True, ENTITIES_SCHEMA),        # the spec's fallback: ent-v3's text at 6,000, with the rule
-    Arm("ent-v4.2", 6000, False, ENTITIES_V4_SCHEMA),     # 0133 v4.2: the lab's ent42_extract.md, the rule off, + `cite`
+    Arm("ent-v3", 1500, False, ENTITIES_SCHEMA),          # the default
+    Arm("ent-v4", 6000, True, ENTITIES_V4_SCHEMA),        # a placeholder until the lab's guide passes
+    Arm("ent-v3-6k", 6000, True, ENTITIES_SCHEMA),        # the fallback: ent-v3's text at 6,000, with the rule
+    Arm("ent-v4.2", 6000, False, ENTITIES_V4_SCHEMA),     # the rule off, + `cite`
 )}
 DEFAULT_ARM = "ent-v3"
 PLACEHOLDER = "<!-- 0133 placeholder:"                    # a guide file starting so is not the lab's: never switched to
@@ -847,14 +845,14 @@ def set_entities_arm(cur, guide: str, *, allow_placeholder: bool = False) -> Arm
 
 
 def mention_guides() -> list:
-    """Every entities guide (identity reads the current set, mx_mentions_now, of any of them); 0212: and ent-v5's,
-    whose rows are current only once its switch is on (Shadow writes them without moving mx_mention_sets)."""
+    """Every entities guide (identity reads the current set, mx_mentions_now, of any of them), and ent-v5's, whose rows
+    are current only once its switch is on."""
     return list(ENTITY_ARMS) + ["ent-v5"]
 
 
-# 0260 (v10.30): the `significance` kind's guide behind a switch (entity_bands.json `significance.results`): on, a new
-# ask is significance-v3 (a result scored by what it changes in the field as well as by what one can use); off,
-# significance-v2. Same schema; a guide is a new task only when a row is asked (significance.due), never a mass re-ask.
+# the `significance` kind's guide behind a switch (entity_bands.json `significance.results`): on, a new ask is
+# significance-v3 (a result scored by what it changes in the field too); off, significance-v2. Same schema; a guide is
+# a new task only when a row is asked (significance.due), never a mass re-ask.
 SIGNIFICANCE_RESULTS_GUIDE = "significance-v3"
 
 
@@ -873,43 +871,44 @@ def guide_of(cur, kind: str) -> Optional[str]:
     return KINDS[kind].guide
 
 
-# 0196: a kind's second guide with a schema of its own (the same kind, so the worker asks it with that kind's tools and
+# a kind's second guide with a schema of its own (the same kind, so the worker asks it with that kind's tools and
 # per-call setting): {guide: (kind, schema)}. A task names its guide; its answers are checked by that guide's schema.
 GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "websearch-official-v1": ("websearch", OFFICIAL_SCHEMA),
-    "track-v1": ("track", TRACK_SCHEMA),   # 0207: the judge before track-v2; its open questions are still answered
-    "track-v2": ("track", TRACK_SCHEMA),   # v10.41: the judge before track-v3 (no stated fit); its open questions are still answered
-    "track-check-v1": ("track", TRACK_SCHEMA),   # 0256: the blind check of a passive `in` (tracks.plan_checks)
-    "track-check-v2": ("track", TRACK_SCHEMA_V3),   # v10.41: the blind check, its verdict following its stated fit
-    "digest-v2": ("digest", DIGEST_SCHEMA),   # 0245: a track brief's "what changed", citing its rows (track_brief.py)
-    "digest-v3": ("digest", DIGEST_SCHEMA),   # v10.29: the same, its points state facts (no reporting words, no hedges)
-    "collide-makers-v1": ("collide", COLLIDE_MAKERS_SCHEMA),   # 0250: two maker groups of one bare name (identity.split_names)
-    "collide-v2": ("collide", COLLIDE2_SCHEMA),   # 0184's guide; 0274: an entity brief's senses (entity_brief.senses, b set)
-    "significance-v3": ("significance", SIGNIFICANCE_V2_SCHEMA),   # 0260: results by what they change (the switch above)
-    "track-fields-v1": ("track_schema", TRACK_FIELDS_SCHEMA),   # v10.41: fields a track's records miss (track_fields.py)
+    "track-v1": ("track", TRACK_SCHEMA),   # the judge before track-v2; its open questions are still answered
+    "track-v2": ("track", TRACK_SCHEMA),   # the judge before track-v3; its open questions are still answered
+    "track-check-v1": ("track", TRACK_SCHEMA),   # the blind check of a passive `in` (tracks.plan_checks)
+    "track-check-v2": ("track", TRACK_SCHEMA_V3),   # the blind check, its verdict following its stated fit
+    "digest-v2": ("digest", DIGEST_SCHEMA),   # a track brief's "what changed", citing its rows (track_brief.py)
+    "digest-v3": ("digest", DIGEST_SCHEMA),   # the same, its points state facts (no reporting words, no hedges)
+    "collide-makers-v1": ("collide", COLLIDE_MAKERS_SCHEMA),   # two maker groups of one bare name
+    "collide-v2": ("collide", COLLIDE2_SCHEMA),   # also an entity brief's senses (entity_brief.senses, b set)
+    "significance-v3": ("significance", SIGNIFICANCE_V2_SCHEMA),   # results by what they change (the switch above)
+    "track-fields-v1": ("track_schema", TRACK_FIELDS_SCHEMA),   # fields a track's records miss (track_fields.py)
 }
 
 
-# 0258: a kind's earlier guides, {guide: (its kinds, the schema its answers were checked by)}. A question already asked
-# under one keeps its task and answers: they are read (`answer_guides`), and a task still open there is answered and
-# checked under it. A guide change asks new questions only, never the history again.
+# a kind's earlier guides, {guide: (its kinds, the schema its answers were checked by)}. A question already asked under
+# one keeps its task and answers (`answer_guides`), and a task still open there is answered and checked under it. A
+# guide change asks new questions only, never the history again.
 EARLIER_GUIDES: Dict[str, Tuple[Tuple[str, ...], Dict[str, Any]]] = {
-    "judge-read-v1": (("join", "pair"), JUDGE_SCHEMA),   # before 0258's post quote
-    "track-things-v1": (("track_things",), TRACK_THINGS_SCHEMA),   # 0261: before v2 (values only from their quote, the subject's own results)
-    "track-things-v2": (("track_things",), TRACK_THINGS_SCHEMA),   # v10.41: before v3 (a catalog or roundup is one row);
+    "judge-read-v1": (("join", "pair"), JUDGE_SCHEMA),   # before the post quote
+    "track-things-v1": (("track_things",), TRACK_THINGS_SCHEMA),   # before v2 (values only from their quote)
+    "track-things-v2": (("track_things",), TRACK_THINGS_SCHEMA),   # before v3 (a catalog or roundup is one row);
                                                                    # its catalog posts are asked again (track_things.repair)
-    "track-same-v1": (("track_same",), TRACK_SAME_SCHEMA),   # v10.41: before v2 (practices only); its pairs are not asked again
-    "chain-v1": (("chain",), CHAIN_SCHEMA),   # v10.34: before v2's clause (a result achieved with the thing is not
+    "track-same-v1": (("track_same",), TRACK_SAME_SCHEMA),   # before v2 (practices only); its pairs are not asked again
+    "chain-v1": (("chain",), CHAIN_SCHEMA),   # before v2's clause (a result achieved with the thing is not
                                                  # its release); its same_release pairs are asked again (graph.plan_chains)
-    "chain-v2": (("chain",), CHAIN_SCHEMA),   # v10.38: before v3's sibling things of one release; its sibling pairs
+    "chain-v2": (("chain",), CHAIN_SCHEMA),   # before v3's sibling things of one release; its sibling pairs
                                               # that linked nothing are asked again (graph.chain_asked)
-    "chain-v3": (("chain",), CHAIN_SCHEMA),   # v10.40: before v4's project made with the thing (builds_on); its
+    "chain-v3": (("chain",), CHAIN_SCHEMA),   # before v4's project made with the thing (builds_on); its
                                               # same_release and unknown pairs are asked again (graph.chain_asked)
+    "ent-v5": (("reading",), READING_V5_SCHEMA),   # v10.42: before v6's subtype; its readings are not asked again
 }
 
 
 def answer_guides(kind: str) -> Tuple[str, ...]:
-    """The guides whose task answers a question of `kind`: the current one first, then its earlier ones (0258)."""
+    """The guides whose task answers a question of `kind`: the current one first, then its earlier ones."""
     return (KINDS[kind].guide,) + tuple(g for g, (kinds, _s) in EARLIER_GUIDES.items() if kind in kinds)
 
 
@@ -927,8 +926,8 @@ def schema_for(kind: str, guide: Optional[str] = None) -> Optional[Dict[str, Any
 
 
 def guide_ids() -> Dict[str, str]:
-    """{guide id: kind}: every guide a kind names (a guide two kinds share, judge-read-v2, takes the first), each
-    kind's second guide (GUIDE_VARIANTS, 0196) and its earlier ones (EARLIER_GUIDES, 0258: their tasks are kept)."""
+    """{guide id: kind}: every guide a kind names (a guide two kinds share, judge-read-v2, takes the first), each kind's
+    second guide (GUIDE_VARIANTS) and its earlier ones (EARLIER_GUIDES: their tasks are kept)."""
     out: Dict[str, str] = {}
     for kind in KINDS.values():
         if kind.guide:
@@ -950,9 +949,9 @@ def load_guides(cur) -> Dict[str, str]:
     from insight_core.markx import repo
     out = {}
     for guide_id, kind in guide_ids().items():
-        schema = schema_for(kind, guide_id)   # 0196: a guide variant's own schema, else its kind's
+        schema = schema_for(kind, guide_id)   # a guide variant's own schema, else its kind's
         out[guide_id] = repo.put_guide(cur, guide_id, kind, guide_body(guide_id), schema)
-    arm = entities_arm(cur)          # 0133: the switched-to entities guide (only that one: a placeholder never loads)
+    arm = entities_arm(cur)          # the switched-to entities guide (only that one: a placeholder never loads)
     if arm.guide not in out:
         out[arm.guide] = repo.put_guide(cur, arm.guide, "entities", guide_body(arm.guide), arm.schema)
     return out
@@ -962,15 +961,14 @@ _ready: set = set()
 
 
 def ensure_guides(cur) -> None:
-    """The guides loaded once per process and database, before the first task or lease that names one (0086 C:
-    loaded at start, by sha256). The database is told apart by its connection's host, port and name.
+    """The guides loaded once per process and database (told apart by host, port and name), before the first task or
+    lease that names one.
 
-    It is ready only once the transaction that loaded them commits (0112 bug 4: marked ready before, a second
-    thread's lease planned tasks naming a guide not committed yet, a foreign-key failure). Until then each caller
-    loads them in its own transaction, once per transaction: a concurrent first lease waits on the first one's
-    rows (the database's lock, never a lock of this process held while waiting), then sees them committed; a
-    failed load leaves the database not ready and the next caller loads again. On a plain connection (not
-    `database.transaction`'s, so no commit to wait for) the database never becomes ready: each transaction loads."""
+    It is ready only once the transaction that loaded them commits (else a second thread's lease could plan tasks naming
+    a guide not committed yet). Until then each caller loads them in its own transaction, once per transaction: a
+    concurrent first lease waits on the first one's rows (the database's lock, never a lock of this process), then sees
+    them committed; a failed load leaves it not ready. On a plain connection (no commit to wait for) the database never
+    becomes ready: each transaction loads."""
     from insight_core.db import database
     info = cur.connection.info
     where = (info.host, info.port, info.dbname)

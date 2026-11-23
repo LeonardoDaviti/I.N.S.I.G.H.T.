@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Run the backend tests from any checkout or worktree, the way the scale-v1014 work ran them:
-# build this checkout's backend into an image of its own tag (never insight-backend:latest, which the
-# running services use; tagged by the tree's content, so an unchanged tree is not built again), then
-# ./run-tests.sh copies the migrated test template into a fresh *_test database, runs the tests in the
-# image on the compose network, and drops the database on exit.
+# Run the backend tests from any checkout or worktree: build this checkout's backend into an image tagged by the
+# tree's content (never insight-backend:latest, which the running services use), then ./run-tests.sh copies the
+# migrated test template into a fresh *_test database, runs the tests on the compose network, and drops it on exit.
 #
 # Usage:
 #   scripts/test-backend.sh                                        # the whole suite
@@ -25,8 +23,7 @@ if [ -z "${ENV_FILE:-}" ]; then
 fi
 [ -f "$ENV_FILE" ] || { echo "error: no .env (set ENV_FILE)" >&2; exit 1; }
 
-# The image is tagged by the content of the backend tree (v10.17): a tree already built is not built again, and
-# two checkouts with the same tree share one image. A changed tree (any file, committed or not) is a new tag.
+# Tagged by the backend tree's content (any file, committed or not): a tree already built is not built again.
 if [ -z "${TEST_IMAGE:-}" ]; then
   tree="$(tar -C backend --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
             --exclude='__pycache__' --exclude='*.pyc' --exclude='./logs' --exclude='insight_core/logs/*/*.log' -cf - . | sha256sum | cut -c1-16)"
@@ -36,9 +33,7 @@ else
   built=0
 fi
 
-# run-tests.sh reads ENV_FILE (v10.17: a .env linked into the checkout for the run and removed after raced between
-# runs at once in one checkout: "ln: failed to create symbolic link '.env': File exists", and the first to end took
-# the others' .env away)
+# run-tests.sh reads ENV_FILE (a .env linked into the checkout raced between concurrent runs)
 export ENV_FILE="$(realpath "$ENV_FILE")"
 
 if [ "$built" = 1 ]; then

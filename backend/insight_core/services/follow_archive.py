@@ -1,21 +1,10 @@
-"""Following a feed fetches its archive (issue 0167, part 2).
+"""Following a feed queues its archive (0167): a feed lists only its newest items, so a new source would miss its
+own recent past.
 
-A feed lists only its newest items (a blog's 20): a source followed today held none of its older posts, and an
-event of three months ago missed its own announcement. So when a source is added (POST /api/sources), its archive
-is queued at once, back to a horizon, through the archive machinery as it is (0107's waits, 0108's moved blogs and
-sitemaps, 0130 C's "back to a date", 0143's smart archiver): the queue runs it in its turn, one per lane, inside the
-host gates and learned budgets. Existing sources get the same on demand (scripts/archive_on_follow_0167.py, or the
-source sheet's Archive as before).
-
-  - **The horizon**: the owner's reading window when it is a number of days (Mark X's `reading_window_days`), else
-    FOLLOW_ARCHIVE_DAYS (the window at "every post", or never set).
-  - **Which sources**: a website's own feed (utils/own_pages.owns: never an aggregator's, whose archive is months of
-    other sites' pages) of a kind whose archive goes newest first and can stop at a date (`chronological`): a feed
-    and a Substack publication (FOLLOW_KINDS). X and Telegram archives stay the owner's to start (the owner, 12
-    Nov: no X archive now); a page watch's archive can't stop at a date (its pages aren't listed newest first), so it
-    stays the source sheet's button too. A disabled source, or one the archive refuses, is left (the answer says why).
-  - **Nothing runs in the request**: the archive is a queued job (ArchiveJobs.enqueue); the ingestion process starts
-    it. A source whose archive is queued or running already is left as it is.
+On follow (`queue_on_follow`), the archive is queued back to the reading window (else FOLLOW_ARCHIVE_DAYS) through
+the normal archive queue; the ingestion process runs it, nothing runs in the request. Only a website's own feed of a
+kind whose archive goes newest first and can stop at a date (FOLLOW_KINDS: feeds, Substack); never an aggregator's,
+X, Telegram or a page watch. A disabled source, or one already queued or running, is left (the answer says why).
 """
 from __future__ import annotations
 

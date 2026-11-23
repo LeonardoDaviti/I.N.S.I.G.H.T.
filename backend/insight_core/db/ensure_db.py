@@ -60,28 +60,22 @@ def _ensure_database(cur: Cursor, dbname: str, owner: str) -> None:
     )
 
 def ensure_database() -> str:
-    """
-    Ensure the application database exists and return a usable DATABASE_URL.
-    If DATABASE_URL is already set in the env, return it unchanged.
-    Otherwise, create role+db using ADMIN_DATABASE_URL (or a local default).
-    """
+    """Ensure the application database exists and return a usable DATABASE_URL: DATABASE_URL unchanged when set,
+    else role and database created through ADMIN_DATABASE_URL (or a local default)."""
     load_dotenv()
     setup_logging(debug_mode=False)
 
-    # 1) Respect existing DATABASE_URL
     db_url = env_get("DATABASE_URL")
     if db_url:
         logger.info("DATABASE_URL already set")
         return db_url
 
-    # 2) App DB parameters
     db_name = env_get("DB_NAME", "insight")
     db_user = env_get("DB_USER", "insight")
     db_pass = env_get("DB_PASSWORD", "insight")
     db_host = env_get("DB_HOST", "localhost")
     db_port = env_get("DB_PORT", "5432")
 
-    # 3) Admin DSN and basic reachability hints
     admin_url = env_get("ADMIN_DATABASE_URL", "postgresql://postgres@localhost:5432/postgres")
     host_for_probe = db_host or "localhost"
     port_for_probe = int(db_port or "5432")
@@ -89,7 +83,7 @@ def ensure_database() -> str:
     if not is_port_open(host_for_probe, port_for_probe):
         logger.warning("PostgreSQL not reachable at %s:%s; ensure service is running", host_for_probe, port_for_probe)
 
-    # Create role/database if needed - USE AUTOCOMMIT
+    # create role/database if needed, in autocommit
     try:
         conn = session_connection(admin_url, autocommit=True)
         with conn.cursor() as cur:
@@ -100,7 +94,6 @@ def ensure_database() -> str:
         logger.exception("Admin bootstrap failed. Set ADMIN_DATABASE_URL or start Postgres. Error: %s", e)
         raise
 
-    # 4) Build and return the application DSN
     app_url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
     logger.info("Prepared application DATABASE_URL")
     return app_url

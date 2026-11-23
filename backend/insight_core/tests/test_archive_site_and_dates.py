@@ -1,14 +1,12 @@
-"""Stealth v10.13.9: an archive reads the source's own site, and an older page is never dated "now".
+"""An archive reads the source's own site, and an older page is never dated "now".
 
 1. The archive's site is the source's own publication (the feed's host, its channel link), never the host its items
-   link: a link blog's archive had crawled a newspaper's sitemap (its first item's host). A sitemap of another site is
-   refused (foreign_site), an older checkpoint on another site is not resumed, an archive that finds a post in under
-   5% of 1,000 pages stops (low_yield), and an address crawl waits at least a second between pages.
-2. "date or now" is gone from the backlog's paths: article_post keeps None, the page watch's genuinely new page alone
-   is dated now, an archive's / collected / missed page stays undated (sorted before its source's oldest) or takes its
-   address's day or month (/2003/07/: the 1st). Migration 0101 repairs the posts stored with their fetch time.
+   link. A sitemap of another site is refused (foreign_site), a checkpoint on another site is not resumed, an archive
+   finding a post in under 5% of 1,000 pages stops (low_yield), and an address crawl waits a second between pages.
+2. No "date or now" on the backlog's paths: only the page watch's genuinely new page is dated now; an archived,
+   collected or missed page stays undated or takes its address's day or month. Migration 0101 repairs old rows.
 
-Fictional names only; no network (FakeHttp); the database tests run against a `_test` database.
+Fictional names; no network (FakeHttp); DB tests against a `_test` database.
 """
 from __future__ import annotations
 
@@ -77,8 +75,8 @@ async def pages_of(kind: GenericRssKind, src: dict, checkpoint=None, rate=RATE, 
 
 
 def link_blog() -> dict:
-    """The link blog: its feed's items link the paper; its own sitemap lists its own two older entries. The paper's
-    sitemap is there too, listing many pages: it must never be read."""
+    """The link blog: its feed's items link the paper; its own sitemap lists its two older entries. The paper's sitemap
+    is there too and must never be read."""
     items = [f"{PAPER}/2026/11/0{n}/story-{n}" for n in range(1, 4)]
     paper_pages = [f"{PAPER}/2026/10/{n:02d}/old-story-{n}" for n in range(1, 20)]
     return {
@@ -282,7 +280,7 @@ class StoredBacklogTests(unittest.TestCase):
         self.assertEqual(self._row(monthly)[0], datetime(2003, 7, 1, tzinfo=timezone.utc))
 
     def test_a_linker_edited_later_dates_a_missed_page_from_its_change(self):
-        """v10.25 (issue 0228): a 2023 essay edited in 2026 to link a 2026 page is no sign the page existed in 2023."""
+        """A 2023 essay edited in 2026 to link a 2026 page is no sign the page existed in 2023 (0228)."""
         site = f"https://own-{self.mark}.example"
         missed = f"{site}/a-new-model"
         edited, later = datetime(2023, 3, 31, tzinfo=timezone.utc), datetime(2026, 9, 22, 16, 35, tzinfo=timezone.utc)
@@ -298,8 +296,8 @@ class StoredBacklogTests(unittest.TestCase):
         self.assertEqual(self._row(missed)[0], later)
 
     def test_a_linker_corrected_the_same_day_dates_a_missed_page_from_its_publication(self):
-        """0248: a report citing a filing at 11:40, its page updated at 15:42 the same day, still dates the filing
-        11:40 (it had the link from the start); a later report's 14:01 is not the filing's date."""
+        """A report citing a filing at 11:40, its page updated at 15:42 the same day, still dates the filing 11:40; a
+        later report's 14:01 is not the filing's date (0248)."""
         site = f"https://own-{self.mark}.example"
         missed = f"{site}/a-filing"
         cited = datetime(2026, 11, 10, 11, 40, 11, tzinfo=timezone.utc)
@@ -345,7 +343,7 @@ class StoredBacklogTests(unittest.TestCase):
             page = insert_post(cur, self.source, missed, at=essay_day)
             cur.execute("""UPDATE posts SET fetched_at = %s, metadata = jsonb_build_object('missed_by_feed', %s::text)
                             WHERE id = %s""", (fetched, fetched.isoformat(), page))
-            # 0248: a page first linked by a report corrected the same day keeps that report's date
+            # a page first linked by a report corrected the same day keeps that report's date
             filing, report_at = f"{site}/a-filing", datetime(2026, 11, 3, 11, 40, tzinfo=timezone.utc)
             report = insert_post(cur, self.source, f"{site}/a-report", at=report_at, links=[filing])
             cur.execute("UPDATE posts SET metadata = '{\"modified\": \"2026-11-03T15:42:00+00:00\"}' WHERE id = %s",

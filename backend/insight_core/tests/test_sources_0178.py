@@ -1,11 +1,8 @@
-"""Issue 0178: dead sources found, Telegram forwards keep the channel's username, sources named.
+"""Dead sources found, Telegram forwards keep the channel's username, sources named (0178).
 
-1. A source silent far beyond its own rhythm (source_doctor.silent_beyond_rhythm) has where it went looked for
-   (where_it_went: redirects, its home page's feeds, its newest posts' pages) and offered, never switched.
-2. A Telegram bridge item's forward header (<source url="https://t.me/<channel>/<post>">) is kept as
-   metadata.forwarded_from with the channel's username, so Pairing's voice rule matches t.me/<channel>.
-3. A source with no name is named by what its feed or page calls itself, at add, at a fetch, and by the one-off
-   repair; a name the owner set is never written over.
+1. A source silent far beyond its own rhythm has where it went looked for and offered, never switched.
+2. A Telegram bridge item's forward header is kept as metadata.forwarded_from with the channel's username.
+3. A source with no name is named by what its feed or page calls itself; a name the owner set is never written over.
 
 No network: FakeHttp answers. The DB tests run on the scratch test database.
 """

@@ -67,10 +67,8 @@ function ProviderSection({ view, open, onToggle }: { view: CredentialProviderVie
   );
 }
 
-/**
- * Sources → Connections (spec §10.1): one row per provider with its state; a row
- * opens its fields. Write-only: a saved value shows as "set · ••••a3f", never itself.
- */
+/** Sources → Connections: one row per provider with its state, opening its fields. Write-only: a saved value shows
+ *  as "set · ••••a3f", never itself. */
 export default function ConnectionsPanel({ initialOpen }: { initialOpen?: string | null }) {
   const query = useConnections();
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(initialOpen ? [initialOpen] : []));

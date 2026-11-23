@@ -1,39 +1,14 @@
-"""News ranked for the reader (issue 0208, Stealth v10.19): the order of News, owned here.
+"""News ranked for the reader: the order of News, owned here (issue 0208).
 
-News was ordered by loudness alone (`score`: reports + half the shares and roundup mentions): the week's big launch
-repeated by twenty sources stayed on top, and a new method two expert sources took apart sat 100 rows down. A row's
-place is made of two global things, each in [0, 1]:
-
-  - **significance** (markx/significance.py): what kind of event it is and how big its effect is on the work of
-    people in its field, the worker's answer to one question a row. A row not answered yet counts as SIG_UNKNOWN (the
-    middle: it neither rises nor sinks on it);
-  - **coverage**: its score as before, on a log scale (`coverage`: COVERAGE_FULL points or more is 1), so loudness
-    still counts, but once.
-
-`combine` weighs them (W_SIG, W_COV): the GLOBAL score. v10.42: the reader's order (`order` "personal") is that score
-times the row's personal factor (`personal_score`; markx/personal.py: the reader's interest in its things, its kind
-and its sources, from their taps and what they read). The old fit (a Shadow weighing 0) is gone: personal.py owns it.
-
-**Notable for you** (`rank`): up to NOTABLE_MAX rows of the last NOTABLE_DAYS whose significance is NOTABLE_SIG or more
-and that the order by coverage alone puts below NOTABLE_BURIED: the significant items loudness would bury, shown in
-their own lane at the top of News.
-
-**Where it runs.** `keep` in the jobs process (jobs.Jobs.news, before the kept pages are built), never in the API: it
-reads the newest written run's rows of News' window, their significance answers and personal facts, and writes one
-mx_news_rank row a row (a cache of a derived order, replaced when ranked again). The API reads those rows by id
-(`read`), a few hundred small rows, and orders by them (`order`).
-
-**Analysis** (`analysis_of`): a row's expert breakdowns, shown apart from its reports: the posts its significance
-answer names as breakdowns (significance-v2's `breakdowns`) that Mark X reads as commentary, with ANALYSIS_CHARS+
-characters of their own, at most
-ANALYSIS_MAX, kept in the rank's `why`. The reader's News shows them only when `analysis_mode` says "shown" (the bar: a
-point 97% and a Wilson lower bound 90% of them real breakdowns on blind labels, plan/issues/0208); else a Shadow, shown
-on /markx only.
-
-**The switch** (`mode`, mx_settings NEWS_RANK): `order` "personal" (News for this reader: the global score times the
-personal factor, the lane on), "ranked" (global only, the lane on) or "coverage" (News in the old order; the ranks are
-kept and shown on /markx). `?order=` on /api/news asks for one whatever the switch says; Mark IX's News (`?mark=ix`)
-keeps its own order.
+A row's global place combines two parts in [0, 1] (`combine`: W_SIG, W_COV): its significance
+(markx/significance.py; SIG_UNKNOWN until answered) and its coverage (`coverage`: loudness on a log scale). v10.42: the
+reader's order ("personal") is that score times the row's personal factor (`personal_score`; markx/personal.py: the
+reader's interest in its things, kind and sources); the old fit Shadow is gone.
+`rank` also picks the "Notable for you" lane: significant recent rows the coverage order would bury. `keep` runs in
+the jobs process (never the API) and writes one mx_news_rank row a News row (a replaced cache, with the row's personal
+facts); the API reads them (`read`). `analysis_of` picks a row's expert breakdowns, shown per `analysis_mode`. The
+switch `mode` (mx_settings NEWS_RANK): "personal", "ranked" (global only) or "coverage" (the old order); `?order=`
+asks for one whatever it says.
 """
 from __future__ import annotations
 
@@ -43,9 +18,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from insight_core.markx import reading5   # 0212: the one preference list
+from insight_core.markx import reading5
 
-W_SIG, W_COV = 0.6, 0.3                 # 0208: sig and cov chosen before the measure
+W_SIG, W_COV = 0.6, 0.3                 # measured: plan/issues/0208
 SIG_UNKNOWN = 0.4                        # a row whose significance is not answered yet
 COVERAGE_FULL = 30.0                     # a score this high (reports + half shares and mentions) is coverage 1
 NOTABLE_SIG = 0.7                        # significance a row needs for the lane
@@ -56,11 +31,11 @@ NEWS_RANK = "news_rank"                  # mx_settings: {"order": "ranked" | "co
 ANALYSIS_MAX = 2                         # a row's Analysis posts, at most
 ANALYSIS_CHARS = 1000                    # a breakdown's own words, at least (significance.LONG_POST)
 ANALYSIS_KINDS = ("commentary",)
-_RANK = reading5.rank_sql("r.guide")     # 0212: the preferred reading (was: the guide sorting last)         # the reading kinds a breakdown has (read-v3, else read-v2)
+_RANK = reading5.rank_sql("r.guide")     # the preferred reading
 ANALYSES = ("shown", "shadow")
-DEFAULT_ANALYSIS = "shadow"              # 0208: measured 9 of 12 real (Wilson .47-.91): under the bar, a Shadow
+DEFAULT_ANALYSIS = "shadow"              # under its bar (measured: plan/issues/0208)
 ORDERS = ("personal", "ranked", "coverage")   # v10.42: global x personal, global only, coverage only
-DEFAULT_ORDER = "personal"               # 0208: "ranked" passed its bar (P@20 .50 -> .75); v10.42: x the reader's interest
+DEFAULT_ORDER = "personal"               # "ranked" passed its bar (0208); v10.42: x the reader's interest
 
 
 # ---- the parts --------------------------------------------------------------------------------------------
@@ -144,9 +119,8 @@ def ranks_of(cur: Any, rows: Sequence[Dict[str, Any]], now: datetime) -> List[Ra
 
 def analysis_of(cur: Any, answers: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
     """{row: its Analysis posts}: the posts its answer names as breakdowns that Mark X's newest reading calls
-    commentary (ANALYSIS_KINDS) and that have ANALYSIS_CHARS+ characters of their own (the text beyond the title), in
-    the answer's order, at most ANALYSIS_MAX. Measured blind (0208): the answer's names alone 26 of 49 real breakdowns
-    (reports and makers' announcements named too); with the reading's kind and the length 9 of 12."""
+    commentary (ANALYSIS_KINDS) and that have ANALYSIS_CHARS+ characters of their own, in the answer's order, at most
+    ANALYSIS_MAX (the reading's kind and length matter: measured, 0208)."""
     named = {rid: a.get("breakdown_posts") or [] for rid, a in answers.items()}
     ids = sorted({p for ps in named.values() for p in ps})
     if not ids:

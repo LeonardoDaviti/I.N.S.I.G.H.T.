@@ -18,7 +18,7 @@ function writeFlag(on: boolean) {
     if (on) window.sessionStorage.setItem(DEV_DATA_SWITCH_FLAG, '1');
     else window.sessionStorage.removeItem(DEV_DATA_SWITCH_FLAG);
   } catch {
-    // Storage blocked: the switch then only follows `?data=`.
+    // storage blocked: the switch then only follows `?data=`
   }
   window.dispatchEvent(new Event(SHORTCUT_EVENT));
 }
@@ -46,11 +46,9 @@ function useDevSwitchFlag(): boolean {
 }
 
 /**
- * The dev-only `?data=` switch (spec §F.7, break-ui): flips a list between live
- * data and its worst-case, empty, one and huge fixtures. Plain chrome, fixed at
- * the bottom centre, no animation; never rendered in a production build, and in
- * dev only once asked for (a `?data=` URL or Alt+Shift+D), so the owner's
- * preview on the dev server reads like the real app.
+ * The dev-only `?data=` switch: flips a list between live data and its worst-case, empty, one and huge fixtures.
+ * Never rendered in a production build, and in dev only once asked for (a `?data=` URL or Alt+Shift+D), so the
+ * dev server reads like the real app.
  */
 export default function DevDataSwitch({ options }: { options: readonly string[] }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -59,7 +57,7 @@ export default function DevDataSwitch({ options }: { options: readonly string[] 
   if (!flag && !searchParams.has('data')) return null;
   const current = searchParams.get('data') ?? 'live';
   const choose = (value: string) => {
-    // Keep the switch up after "Live" drops `?data=` from the URL.
+    // keep the switch up after "Live" drops `?data=` from the URL
     if (!flag) writeFlag(true);
     const next = new URLSearchParams(searchParams);
     if (value === 'live') next.delete('data');

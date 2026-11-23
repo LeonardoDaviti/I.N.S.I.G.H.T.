@@ -1,6 +1,4 @@
-"""
-One post for the reader: detail, reader state (opens, reading time, favourite) (stored Reddit comments come with its metadata).
-"""
+"""One post for the reader: its detail and reader state (opens, reading time, favourite, position)."""
 from __future__ import annotations
 
 import html as html_lib
@@ -87,7 +85,7 @@ class PostDetailService:
                     (post_id,),
                 )
                 row = cur.fetchone()
-                # The classics this post builds on (issue 0051): at most 2, none without one.
+                # the classics this post builds on: at most 2
                 background = self.news.background(cur, post_id) if row else []
                 story = self.story(cur, post_id, str(row[1])) if row else None
                 internal = self.internal_links(cur, post_id, row[2], _with_quoted(row[8], row[36]), row[7]) if row else {}
@@ -99,9 +97,8 @@ class PostDetailService:
 
         source_settings = row[23] or {}
         media = post_media(row[9], row[2])
-        # The text starts after a title taken from it, without a feed's own lines (hnrss's counts:
-        # the byline says them), issue 0070. A thread's post with words of its own that quotes a post of its
-        # thread is no card: the thread lists it (issue 0072 D4); its title is the one every place shows (D1).
+        # the parsed text: after a title taken from it, without a feed's own lines; a quote of a post of its own
+        # thread is folded (the thread lists it)
         quoted = row[36] if story and story["thread"] and not row[37] else None
         if row[27] is None:   # not parsed yet: as it was stored
             title, content, html = row[6], row[7], row[8]
@@ -109,7 +106,7 @@ class PostDetailService:
             title, content, html = row[27], row[38]["text"], row[38]["body"]   # its quote card folded
         else:
             title, content, html = row[27], body(row[7], row[28:32]), body(row[8], row[32:36])
-        # The quote card's byline opens the quoted tweet on x.com (issue 0126), inside INSIGHT when it is stored.
+        # the quote card's byline opens the quoted tweet (inside INSIGHT when it is stored)
         html = quote_byline_linked(html, row[36])
         counts ={"points": row[39]["points"], "comments": row[39]["comments"]} if row[39] else None
         return {
@@ -142,35 +139,28 @@ class PostDetailService:
             "source_display_name": source_settings.get("display_name") or row[22],
             "background": background,
             "story": story,
-            # A repost (issue 0066): "↻ @by, from @author", as the feed row says it.
             "repost": repost_of(row[21], row[22], row[24], row[25]),
-            # Who wrote it, via whom, quoting whom (issue 0185: Byline), as every view says it.
             "byline": byline_of(source_settings.get("display_name") or row[22], row[21], row[22], row[24],
                                 ((row[11] or {}).get("forwarded_from") or {}).get("name"), row[36]),
             "internal_links": internal,
-            # A link post's page (issue 0072): {url, title, post_id}, read when the post has no words of its own.
             "link": link,
-            # Its News row (issue 0083): {id, title, voices, lead_id, scope}, the page says "In News".
             "news": news,
-            # Why it shows its feed's summary only (issue 0140), or None: "Summary only · <reason> · Open the page".
+            # why it shows only its feed's summary, or None
             "teaser_reason": full_text.teaser_reason(row[11], url=row[2], title=row[6], content_html=row[8]),
         }
 
     @staticmethod
     def story(cur: psycopg.Cursor, post_id: str, source_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """The post's story as the feed's lead carries it (issue 0055: the same `story`, from the
-        same query), when it has 2+ voices, is a thread (issue 0066) or another source shared it (issue
-        0072 D4: "also shared by", as the feed row says); else None (no story, or copies of one voice
-        by its own source)."""
+        """The post's story as the feed row carries it (the same query), when it has 2+ voices, is a thread or
+        another source shared it; else None."""
         item: Dict[str, Any] = {"id": str(post_id)}
         ReaderRepository.attach_stories(cur, [item])
         story = item.get("story")
         others = story and source_id and any(source["id"] != source_id for source in voice_sources(story["sources"]))
         if not story or not (story["voices"] >= 2 or story["thread"] or others):
             return None
-        # A thread's replies read as the post does (issue 0068): each its stored HTML and the
-        # links in it to stored posts, rendered by the post page's reader. A reply's quote of a tweet
-        # of its own story is no card (issue 0070): it was read above, `quotes_above` says so.
+        # a thread's replies carry their HTML and internal links, as the post does; a reply quoting a post of its own
+        # story is folded (`quotes_above`)
         replies = {p["id"]: p for p in story["posts"] if p["parent_reason"] == "thread"}
         if replies:
             cur.execute("SELECT p.id, p.url, p.content_html, p.content, p.normalized_url, pp.quoted, pp.folded FROM posts p "
@@ -191,10 +181,8 @@ class PostDetailService:
     @staticmethod
     def link(cur: psycopg.Cursor, url: Optional[str], story: Optional[Dict[str, Any]],
              post_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """The page a link post shares (issue 0072): {url, title, post_id, kind}, titled by the stored post at
-        its address (opened here), else by its story's outside origin when it is that page. `kind`
-        (issue 0072 D4): a picture opens the picture; a video on Reddit's video host plays on the post's
-        own page (`post_url`)."""
+        """The page a link post shares: {url, title, post_id, kind}, titled by the stored post at its address, else
+        by its story's outside origin. `kind`: a picture opens the picture; a Reddit video plays on `post_url`."""
         if not url:
             return None
         kind = link_kind(url)
@@ -211,10 +199,8 @@ class PostDetailService:
     @staticmethod
     def internal_links(cur: psycopg.Cursor, post_id: str, post_url: Optional[str],
                        content_html: Optional[str], content: Optional[str]) -> Dict[str, str]:
-        """{href as the post's text has it: the id of the stored post at that address} (issue
-        0057). Any link counts, the post's own platform included; looked up by address: the post
-        with that exact url, else the first seen (0049) at its normalized address. Not the post
-        itself."""
+        """{href as the post's text has it: the id of the stored post at that address}: the exact url, else the
+        first seen at its normalized address. Not the post itself."""
         hrefs: List[str] = []
         urls: List[str] = []
         normalized: List[str] = []
@@ -243,8 +229,8 @@ class PostDetailService:
         return {href: str(target) for href, target in cur.fetchall()}
 
     def connected(self, post_id: str, *, full: bool = False) -> Optional[Dict[str, Any]]:
-        """The post's Connected block (issue 0125): {earlier, later, outside, more}, None for no such post. Read
-        apart from the post (the page asks for it after the post), so the post never waits on it."""
+        """The post's Connected block {earlier, later, outside, more}, None for no such post; asked for apart from
+        the post so the post never waits on it."""
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return PostRefsRepository.connected(cur, post_id, full=full)
@@ -286,7 +272,7 @@ class PostDetailService:
         return stored
 
     def save_position(self, post_id: str, block: Optional[int], blocks: Optional[int]) -> None:
-        """Where a long post was left (issue 0030); block None clears it (the post was finished)."""
+        """Where a long post was left; block None clears it (the post was finished)."""
         with self._post_write(post_id) as cur:
             self.reader_repo.set_position(cur, post_id, block, blocks)
 

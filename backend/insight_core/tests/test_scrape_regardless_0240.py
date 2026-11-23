@@ -1,7 +1,6 @@
-"""Issue 0240 (v10.26, 0237 #3; owner 2026-11-19: "I don't care if something has feed, we should scrape it
-regardless"): the one test read (where_linked.follow, scout_reads.Reader) tries the site's list pages before it calls a
-source unfollowable, and dates a feed's undated or titles-only items from their own pages. Invented sites and HTML
-only; no network (FakeHttp), no database."""
+"""Scrape regardless of a feed (0240): the one test read (where_linked.follow, scout_reads.Reader) tries the site's list
+pages before it calls a source unfollowable, and dates a feed's undated or titles-only items from their own pages.
+Invented sites and HTML only; no network, no database."""
 from __future__ import annotations
 
 import asyncio
@@ -101,7 +100,7 @@ class NewsroomWithoutAFeed(unittest.TestCase):
                          ["corp.example"])
 
     def test_the_page_given_is_watched_itself(self):
-        # Before 0240, a list page deeper than the home page was never previewed itself: "none found".
+        # a list page deeper than the home page is previewed itself
         responses = {f"{SITE}/company/newsroom": listing("/company/newsroom", 5),
                      **articles("/company/newsroom", 5, meta_date=True)}
         got = read(responses, f"{SITE}/company/newsroom")
@@ -115,7 +114,7 @@ class NewsroomWithoutAFeed(unittest.TestCase):
         self.assertEqual((got.reason, got.resolved["handle_or_url"]), ("", f"{SITE}/stories"))
 
     def test_a_page_under_an_account_keeps_to_it(self):
-        # v10.13.5: a page under an account or section (hub.example/<org>) is never offered the site's own news.
+        # a page under an account or section (hub.example/<org>) is never offered the site's own news
         responses = {f"{SITE}/example-org": "<html><body><h1>Example org</h1><p>Models.</p></body></html>",
                      f"{SITE}/news": listing("/news", 4), **articles("/news", 4, meta_date=True)}
         got = read(responses, f"{SITE}/example-org")
@@ -154,7 +153,7 @@ class UndatedListDatedArticles(unittest.TestCase):
         feed = f'<?xml version="1.0"?><rss version="2.0"><channel><title>Corp</title>{entries}</channel></rss>'
         http = FakeHttp({f"{SITE}/u/feed.xml": feed})
         asyncio.run(scout_reads.Reader(http, KindRegistry.default(http, None), page_gap=0).read(f"{SITE}/u/feed.xml"))
-        # The finder reads the first entry's page once itself (a bodiless feed may have moved: issue 0108).
+        # the finder reads the first entry's page once itself (a bodiless feed may have moved)
         self.assertEqual(sum(1 for url in http.requests if "/u/we-launched" in url), scout_reads.DATE_PAGES + 1)
 
     def test_a_news_sitemap_dates_a_javascript_list(self):

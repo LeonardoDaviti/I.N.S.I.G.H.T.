@@ -68,7 +68,7 @@ describe('search (issue 0040)', () => {
 
     expect(where()).toBe(`/search?q=mcp+servers&scope=source%3A${SOURCE}&filter=later`);
     expect(await screen.findByRole('button', { name: /Simon Willison/ })).toHaveAttribute('aria-pressed', 'true');
-    // Two words: best match first (issue 0139).
+    // Two words: best match first.
     expect(lastSearch(searchPosts)).toMatchObject({ q: 'mcp servers', scope: `source:${SOURCE}`, filter: 'later', order: 'best' });
   });
 

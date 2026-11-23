@@ -1,15 +1,13 @@
 /**
- * Run report presentation (Mark IX §F.3, issue 0021): what a fetch run delivered,
- * in words ("34 new posts from 5 sources", "Nothing new: 12 sources checked"),
- * with a feedback tone; the backend's `RunReport.summary_line` says the same.
- * Pure; `asRunReport` is the one parser for job payloads (it tolerates the job
- * compaction sentinels, missing lists and the fields of old stored reports).
+ * Run report presentation: what a fetch run delivered in words ("34 new posts from 5 sources"), with a tone;
+ * the backend's `RunReport.summary_line` says the same. `asRunReport` is the one parser for job payloads
+ * (tolerates compaction sentinels, missing lists and old reports' fields). Pure.
  */
 import type { RunReport } from '../services/api';
 import { isRecord } from './utils.ts';
 import { plural } from './format.ts';
 
-/** The feedback kinds of spec §F.7 (same names as `components/states/Notice`). */
+/** The feedback kinds (same names as `components/states/Notice`). */
 export type RunReportTone = 'status' | 'completion' | 'warning' | 'error';
 
 export interface RunReportSummaryText {
@@ -30,8 +28,7 @@ function records<T>(value: unknown, required: string): T[] {
   return value.filter((item) => isRecord(item) && required in item) as T[];
 }
 
-/** A job payload -> RunReport, or null when the payload is not a run report
- *  (for example the `{success: false, error}` of a run that raised). */
+/** A job payload -> RunReport, or null when it is not one (the `{success: false, error}` of a run that raised). */
 export function asRunReport(payload: unknown): RunReport | null {
   if (!isRecord(payload)) return null;
   if (typeof payload.status !== 'string' || !RUN_STATUSES.has(payload.status)) return null;

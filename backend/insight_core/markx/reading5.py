@@ -1,19 +1,10 @@
-"""ent-v5, one reading of a post (issue 0212, Stealth v10.21): read-v2's reading, read-v3's event type and origin and
-ent-v4.2's entities from one call a post (a window each for a long post), guide `ent-v5` (draft d7), task kind
-`reading`. `cite` stays its own question for posts that cite things (its answer merges into this set too, ent42).
+"""ent-v5: one reading of a post (read-v2's reading, read-v3's event type and origin, ent-v4.2's entities) from one
+call a window, task kind `reading`; `cite` stays its own question.
 
-**The switch** (mx_settings `reading_guide`): `off` (the default: nothing planned, nothing changes), `shadow` (new posts
-are read by ent-v5 beside the four old kinds; its reading and mentions are stored but nothing reads them except the
-/markx comparison), `on` (ent-v5's reading comes first wherever a reading is picked, its mentions are the post's
-current set, and new posts it read get no read, read3 or entities task). Old rows stay (keep everything); no older
-post is read again.
-
-**The one preference list:** every place that picks a post's reading by guide asks `guides(cur, *base)` (Python) or
-`rank_sql(column)` (SQL): its own guides as before, with ent-v5 first only while the switch is `on`.
-
-**The one adapter** (`record`, from tasks.record): an answer's reading becomes an mx_readings row under ent-v5 in
-read-v3's shape (`event` as `main`), its entities mx_mentions rows under ent-v5 through ent42's merge (own title
-dropped, the cite answer merged); in Shadow without moving mx_mention_sets.
+The switch (mx_settings `reading_guide`, `set_mode`): `off` (default, nothing planned), `shadow` (stored beside the
+old kinds, read only by `compare`), `on` (ent-v5 first wherever a reading is picked, its mentions the post's current
+set, no old-kind tasks for posts it reads). Every reading picker asks `guides` (Python) or `rank_sql` (SQL). `record`
+(from tasks.record) is the one adapter: the reading in read-v3's shape, mentions through ent42's merge. Old rows stay.
 """
 from __future__ import annotations
 
@@ -22,13 +13,16 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from psycopg import Cursor
 
-from insight_core.markx import pairing, plan_marks, repo, tasks
+from insight_core.markx import pairing, plan_marks, repo, schemas, tasks
 
 GUIDE, KIND = "ent-v5", "reading"
+# v10.42: the guides whose tasks ask the reading, current first (ent-v6: + the subtype). Its rows stay under GUIDE
+# whichever asked (the call names its task), so every reader of ent-v5's rows reads ent-v6's.
+ASKED = schemas.answer_guides(KIND)
 SETTING = "reading_guide"
 MODES = ("off", "shadow", "on")
 DEFAULT = "off"
-CHARS, LINKS = 6000, 12                     # ent-v4.2's cut and cite's links (0212 section 3)
+CHARS, LINKS = 6000, 12                     # ent-v4.2's cut and cite's links
 _GUIDE_RE = r"^[a-z0-9][a-z0-9.\-]*$"
 
 
@@ -109,14 +103,15 @@ def old_kinds_sql(cur: Cursor, post: str = "p.id") -> str:
     ent-v5 reads it."""
     if not is_on(cur):
         return "TRUE"
-    return f"NOT EXISTS (SELECT 1 FROM mx_tasks v5 WHERE v5.kind = '{KIND}' AND v5.guide = '{GUIDE}' AND v5.a = {post})"
+    asked = ", ".join(f"'{g}'" for g in ASKED)
+    return f"NOT EXISTS (SELECT 1 FROM mx_tasks v5 WHERE v5.kind = '{KIND}' AND v5.guide IN ({asked}) AND v5.a = {post})"
 
 
 # ---- the input and the planner -------------------------------------------------------------------------------------
 
 def inputs(p: tasks.Post, *, url: Optional[str], repost: Optional[Dict[str, Any]], cap: int) -> List[str]:
-    """The post's inputs, a window each: window 1 is read-v3's head (address, repost author, published time) over
-    ent-v4.2's cut (6,000 characters) with cite's 12 links; a later window is 0176's (`tasks.window_input`)."""
+    """The post's inputs, a window each: the first is read-v3's head (address, repost author, published time) over
+    the CHARS cut with LINKS links; later ones are `tasks.window_input`'s."""
     head, _, rest = tasks.post_block(p, LINKS, CHARS).partition("\n")
     extra = [f"Address: {url or ''}"]
     if repost and repost.get("author"):
@@ -128,9 +123,8 @@ def inputs(p: tasks.Post, *, url: Optional[str], repost: Optional[Dict[str, Any]
 
 
 def plan(cur: Cursor, *, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] = None, **_ignored: Any) -> int:
-    """`reading` tasks (a window each) for the NEW posts only (the fresh lane: fetched or surfaced in the last
-    FRESH_HOURS, dated in the last FRESH_DATED_DAYS) that have none, newest first, while the switch is shadow or on:
-    how many were added. No older post is planned (no archive re-read)."""
+    """`reading` tasks for new posts only (the fresh lane) that have none, newest first, while the switch is shadow
+    or on: how many were added. No archive re-read."""
     if mode(cur) == "off":
         return 0
     since = tasks.fresh_since(now)
@@ -139,12 +133,12 @@ def plan(cur: Cursor, *, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] 
                                  - {pairing.ordinary_date('p')})) / 86400))::int, {plan_marks.STAMP}
               FROM posts p
              WHERE {tasks.fresh_sql()}
-               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = ANY(%(asked)s) AND t.a = p.id)
                AND {plan_marks.unmarked()}
                AND p.filtered_by IS NULL
              ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
              LIMIT %(limit)s""",
-        {"now": now, "fresh": since, "kind": KIND, "guide": GUIDE, "limit": limit, "days": tasks.FRESH_DATED_DAYS})
+        {"now": now, "fresh": since, "kind": KIND, "guide": GUIDE, "asked": list(ASKED), "limit": limit, "days": tasks.FRESH_DATED_DAYS})
     if not rows:
         return 0
     added, passed = add_posts(cur, rows)
@@ -153,9 +147,9 @@ def plan(cur: Cursor, *, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] 
 
 
 def add_posts(cur: Cursor, rows: Sequence[Any]) -> Any:
-    """`reading` tasks (a window each) for these posts, rows of (post id, priority, stamp): (how many were added, the
-    (post, SAME_INPUT, stamp) rows of the posts whose first input is another post's task). The one way a post's
-    reading is asked: the fresh lane (`plan`) and the last posts of a thin source (tasks.plan_last_posts, 0233)."""
+    """`reading` tasks (a window each) for rows of (post id, priority, stamp): (how many were added, the (post,
+    SAME_INPUT, stamp) rows of posts whose first input is another post's task). The one way a post's reading is
+    asked (`plan`, tasks.plan_last_posts)."""
     from insight_core.markx import folds
     ids = [str(r[0]) for r in rows]
     posts = tasks.load_posts(cur, ids)
@@ -187,7 +181,7 @@ def as_read3(answer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     return {"kind": r.get("kind"), "events": r.get("events"), "main": answer.get("event"), "items": r.get("items") or [],
             "mentions": r.get("mentions") or [], "lang": r.get("lang"), "type_why": r.get("type_why"),
-            "event_type": r.get("event_type"), "origin": r.get("origin")}
+            "event_type": r.get("event_type"), "subtype": r.get("subtype"), "origin": r.get("origin")}
 
 
 def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> None:
@@ -203,12 +197,13 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: Dict[str, An
         repo.add_reading(cur, post_id=pid, guide=GUIDE, call_id=call_id, kind=read3["kind"], events=read3["events"],
                          lang=read3["lang"], headline=main.get("headline_en"), reading=read3)
     entities = [{**{f: None for f in ENTITY_NULLS}, **e} for e in answer.get("entities") or [] if isinstance(e, dict)]
-    if win:   # 0176: a name wholly in the text a window shares with the one before was read there
+    if win:   # a name wholly in the text a window shares with the one before was read there
         shared, rest = tasks.window_overlap(task["input"])
         entities = [e for e in entities if not (e.get("span") and e["span"] in shared and e["span"] not in rest)]
     mentions = ent42.main_mentions(cur, pid, entities) if win == 0 else ent42.window_mentions(cur, pid, entities)
     repo.add_mentions(cur, post_id=pid, guide=GUIDE, call_id=call_id, mentions=mentions, win=win, current=on)
     if on:
+        task = {**task, "guide": GUIDE}   # v10.42: the readers name the rows' guide, whichever version asked
         tasks._note_happening(cur, task)
         tasks._note_units(cur, task)
 
@@ -220,9 +215,8 @@ def _names(rows: Iterable[Any]) -> set:
 
 
 def compare(cur: Cursor, *, limit: int = 40) -> Dict[str, Any]:
-    """The newest posts ent-v5 read, each beside what the post has now: the reading's kind and events (read-v2), event
-    type and origin (read-v3, when the post has one), the headline, and the entity names (ent-v5's, all windows,
-    against the post's current set); and the share of agreement over them."""
+    """The newest posts ent-v5 read beside what each has now (kind, events, event type, origin, headline, entity
+    names), and the share of agreement over them."""
     cur.execute("""SELECT r.post_id::text, r.kind, r.events, r.headline, r.reading->>'event_type', r.reading->>'origin',
                           c.created_at, p.title
                      FROM mx_readings r JOIN mx_calls c ON c.id = r.call_id JOIN posts p ON p.id = r.post_id

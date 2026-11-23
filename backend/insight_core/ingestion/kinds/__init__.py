@@ -13,11 +13,8 @@ if TYPE_CHECKING:
 
 
 class KindRegistry:
-    """Resolves a source to its kind: first match in priority order, cached per address.
-
-    The cache key is what a kind matches on: the platform, the address and whether
-    settings.page_watch is set, so a source switched to follow a page (issue 0036) at an
-    address once resolved as a feed (the feed finder asks about any address) gets page_watch.
+    """Resolves a source to its kind: first match in priority order, cached by what kinds match on (platform,
+    address, whether settings.page_watch is set), so a source switched to follow a page gets page_watch.
     """
 
     def __init__(self, kinds: Sequence["SourceKind"]) -> None:
@@ -40,12 +37,9 @@ class KindRegistry:
 
     @staticmethod
     def default(http: "KindHttp", youtube: Any, *, db_url: Optional[str] = None) -> "KindRegistry":
-        """The real kinds in resolution priority (spec §D.1); generic_rss is the fallback.
-        saved (platform saved, issue 0031) and page_watch come first: the Saved source is no feed,
-        and page_watch's setting (settings.page_watch) is the owner's explicit choice.
-
-        With db_url, generic_rss and page_watch read the article page of new posts only (it asks which
-        urls are already stored); without it, of every teaser it fetches.
+        """The real kinds in resolution priority; generic_rss is the fallback. saved and page_watch come first (the
+        Saved source is no feed; settings.page_watch is an explicit choice). With db_url, generic_rss and page_watch
+        read the article page of new posts only; without it, of every teaser they fetch.
         """
         from insight_core.adapters import ADAPTER_CLASSES
         from insight_core.db.repo_posts import PostsRepository
@@ -71,10 +65,10 @@ class KindRegistry:
             YouTubeKind(youtube),
             TelegramRssKind(http),
             NitterRssKind(http, stored_articles=posts.stored_x_articles if posts else None),
-            BlueskyKind(http),   # matches nothing unless INSIGHT_BLUESKY is on (issue 0137 B10)
+            BlueskyKind(http),   # matches nothing unless INSIGHT_BLUESKY is on
             TelegramKind(http=http),
             GenericRssKind(http, stored_urls=stored_urls, teasers_due=posts.teasers_to_read_again if posts else None,
-                           learned=LearnedLadder(db_url) if db_url else None),   # issue 0143's learned ladder
+                           learned=LearnedLadder(db_url) if db_url else None),
         ])
 
 

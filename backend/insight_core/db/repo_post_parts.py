@@ -1,10 +1,7 @@
-"""The stored parts of each post (issue 0076, migration 0060): written here, from the one parser
-(utils/post_parser.py), at save and by the catch-up; read by every page and the story job through
-the SQL and the helpers below, never by parsing again.
-
-The catch-up (`catch_up`, in a process of its own: StoriesService.recompute runs it first) parses
-the posts with no row (the first start after 0060: every post), then, when the parser's stamp
-changed, every post again, a batch a transaction, writing only the rows whose digest changed.
+"""The stored parts of each post: written here from the one parser (utils/post_parser.py), at save and by the
+catch-up; read by every page and the story job through the SQL and helpers below, never by parsing again.
+`catch_up` (in a process of its own) parses posts with no row, then, when the parser's stamp changed, every
+post again, a batch a transaction, writing only the rows whose digest changed.
 """
 from __future__ import annotations
 
@@ -23,8 +20,7 @@ logger = logging.getLogger(__name__)
 SETTINGS_KEY = "post_parts"   # {"stamp": the parser's stamp every row is at, "redo": {"stamp", "after"}}
 BATCH = 500                   # posts a transaction (their bodies are read whole); not measured
 
-# The title every place shows (post_parser: post_fields.post_title at save), one column; the stored
-# title until the post is parsed (a post saved by a path that doesn't parse, until the catch-up does).
+# The title every place shows (post_fields.post_title at save); the stored title until the post is parsed.
 def shown_title(p: str = "p") -> str:
     return f"COALESCE((SELECT pp.title FROM post_parts pp WHERE pp.post_id = {p}.id), {p}.title)"
 
@@ -61,10 +57,9 @@ def _row(post_id: Any, parts: Any, digest: str, stamp: str) -> Tuple[Any, ...]:
 class PostPartsRepository:
     @staticmethod
     def write(cur: Cursor, ids: Iterable[str], *, again: bool = False) -> int:
-        """Parse those of these stored posts that have no parts (a change to their raw columns dropped
-        them: migration 0060), or with `again` every one (a new parser), and write the rows that changed.
-        Returns how many. A post the parser can't read is logged and keeps its raw title and bodies, so
-        it isn't tried again until its stamp changes."""
+        """Parse those of these stored posts that have no parts, or with `again` every one, and write the rows
+        that changed. Returns how many. A post the parser can't read is logged and keeps its raw title and bodies,
+        not tried again until its stamp changes."""
         from insight_core.utils.post_parser import Parts, parse, parse_stamp
 
         ids = list(ids)
@@ -90,8 +85,8 @@ class PostPartsRepository:
 
     @staticmethod
     def write_missing(cur: Cursor, ids: Optional[Iterable[str]] = None) -> int:
-        """Parse those of these posts (None: every post) that have no parts yet (the story job reads its
-        posts' parts; the catch-up before it leaves none, but a post saved meanwhile may have none)."""
+        """Parse those of these posts (None: every post) that have no parts yet (a post saved meanwhile may have
+        none)."""
         cur.execute("SELECT p.id FROM posts p WHERE (%s::uuid[] IS NULL OR p.id = ANY(%s::uuid[])) "
                     "AND NOT EXISTS (SELECT 1 FROM post_parts pp WHERE pp.post_id = p.id)",
                     (None if ids is None else list(ids),) * 2)

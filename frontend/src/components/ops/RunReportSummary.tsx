@@ -7,7 +7,7 @@ import { sourceLabel } from '../../lib/sourceLabel';
 import { StatusIcon, TextLink } from '../ui';
 import type { Status } from '../ui';
 
-/** Monochrome tone (design docs system/status.md): border style and a glyph, never hue. */
+/** Monochrome tone: border style and a glyph, never hue. */
 const TONE: Record<RunReportTone, { box: string; glyph: Status }> = {
   status: { box: 'border-line', glyph: 'running' },
   completion: { box: 'border-line-strong', glyph: 'ok' },
@@ -15,11 +15,8 @@ const TONE: Record<RunReportTone, { box: string; glyph: Status }> = {
   error: { box: 'border-fg', glyph: 'failing' },
 };
 
-/**
- * A run report, readable (issue 0021): what the run delivered in words ("34 new
- * posts from 5 sources"), the sources that delivered, each linked to read it,
- * and the sources that failed, one line each with the reason. No zero counts.
- */
+/** A run report in words ("34 new posts from 5 sources"): the sources that delivered, each linked, and the ones that
+ *  failed with the reason. No zero counts. */
 export default function RunReportSummary({ report, className = '' }: { report: RunReport; className?: string }) {
   const summary = summarizeRunReport(report);
   const duration = formatElapsed(report.duration_s, { hours: false });

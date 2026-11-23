@@ -9,8 +9,8 @@ import type { MarkxEntityPage, MarkxEntityQueue, MarkxEntityRef, MarkxQueueItem 
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
-/** Issue 0222, invented names: the owner is asked only what Claude flagged; the whole queue is the operator's,
- * collapsed; an answer about posts a side no longer holds is never shown; each post shows its mention in context. */
+/** The owner is asked only what Claude flagged; the whole queue is the operator's, collapsed; an answer about posts a
+ *  side no longer holds is never shown; each post shows its mention in context (0222). Invented names. */
 const now = new Date().toISOString();
 const ref = (id: string, name: string): MarkxEntityRef => ({
   id, name, type: 'software', maker: null, level: 'thing', version: null, variant: null, size: null, build: null,
@@ -74,7 +74,7 @@ describe('a post shows its mention in context (issue 0222)', () => {
     const mark = within(context as HTMLElement).getByText('Kestrel Coder');
     expect(mark.tagName).toBe('MARK');
     expect(screen.getByRole('link', { name: 'Weekly notes' })).toBeInTheDocument();
-    // 0233 (0225 #28): a quote one step in under the post's line, never at the line's own indent
+    // a quote one step in under the post's line, never at the line's own indent (0233)
     const quote = context?.closest('[data-context]');
     expect(quote?.tagName).toBe('BLOCKQUOTE');
     expect(quote).toHaveClass('ml-4', 'border-l-2', 'pl-2');

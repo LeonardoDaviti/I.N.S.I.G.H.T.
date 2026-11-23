@@ -1,9 +1,6 @@
-"""0174 (Stealth v10.16): Mark X News in Haiku's titled sections, and every row titled by Haiku. The checks on an answer
-(every row once, no unknown key, counts, title length, no title twice, "Other" for two rows at most), when the question
-is asked (first time, 20% of the rows changed, 30 minutes, one waiting), its input (headline, entities, type, voices,
-last time's titles and each row's last section), the answer stored as rows, the page's `sections` (the page's order,
-the rows added since as `new`), the lease's planner, and the untitled rows' headline tasks asked first. Synthetic data
-only; the DB tests run on a database whose name ends in _test."""
+"""Mark X News in Haiku's titled sections (0174): the answer's checks, when the question is asked, its input, the
+answer stored as rows, the page's `sections` (the rows added since as `new`), the lease's planner, and untitled rows'
+headline tasks first. Synthetic data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import unittest
@@ -90,7 +87,7 @@ def placed(*pairs):
 
 
 class ThePlacementChecks(unittest.TestCase):
-    """0197: every new row placed once, into a section the question shows or "new"."""
+    """Every new row placed once, into a section the question shows or "new" (0197)."""
 
     def check(self, a):
         return validate.check("news_place", a, PLACE_TEXT, "news-place-v1")[1]
@@ -256,7 +253,7 @@ class Sections(_Api):
         self.cur.execute("SELECT position, title, row_ids::text[] FROM mx_news_sections WHERE task_id = %s ORDER BY position",
                          (tid,))
         self.assertEqual(self.cur.fetchall(), [(0, "Releases", ps[0:3]), (1, "Deals", ps[3:6]), (2, "Research", ps[6:8])])
-        # a new run: one row gone, one new (row ids are first posts): the page keeps the last sectioning, the new row first
+        # a new run: one row gone, one new: the page keeps the last sectioning, the new row first
         extra = self.post(title="Late item")
         self.news_run(ps[1:] + [extra], scores={extra: 1000})
         status, page = call("GET", "/api/markx/news", query={"all": 1})
@@ -324,8 +321,8 @@ class Sections(_Api):
         return page["sections"]
 
     def test_a_new_row_is_placed_into_its_section(self):
-        """0197: one new row of 8 (12.5%: no full sectioning) is asked alone with the sections and their examples,
-        and the page shows it in the section answered."""
+        """One new row of 8 (no full sectioning due) is asked alone with the sections and their examples, and the page
+        shows it in the section answered (0197)."""
         ps = self.posts(8)
         self.sectioned(ps)
         extra = self.post(title="Late deal signed")

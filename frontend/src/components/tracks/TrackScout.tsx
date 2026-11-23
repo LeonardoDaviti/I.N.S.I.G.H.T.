@@ -43,11 +43,9 @@ export function ScoutRow({ c, onDone }: { c: ScoutCandidate; onDone?: () => void
   );
 }
 
-/**
- * The Topic view's "Sources for this track" (issue 0148, Mark X): the scout's suggestions, ranked by how many of their
- * last posts the track's judge put in (30% at least), each with Follow as active / passive / Not this one; the sources
- * it brought and how they do since; what could not be read and why. "Find sources for this track" starts a scout.
- */
+/** The Topic view's "Sources for this track" (Mark X): the scout's suggestions, ranked by how many of their last
+ *  posts the track's judge put in (30% at least), each with Follow active / passive / Not this one; the sources it
+ *  brought and how they do; what could not be read. "Find sources for this track" starts a scout. */
 export default function TrackScout({ folderId }: { folderId: string }) {
   const client = useQueryClient();
   const query = useQuery({

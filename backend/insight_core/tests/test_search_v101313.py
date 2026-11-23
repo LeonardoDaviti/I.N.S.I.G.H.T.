@@ -1,17 +1,14 @@
-"""Stealth v10.13.13, search for a name and its version, the version spelled any way (a model's "K3.1" asked as "3.1"):
+"""Search for a name and its version, the version spelled any way (a model's "K3.1" asked as "3.1"):
 
-1. Rank: a name and its version pair to match (0095) but rank by the query's words unpaired, as before v10.13.1:
-   ts_rank reads a lone pair ('x' <-> '3.1' | 'x' <2> '3.1') word by word, so a post repeating the name outranked one
-   naming the version once, side by side.
+1. Rank: a name and its version pair to match (0095) but rank by the query's words unpaired: ts_rank reads a lone
+   pair word by word, so a post repeating the name would outrank one naming the version once, side by side.
 2. Titled: in best order a title naming the name and its version together as the index reads them ("Zentra Z3.1
-   Pro", "Zentra3.1") holds the query, as a title holding it word for word does (v10.13.6); a query with no version
-   keeps v10.13.6's rule.
-3. Entity first and cards (Mark X on): the query's version of the family its name names, however its entities are
-   spelled ("Zentra Z3.1", its variant "Zentra Z3.1 Pro", an unmerged "Zentra3.1", a loose "Zentra Z3.1 Flash"): all
-   their posts as subject or actor rank first, and the card with the most posts leads, so one spelling never crowds
-   out the others.
+   Pro", "Zentra3.1") holds the query, as a title holding it word for word does; a query with no version keeps that
+   rule.
+3. Entity first and cards (Mark X on): the query's version of the family, however its entities are spelled: all their
+   posts as subject or actor rank first, and the card with the most posts leads.
 
-Rows are committed, so the classes run only against a `_test` database. Every name, post and source is synthetic."""
+Rows are committed, so the classes run only against a `_test` database. Everything is synthetic."""
 from __future__ import annotations
 
 import os
@@ -57,7 +54,7 @@ class RankAndTitle(_Search):
         live = self.post("Zentra Z3.1 Pro is live in Zentra Chat and Zentra Code!",
                          "Zentra Z3.1 Pro is live in Zentra Chat and Zentra Code! Happy Zentra day!", at=self.at(1))
         apart = self.post("Zentra is good", "Its 3.1 score on the board is not, they say.", at=self.at(3))
-        self.assertEqual(self.ids("zentra 3.1", order="best"), [notes, live])   # was [live, notes]
+        self.assertEqual(self.ids("zentra 3.1", order="best"), [notes, live])
         self.assertNotIn(apart, self.ids("zentra 3.1", order="newest"))
         self.cur.execute("SELECT id::text FROM posts WHERE id = ANY(%s::uuid[])"
                          " ORDER BY ts_rank(search_vector, search_query_words('zentra 3.1'), 1) DESC",

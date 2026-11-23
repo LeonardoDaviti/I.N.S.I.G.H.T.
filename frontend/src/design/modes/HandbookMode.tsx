@@ -23,7 +23,7 @@ function DocAt({ href }: { href: string }) {
   return doc ? <DocView doc={doc} /> : <NotFound what="doc" />;
 }
 
-/** A prototype's README (D6), its status and age, and the way into Bench, where it is compared. */
+/** A prototype's README, its status and age, and the way into Bench, where it is compared. */
 function PrototypeDoc() {
   const { id = '' } = useParams();
   const prototype = prototypeById(id);
@@ -43,10 +43,7 @@ function PrototypeDoc() {
   );
 }
 
-/**
- * A page or parked doc, then its specimen at full width, offering the doc's
- * `states:` that have a frame scenario. A parked page has none, so no specimen.
- */
+/** A page or parked doc, then its specimen at full width with the doc's `states:` that have a frame scenario. */
 function PageDoc({ section }: { section: 'pages' | 'parked' }) {
   const { slug = '' } = useParams();
   const doc = docAt(`/design/${section}/${slug}`);
@@ -60,12 +57,9 @@ function PageDoc({ section }: { section: 'pages' | 'parked' }) {
   );
 }
 
-/**
- * Handbook mode, the default (verdict A): the rail on the left, the doc in a
- * centred column, specimens under page docs at full width.
- */
+/** Handbook mode, the default: the rail on the left, the doc in a centred column, specimens under page docs. */
 export default function HandbookMode() {
-  // The rail's prototype ages count from now, so they are read when the mode mounts.
+  // the rail's prototype ages count from now, so they are read when the mode mounts
   const groups = useMemo(() => railGroups(DOCS, COMPONENTS, prototypeRefs(new Date())), []);
   return (
     <div className="mx-auto flex w-full max-w-[90rem] gap-8 px-4 sm:px-6">

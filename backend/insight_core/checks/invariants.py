@@ -1,16 +1,10 @@
-"""Rules that hold on every post (issue 0075 B): checks over the whole copy, not a sample.
+"""Rules that hold on every post: checks over the whole copy, not a sample (`INVARIANTS`, read-only, `Run`; and
+`SCRATCH_INVARIANTS`, which run the story job, so only ever on a scratch copy).
 
-Each invariant has a name, an area and a line saying what it counts; run, it gives a count, the
-number of things it looked at and up to EXAMPLES example ids (written only to the private report).
-A count above the baseline (main's count on the same copy) fails the check unless the spec names its
-reason (`allowed`).
-
-The rules here are written apart from the rules they check (their own address and label patterns), so
-a change to a title rule can't also change what measures it. The services are the pages' own.
-
-Two kinds:
-- `INVARIANTS` read the copy only (`Run`);
-- `SCRATCH_INVARIANTS` run the story job, so they only ever get a scratch copy (story_identity.py).
+Each invariant has a name, an area and a line saying what it counts; run, it gives a count, the number of things it
+looked at and up to EXAMPLES example ids (written only to the private report). A count above the baseline (main's
+count on the same copy) fails unless the spec names its reason (`allowed`). The rules here are written apart from the
+rules they check, so a change to a rule can't also change what measures it.
 """
 from __future__ import annotations
 
@@ -76,7 +70,7 @@ class Run:
         return self.random.sample(ids, EXAMPLES) if len(ids) > EXAMPLES else ids
 
 
-# ---- reading a whole table (0243) ---------------------------------------------------------------------------------
+# ---- reading a whole table ---------------------------------------------------------------------------------
 # An invariant that runs Python over every row of a large table reads it in shares, one worker process each (a hash of
 # the row's key), streamed through a server-side cursor: no process holds the table, only the ids it finds.
 STREAM_ROWS = 500
@@ -221,7 +215,7 @@ def _news_lines(run: Run) -> Tuple[List[str], int]:
 
 
 def _discover_articles(run: Run) -> Tuple[List[str], int]:
-    """Discover's kept articles (its counts, issue 0067) that are stored posts read the feed's title."""
+    """Discover's kept articles that are stored posts read the feed's title."""
     run.cur.execute("SELECT value FROM system_settings WHERE key = 'discover_counts'")
     row = run.cur.fetchone()
     articles = [a for s in ((row[0] or {}).get("found", []) if row else []) for a in s.get("articles", [])]
@@ -264,8 +258,8 @@ def _date_after_fetch(run: Run):
 # ---- addresses ------------------------------------------------------------------------------------
 
 def _address_unnormalized(run: Run):
-    """A post with an http(s) address and no normalized_url (issue 0130 E1: every read matching posts by it misses
-    the post). Its own pattern, not the save path's rule."""
+    """A post with an http(s) address and no normalized_url (every read matching posts by it misses the post). Its own
+    pattern, not the save path's rule."""
     run.cur.execute("SELECT id::text FROM posts WHERE normalized_url IS NULL AND url ~* '^https?://[^/\\s]+'")
     ids = [r[0] for r in run.cur.fetchall()]
     run.cur.execute("SELECT count(*) FROM posts WHERE url ~* '^https?://'")
@@ -336,27 +330,26 @@ def _refs_share(args) -> Tuple[List[str], int]:
 
 def _refs_every_link(run: Run):
     """A post with an http(s) link of its text (the reader's body_hrefs, made absolute and normalized as internal_links
-    does) that has no open post_refs row (issue 0125). A version without post_refs is not measurable. In parallel
-    (0243: one process read 160k posts' whole bodies in 40 s)."""
+    does) that has no open post_refs row. A version without post_refs is not measurable. In parallel."""
     return _in_shares(run, _refs_share)
 
 
 def _label_story_voices(run: Run):
-    """A row's count ("covered by N", story.voices, 2+) isn't its names (story.sources, one a voice, issue
-    0082): the label and the list beside it disagree. One voice shows no count ("also shared by")."""
+    """A row's count ("covered by N", story.voices, 2+) isn't its names (story.sources, one a voice): the label and the
+    list beside it disagree. One voice shows no count ("also shared by")."""
     out = [sid for sid, st in run.stories.items() if st["voices"] >= 2 and st["voices"] != len(st.get("sources") or [])]
     return out, len(run.stories)
 
 
 def _label_news_voices(run: Run):
-    """A News row's count (its story's voices) isn't its names (issue 0082)."""
+    """A News row's count (its story's voices) isn't its names."""
     from insight_core.services.news_service import NewsService
     answer = plain(NewsService(run.db_url, clock=lambda: run.now).news_on(run.cur))
     out = [i["story"]["id"] for i in answer["items"] if i["story"]["voices"] != len(i["story"].get("sources") or [])]
     return out, len(answer["items"])
 
 
-# ---- Discover (issue 0080) -------------------------------------------------------------------------
+# ---- Discover -------------------------------------------------------------------------
 # Its own reading of an address, a slug and a followed host, apart from discover_rules'.
 DISCOVER_FIRST_PAGE = 30
 DISCOVER_TEST_DAYS = 30
@@ -374,7 +367,7 @@ def _discover(run: Run, first: bool) -> List[Dict[str, Any]]:
         service = StoriesService(run.db_url, clock=lambda: run.now, news=NewsService(run.db_url, clock=lambda: run.now))
         try:
             answer = service.discover(limit=DISCOVER_FIRST_PAGE) if first else service.discover()
-        except TypeError:   # before 0080: no pages
+        except TypeError:   # an older version: no pages
             answer = service.discover()
         memo[first] = plain(answer)
     return memo[first].get("suggestions", [])
@@ -402,7 +395,7 @@ def _discover_title_address(run: Run):
 
 
 def _discover_name_address(run: Run):
-    """Its names that are an address (the source's feed address: one name for a source is 0080 decision 1)."""
+    """Its names that are an address (the source's feed address: one name for a source)."""
     out, seen = set(), 0
     for s in _discover(run, False):
         for name in [*s.get("voice_names", []), *(n for a in s.get("articles", []) for n in a.get("linked_by", []))]:
@@ -452,8 +445,8 @@ def _discover_untested(run: Run):
     return sorted(out), len(_discover(run, True))
 
 
-# ---- Mark X (issue 0086 Safety): the mx_* tables keep their rules on every copy ------------------------
-# Invariant 1 (Mark IX's tables the same with Mark X on and off) runs the decision job, so it is a job check
+# ---- Mark X: the mx_* tables keep their rules on every copy ------------------------
+# Mark IX's tables the same with Mark X on and off runs the decision job, so it is a job check
 # (job_checks.markx_unchanged). A version before the mx_* tables can't be asked: "not measurable".
 
 def _calls_share(args) -> Tuple[List[str], int]:
@@ -465,16 +458,15 @@ def _calls_share(args) -> Tuple[List[str], int]:
             SELECT c.id::text, t.kind, t.input, c.answer, t.guide FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
              WHERE c.valid AND t.kind <> 'embed' AND t.input IS NOT NULL AND {share}""", "c.id"):
         of += 1
-        if validate.check(kind, answer, text, guide)[1] is not None:   # 0133: an entities arm's own schema
+        if validate.check(kind, answer, text, guide)[1] is not None:   # an entities arm's own schema
             out.append(cid)
     return out, of
 
 
 def _markx_calls_valid(run: Run):
     """A valid call whose answer its task's checks (markx/validate.py: the guide's schema, then the input's) refuse.
-    0233: the calls whose task still has its input: every kept kind, and the last tasks.SPEND_AFTER of the spent
-    ones (markx/tasks.py SPENDS; nothing reads a spent input, so there is nothing to check it against).
-    0243: streamed, in parallel (at the server's size, 1.5M calls and their inputs read whole held 15.8 GB)."""
+    Only the calls whose task still has its input (a spent input has nothing to check against). Streamed, in
+    parallel: the calls and inputs don't fit in memory at the server's size."""
     return _in_shares(run, _calls_share)
 
 
@@ -511,8 +503,8 @@ def _markx_lease_past(run: Run):
 
 
 def _markx_check_empty_story(run: Run):
-    """A check task still to be asked (open or leased) whose input shows its story with no member (0112 bug 2). v10.0's
-    answered ones stay as they were (keep everything); no decision reads them again (0112 Decided 6)."""
+    """A check task still to be asked (open or leased) whose input shows its story with no member (0112). Answered
+    ones stay as they were (keep everything); no decision reads them again."""
     run.cur.execute("SELECT id::text, input FROM mx_tasks WHERE kind = 'check' AND status IN ('open', 'leased')")
     rows = run.cur.fetchall()
     return sorted(tid for tid, text in rows if _shows_empty_story(text)), len(rows)
@@ -523,7 +515,7 @@ def _shows_empty_story(text: str) -> bool:
     return "\nMembers (earliest first):\n" not in text.split("\n\nPOST\n", 1)[0] + "\n"
 
 
-# ---- Mark X entities (issue 0119 A1): identity's rules on every copy -----------------------------------------
+# ---- Mark X entities: identity's rules on every copy -----------------------------------------
 
 def _mx_redirects(run: Run) -> Dict[str, Tuple[str, bool, str]]:
     run.cur.execute("SELECT from_id::text, to_id::text, automatic, id::text FROM mx_entity_redirects WHERE undone_at IS NULL")
@@ -531,7 +523,7 @@ def _mx_redirects(run: Run) -> Dict[str, Tuple[str, bool, str]]:
 
 
 def _series_source(run: Run):
-    """0134: a series part that is not a post of the series' source. A version without series is not measurable."""
+    """A series part that is not a post of the series' source. A version without series is not measurable."""
     run.cur.execute("""SELECT s.id::text, sp.post_id::text, p.source_id = s.source_id
                          FROM series_posts sp JOIN series s ON s.id = sp.series_id JOIN posts p ON p.id = sp.post_id""")
     rows = run.cur.fetchall()
@@ -539,7 +531,7 @@ def _series_source(run: Run):
 
 
 def _markx_author_links(run: Run):
-    """0131: a current author-link edge (author_link_other, author_link_own) whose post_refs row is gone, closed or
+    """A current author-link edge (author_link_other, author_link_own) whose post_refs row is gone, closed or
     boilerplate, or no longer resolves to its older post (Connected's resolution: the post at that exact url, else the
     first seen at its normalized address)."""
     from insight_core.markx import graph
@@ -618,7 +610,7 @@ def _markx_entity_big_cluster(run: Run):
     return sorted(e for e, n in size.items() if n > 10), len(size)
 
 
-# ---- voices (issue 0132 A) -------------------------------------------------------------------------
+# ---- voices -------------------------------------------------------------------------
 
 def _voice_one_per_source(run: Run):
     """A source in more than one voice, or in one that is no live voice (removed, never confirmed or gone): every

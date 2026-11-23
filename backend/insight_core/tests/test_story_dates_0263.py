@@ -1,8 +1,6 @@
-"""Issue 0263: a story is dated by the posts that report it, never by a background page it cites.
-
-A page you saved joins its linkers whatever its own date (0113) and is no voice: a Saved copy of a paper a release
-cites, dated a year before the release, became the release story's start, and the release row left News. Pure rules
-over invented posts: Mark IX's grouping, News's rows (Mark IX's and Mark X's code), and Mark X's story date.
+"""A story is dated by the posts that report it, never by a background page it cites (0263): a Saved copy of a paper
+a release cites, dated long before, must not become the release story's start. Pure rules over invented posts: Mark
+IX's grouping, News's rows (Mark IX's and Mark X's code), and Mark X's story date.
 """
 from __future__ import annotations
 

@@ -1,38 +1,8 @@
-"""A story's original, fetched when INSIGHT lacks it (issues 0114 and 0123). The rules are
-utils/originals_rules.py; this file reads what they need, asks, and records every ask in story_originals.
+"""Originals: the pages INSIGHT lacks that its stories, entities and posts point at, fetched and recorded.
 
-    summary = await OriginalsService(db_url, saved=saved_service).run(http)
-
-Run after each wanted story job by insight-ingestion's jobs runner (0216: markx/jobs.Jobs.after_stories), never by the API:
-1. **Settle** the early fetches asked before: a page stored since is `found`, else, once its source was
-   fetched after the ask, `missing` (its feed doesn't hold it: Discover's archive row shows it, 0114 decided 1).
-2. **0114, a followed source's page a story links** (always on: the owner's decision, 2026-11-05): the
-   source's fetch state gets `linked_wanted_at`, so the next tick's schedule decides `fetch_linked` for it
-   and it goes through the normal fetch path (the fetcher, the host gates, the learned budgets, backoff).
-3. **0123, a News story's original** (only when Collect originals is on, the scheduler's setting
-   `collect_originals`, default off): a tweet from the quote a member holds (no request), else one page
-   read through the save path's reader, under the host's gate; walled, no-article and unquoted-tweet
-   originals are recorded with their reason and never asked again.
-
-4. **0138, an entity's original** (under the same switch): a Mark X entity's original (its paper or release page,
-   markx/entity_addresses.py) that 2+ voices made the subject of their posts in 7 days, or one voice's News lead, not
-   stored: read as 0123 reads a page, recorded once in story_originals (kind `entity`, its entity_id). After 0123's.
-5. **0138 C, Look up unlinked originals** (its own switch `lookup_originals`, default off): a document entity of 2+
-   voices with no address: one title lookup (the arXiv API, else Crossref), recorded once (kind `lookup`).
-6. **0138 D2**: the sites that were the address of 3+ originals in 30 days, kept for Discover (`originals_suppliers`).
-7. **0196, pages 2+ voices link** (`plan_cited`, under Collect originals' switch): a page of a site you don't follow
-   that 2+ voices linked in 7 days (a publication's feeds one voice), not stored and not asked, passing the official
-   channels' exclusions (markx/official.pages_wanted: front pages, references, docs, apps, pricing, help, README, media
-   hosts, code and model hub pages, tweets); read as 0123 reads a page, recorded once (kind `cited`). After 0138's
-   entity originals, under the same credit; a followed source's page stays 0114's and F2's.
-8. **0208, a link post's page** (`plan_link_posts`, under Collect originals' switch): the page a link post of the last
-   72 hours shares (a Reddit link post: its title and the page), when the post has no words of its own: read as 0123
-   reads a page (a page stored already: recorded, no request), recorded once (kind `linked`). Mark X reads the post
-   with the page's text (markx/tasks.load_posts), so a post that said nothing but its title can join its story.
-   After 0138's entity originals and before 0196's cited pages, under the same credit.
-
-All spend one credit (originals_rules.credit_after: 1% of the schedule's fetches, at most 3 at once, 6 while an
-entity's original has waited over 72 hours); 0114's asks go first.
+The rules are utils/originals_rules.py; this file reads what they need, asks, and records every ask once in
+story_originals. `OriginalsService.run(http)` runs after each wanted story job in insight-ingestion, never the API.
+All asks share one credit (originals_rules.credit_after); early fetches of followed sources go first.
 """
 from __future__ import annotations
 
@@ -58,36 +28,31 @@ from insight_core.markx import pairing
 
 logger = logging.getLogger("insight.originals")
 
-SCHEDULER_KEY = "scheduler_config"   # OperationsService.SETTINGS_KEY_SCHEDULER: the row the dialog writes (0126: 0123 read "scheduler")
+SCHEDULER_KEY = "scheduler_config"   # OperationsService.SETTINGS_KEY_SCHEDULER: the row the dialog writes
 READS_KEY = "discover_reads"
 BUDGET_KEY = "originals_budget"   # the shared credit (originals_rules.credit_after): {credit, counted_at}
-CITED_KEY = "longread_citations"   # 0138 F3: {key: {n, posts}}: the sites the long-reads you opened cite
-SUPPLIERS_KEY = "originals_suppliers"   # 0138 D2: {at, current: {key: {n, urls, since}}, suggested: {key: first at}}
-EARLY_INTERVAL = timedelta(hours=24)   # at most one early fetch a day per source (was schedule.TIER_INTERVAL_MIN until 2026-11-11)
+CITED_KEY = "longread_citations"
+SUPPLIERS_KEY = "originals_suppliers"
+EARLY_INTERVAL = timedelta(hours=24)   # at most one early fetch a day per source
 
 
 def collect_on(cur: Any) -> bool:
-    """Collect originals (issue 0123): the scheduler's setting, on unless you switched it off (0126)."""
     row = SystemSettingsRepository.get(cur, SCHEDULER_KEY)
     return rules.collect_setting(row[0] if row else None)
 
 
 def lookup_on(cur: Any) -> bool:
-    """Look up unlinked originals (issue 0138 C): off unless you switched it on."""
     row = SystemSettingsRepository.get(cur, SCHEDULER_KEY)
     return rules.lookup_setting(row[0] if row else None)
 
 
 def classics_on(cur: Any) -> bool:
-    """Store Classics (issue 0138 E1): on unless you switched it off."""
     row = SystemSettingsRepository.get(cur, SCHEDULER_KEY)
     return rules.classics_setting(row[0] if row else None)
 
 
 def accrue(cur: Any, now: datetime, cap: float = rules.EXTRA_CREDIT_CAP) -> float:
-    """The shared credit now (originals_rules.credit_after), kept in system_settings: the schedule's fetches since
-    it was last counted are the sources attempted since (a source attempted twice between two runs counts once,
-    and page reads not at all: the credit errs low). The first count starts an hour back."""
+    """The shared credit now, kept in system_settings; it counts the sources attempted since, so it errs low."""
     row = SystemSettingsRepository.get(cur, BUDGET_KEY)
     kept = (row[0] if row else None) or {}
     counted = datetime.fromisoformat(kept["counted_at"]) if kept.get("counted_at") else now - timedelta(hours=1)
@@ -98,7 +63,6 @@ def accrue(cur: Any, now: datetime, cap: float = rules.EXTRA_CREDIT_CAP) -> floa
 
 
 def spend(cur: Any, requests: int) -> None:
-    """Spend extra requests from the credit."""
     if requests <= 0:
         return
     row = SystemSettingsRepository.get(cur, BUDGET_KEY)
@@ -113,8 +77,7 @@ def site_reads(cur: Any) -> Dict[str, rules.SiteReads]:
 
 
 class _NeverFront:
-    """{site word: the types of the entities whose key squashes to it, of NEVER_FRONT_TYPES} (E5), asked per word of
-    a page's book (v10.17, 0186: was a walk of the whole book)."""
+    """{site word: the NEVER_FRONT_TYPES types of the entities whose key squashes to it}, per word of a page."""
 
     def __init__(self, book: Any) -> None:
         self.book, self.got = book, {}
@@ -129,8 +92,7 @@ class _NeverFront:
 
 
 class _Steps:
-    """Wall seconds of a run's steps, in order (plan, collect, lookup, backfill, suppliers): the backfill's page reads
-    wait out their host's gap (gates) and E.PAGE_DELAY_S, so most of a long hook is waiting, which this tells apart."""
+    """Wall seconds of a run's steps, so waiting on hosts' gaps is told apart from work."""
 
     def __init__(self) -> None:
         import time
@@ -154,15 +116,12 @@ class OriginalsService:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.cap = rules.EXTRA_CREDIT_CAP
         self.sleep = sleep or asyncio.sleep
-        self.budget = budget or (lambda cur, now: accrue(cur, now, self.cap))   # the credit now (tests give their own)
-
-    # ---- the run ------------------------------------------------------------------------
+        self.budget = budget or (lambda cur, now: accrue(cur, now, self.cap))
 
     async def run(self, http: Any = None) -> Dict[str, Any]:
-        """Settle, then ask: 0114's early fetches, then (when on) 0123's collections and 0138's entity originals, and
-        (when its switch is on) 0138's title lookups, within the credit."""
+        """Settle, then ask every planner that is switched on, within the credit."""
         now = self.clock()
-        clock = _Steps()   # v10.18 (0199): each step's seconds in the summary (the server's hourly hook took ~6.5 min)
+        clock = _Steps()
         with db.transaction(self.db_url) as cur:
             settled = self.settle(cur, now)
             on = collect_on(cur)
@@ -182,7 +141,7 @@ class OriginalsService:
             spend(cur, len(asked))
             collects = self.plan_collect(cur, now) if on else []
             cited = self.plan_cited(cur, now) if on else []
-            linked_pages = self.plan_link_posts(cur, now) if on else []   # 0208: a link post's page, before cited's
+            linked_pages = self.plan_link_posts(cur, now) if on else []   # before cited's
             taken_now = {c["url"] for c in collects + entities}
             entities = entities + [c for c in linked_pages if c["url"] not in taken_now]
             taken_now |= {c["url"] for c in linked_pages}
@@ -195,7 +154,7 @@ class OriginalsService:
                 kind_of = self._classifier(cur)
                 backfill = ((self.plan_works(cur, now, kind_of) if on else []) + self.plan_references(cur, now, kind_of)
                             + self.plan_missed(cur, now, kind_of) + self.plan_classics(cur, now, kind_of))
-                taken = {c["url"] for c in collects + entities}   # asked above under the credit (0123, B)
+                taken = {c["url"] for c in collects + entities}
                 backfill = [c for c in backfill if c["url"] not in taken and not taken.add(c["url"])]   # once each
         clock.step("plan")
         collected = await self._collect(collects + entities, http, left, now) if collects or entities else []
@@ -229,7 +188,7 @@ class OriginalsService:
             logger.info("Originals: %s", summary)
         return summary
 
-    # ---- 0114 ----------------------------------------------------------------------------
+    # ---- early fetches of followed sources' linked pages -------------------------------------
 
     def plan_linked(self, cur: Any, now: datetime) -> List[Dict[str, Any]]:
         """The followed sources to fetch early: one page each (its most linked), not asked before, linked by a
@@ -286,8 +245,7 @@ class OriginalsService:
 
     @staticmethod
     def settle(cur: Any, now: datetime) -> int:
-        """The early fetches asked: `found` when a post is at the page now, `missing` once the source was
-        fetched after the ask and the page still isn't stored. Returns how many were settled."""
+        """Settle the early fetches asked: `found` once stored, `missing` once fetched without it. Returns how many."""
         cur.execute("""SELECT o.url, o.asked_at, st.last_success_at, (SELECT p.id FROM posts p WHERE p.normalized_url = o.url LIMIT 1)
                        FROM story_originals o LEFT JOIN source_fetch_state st ON st.source_id = o.source_id
                        WHERE o.kind = 'fetch_linked' AND o.outcome = 'wanted'""")
@@ -300,11 +258,10 @@ class OriginalsService:
             n += 1
         return n
 
-    # ---- 0123 ----------------------------------------------------------------------------
+    # ---- News stories' originals ------------------------------------------------------------
 
     def plan_collect(self, cur: Any, now: datetime) -> List[Dict[str, Any]]:
-        """Each News story's original not stored, not asked before, of a story started in the last week:
-        {url, story_id, voices, kind, title, quoted}, the biggest stories first."""
+        """Each News story's original not stored nor asked, of a story started in the last week; biggest first."""
         cur.execute("""
             WITH ns AS (SELECT n.id news_id, sp.story_id, s.voices, s.first_at, s.origin_url, s.origin_title
                         FROM news_stories n JOIN news_posts np ON np.news_id = n.id
@@ -324,7 +281,7 @@ class OriginalsService:
         if not rows:
             return []
         stories = [r[0] for r in rows]
-        # The members' links as written (0126: a gift link's token is out of target_url, kept in shared_url).
+        # The members' links as written (a gift link's token is kept in shared_url, not target_url).
         cur.execute("""SELECT sp.story_id::text, COALESCE(pl.shared_url, pl.target_url) FROM story_posts sp JOIN post_links pl ON pl.post_id = sp.post_id
                        WHERE sp.story_id = ANY(%s::uuid[])""", (stories,))
         linked_as: Dict[str, List[str]] = {}
@@ -350,9 +307,7 @@ class OriginalsService:
 
     @staticmethod
     def _classifier(cur: Any) -> Callable[..., str]:
-        """originals_rules.trigger_kind with what it reads of the database: the followed sources' own pages, the
-        server's reads of each site, Discover's platforms. A paper's page is an article here (0138 B3: none of the
-        not-an-article shapes is a paper's)."""
+        """originals_rules.trigger_kind with what it reads of the database (a paper's page is an article here)."""
         followed = _followed(cur)
         own = _own_pages(cur, followed)[0] if followed else None
         reads = site_reads(cur)
@@ -366,22 +321,16 @@ class OriginalsService:
                                                    or reference_address(url)),
                                       reads=reads.get(site_of(host_of(url)), rules.SiteReads()),
                                       linked_as=list(linked_as), quoted=quoted)
-        kind_of.owner = (lambda url: own.owner(url) if own else None)   # type: ignore[attr-defined]  # 0138 F2
+        kind_of.owner = (lambda url: own.owner(url) if own else None)   # type: ignore[attr-defined]
         return kind_of
 
-    # ---- 0138 ----------------------------------------------------------------------------
+    # ---- entities' originals and lookups ----------------------------------------------------
 
     def plan_entities(self, cur: Any, now: datetime, *, listing: bool = False
                       ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """(the entities' originals to collect, the document entities to look up by title). `listing` (Discover's
-        Pages, 0138 D1): every original not stored, asked before or not, unclassified (no `kind`).
-
-        An entity triggers (entity_originals.triggered) when it is the `subject` of current Mark X mentions on posts
-        of 2+ voices (sources, Saved aside) in the last 7 days, or of one voice's post that leads a News row (the
-        row's first report by position). Its original (markx/entity_addresses.py: a paper page, else a release
-        page), not stored and not asked before (as 0123's or 0138's), is planned like 0123's page; `first_at` is when
-        it triggered (the second voice's first post, else the lead). A document entity of 2+ voices with no address
-        is a lookup (C). Entities by voices, then the newest."""
+        """(the entities' originals to collect, the document entities to look up by title); `listing`: every original
+        not stored, unclassified. An entity triggers (entity_originals.triggered) as the subject of 2+ voices' posts in
+        7 days or of a News row's lead; a document entity of 2+ voices with no address is a lookup."""
         from insight_core.markx import entity_addresses as EA, identity as I, schemas
         from insight_core.markx.pairing import SPECIFIC_TYPES
         since = now - E.TRIGGER_WITHIN
@@ -390,7 +339,7 @@ class OriginalsService:
                          FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
                         WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.type = ANY(%s) AND m.entity_id IS NOT NULL
                           AND s.platform <> 'saved' AND {pairing.ordinary_date('p')} >= %s
-                          AND (NOT %s OR {suggestable_sql("p.source_id")})""",   # 0200: Discover's Pages are suggestions
+                          AND (NOT %s OR {suggestable_sql("p.source_id")})""",
                     (schemas.mention_guides(), schemas.stored_types(SPECIFIC_TYPES), since, listing))
         rows = cur.fetchall()
         if not rows:
@@ -398,7 +347,7 @@ class OriginalsService:
         cur.execute("""SELECT DISTINCT ON (news_id) post_id::text FROM news_posts
                         ORDER BY news_id, role <> 'report', position NULLS LAST, post_id""")
         leads = {r[0] for r in cur.fetchall()}
-        book = I.lazy_book(cur)   # v10.17 (0186): the mentions' entities, not the whole book
+        book = I.lazy_book(cur)
         book.prime(ids=[book.pins.get((pid, guide, n), eid) for pid, guide, n, eid, *_ in rows])
         ents: Dict[str, Dict[str, Any]] = {}
         for pid, guide, n, eid, source, at, by, type_ in rows:
@@ -458,9 +407,7 @@ class OriginalsService:
         return sorted(out, key=order), sorted(lookups, key=order)
 
     async def _lookups(self, plan: List[Dict[str, Any]], http: Any, left: int, now: datetime) -> List[Dict[str, Any]]:
-        """0138 C: each document entity's title looked up (the arXiv API, then Crossref when it found none), one credit
-        a request; a match (entity_originals.lookup_match: the title by the name key and an author of `by`) is stored
-        as its address (rule `lookup`) and collected by the next run. Recorded once: found or not_found."""
+        """Each document entity's title looked up (arXiv, then Crossref), one credit a request; recorded once."""
         from insight_core.markx import entity_addresses as EA
         from insight_core.markx import names as N
         done = []
@@ -495,9 +442,7 @@ class OriginalsService:
         return done
 
     def keep_suppliers(self, cur: Any, now: datetime) -> Dict[str, int]:
-        """0138 D2: each site (Discover's address key) that was the address of 3+ originals in 30 days (0123's and
-        0138's asks, and the other pages an entity's title names beside its paper original: a summariser's), kept
-        for Discover with the first time each was suggested (D3). Returns {current, suggested}."""
+        """The sites that were the address of 3+ originals in 30 days, for Discover. Returns {current, suggested}."""
         from insight_core.db.repo_stories import SourceFacts, StoriesRepository
         since = now - E.SUPPLY_WITHIN
         cur.execute("""SELECT url, asked_at FROM story_originals WHERE kind IN ('collect', 'entity') AND asked_at >= %s
@@ -528,14 +473,13 @@ class OriginalsService:
 
     async def _collect(self, plan: List[Dict[str, Any]], http: Any, left: int, now: datetime,
                        pause: float = 0.0) -> List[Dict[str, Any]]:
-        """Each planned original: a quote stored, a page read (while the budget lasts), or the reason none is.
-        `pause`: seconds between two page reads (0138 E's backfill: one host at a time, PAGE_DELAY_S apart)."""
+        """Each planned original: a quote stored, a page read while the budget lasts, or the reason none is."""
         done = []
         read_before = False
         for c in plan:
             outcome, requests, post_id, detail = c["kind"], 0, None, None
             if c["kind"] == rules.FOLLOWED:
-                continue   # 0114's: its source is fetched when a story links it
+                continue
             if c["kind"] == rules.FROM_QUOTE and self.saved is not None:
                 result = self.saved.collect_quote(c["url"], c["quoted"] or "", title=c["title"],
                                                   at=rules.tweet_time(c["url"]) or now)
@@ -569,7 +513,7 @@ class OriginalsService:
         extra = {"collected_as": c["collected_as"]} if c.get("collected_as") else {}
 
         async def read() -> Dict[str, Any]:
-            if c.get("record") == "missed":   # 0138 F2: the followed source's own post
+            if c.get("record") == "missed":
                 return await self.saved.collect_for_source(http, c["url"], c["source_id"])
             return await self.saved.collect(http, c["url"], c["title"], **extra)
         if self.gates is None:
@@ -579,11 +523,10 @@ class OriginalsService:
         async with self.gates.slot(PolitenessProfile(concurrency_pool="host-lock"), host_of(c["url"])):
             return await read()
 
-    # ---- 0196: pages 2+ voices link (the `cited` planner) ------------------------------------
+    # ---- pages 2+ voices link (the `cited` planner) ------------------------------------------
 
     def plan_cited(self, cur: Any, now: datetime) -> List[Dict[str, Any]]:
-        """The pages 2+ voices linked in the last week that no source of yours holds or owns, not asked before
-        (markx/official.pages_wanted's rule), each read through the save path's reader and recorded as `cited`."""
+        """Pages 2+ voices linked in the last week that no source of yours holds or owns, not asked before."""
         from insight_core.markx import official
         kind_of = self._classifier(cur)
         wanted = official.pages_wanted(cur, now, kind_of=kind_of)
@@ -591,14 +534,11 @@ class OriginalsService:
                  "kind": w["kind"], "title": None, "quoted": None, "record": "cited", "collected_as": "cited"}
                 for w in wanted if w["kind"] == rules.PAGE]
 
-    # ---- 0208: the page a link post with no words of its own shares (the `linked` planner) ------------
+    # ---- the page a link post with no words of its own shares (the `linked` planner) ------------------
 
     def plan_link_posts(self, cur: Any, now: datetime) -> List[Dict[str, Any]]:
-        """The pages the link posts of the last LINK_POSTS_WITHIN share (post_parts' link target, a page: not a picture
-        or a video) when the post has no words of its own (LINK_POST_OWN_CHARS beyond its title) and the page is not
-        asked yet (story_originals kind `linked`, by address). A page stored already is recorded at once (no request);
-        a followed source's page is left to 0114; any other is read as 0123 reads a page (or recorded with its reason:
-        walled, no article). Mark X then reads the post with the page's text (markx/tasks.load_posts)."""
+        """The pages wordless link posts of the last LINK_POSTS_WITHIN share, not asked yet; a stored page is recorded
+        at once, a followed source's left to the early fetch. Mark X then reads the post with the page's text."""
         from insight_core.utils.addresses import is_tweet
         cur.execute(f"""SELECT DISTINCT ON (pp.link_target) pp.link_target, p.id::text, COALESCE(pp.title, p.title)
                           FROM post_parts pp JOIN posts p ON p.id = pp.post_id
@@ -626,32 +566,29 @@ class OriginalsService:
                 continue
             kind = kind_of(url)
             if kind == rules.FOLLOWED:
-                continue   # its source is fetched when a story links it (0114)
+                continue
             out.append({"url": url, "story_id": None, "voices": 1, "first_at": now, "kind": kind, "title": title,
                         "quoted": None, "record": "linked", "collected_as": "linked", "from_post_id": pid})
         return out
 
-    # ---- 0138 E: the backfill (Classics stored, work sites) ----------------------------------
+    # ---- the backfill (Classics stored, work sites) ------------------------------------------
 
     @staticmethod
     def backfill_left(cur: Any, now: datetime) -> int:
-        """E1's allowance now: CLASSICS_DAILY pages in the last 24 hours (Classics and works together), at most a run's
-        share. Apart from 0114 and 0123's credit."""
+        """The backfill's allowance now: CLASSICS_DAILY pages a day, at most a run's share, apart from the credit."""
         cur.execute("""SELECT COALESCE(sum(requests), 0) FROM story_originals
                         WHERE kind IN ('classic', 'work') AND asked_at > %s""", (now - timedelta(hours=24),))
         used = int(cur.fetchone()[0])
         return max(0, min(E.BACKFILL_PER_RUN, E.CLASSICS_DAILY - used))
 
     def plan_works(self, cur: Any, now: datetime, kind_of: Callable[..., str]) -> List[Dict[str, Any]]:
-        """E2: each work site (an entity's `work` address: a document's front page, A's rules) linked by 2+ voices,
-        not stored and not asked, never one whose site word names a product, app, model, org or person (E5); with its
-        own pages your posts link (the same host, never another front page), at most WORK_PAGES_MAX, the most linked
-        first. The front page first, then its pages; sites by their voices."""
+        """Each work site linked by 2+ voices, not stored nor asked, never one whose site word names a product, app,
+        model, org or person; then up to WORK_PAGES_MAX of its own linked pages."""
         from insight_core.markx import entity_addresses as EA, identity as I
         cur.execute("SELECT 1 FROM mx_entity_addresses WHERE kind = 'work' LIMIT 1")
         if cur.fetchone() is None:
             return []
-        book = I.lazy_book(cur)   # v10.17 (0186): the addresses' entities, not the whole book
+        book = I.lazy_book(cur)
         never = _NeverFront(book)
         fronts: Dict[str, str] = {}
         for root, rows in EA.current(cur, book).items():
@@ -690,13 +627,8 @@ class OriginalsService:
 
     @staticmethod
     def longreads(cur: Any, *, suggesting: bool = False) -> Dict[str, List[str]]:
-        """F1: the curated long-reads you opened or kept: {post: its outside article pages}. A post is one when its own
-        text is LONGREAD_CHARS+ long, Mark X reads it as commentary or a roundup (its reading's kind), and it cites
-        LONGREAD_LINKS+ outside article pages (another site's, not a front page, not an archive or an app's).
-        `suggesting` (Discover's citations, issue 0200): only the posts of sources not switched off.
-        v10.34: your posts as an array of primary-key probes, not a join: a plan that hashed them read every post and
-        measured every text (char_length decompresses it): production 9.7 s a call; on the server copy forced so,
-        2.25 s and 525k blocks, the array 0.1 s (the copy's own plan, 21 ms, is unchanged)."""
+        """The curated long-reads you opened or kept: {post: its outside article pages}. Posts go in as primary-key
+        probes, not a join: a hashed plan decompressed every post's text."""
         cur.execute(f"""
             SELECT p.id::text, COALESCE(p.normalized_url, p.url) FROM posts p
              WHERE p.id = ANY(ARRAY(SELECT post_id FROM post_interactions
@@ -718,8 +650,7 @@ class OriginalsService:
         return {pid: urls for pid, urls in cited.items() if len(urls) >= E.LONGREAD_LINKS}
 
     def plan_references(self, cur: Any, now: datetime, kind_of: Callable[..., str]) -> List[Dict[str, Any]]:
-        """F1: each curated long-read's cited pages (at most REFERENCES_MAX a post), not stored and not asked. A followed
-        source's page is read as F2 reads one (its source's post, kind `missed`, the citing post kept)."""
+        """Each curated long-read's cited pages (at most REFERENCES_MAX a post), not stored nor asked."""
         found = self.longreads(cur)
         if not found:
             return []
@@ -737,7 +668,7 @@ class OriginalsService:
                     continue
                 kind = kind_of(url)
                 planned.add(url)
-                if kind == rules.FOLLOWED:   # a followed source's page: read as F2 reads one, its source's post
+                if kind == rules.FOLLOWED:
                     from insight_core.utils.addresses import is_tweet
                     sid = getattr(kind_of, "owner", lambda u: None)(url)
                     if sid and not is_tweet(url):
@@ -750,13 +681,11 @@ class OriginalsService:
         return out
 
     def plan_missed(self, cur: Any, now: datetime, kind_of: Callable[..., str]) -> List[Dict[str, Any]]:
-        """F2: a followed source's page (0084 B's own pages) that a post of another source linked in the last 30 days
-        and that its feed never carried: not stored, not asked; read as that source's post."""
+        """A followed source's own page another source linked in 30 days, never in its feed; read as its post."""
         owner = getattr(kind_of, "owner", None)
         if owner is None:
             return []
-        # A post listing ROUNDUP_ANCHORS+ links is about its first only (Mark IX's rule, story_rules.ROUNDUP_ANCHORS):
-        # measured on the server's copy, a meetups list's 60 event pages were half of what was wanted without it.
+        # A post listing ROUNDUP_ANCHORS+ links is about its first only, so a listing never floods the wanted pages.
         from insight_core.utils.story_rules import ROUNDUP_ANCHORS
         cur.execute(f"""SELECT target_url, source_id FROM (
                            SELECT pl.target_url, p.source_id::text AS source_id, pl.position,
@@ -770,7 +699,7 @@ class OriginalsService:
         from insight_core.utils.addresses import is_tweet
         for url, linker in cur.fetchall():
             if E.front_page(url) or url in want or is_tweet(url):
-                continue   # a tweet is never read (x.com's app shell): it comes from a quote (0123)
+                continue   # a tweet is never read (x.com's app shell): it comes from a quote
             sid = owner(url)
             if sid and sid != linker:
                 want[url] = sid
@@ -786,8 +715,7 @@ class OriginalsService:
                 for url, sid in sorted(want.items()) if url not in stored and url not in asked]
 
     def keep_cited(self, cur: Any) -> int:
-        """F3: each site (Discover's address key) the long-reads you opened cite: {key: {n, posts}} kept for Discover
-        (`longread_citations`), the keys cited twice or more. Returns how many."""
+        """The sites the long-reads you opened cite twice or more, kept for Discover. Returns how many."""
         found = self.longreads(cur, suggesting=True)
         kept = DiscoverRepository.kept(cur) or {}
         platforms = {host: tuple(prefix) for host, prefix in (kept.get("platforms") or {}).items()}
@@ -806,7 +734,7 @@ class OriginalsService:
         return len(value)
 
     def plan_classics(self, cur: Any, now: datetime, kind_of: Callable[..., str]) -> List[Dict[str, Any]]:
-        """E1: every Classic not stored and not hidden, not asked before (as any original): biggest voices first."""
+        """Every Classic not stored, not hidden and not asked before: biggest voices first."""
         cur.execute("""SELECT c.target_url, c.voices, c.title, c.first_at FROM classics c
                         WHERE c.post_id IS NULL
                           AND NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)

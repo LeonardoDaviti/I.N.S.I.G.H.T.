@@ -8,10 +8,8 @@ import { ScoutRow } from './TrackScout';
 
 const KEY = ['markx-scout-suggestions'] as const;
 
-/**
- * Discover's rows from the track scout (issue 0148, Mark X): each track's suggested sources under the track's name, the
- * same rows and buttons as its Topic view. Nothing while Mark X is off or nothing is suggested.
- */
+/** Discover's rows from the track scout (Mark X): each track's suggested sources under its name, as in its Topic
+ *  view. Nothing while Mark X is off or nothing is suggested. */
 export default function ScoutSourceLines() {
   const on = useMarkxOn();
   const client = useQueryClient();

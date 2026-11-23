@@ -1,15 +1,7 @@
-"""Issue 0183: a background pass that would change nothing is not run again while nothing it reads changed
-(markx/unchanged.py), and the check planner reads its stories a chunk at a time.
-
-  - the rule: a pass that wrote nothing it reads, while nothing it reads changed, keeps its inputs' stamp; the next
-    pass with that stamp is skipped; any change to a table it names, or to its key, runs it again; a key of None
-    always runs;
-  - the planners: cite's and check's passes, real, through the declarations the plan job uses: busy, then a no-op
-    that keeps its stamp, then skipped; the skipped pass is proved to be what the planner would do (run anyway, it
-    adds nothing and writes nothing); an edit, a new story or the window's next day runs it again;
-  - the check planner a chunk of stories at a time asks the same questions in the same order as all at once.
-
-Invented names and example hosts only. Every test rolls back (a database whose name ends in _test)."""
+"""A background pass that would change nothing is not run again while nothing it reads changed (0183,
+markx/unchanged.py): a no-op pass keeps its inputs' stamp and the next pass with that stamp is skipped (proved to be
+what the planner would do); any change to a table it names, or to its key, runs it again; a key of None always runs.
+The check planner a chunk of stories at a time asks what it asks all at once. Every test rolls back (_test database)."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -126,8 +118,8 @@ class ThePlanners(_Posts):
         self.assertEqual(self.plan("check", tomorrow), 1, "a new story: run, and its check asked")
 
     def test_another_kinds_tasks_do_not_wake_check_or_cite_and_their_own_do(self):
-        """0199: check stamps only check tasks, cite only cite and entities tasks: a track-like stream of another
-        kind's tasks and answers leaves both skipped (and the skip proved a no-op); one of their own runs them."""
+        """Check stamps only check tasks, cite only cite and entities tasks: another kind's stream leaves both skipped;
+        one of their own runs them (0199)."""
         W.set_window(self.cur, None)
         repo.set_setting(self.cur, W.BACKFILL, {"reached": (self.now - 70 * DAYS).date().isoformat()})
         schemas.set_entities_arm(self.cur, "ent-v4.2", allow_placeholder=True)

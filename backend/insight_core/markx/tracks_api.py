@@ -1,26 +1,6 @@
-"""0145 (Stealth v10.11)'s routes: tracks as topics (Shadow; no bearer: the app's own; 404 when Mark X is off, as every
-/api/markx path). Included into markx/api.py's router.
-
-GET  /api/markx/tracks                         [{id, name, kind, topic, description, version}] every folder
-GET  /api/markx/tracks/suggestions             [{track, track_name, source_id, source, n}] (Discover's line)
-GET  /api/markx/tracks/{id}                    the track page (markx/tracks.page)
-PUT  /api/markx/tracks/{id}                    {description, excludes} -> the page (an empty description: a folder)
-POST /api/markx/tracks/{id}/labels             {post, answer: in | out | undo} -> {id, label}
-POST /api/markx/tracks/{id}/subtopics          {action: rename | merge | split | lock | unlock | add, id, ids, name,
-                                               definition, keys} -> [sub-topics]
-POST /api/markx/tracks/{id}/sources/{source}   make a suggested passive source active -> {added}
-GET  /api/markx/tracks/{id}/why?post=<id or address>   where one post stands and why (markx/track_why, 0185)
-GET  /api/markx/tracks/{id}/seen                 {track, subtopics: {id: ISO}} the last looks (0207)
-POST /api/markx/tracks/{id}/seen                 {subtopic?} the reader looked now -> {before, now} (0207)
-GET  /api/markx/tracks/{id}/schema               the track's kinds and fields (0245)
-PUT  /api/markx/tracks/{id}/schema               {kinds} the owner's, a new version (0245)
-GET  /api/markx/tracks/{id}/brief?week=<date>    the week's issue, kept (0245); ?since=seen|<ISO>: the quick look
-GET  /api/markx/tracks/{id}/things?kind=&<field>.min=...   a kind's table, filtered by its fields (0245)
-                 &q=words &entity=name &entity_type=type   v10.41: a search across a row, the entities its posts name
-GET  /api/markx/tracks/{id}/schema/suggestions   v10.41: fields INSIGHT suggests (track_fields; Add = PUT schema)
-POST /api/markx/tracks/{id}/schema/suggestions/dismiss   {kind, name} never suggested again
-
-Every item a track page shows carries its `byline` (issue 0185: who wrote it, via whom).
+"""The routes of topic tracks (markx/tracks.py, track_things.py, track_brief.py), included into markx/api.py's router:
+no bearer (the app's own), 404 when Mark X is off. Pages, suggestions and weekly issues are sent kept (built by the
+jobs process); every item a track page shows carries its `byline`.
 """
 from __future__ import annotations
 
@@ -72,7 +52,7 @@ def mx_tracks():
 
 @router.get("/tracks/suggestions")
 def mx_track_suggestions():
-    """Issue 0206: kept (tracks.kept_page), built by the jobs process."""
+    """Kept (tracks.kept_page), built by the jobs process."""
     from insight_core.markx.api import transaction
     with transaction() as cur:
         return Response(tracks.kept_page(cur, None), media_type="application/json")
@@ -80,8 +60,8 @@ def mx_track_suggestions():
 
 @router.get("/tracks/{track_id}")
 def mx_track_page(track_id: str):
-    """Issue 0206: kept (tracks.kept_page), built by the jobs process; built here only when the owner changed what it
-    shows since (then kept) or nothing is kept yet."""
+    """Kept (tracks.kept_page), built by the jobs process; built here only when the owner changed what it shows since
+    (then kept) or nothing is kept yet."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:
@@ -93,7 +73,7 @@ def mx_track_page(track_id: str):
 
 @router.get("/tracks/{track_id}/why")
 def mx_track_why(track_id: str, post: str = ""):
-    """Where one post stands in the track and why (0185): read only, stored rows."""
+    """Where one post stands in the track and why: read only, stored rows."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:
@@ -154,7 +134,7 @@ class LookIn(BaseModel):
 
 @router.get("/tracks/{track_id}/seen")
 def mx_track_seen(track_id: str):
-    """0207: the reader's last looks at the track and its sub-topics (the page counts what is new since)."""
+    """The reader's last looks at the track and its sub-topics (the page counts what is new since)."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:
@@ -163,7 +143,7 @@ def mx_track_seen(track_id: str):
 
 @router.post("/tracks/{track_id}/seen")
 def mx_track_look(track_id: str, body: LookIn):
-    """0207: the reader looked at the track (or one sub-topic) now: {before, now}."""
+    """The reader looked at the track (or one sub-topic) now: {before, now}."""
     from insight_core.markx.api import _uuid, transaction
     tid = _id(track_id)
     sub = None
@@ -179,7 +159,7 @@ def mx_track_look(track_id: str, body: LookIn):
             raise HTTPException(status_code=404, detail="No such track or sub-topic")
 
 
-# ---- 0245: the general track briefer (markx/track_things.py, markx/track_brief.py; entity_bands.json tracks.briefs) ----
+# ---- the general track briefer (markx/track_things.py, markx/track_brief.py; entity_bands.json tracks.briefs) -------
 
 class SchemaIn(BaseModel):
     kinds: List[Any] = []
@@ -187,7 +167,7 @@ class SchemaIn(BaseModel):
 
 @router.get("/tracks/{track_id}/schema")
 def mx_track_schema(track_id: str):
-    """0245: the track's kinds and fields (its newest version): {on, version, by, track_version, stale, schema}."""
+    """The track's kinds and fields (its newest version): {on, version, by, track_version, stale, schema}."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:
@@ -199,8 +179,8 @@ def mx_track_schema(track_id: str):
 
 @router.put("/tracks/{track_id}/schema")
 def mx_track_schema_edit(track_id: str, body: SchemaIn):
-    """0245: the owner's kinds and fields, a new version (the general practice kind is added by code); its posts are
-    read again under it."""
+    """The owner's kinds and fields, a new version (the general practice kind is added by code); its posts are read
+    again under it."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:
@@ -219,7 +199,7 @@ class DismissIn(BaseModel):
 
 @router.get("/tracks/{track_id}/schema/suggestions")
 def mx_track_field_suggestions(track_id: str):
-    """v10.41 (FIX 6): the fields INSIGHT suggests the track's records add (track_fields; never applied)."""
+    """The fields INSIGHT suggests the track's records add (track_fields; never applied)."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:
@@ -231,7 +211,7 @@ def mx_track_field_suggestions(track_id: str):
 
 @router.post("/tracks/{track_id}/schema/suggestions/dismiss")
 def mx_track_field_dismiss(track_id: str, body: DismissIn):
-    """v10.41: the owner dismissed a suggested field (never suggested again): the suggestions left."""
+    """The owner dismissed a suggested field (never suggested again): the suggestions left."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     with transaction() as cur:
@@ -243,8 +223,8 @@ def mx_track_field_dismiss(track_id: str, body: DismissIn):
 
 @router.get("/tracks/{track_id}/brief")
 def mx_track_brief(track_id: str, week: Optional[str] = None, since: Optional[str] = None):
-    """0245: ?week=<a day of it> the week's issue (kept, built by the jobs process); ?since=seen (the reader's last
-    look) or ?since=<ISO time> the quick look; neither: the quick look since the last look."""
+    """?week=<a day of it> the week's issue (kept, built by the jobs process); ?since=seen (the reader's last look) or
+    ?since=<ISO time> the quick look; neither: the quick look since the last look."""
     from datetime import datetime
     from insight_core.markx.api import transaction
     tid = _id(track_id)
@@ -274,8 +254,8 @@ def mx_track_brief(track_id: str, week: Optional[str] = None, since: Optional[st
 
 @router.get("/tracks/{track_id}/things")
 def mx_track_things(track_id: str, request: Request, kind: str = "", limit: int = 100, offset: int = 0):
-    """0245: a kind's table, filtered by its own fields (<number|money field>.min / .max, <money field>.currency,
-    <enum field>=a,b, <text field>=words, <link field>=any)."""
+    """A kind's table, filtered by its own fields (<number|money field>.min / .max, <money field>.currency,
+    <enum field>=a,b, <text field>=words, <link field>=any), `q` words and named entities."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
     params = request.query_params

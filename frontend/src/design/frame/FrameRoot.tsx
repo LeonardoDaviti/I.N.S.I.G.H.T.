@@ -24,11 +24,9 @@ function PathMark() {
 }
 
 /**
- * A plain `<a href>` in the app (the error boundary's "Go to feed", an empty
- * state's link) would reload the iframe at a real route, out of the frame and
- * onto the real API. A same-origin plain click moves the frame's memory router
- * instead. It listens on the window after React's own handlers, so a router
- * `Link` (which prevents the default) keeps its replace and state.
+ * A plain `<a href>` in the app would reload the iframe at a real route, onto the real API: a same-origin plain
+ * click moves the frame's memory router instead. It listens after React's own handlers, so a router `Link` (which
+ * prevents the default) keeps its replace and state.
  */
 function KeepLinksInFrame() {
   const navigate = useNavigate();
@@ -56,11 +54,8 @@ function Resolved({ onResolved }: { onResolved: () => void }) {
 
 const IDLE_CHECK_MS = 40;
 
-/**
- * Waits until the page is settled: the route resolved and every query answered,
- * except the requests a loading state holds forever (`pending()`), checked twice
- * in a row so a query that starts after another finishes is not missed.
- */
+/** Waits until the page is settled: the route resolved and every query answered (except `pending()` ones), checked
+ *  twice in a row so a query that starts after another finishes is not missed. */
 function settled(
   resolved: Promise<void>,
   queryClient: QueryClient,
@@ -80,10 +75,7 @@ function settled(
   }));
 }
 
-/**
- * Runs the scenario's steps once the page is up, then marks the frame ready
- * (`html[data-frame-ready]`) once the page settled, for screenshots and the walk.
- */
+/** Runs the scenario's steps once the page is up, then marks the frame ready (`html[data-frame-ready]`). */
 function useScenarioSetup(
   scenario: FrameScenario | null,
   ready: (alive: () => boolean) => Promise<void>,
@@ -96,7 +88,7 @@ function useScenarioSetup(
     return () => { alive.current = false; };
   }, []);
   useEffect(() => {
-    // Once per frame: StrictMode runs effects twice, and ⌘K pressed twice is closed again.
+    // once per frame: StrictMode runs effects twice, and ⌘K pressed twice is closed again
     if (ran.current || !scenario) return;
     ran.current = true;
     const root = document.documentElement;
@@ -112,11 +104,8 @@ function useScenarioSetup(
   }, [scenario, ready, onError]);
 }
 
-/**
- * A walk frame (the Wall's walk) listens to the studio, its parent on the same
- * origin: `run` a step of the walk in this document, answer `done`. One step
- * at a time; a step sent while one runs waits behind it.
- */
+/** A walk frame listens to the studio (its same-origin parent): `run` a step in this document, answer `done`. One
+ *  step at a time; a step sent while one runs waits behind it. */
 function useWalkCommands(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return undefined;
@@ -140,12 +129,9 @@ function useWalkCommands(enabled: boolean) {
 }
 
 /**
- * A frame's page (Design Studio D4): the real routes inside the app's own
- * providers and shell, at the scenario's URL, on a fresh query cache that does
- * not retry (an error state shows at once). The top bar shows, so the Wall
- * reads like the site. Its router is in memory: links move inside the frame.
- * A prototype frame (D6) wraps the routes in the prototype's component, which
- * may restyle the page (an override) or render something else instead.
+ * A frame's page: the real routes inside the app's providers and shell, at the scenario's URL, on a fresh query
+ * cache that does not retry (an error state shows at once). Its router is in memory: links move inside the frame. A
+ * prototype frame wraps the routes in the prototype's component, which may restyle or replace the page.
  */
 export default function FrameRoot({ booted, prototype: Prototype, walk = false }: {
   booted: BootedFrame;

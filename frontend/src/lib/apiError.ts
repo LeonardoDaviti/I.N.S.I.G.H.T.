@@ -1,12 +1,7 @@
 /**
- * The one error type the API client throws (Mark IX §4 error contract).
- *
- * `message` is always a human sentence fit for an `ErrorState` or a toast: the
- * server's `detail` when it sent one, otherwise a message for the status. It never
- * carries the request url or a "API request failed:" prefix. `status` is the HTTP
- * status, or 0 when the backend could not be reached at all.
- *
- * Pure (no DOM, no React) so `node --test` can exercise it directly.
+ * The one error type the API client throws. `message` is always a human sentence (the server's `detail`, else
+ * one for the status), never the url or an "API request failed:" prefix. `status` is 0 when the backend was
+ * unreachable. Pure, so `node --test` can exercise it.
  */
 export class ApiError extends Error {
   readonly status: number;
@@ -41,14 +36,12 @@ export function statusMessage(status: number): string {
   return STATUS_MESSAGES[status] ?? `Request failed (${status})`;
 }
 
-/** Strip the Mark VIII decorations from an error message: the
- *  "API request failed: <status> " prefix and the " | url=..." suffix. */
+/** Strip the old "API request failed: <status> " prefix and " | url=..." suffix from an error message. */
 export function cleanErrorMessage(raw: string): string {
   let text = String(raw ?? '');
   const urlIndex = text.indexOf(' | url=');
   if (urlIndex >= 0) text = text.slice(0, urlIndex);
   text = text.replace(/^\s*API request failed:\s*/i, '');
-  // The legacy prefix was followed by "<status> "; drop a bare leading status code.
   text = text.replace(/^\d{3}\s+(?=\S)/, '');
   return text.replace(/\s+/g, ' ').trim();
 }
@@ -117,9 +110,8 @@ function isAbortError(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as { name?: unknown }).name === 'AbortError');
 }
 
-/** Normalise anything thrown into an ApiError. A fetch network failure
- *  (TypeError) becomes status 0. An AbortError is not converted: check
- *  `isAbortError` first if that matters to the caller. */
+/** Normalise anything thrown into an ApiError; a fetch network failure (TypeError) is status 0. An AbortError
+ *  is not converted: check `isAbortError` first if that matters. */
 export function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
   if (error instanceof TypeError) return new ApiError(0, statusMessage(0), error.message);
@@ -133,8 +125,7 @@ export function errorMessage(error: unknown): string {
   return toApiError(error).message;
 }
 
-/** Worth retrying: the backend was unreachable, timed out, throttled us or failed
- *  with a 5xx. Client errors (4xx) and aborts are not transient. */
+/** Worth retrying: unreachable, timed out, throttled or a 5xx. Client errors (4xx) and aborts are not. */
 export function isTransientError(error: unknown): boolean {
   if (isAbortError(error)) return false;
   if (error instanceof TypeError) return true;

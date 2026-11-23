@@ -91,8 +91,8 @@ class SchedulerConfigTests(unittest.TestCase):
         self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 30})["ingest_tick_minutes"], 30)
 
     def test_collect_originals_is_on_by_default_and_keeps_an_owner_s_choice(self):
-        """Issue 0126 (4): on unless you switched it off. A false written while off was the default (the
-        dialog wrote it whether or not you touched it) reads as the default; one this version wrote is kept."""
+        """On unless you switched it off: a false written while off was the default reads as the default; one this
+        version wrote is kept (0126)."""
         normalize = self.service._normalize_scheduler_config
         self.assertTrue(normalize({})["collect_originals"], "never set: on")
         self.assertTrue(normalize({"collect_originals": False})["collect_originals"], "written under the old default")
@@ -101,7 +101,7 @@ class SchedulerConfigTests(unittest.TestCase):
         self.assertTrue(normalize({"collect_originals": True})["collect_originals"])
 
     def test_the_originals_job_reads_the_row_the_dialog_writes(self):
-        """Issue 0126: 0123's job read a 'scheduler' row nothing wrote, so the switch never reached it."""
+        """The job reads the switch from the row the dialog writes (0126)."""
         from insight_core.services import originals_service
         self.assertEqual(originals_service.SCHEDULER_KEY, OperationsService.SETTINGS_KEY_SCHEDULER)
 

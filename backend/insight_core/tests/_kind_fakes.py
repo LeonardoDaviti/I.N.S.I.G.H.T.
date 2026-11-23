@@ -1,7 +1,5 @@
-"""Test adapters for the source-kind seam (spec §3): FakeHttp, RecordingSleeper, FakeKind.
-
-No network: FakeHttp answers from a dict and records every request; RecordingSleeper
-records the politeness delays a kind asked for instead of waiting them out.
+"""Test adapters for the source-kind seam: FakeHttp answers from a dict and records every request; RecordingSleeper
+records the politeness delays a kind asked for instead of waiting them out; FakeKind is a scripted SourceKind.
 """
 from __future__ import annotations
 
@@ -146,7 +144,7 @@ class FakeHttp(KindHttp):
         user_agent: str | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> dict:
-        """As post_json; the headers and the User-Agent are kept in request_headers (issue 0242's OAuth token)."""
+        """As post_json; the headers and the User-Agent are kept in request_headers."""
         self.requests.append(url)
         self.posts.append((url, dict(fields)))
         self.request_headers.append((url, {**(extra_headers or {}), "User-Agent": user_agent or ""}))

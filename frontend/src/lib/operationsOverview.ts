@@ -1,6 +1,4 @@
-/**
- * The job labels as Sources → ingestion shows them. Pure.
- */
+/** The job labels as Sources → ingestion shows them. Pure. */
 import type { JobRun } from '../services/api';
 
 const JOB_LABELS: Record<string, string> = {

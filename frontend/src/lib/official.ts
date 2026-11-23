@@ -1,4 +1,4 @@
-// Discover's "Official channels" lines (issue 0196): what each row says, from the server's row. Pure.
+// Discover's "Official channels" lines: what each row says, from the server's row. Pure.
 import type {
   OfficialFilter, OfficialFrom, OfficialJudge, OfficialKind, OfficialProof, OfficialResponse, OfficialRow, OfficialState,
 } from '../services/api';
@@ -22,10 +22,7 @@ export const OFFICIAL_GROUPS: OfficialGroup[] = [
   { id: 'undone', title: 'Undone', states: ['undone'], collapsed: true, noun: 'undone' },
 ];
 
-/**
- * The rows of each group, in the groups' order; empty groups are left out. Issue 0241: a group the page holds no
- * rows of, but the server counts rows in (`counts`), is kept: its rows are a "Show more" away.
- */
+/** The rows of each group, in the groups' order; an empty group is left out unless the server counts rows in it. */
 export function groupRows(
   rows: OfficialRow[], counts?: Record<string, number>,
 ): { group: OfficialGroup; rows: OfficialRow[] }[] {
@@ -34,7 +31,6 @@ export function groupRows(
     .filter((entry) => entry.rows.length > 0 || groupCount(entry.group, counts, 0) > 0);
 }
 
-/** The job's mode in words. */
 export function modeLine(data: Pick<OfficialResponse, 'mode' | 'cap' | 'added_today'>): string {
   if (data.mode === 'shadow') return 'Shadow: nothing is added, it shows what would be';
   if (data.mode === 'on') {

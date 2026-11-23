@@ -70,7 +70,7 @@ function Row({ row, now, onOpen }: { row: SourceAnatomyRow; now: Date; onOpen: (
   const name = anatomyName(row);
   const failed = lastFetchFailed(row);
   return (
-    // The row opens the sheet on a click anywhere; the name is its keyboard control.
+    // the row opens the sheet on a click anywhere; the name is its keyboard control
     <tr onClick={() => onOpen(row.source_id)} className="group/row cursor-pointer border-b border-line hover:bg-surface">
       <td className={cn(TD, STICKY, 'max-w-[10rem] pl-3 sm:max-w-[16rem] group-hover/row:bg-surface')}>
         <button
@@ -80,7 +80,7 @@ function Row({ row, now, onOpen }: { row: SourceAnatomyRow; now: Date; onOpen: (
           dir="auto"
           className={cn(
             'block max-w-full truncate rounded-sm text-left text-[0.875rem]', FOCUS,
-            // Named from its address: a quieter tone says it has no name of its own.
+            // named from its address: a quieter tone says it has no name of its own
             row.display_name ? 'font-semibold text-fg' : 'text-fg-2',
             !row.enabled && 'font-normal text-fg-3',
           )}
@@ -112,11 +112,9 @@ function Row({ row, now, onOpen }: { row: SourceAnatomyRow; now: Date; onOpen: (
 }
 
 /**
- * Sources → ingestion → sources (issue 0054): every source on one table, how it is read (kind,
- * full text, change watching, conditional fetching, schedule, last fetch) and what it gave in
- * the last 30 days (posts, read, stories, reported first, classics, outside links; all time on
- * hover). Every column sorts, the most posts first by default; a row opens the source's sheet.
- * Nothing is fetched. A lazy chunk: the reader never loads it.
+ * Sources → ingestion → sources: every source on one table, how it is read (kind, full text, change watching,
+ * conditional fetching, schedule, last fetch) and what it gave in the last 30 days (all time on hover). Every column
+ * sorts, most posts first by default; a row opens the source's sheet. Nothing is fetched. A lazy chunk.
  */
 export default function SourceAnatomy({ onOpen }: { onOpen: (id: string) => void }) {
   const api = useApi();

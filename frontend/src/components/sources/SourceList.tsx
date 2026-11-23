@@ -18,11 +18,8 @@ const CHECKBOX =
   'h-4 w-4 shrink-0 cursor-pointer [accent-color:rgb(var(--text))] coarse:h-5 coarse:w-5 '
   + 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg';
 
-/**
- * Checkboxes stay out of the reading path: they appear on row hover or focus
- * and once anything is selected; on touch (no hover) they always show. They
- * keep their space, so nothing shifts when they appear.
- */
+/** Checkboxes stay out of the reading path: they show on row hover or focus, once anything is selected, and always
+ *  on touch. They keep their space, so nothing shifts. */
 const REVEAL = 'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100 coarse:opacity-100';
 
 /** The fixed columns, shared by the column header and every row so they line up. */
@@ -66,7 +63,7 @@ export interface SourceListProps {
   focusToken: number;
   /** The track a deep link (`?track=`) points at, highlighted briefly. */
   highlightFolderId?: string | null;
-  /** Tidy up (issue 0046): a marked row offers Keep and Remove… in place of its read link. */
+  /** Tidy up: a marked row offers Keep and Remove… in place of its read link. */
   tidy?: TidyActions;
 }
 
@@ -78,13 +75,10 @@ export interface TidyActions {
 const TIDY_BUTTON = 'inline-flex h-7 shrink-0 items-center rounded-md px-2 text-[0.75rem] hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11';
 
 /**
- * The sources as one dense list (one 36px line per source), in groups whose
- * headers stick under the toolbar and collapse (a headless group has none: the
- * flat list, and the untracked sources after a divider). Every row: select,
- * status glyph, name (opens the detail sheet), kind, posts, last new post,
- * added, a status note, read (in Tidy up, Keep and Remove… on a marked row), on/off; on a phone only the glyph, name, posts,
- * read and switch (never a URL). Roving focus: only the active row's controls
- * are tab stops; j/k move it.
+ * The sources as one dense list (one 36px line per source), in groups whose headers stick under the toolbar and
+ * collapse (a headless group: the flat list, or the untracked sources after a divider). On a phone a row shows only
+ * the glyph, name, posts, read and switch (never a URL). Roving focus: only the active row's controls are tab
+ * stops; j/k move it.
  */
 export default function SourceList({
   groups,
@@ -121,7 +115,7 @@ export default function SourceList({
 
   return (
     <div ref={rootRef} className="min-w-0">
-      {/* The column headers sort the list (narrower screens sort from the toolbar). */}
+      {/* the column headers sort the list (narrower screens sort from the toolbar) */}
       <div role="group" aria-label="Sort sources" className="hidden h-7 min-w-0 items-center gap-3 border-b border-line px-3 text-[0.6875rem] text-fg-3 sm:flex">
         <span className="w-4 shrink-0" />
         <span className="w-3.5 shrink-0" />
@@ -129,7 +123,7 @@ export default function SourceList({
         <span className={COL.kind}><SortButton column="kind" sort={sort} dir={dir} onSort={onSort} /></span>
         {(['posts', 'lastPost', 'added', 'status'] as const).map((column) => (
           <span key={column} className={COL[column === 'status' ? 'note' : column]}>
-            {/* Right-aligned: a label wider than its column spills to the left. */}
+            {/* right-aligned: a label wider than its column spills to the left */}
             <SortButton column={column} sort={sort} dir={dir} onSort={onSort} className="w-full justify-end" />
           </span>
         ))}
@@ -149,10 +143,10 @@ export default function SourceList({
             aria-label={showHeader ? undefined : group.label}
             data-folder-id={group.folderId ?? undefined}
             data-highlighted={group.folderId && group.folderId === highlightFolderId ? 'true' : undefined}
-            // Scrolled to below the sticky top bar and toolbar; the highlight fades out (instantly with reduced motion).
+            // scrolled to below the sticky top bar and toolbar; the highlight fades out (instantly with reduced motion)
             className={cn(
               'min-w-0 scroll-mt-[calc(var(--topbar-h)+var(--sources-toolbar-h,0px))] rounded-md motion-safe:transition-colors motion-safe:duration-700 data-[highlighted=true]:bg-raised',
-              // The untracked sources after the tracks: a thin divider instead of a header.
+              // the untracked sources after the tracks: a thin divider instead of a header
               !showHeader && index > 0 && 'mt-4 border-t border-line-strong',
             )}
           >
@@ -244,7 +238,7 @@ export default function SourceList({
                           className={cn(CHECKBOX, !selecting && REVEAL)}
                           checked={isSelected}
                           onChange={(event) => {
-                            // React drives a checkbox's change from its click, so the click's Shift is here.
+                            // React drives a checkbox's change from its click, so the click's Shift is here
                             const native = event.nativeEvent as Partial<MouseEvent>;
                             onSelectRow(key, row.source_id, event.target.checked, native.shiftKey === true);
                           }}

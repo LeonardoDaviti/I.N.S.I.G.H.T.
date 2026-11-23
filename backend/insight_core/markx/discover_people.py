@@ -1,38 +1,16 @@
-"""Discover → People and makers (issue 0276, Stealth v10.33; 0101's "authors in Discover").
+"""Discover → People and makers: who is behind what your tracks and News care about, as suggestions to follow.
 
-Reddit is closed to INSIGHT (0262), so what practitioners write must come from following the PEOPLE and MAKERS
-themselves. Discover's main list suggests the sites your sources link; this one suggests who is behind what your
-tracks and News care about:
+  (a) **authors**: the accounts your in-track and News posts quote, repost, @mention or link (X, Bluesky, Telegram,
+      YouTube, a code host's owner, a model hub's org), keyed as the scout keys them (scout.key_of);
+  (b) **makers**: the makers (entity_facts) of the entities those posts name, with the channels markx/official.py
+      found for them (never a new search here).
 
-  (a) **authors**: the accounts your in-track and News posts quote, repost, @mention or link: an X / Bluesky /
-      Telegram / YouTube account (a tweet's address is its author's: a quote or a retweet is a link to it), a code
-      host's owner (from a linked repository) and a model hub's org; keyed as the scout keys them (scout.key_of), so a
-      key here is a key there;
-  (b) **makers**: the makers (entity_facts' maker) of the entities those posts name, each with the channels the
-      official-channels module found for it (official.book: proven, would_add, refused), never a new search here.
-
-**Where the posts come from** (30 days, WITHIN_DAYS): each topic track's posts placed in the track or joined
-(track_feed.track_posts, the track's own reading view: a post in the track's Discover is not in it), and the posts of
-the News rows first seen in the window (news_posts). A post counts once a candidate however many ways it names it.
-
-**Ranked** by the posts that brought the candidate (in a track or News), then the tracks it appears in, then its key.
-Kept: MIN_POSTS posts, or 2+ posts from MIN_SOURCES of your sources (measured 0276: the one-off project owners came
-from 2 posts of one source). Never one you follow (the scout's Followed: an account, a site, a source's address), one
-you hid in Discover (discover_hidden), a reference/app/document address (discover_rules.place_kind) or a platform that
-is no person (Reddit, Hacker News).
-
-**People** (`people`): an account is a person's only where the handles module says so (the owner's yes in
-mx_entity_handles: never a handle from a name, never the same handle on another platform, handles.py's rule). Such
-accounts fold into one suggestion (`person:<id>`), and a person you follow under any account or site (a source of
-theirs: mx_entity_sources yes, a live voice of theirs, a yes handle that is a followed source's account) is left out.
-
-**Followable**: each suggestion carries the address Follow sends through the add path (the feed finder, then page
-watching; POST /api/sources' own): an X account through the configured nitter bridge (feed_finder.bridge_feed), a
-Telegram channel through its bridge, a YouTube channel's own feed, a code owner's page and a model hub org's page
-through the finder / page watching (scrape regardless of a feed: no candidate is dropped for having none).
-
-**Suggestions only**: nothing here adds a source. The makers' official channels are the official module's to add
-(INSIGHT_OFFICIAL); a person is followed by the owner's tap.
+The posts: each topic track's posts in the last WITHIN_DAYS (track_feed.track_posts) and the News rows' first seen in
+the window. Ranked by posts, then tracks, then key; kept with 2+ posts from MIN_SOURCES of your sources. Never one you
+follow, hid in Discover, a reference/app/document address, or a platform that is no person. An account is a person's
+only by the owner's yes in mx_entity_handles (handles.py's rule); a person's accounts fold into `person:<id>`, and a
+person you follow under any account is left out. Each suggestion carries the address Follow sends through the add path.
+Nothing here adds a source.
 
     rows = hits(cur, now)                       # what the posts say (SQL), Hit rows
     got = rank(rows, skip=..., people=...)      # pure: the ranked suggestions with their evidence
@@ -46,13 +24,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 WITHIN_DAYS = 30
-MIN_POSTS = 3          # (kept for callers; v10.33: the floor is MIN_SOURCES only) ...
+MIN_POSTS = 3          # (kept for callers; the floor is MIN_SOURCES only) ...
 MIN_SOURCES = 2        # ... or 2+ posts from 2+ of your sources
 EVIDENCE = 5           # the posts shown with each suggestion
 LIMIT = 60
 TRACK_POSTS = 400      # a track's newest posts of the window read
 # The scout's platform words (scout._platform_word) that are a person or a maker; "site" is Discover's main list,
-# "reddit" is closed (0262), "hn" is a forum.
+# "reddit" is closed, "hn" is a forum.
 PERSON_WORDS = frozenset({"x", "telegram", "youtube", "bluesky", "code", "hub", "account"})
 NOT_PERSON = frozenset({"reddit", "hn", "site"})
 CODE_HOST = "git" + "hub.com/"
@@ -225,7 +203,7 @@ def rank(hits: Iterable[Hit], *, skip: Callable[[str, str], bool] = lambda k, w:
             s.posts.add(h.post_id)
             s.evidence.append(h)
     out = [s for s in by.values()
-           if len(s.posts) >= 2 and len(s.sources) >= min_sources]   # v10.33: 2+ of your sources only (7/8 wanted vs 14/26)
+           if len(s.posts) >= 2 and len(s.sources) >= min_sources]   # 2+ of your sources only (0276)
     for s in out:
         s.evidence.sort(key=lambda h: h.at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         s.evidence = s.evidence[:EVIDENCE]
@@ -378,15 +356,13 @@ def suggestions(cur: Any, now: Optional[datetime] = None, *, limit: int = LIMIT,
 
 
 # ---- kept: built in the jobs process's "discover" view, served from system_settings --------------------------------
-# Measured 0276 on the server copy (162k posts, 2,056 window posts, 5,872 hits): 0.98-1.06 s a build, so it is never
-# made on the request.
+# A build takes about a second (0276), so it is never made on the request.
 
 KEY = "discover_people"
 KEEP_FOR = timedelta(hours=1)      # a kept list this old is built again at the next "discover" job
 
 
 def due(cur: Any, now: Optional[datetime] = None) -> bool:
-    """Whether the kept list is missing or KEEP_FOR old."""
     from insight_core.db.repo_operations import SystemSettingsRepository
     row = SystemSettingsRepository.get(cur, KEY)
     now = now or datetime.now(timezone.utc)

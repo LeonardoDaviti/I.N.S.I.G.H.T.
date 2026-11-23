@@ -1,13 +1,9 @@
-"""Each source's post statistics, kept (issue 0195, migration 0131).
+"""Each source's post statistics, kept in source_post_stats (0195).
 
-Source health, the Ingestion tab's overview and /api/status read per source: how many posts, its newest post, the
-newest page reads, whether its newest paid post was a teaser, where its newest posts moved, and the corpus' freshness.
-They were six correlated subqueries per source over posts on every request. Here they are kept in source_post_stats
-and read; a source whose posts changed since its last refresh (a row in source_post_stats_changes, written by the
-posts triggers, whoever wrote the posts) or that was never kept is read live by the very same expressions, so a read
-is never stale. `refresh` (after each ingestion run) keeps the changed sources again.
-
-`stats_sql()` is the one place the statistics are defined: the refresh and the live read both use it.
+Source health, the Ingestion overview and /api/status read them instead of per-source subqueries over posts. A
+source whose posts changed since its last refresh (source_post_stats_changes, written by the posts triggers) or
+that was never kept is read live by the same expressions, so a read is never stale. `refresh` (after each
+ingestion run) keeps the changed sources again. `stats_sql()` is the one definition both use.
 """
 from __future__ import annotations
 
@@ -19,8 +15,8 @@ from insight_core.db.repo_posts import PAGE_READ_KEY
 from insight_core.markx import pairing
 from insight_core.utils.post_fields import MOVED_KEY
 
-PAGE_READS_IN_HEALTH = 8    # the newest page-read posts source health sums (issue 0032)
-MOVED_NEWEST = 10           # the newest posts whose pages' moves say a source moved (issue 0108)
+PAGE_READS_IN_HEALTH = 8    # the newest page-read posts source health sums
+MOVED_NEWEST = 10           # the newest posts whose pages' moves say a source moved
 
 # Session-scoped advisory key: one refresh at a time (a second skips; the rows stay read live until the next).
 REFRESH_LOCK = 0x5050_0195
@@ -94,8 +90,8 @@ def corpus(cur: Cursor) -> Dict[str, Any]:
 
 
 def opened_counts(cur: Cursor, source_ids: Optional[Sequence[str]] = None) -> Dict[str, int]:
-    """{source_id: its posts the owner opened} (repo_fetch_state.OPENED_POST_SQL's rule, counted from the few opened
-    posts up rather than per source over every post; not kept: reading changes it)."""
+    """{source_id: its posts the owner opened} (repo_fetch_state.OPENED_POST_SQL), counted from the few opened posts
+    up; not kept: reading changes it."""
     where, params = "", {}
     if source_ids is not None:
         where, params = "AND p.source_id = ANY(%(ids)s::uuid[])", {"ids": [str(s) for s in source_ids]}

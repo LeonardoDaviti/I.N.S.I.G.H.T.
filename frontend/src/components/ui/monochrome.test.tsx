@@ -2,9 +2,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-// Mark IX is monochrome (src/design/docs). The Tailwind palette swap
-// turns every colour class grey, but a literal hex in TS/TSX (an inline style, a
-// `color: '#0EA5E9'` field) gets past it. This guard keeps them out.
+// The UI is monochrome: the Tailwind palette swap turns colour classes grey, but a literal hex in TS/TSX gets past
+// it. This guard keeps them out.
 const SRC = join(__dirname, '..', '..');
 // The browser chrome colour must be a literal; it is the dark/light page background.
 const ALLOW = new Set(['components/ThemeProvider.tsx']);

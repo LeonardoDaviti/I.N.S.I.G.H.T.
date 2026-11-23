@@ -1,9 +1,7 @@
-"""A wanted voice Discover found and buried (issue 0235, backlog #32): @mentions are links, growth is in the score,
-the worker judges the fastest growing suggestions every day, and a suggestion judged "follow" leads the list.
-
-The case, synthetic: an account six of your sources started linking or @mentioning in the last 60 days, against 35
-outlets each linked by 50 sources for months (and 2 new ones). Before: its score sat below every outlet's and nothing
-judged it. Now: the daily planner judges it among its 15, and once judged "follow" it is on Discover's first page.
+"""A wanted voice Discover found and buried (0235): @mentions are links, growth is in the score, the worker judges the
+fastest growing suggestions every day, and a suggestion judged "follow" leads the list. The synthetic case: an account
+six of your sources started linking or @mentioning in the last 60 days, against 35 long-linked outlets; the daily
+planner judges it, and once judged "follow" it is on Discover's first page.
 """
 from __future__ import annotations
 
@@ -224,7 +222,7 @@ class TheCase(unittest.TestCase):
 
 @requires_test_db
 class Backfill(unittest.TestCase):
-    """0235's resumable backfill (StoriesRepository.fill_mentions): stored X posts gain their mentions."""
+    """The resumable backfill (StoriesRepository.fill_mentions): stored X posts gain their mentions (0235)."""
 
     def setUp(self):
         self.conn = psycopg.connect(db_url())

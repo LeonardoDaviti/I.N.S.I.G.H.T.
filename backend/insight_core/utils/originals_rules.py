@@ -1,34 +1,16 @@
-"""A story's original, fetched when INSIGHT lacks it: a followed source fetched early when a story
-links its page (issue 0114), and a News story's original collected, one page, when "Collect originals"
-is on (issue 0123). Pure rules; the database and the requests are services/originals_service.py.
+"""A story's original, fetched when INSIGHT lacks it: a followed source fetched early when a story links its page
+(0114), and a News story's original collected, one page, when "Collect originals" is on (0123). Pure rules; the
+database and the requests are services/originals_service.py.
 
-**One budget for both** (the owner's bar, 0114): the extra requests these make stay under 1% of the
-requests the schedule makes. A credit: every source fetch the schedule makes adds EXTRA_SHARE of a
-request, an extra request spends one, and it never holds more than EXTRA_CREDIT_CAP (a burst); 0114's
-fetches go first, then 0123's by the story's voices, and what can't be asked now waits for the credit.
-Replayed on the server's copy (2026-11-05, `plan/research/0123-measure.md`, the 8.7 days its per-source
-fetch history covers): the two together were +1.14% of requests without it, +0.78% with it.
+One budget for both: the extra requests stay under EXTRA_SHARE of the schedule's requests. A credit: every scheduled
+source fetch adds EXTRA_SHARE of a request, an extra request spends one, and it never holds more than
+EXTRA_CREDIT_CAP; early fetches go first, then collections by the story's voices.
 
-**0114, narrowed by the measure** (`plan/research/0114-measure.md`: as written +1.44%, 4 in 5 fetches
-found nothing): a link is wanted only when
-- a post of a story links it (a member or the story's root), not any post;
-- it is a followed source's own page (0084 B's `OwnPages`: its post pages on its publication; on a
-  platform its account's posts), the source followed when the link was seen, never a platform host;
-- it isn't stored, and the linking post was published in the last 72 hours;
-- the page isn't dated (by its address or a tweet's id) 7+ days before the link, nor a day before the
-  source's last fetch: its feed can't hold it (it goes to "missing from the feed" with no fetch);
-- the source wasn't fetched in the last 15 minutes, isn't in backoff, and had no early fetch in its
-  scheduled interval (at most one per interval, not one per hour: 0114's measure saw 3 a day).
-
-**0123's trigger** is the root of a News story's main story (`stories.origin_url`: the outside page its
-posts link or quote first and most, 0064's tree), when no post is at it. It is collected only when:
-- no followed source owns it (a followed source's page is 0114's: its source is fetched);
-- it isn't walled (0081 is on hold): an address that carried an access or gift token, or a site whose
-  every page the server read came back untitled, or whose follow test was "blocked";
-- it is an article page: a platform page that names no account (a video's watch page) has none;
-- a tweet is collected from the quote a member holds (its words as Nitter shows them, its date by its
-  id): no request. A tweet no member quotes is not fetched (the save path reads x.com's app shell).
-- a quote that names no address (only a name) is never fetched: there is nothing to fetch.
+An early fetch is wanted only for a story post's link to a followed source's own page, not stored, linked in the
+last LINK_RECENT, not dated PAGE_OLD+ before the link, and a source not fetched in REFETCH_WITHIN, not in backoff,
+and with no early fetch this interval. A News story's root (`stories.origin_url`) is collected only when no followed
+source owns it, it isn't walled (an access token, a never-titled site, a blocked follow test) and it is an article;
+a tweet is taken from the quote a member holds (no request), never fetched.
 """
 from __future__ import annotations
 
@@ -42,33 +24,31 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from insight_core.utils.addresses import host_of, is_tweet, site_of
 from insight_core.utils.url_normalization import is_access_key, normalize_url
 
-EXTRA_SHARE = 0.01                       # the owner's bar (0114): extra requests < 1% of the schedule's
-EXTRA_CREDIT_CAP = 3.0                   # the most extra requests the credit holds at once: the replay's value
-REFETCH_WITHIN = timedelta(minutes=15)   # 0114 decided 2
-LINK_RECENT = timedelta(hours=72)        # 0114 decided 2
-PAGE_OLD = timedelta(days=7)             # 0114's measure: older pages are never in a feed (8 of 8)
+EXTRA_SHARE = 0.01                       # the owner's bar: extra requests < 1% of the schedule's
+EXTRA_CREDIT_CAP = 3.0                   # the most extra requests the credit holds at once (measured: 0123)
+REFETCH_WITHIN = timedelta(minutes=15)   # decided in plan/issues/0114
+LINK_RECENT = timedelta(hours=72)        # decided in plan/issues/0114
+PAGE_OLD = timedelta(days=7)             # older pages are never in a feed (measured: 0114)
 COLLECT_WITHIN = timedelta(days=7)       # a News story's original is collected in its first week; not measured
-WALLED_MIN_READS = 2                     # a site read this often, never titled, is walled (0113's measure: 13-15 reads)
-# 0208: a link post with no words of its own (a Reddit link post: its title and the page it shares) has the page read
-# (story_originals kind `linked`) so Mark X reads the post with the page's text (markx/tasks.load_posts) and can join
-# it to its story. Its own words beyond its title: at most LINK_POST_OWN_CHARS; posted within LINK_POSTS_WITHIN.
+WALLED_MIN_READS = 2                     # a site read this often, never titled, is walled (measured: 0113)
+# A link post with no words of its own (a Reddit link post) has the page read (story_originals kind `linked`) so
+# Mark X reads the post with the page's text and can join it to its story (0208). Its own words beyond its title:
+# at most LINK_POST_OWN_CHARS; posted within LINK_POSTS_WITHIN.
 LINK_POST_OWN_CHARS = 200
 LINK_POSTS_WITHIN = timedelta(hours=72)
 LINKED_PAGE_CHARS = 3000                 # the page's text Mark X reads with the post, at most
 
-# A query key naming an access or gift token, or a value shaped as a signed token (a JWT): a page that needs one
-# to be read is walled, and the token is never stored (0123). The vocabulary is url_normalization's (0126: every
-# compared address drops it, and share marks too; a share mark opens no wall).
+# A query key naming an access or gift token, or a value shaped as a signed token (a JWT): a page that needs one is
+# walled, and the token is never stored. The vocabulary is url_normalization's.
 TWITTER_EPOCH_MS = 1288834974657
 ADDRESS_DATE = re.compile(r"/((?:19|20)\d\d)[/-](0[1-9]|1[0-2])(?:[/-]([0-3]\d))?(?=/|$|-|\.)")
-# v10.13.5: a month written by name in the address (/2008/Jul/7/, /2019/september/03/), a whole day only
+# a month written by name in the address (/2008/Jul/7/, /2019/september/03/), a whole day only
 ADDRESS_DATE_NAMED = re.compile(r"/((?:19|20)\d\d)/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*/([0-3]?\d)(?=/|$)",
                                 re.IGNORECASE)
 
 
-# Collect originals' switch (issue 0126 (4), the owner 2026-11-07: on by default). A stored false counts as your
-# choice only when this default wrote it (the row carries COLLECT_CHOSEN): before, the dialog wrote false on every
-# save, touched or not, so that false is no choice and reads as the default.
+# Collect originals' switch: on by default. A stored false counts as your choice only when this default wrote it
+# (the row carries COLLECT_CHOSEN): an older dialog wrote false on every save, so that false reads as the default.
 COLLECT_DEFAULT = True
 COLLECT_CHOSEN = ("collect_originals_default", "on")
 
@@ -82,7 +62,7 @@ def collect_setting(stored: Optional[Mapping]) -> bool:
     return bool(value)
 
 
-# Look up unlinked originals (issue 0138 C): a title lookup (the arXiv API, Crossref) for a document entity no post
+# Look up unlinked originals: a title lookup (the arXiv API, Crossref) for a document entity no post
 # links. Off unless you switch it on (its own key in the scheduler's settings).
 LOOKUP_SETTING = "lookup_originals"
 LOOKUP_DEFAULT = False
@@ -94,7 +74,7 @@ def lookup_setting(stored: Optional[Mapping]) -> bool:
     return LOOKUP_DEFAULT if value is None else bool(value)
 
 
-# Store Classics (issue 0138 E1): every Classic not stored collected once, under its own backfill allowance. On unless
+# Store Classics: every Classic not stored collected once, under its own backfill allowance. On unless
 # you switch it off.
 CLASSICS_SETTING = "store_classics"
 CLASSICS_DEFAULT = True
@@ -120,7 +100,7 @@ def tokened(url: str) -> bool:
 
 
 def strip_access_tokens(url: str) -> str:
-    """`url` without its access and gift tokens (never stored, issue 0123); the rest as written."""
+    """`url` without its access and gift tokens (never stored); the rest as written."""
     keys = set(access_keys(url))
     if not keys:
         return url
@@ -142,7 +122,7 @@ def tweet_time(url: str) -> Optional[datetime]:
 
 def page_date(url: str) -> Optional[datetime]:
     """The date an address states: a tweet's id, else /2026/10/21/ or /2026-10/ in its path, or a month by name
-    with its day (/2008/Jul/7/, v10.13.5)."""
+    with its day (/2008/Jul/7/)."""
     if is_tweet(url):
         return tweet_time(url)
     path = urlsplit(url).path
@@ -163,7 +143,7 @@ def page_date(url: str) -> Optional[datetime]:
 
 
 def address_day(url: str) -> Optional[datetime]:
-    """v10.13.5: the day an address states, only when it names a whole day (/2026/10/21/, /2008/Jul/7/), never a month
+    """The day an address states, only when it names a whole day (/2026/10/21/, /2008/Jul/7/), never a month
     alone (/2026-10/ is no day): what dates a page that states none in its markup."""
     path = urlsplit(url).path
     if is_tweet(url) or ADDRESS_DATE_NAMED.search(path):
@@ -173,7 +153,7 @@ def address_day(url: str) -> Optional[datetime]:
 
 
 def address_month(url: str) -> Optional[datetime]:
-    """v10.13.9: the 1st of the month an address names when it names a month and no day (/2003/07/slug, /2026-10/),
+    """The 1st of the month an address names when it names a month and no day (/2003/07/slug, /2026-10/),
     None otherwise (a day: address_day; a year alone: no guess)."""
     if is_tweet(url):
         return None
@@ -185,10 +165,9 @@ def address_month(url: str) -> Optional[datetime]:
 
 
 def address_hint(url: Optional[str], now: Optional[datetime] = None) -> Optional[datetime]:
-    """v10.13.9: an older page's sort hint by its address alone, for the backlog's paths only (an archive's page, a
-    collected original, a page its feed missed): the address's whole day, else the 1st of its month (stored as a
-    date alone, precision "date": posts.published_precision has no month), never a year alone, never a date more
-    than a day ahead. Never above the date the page states: callers ask for it only when the page states none."""
+    """An older page's sort hint by its address alone, for the backlog's paths only: the address's whole day, else
+    the 1st of its month (stored as a date alone), never a year alone, never a date more than a day ahead. Never
+    above the date the page states: callers ask for it only when the page states none."""
     if not url:
         return None
     hint = address_day(url) or address_month(url)
@@ -196,7 +175,7 @@ def address_hint(url: Optional[str], now: Optional[datetime] = None) -> Optional
     return hint if hint is not None and hint <= latest else None
 
 
-# ---- 0114: a followed source's page a story links -------------------------------------------------
+# ---- early fetch: a followed source's page a story links -------------------------------------------------
 
 
 def linked_wanted(url: str, linked_at: datetime, *, in_story: bool, last_fetch: Optional[datetime]) -> Optional[str]:
@@ -229,7 +208,7 @@ def early_fetch_blocked(now: datetime, *, last_attempt: Optional[datetime], fail
 
 def credit_after(credit: float, scheduled: int, cap: float = EXTRA_CREDIT_CAP) -> float:
     """The credit once `scheduled` more source fetches were made: EXTRA_SHARE of a request each, at most the cap
-    (0138 B5: raised while an entity's original has waited on it over 72 hours)."""
+    (raised while an entity's original has waited on it over 72 hours)."""
     return min(cap, max(0.0, credit) + EXTRA_SHARE * max(0, scheduled))
 
 
@@ -238,7 +217,7 @@ def whole(credit: float) -> int:
     return max(0, math.floor(credit + 1e-9))
 
 
-# ---- 0123: a News story's original -------------------------------------------------------------------
+# ---- collect: a News story's original -------------------------------------------------------------------
 
 FOLLOWED, WALLED, NO_ARTICLE, FROM_QUOTE, TWEET_UNHELD, PAGE = (
     "followed", "walled", "no_article", "from_quote", "tweet_unheld", "page")
@@ -246,7 +225,7 @@ FOLLOWED, WALLED, NO_ARTICLE, FROM_QUOTE, TWEET_UNHELD, PAGE = (
 
 @dataclass(frozen=True)
 class SiteReads:
-    """What the server read of one site (Discover's reads, issue 0080): pages read, pages titled, the
+    """What the server read of one site (Discover's reads): pages read, pages titled, the
     follow test's label."""
     read: int = 0
     titled: int = 0
@@ -279,7 +258,7 @@ def site_reads_of(reads: Mapping) -> Dict[str, SiteReads]:
 
 def trigger_kind(url: str, *, owner: Optional[str], names_account: bool, reads: SiteReads,
                  linked_as: Iterable[str] = (), quoted: Optional[str] = None, article: bool = True) -> str:
-    """What collecting a story's original would be: FOLLOWED (0114 fetches its source), WALLED, NO_ARTICLE,
+    """What collecting a story's original would be: FOLLOWED (an early fetch of its source), WALLED, NO_ARTICLE,
     FROM_QUOTE (a tweet a member quotes: no request), TWEET_UNHELD (a tweet nobody quotes: not fetched), or
     PAGE (one request). `names_account`: the address is a platform's page of an account, or not on a
     platform (Discover's discover_address found a key); `article`: not a reference, document, app or

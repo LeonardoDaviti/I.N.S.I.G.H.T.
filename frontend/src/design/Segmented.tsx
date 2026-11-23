@@ -1,13 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { cn } from '../lib/utils';
 
-/**
- * A segmented control: one choice of a few, as a radio group in a hairline
- * track, the chosen segment the inverted block (P2). The change is instant:
- * it is switched often, and motion on frequent actions is latency (P12). It
- * owns no arrow keys; the studio steps modes with ← → on the whole page, and
- * focus follows the choice when it was inside the group.
- */
+/** A segmented control: a radio group in a hairline track, the chosen segment the inverted block. Instant (switched
+ *  often). It owns no arrow keys: the studio steps modes with ← → on the whole page. */
 export default function Segmented<T extends string>({
   label,
   value,

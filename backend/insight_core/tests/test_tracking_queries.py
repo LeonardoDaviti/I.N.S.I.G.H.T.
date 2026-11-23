@@ -1,8 +1,6 @@
-"""A mail or analytics tracker's query names no other page (issue 0109 B1).
-
-The rule is url_normalization's (test_post_fields_utils); the story sample holds its case, so the
-rules' stamp regroups every story once (test_stamps). Here: the links already stored with a tracker
-are read again from their post's stored HTML (migration 0067), and only those.
+"""A mail or analytics tracker's query names no other page (0109 B1). The rule is url_normalization's
+(test_post_fields_utils); here the links already stored with a tracker are read again from their post's stored HTML
+(migration 0067), and only those.
 """
 from __future__ import annotations
 
@@ -93,9 +91,8 @@ class MigrationTests(unittest.TestCase):
 
 @requires_test_db
 class ADeploysFirstStartTests(unittest.TestCase):
-    """What a deploy's first start makes of it (issue 0110's check): the links read again, then the rule
-    change's rebuild in batches, leave what a full run leaves. On the lab's copy the rebuild kept a classic
-    at a tracked address no link points to any more, where the full run has it at the page's own."""
+    """A deploy's first start (the links read again, then the rule change's rebuild in batches) leaves what a full run
+    leaves: no classic kept at a tracked address no link points to any more (0110)."""
 
     def setUp(self):
         self.conn = psycopg.connect(db_url())

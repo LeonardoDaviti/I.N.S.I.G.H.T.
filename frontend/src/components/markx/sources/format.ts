@@ -1,4 +1,4 @@
-// 0132 B: how the source analysis page writes each signal's number. No overall score anywhere.
+// How the source analysis page writes each signal's number. No overall score anywhere.
 import type { MarkxSourceCell, MarkxSourceRow } from '../../../services/api';
 
 export const COLUMN_TITLES: Record<string, string> = {
@@ -8,7 +8,7 @@ export const COLUMN_TITLES: Record<string, string> = {
   news_yield: 'News yield',
   cited_by: 'Cited by',
   solo_share: 'Solo share',
-  // 0266: the track record, last 30 days
+  // the track record, last 30 days
   firsts: 'Firsts (30 d)',
   first_lead: 'Lead',
   signal_share: 'Signal',

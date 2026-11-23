@@ -3,10 +3,8 @@
     from insight_core.services.registry import services
     services().reader.list_posts(...)
 
-`services()` builds every service on first use, from DATABASE_URL (ensure_database) and the
-environment, and hands back the same `Services` after that. Tests swap the whole set with
-`use(...)`: real services against the scratch database, or a stand-in object with only the
-attributes the route under test touches.
+`services()` builds every service on first use from DATABASE_URL and the environment, then returns the same
+`Services`. Tests swap the whole set with `use(...)`.
 """
 from __future__ import annotations
 
@@ -62,8 +60,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
     source_config_sync = SourceConfigSyncService(db_url)
     reader = ReaderService(db_url)
     news = NewsService(db_url)
-    # One kind registry for the health table and the archive: the same resolution the
-    # runner uses (KindRegistry.default), built once.
+    # one kind registry for the health table and the archive, resolving as the runner does
     operations = OperationsService(db_url, kinds=source_fetch.kinds)
     return Services(
         db_url=db_url,

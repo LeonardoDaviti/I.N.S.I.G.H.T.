@@ -55,11 +55,8 @@ function allEvidence(suggestion: VoiceSuggestion): VoiceEvidence[] {
   return suggestion.edges.flatMap((edge) => edge.evidence).filter((e) => (seen.has(e.line) ? false : (seen.add(e.line), true)));
 }
 
-/**
- * "Suggested voices" (issue 0132 A): the sources that look like one voice, each with its evidence, never joined
- * without you. Join makes them one voice (stories then count it once; only their posts regroup); Not the same keeps
- * them apart for good. Related voices (a company's staff) and name-only pairs ("possible") are listed apart.
- */
+/** "Suggested voices": the sources that look like one voice, each with its evidence, never joined without you. Join
+ *  makes them one voice; Not the same keeps them apart for good. Related voices and name-only pairs are listed apart. */
 export default function SuggestedVoices({ onFollow }: { onFollow?: (url: string) => void } = {}) {
   const queryClient = useQueryClient();
   const query = useQuery({
@@ -153,7 +150,7 @@ export default function SuggestedVoices({ onFollow }: { onFollow?: (url: string)
 
 const PROFILES_KEY = [...VOICES_KEY, 'profiles-setting'] as const;
 
-/** Channel profiles (0132 C2): each source's profile page read monthly, on unless you switch it off. */
+/** Channel profiles: each source's profile page read monthly, on unless you switch it off. */
 function ProfilesSwitch({ count }: { count: number }) {
   const queryClient = useQueryClient();
   const setting = useQuery({ queryKey: PROFILES_KEY, queryFn: () => voicesApi.profilesSetting(), retry: false });

@@ -1,8 +1,7 @@
-"""v10.12.1: a topic track's reading views list only the posts in the track (markx/track_feed): its active sources'
-posts judged in, posts joined by INSIGHT, the owner's ✓; not a post judged out, not one waiting for its verdict, not
-a Discover suggestion. `all_sources` lists the folder's every post as before; a plain folder and Mark X off are
-unchanged. Stream, By source, Later, Kept and History; the toolbar's count; mark read up to here; the waiting count.
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""A topic track's reading views list only the posts in the track (markx/track_feed): its active sources' posts judged
+in, posts joined by INSIGHT, the owner's ✓; never one judged out, waiting for its verdict, or a Discover suggestion.
+`all_sources` lists the folder's every post; a plain folder and Mark X off are unchanged. Stream, By source, Later,
+Kept and History; the toolbar's count; mark read up to here; the waiting count. Synthetic data; a _test database."""
 from __future__ import annotations
 
 import os
@@ -122,7 +121,7 @@ class TrackFeed(_Tracks):
 
     def test_the_count_and_the_waiting(self):
         w = self.world()
-        self.assertEqual(self.counts()[self.folder], {"unread": 3, "discover": 1, "count": 4, "waiting": 1})   # v10.36: no `things` (the rail count is gone)
+        self.assertEqual(self.counts()[self.folder], {"unread": 3, "discover": 1, "count": 4, "waiting": 1})
         scope = track_feed.restrict(self.cur, FeedScope("folder", self.folder))
         self.assertEqual(ReaderRepository().scope_unread(self.cur, scope), 3)
         self.plan()

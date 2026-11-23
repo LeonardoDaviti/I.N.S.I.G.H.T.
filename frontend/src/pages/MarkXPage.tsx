@@ -1,18 +1,17 @@
 import { Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import MarkXNews from '../components/markx/MarkXNews';
-import MarkXBack from '../components/markx/MarkXBack';   // 0136: back in the news (Shadow)
-import MarkXRoundup from '../components/markx/MarkXRoundup';   // 0181: own round-up
+import MarkXBack from '../components/markx/MarkXBack';
+import MarkXRoundup from '../components/markx/MarkXRoundup';
 import { MarkXBriefing, MarkXWorker } from '../components/markx/MarkXOverview';
-import MarkXEntities from '../components/markx/MarkXEntities';   // 0119 A3: the list, the review queue
+import MarkXEntities from '../components/markx/MarkXEntities';
 import { useSearchParams } from 'react-router-dom';
 
 const TABS = ['news', 'briefing', 'entities', 'worker'] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * Mark X Shadow (issue 0086 E), `/markx`, while INSIGHT_MARKX is on: Haiku's stories beside Mark IX's, never read by
- * the reader's feed or News. News (Mark X's News against Mark IX's, only the differences by default), the day's
- * briefing, the main-subject entities, and the worker's queue and runs (v10.22, 0216 D: the Labels tab removed).
+ * Mark X, `/markx`, while INSIGHT_MARKX is on: Haiku's stories beside Mark IX's, never read by the reader's feed
+ * or News; the day's briefing, the entities, and the worker's queue and runs.
  */
 export default function MarkXPage() {
   const [params, setParams] = useSearchParams();

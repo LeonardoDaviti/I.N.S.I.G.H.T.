@@ -12,8 +12,7 @@ import type { MarkxEntityPage, MarkxEntityQueue, MarkxEntityRef, MarkxPostPanel,
 import { makeFakeApi as makeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
-/** Issue 0165, invented names: the entity page's Timeline (and its components), the post page's "before" from it,
- *  and a rename question in the review queue. Synthetic data only. */
+/** The entity page's Timeline, the post page's "before" from it, and a rename question in the queue (0165). */
 const makeFakeApi = (methods: Record<string, unknown>) => makeApi(methods as Parameters<typeof makeApi>[0]);
 const post = (id: string, title: string, source: string) => ({ id, title, source, kind: 'site', url: null });
 const ev = (kind: MarkxTimelineEvent['kind'], at: string, extra: Partial<MarkxTimelineEvent> = {}): MarkxTimelineEvent => ({

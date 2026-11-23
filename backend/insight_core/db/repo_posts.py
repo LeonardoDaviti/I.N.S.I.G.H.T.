@@ -29,40 +29,34 @@ from insight_core.markx import pairing
 # metadata key of a body read from the article page (ingestion/full_text.py)
 FULL_TEXT_FLAG = "full_content_fetched"
 FULL_TEXT_CHECKED = "full_text_checked_at"
-# metadata key of how well a page was read (parsing.read_fidelity; issue 0032): page watch
-# and full text set it, source health sums the newest ones per source.
+# metadata key of how well a page was read (parsing.read_fidelity): source health sums the newest per source
 PAGE_READ_KEY = "page_read"
-# metadata key of a teaser's page reads (issue 0062): {"count", "last_at", "failed"}. A re-fetch
-# of the feed keeps it (_post_update_assignments); ingestion/full_text.py reads and writes it.
+# metadata key of a teaser's page reads: {"count", "last_at", "failed"}; a re-fetch keeps it
 PAGE_TRIES_KEY = "page_tries"
-# metadata keys of a teaser's last page read (issue 0140): {"outcome", "at"} (full, nothing_longer,
-# not_same_article, needs_script, error:<class>, http:<status>), and the version of the rules it was read by
-# (ingestion/full_text.FULL_TEXT_RULE: the repair reads a post again once per version). A re-fetch keeps both.
+# metadata keys of a teaser's last page read ({"outcome", "at"}) and the full_text.FULL_TEXT_RULE version it
+# was read by (the repair reads a post again once per version); a re-fetch keeps both
 PAGE_OUTCOME_KEY = "page_read_outcome"
 FULL_TEXT_RULE_KEY = "full_text_rule"
-# metadata key of an X Article read for a tweet Nitter gave as its link alone (ingestion/kinds/x_articles.py):
-# {"id", "via" (text | preview), "complete", "at"}.
+# metadata key of an X Article read for a link-only tweet (ingestion/kinds/x_articles.py)
 X_ARTICLE_KEY = "x_article"
 # A Telegram post's address (the bridge links each item to t.me): its channel's albums are folded.
 TELEGRAM_POST_PREFIX = "https://t.me/"
 
 
 def published_precision(post: Dict[str, Any]) -> str:
-    """How precise a post's date is (issue 0076, posts.published_precision): "none" (the source gave no
-    date), "seen" (none, and its kind dates it when first seen: issue 0137 B9, the saver keeps the first
-    time), "date" (no time of day: as its kind read it, or stored as 00:00:00 UTC), else "exact"."""
+    """How precise a post's date is (posts.published_precision): "none" (no date), "seen" (dated when first
+    seen), "date" (no time of day, or stored as 00:00:00 UTC), else "exact"."""
     date = post.get("date")
     if not isinstance(date, datetime):
         return "seen" if post.get("date_precision") == "seen" else "none"
     told = post.get("date_precision")
-    if told == "before":   # v10.30: no date given; the feed's next older-side dated item bounds it (parsing._bound_undated)
+    if told == "before":   # no date given; bounded by the feed's next older dated item (parsing._bound_undated)
         return "none"
     return told if told in ("date", "exact") else "date" if date_alone(date) else "exact"
 
 
 def _env_commit_batch() -> int:
-    # INSIGHT_SAVE_COMMIT_BATCH, renamed from SAFE_INGEST_SAVE_COMMIT_BATCH (still read as a
-    # fallback for one version).
+    # SAFE_INGEST_SAVE_COMMIT_BATCH is the old name, still read as a fallback
     raw = os.getenv("INSIGHT_SAVE_COMMIT_BATCH") or os.getenv("SAFE_INGEST_SAVE_COMMIT_BATCH") or "20"
     try:
         return max(1, int(raw))
@@ -70,13 +64,9 @@ def _env_commit_batch() -> int:
         return 20
 
 
-# Commit every N attempted drafts. Deliberately small: upsert_post opens one writing
-# SAVEPOINT per post (two on the rare external_id collision path - its lookup savepoint is
-# read-only and so is never assigned an XID), and Postgres caches only 64 subtransaction ids
-# per backend. Past that the backend's snapshot is suboverflowed and EVERY OTHER backend in
-# the cluster falls back to pg_subtrans lookups for as long as the transaction stays open.
-# RELEASE SAVEPOINT does not hand the id back; only the top-level commit does, which is why
-# this is a commit interval and not a savepoint-stack depth.
+# Commit every N attempted drafts. Small on purpose: each post opens a writing SAVEPOINT, Postgres caches only
+# 64 subtransaction ids per backend, and past that every other backend falls back to pg_subtrans lookups while
+# the transaction stays open. Only the top-level commit hands the ids back, hence a commit interval.
 SAVE_COMMIT_BATCH = _env_commit_batch()
 
 _PQ_INERROR = psycopg.pq.TransactionStatus.INERROR
@@ -87,33 +77,23 @@ def _transaction_is_poisoned(conn) -> bool:
     return conn.info.transaction_status == _PQ_INERROR
 
 
-# A post dict's key a kind sets on a page it read from its site's backlog (page watch's sitemap),
-# not from the site's own list of what is new: such a page is never "new to you" (issue 0039).
+# Set on a post a kind read from its site's backlog (page watch's sitemap): never "new to you" (0039).
 BACKLOG_KEY = "_backlog"
 # A page first seen this long after its date is new to you: it sorts at when it was first seen.
 NEW_TO_YOU_AFTER = "2 days"
-# A post a live read first sees, dated before the source's previous successful read by more than this,
-# was added to its feed after INSIGHT last looked (a feed that lists a post late, with an earlier date):
-# it is new to you and sorts at when it was first seen, as NEW_TO_YOU_AFTER's do. "First seen" is the
-# exact part: every item a successful read returned was stored then (posts are unique by address), so
-# a post inserted now was not in that read. The slack covers the previous read's own length (its
-# last_success_at is recorded when its save ends, after the feed was read) and clock rounding.
+# A post a live read first sees, dated more than this before the source's previous successful read, was added
+# to its feed late: it is new to you and sorts at when it was first seen. The slack covers the previous read's
+# own length and clock rounding.
 ADDED_LATE_SLACK = "15 minutes"
-# The stored bodies the repair reads at a time (drop_hidden_link_labels): ~15 MB of HTML on the lab.
-# Not tuned; any batch far below the 2,958 bodies bounds the peak.
+# Stored bodies the repair reads at a time (drop_hidden_link_labels): bounds the peak memory.
 BODIES_BATCH = 200
-# Issue 0058: known news is not new. A page one of your other sources linked before it was first
-# seen already reached you (0050's post_links, target_url normalized as posts.normalized_url):
-# it keeps its date. p is the page; migration 0043 clears what was surfaced before with the
-# same condition, written out again there.
+# Known news is not new (0058): a page another source linked before it was first seen keeps its date.
+# Migration 0043 repeats this condition.
 LINKED_BEFORE_SQL = """EXISTS (SELECT 1 FROM post_links l JOIN posts q ON q.id = l.post_id
                          WHERE l.target_url = p.normalized_url AND q.source_id <> p.source_id
                            AND q.fetched_at < p.fetched_at)"""
-# Issue 0070: a source's first fetch is its backlog. Its undated posts (ids in the feed's order,
-# %(ids)s) sort below the source's dated posts: at the start of the UTC day of the second before its
-# oldest dated post, or before the fetch, which reads as a date alone (no time of day); a microsecond
-# apart keeps the feed's order. A later fetch's undated post is new: it sorts at its fetch, as before.
-# Migration 0053 places the stored ones the same way.
+# A source's first fetch is its backlog (0070): its undated posts (%(ids)s, in feed order) sort below its dated
+# posts, a microsecond apart to keep the feed's order. Migration 0053 places stored ones the same way.
 UNDATED_BACKLOG_SQL = """
     UPDATE posts p SET surfaced_at = date_trunc('day', LEAST(p.fetched_at, (SELECT min(d.published_at)
                FROM posts d WHERE d.source_id = p.source_id)) - interval '1 second', 'UTC')
@@ -126,11 +106,9 @@ UNDATED_BACKLOG_SQL = """
 class PostDraft:
     """A normalized post dict (url, title, content, date, ...) before it is saved.
 
-    watch: its source watches its pages for changes (issue 0039): the text's hash is kept and
-    a meaningful change brings the post back. surface: a page-based source's live fetch, after
-    its first: a new post first seen long after its date sorts at when it was first seen. Any
-    live read's new post dated before the source's previous read is new to you too: save_batch's
-    live (ADDED_LATE_SLACK)."""
+    watch: the source watches its pages (0039): a meaningful text change brings the post back. surface: a
+    page-based source's live fetch after its first: a new post first seen long after its date sorts at when it
+    was first seen."""
 
     source_id: str
     post: dict
@@ -139,8 +117,8 @@ class PostDraft:
 
 
 class Saved(tuple):
-    """0215: upsert_post's (post_id, was_inserted), unpacked as before, and `changed`: False when the post was stored
-    as it is (a feed's re-fetched item): nothing was written, so its parts, links and refs need no reading again."""
+    """upsert_post's (post_id, was_inserted), plus `changed`: False when the post was stored as it is (nothing
+    written, so its parts, links and refs need no reading again)."""
     changed: bool = True
 
     def __new__(cls, pair: Tuple[str, bool], *, changed: bool = True) -> "Saved":
@@ -193,10 +171,7 @@ class SaveBatchResult:
 
 
 class PostsRepository:
-    """
-    Database access layer for posts table.
-    Handles all SQL operations for storing and retrieving posts.
-    """
+    """Database access layer for the posts table."""
 
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -206,32 +181,15 @@ class PostsRepository:
         self.watch = PageWatchRepository()
         self.stories = StoriesRepository()
 
-    # ===============================
-    # WRITE OPERATIONS
-    # ===============================
-
-    # posts carries TWO unique keys: posts_url_key on (url) and the partial unique index
-    # posts_source_external_unique on (source_id, external_id) WHERE external_id IS NOT NULL.
-    # Postgres allows exactly one inference specification per INSERT, so ON CONFLICT (url)
-    # leaves the second index completely uncovered. On 2026-07-22 two scheduler cycles hit
-    # it with LessWrong post XLSWRFPdgPTjLtaj5 - stable _id, but pageUrl carries a title
-    # slug that moves when the author renames the post - and each raised a real
-    # unique_violation. Because the save loop commits once at the very end, that single row
-    # aborted the transaction and discarded the ENTIRE ~30-minute fetch of every source,
-    # silently: record_live_fetch never ran, so the Operations panel showed nothing wrong.
-    # Ingestion stayed dead for 21 days. Everything below exists so one post can never again
-    # cost a whole cycle.
+    # posts has TWO unique keys: posts_url_key (url) and the partial posts_source_external_unique (source_id,
+    # external_id). ON CONFLICT (url) leaves the second uncovered: a post whose url moved but external_id stayed
+    # (a LessWrong rename) raised unique_violation and once aborted a whole cycle's save. Everything below exists
+    # so one post can never cost a whole cycle.
     _CONFLICT_INDEX = "posts_source_external_unique"
-    # Issue 0049: a post whose link comes back in another form (#atom-everything dropped, utm_
-    # tags, http, www., a trailing slash) is the same post when it also has the same title
-    # (post_title_key, migration 0038: case, whitespace, HTML entities). The address alone is
-    # not enough: Daring Fireball links different posts under one normalized_url, told apart
-    # by #fn1-..., #:~:text=... or utm_campaign, and their titles differ. No index can say
-    # "same address and same title, where the title may change on a re-fetch", so
-    # normalized_url is a plain index and _other_form takes a transaction-scoped advisory lock
-    # on the address before it looks: two writers saving forms of one address are serialized,
-    # and the second sees the first's row once it commits. Such a row is then updated by id
-    # through the resolver below (it keeps its url and id), never inserted a second time.
+    # A post whose link comes back in another form (utm_ tags, http, www., trailing slash, a fragment) is the same
+    # post only with the same title (post_title_key, 0049): one normalized_url can hold different posts (#fn1-).
+    # No index can express that, so _other_form takes an advisory lock on the address before it looks; such a row
+    # is updated by id through the resolver, never inserted twice.
     _ADDRESS_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('insight.post:' || %(normalized_url)s::text, 0))"
     _OTHER_FORM_SQL = """
         SELECT EXISTS (
@@ -241,11 +199,9 @@ class PostsRepository:
         )
     """
 
-    # Issue 0070: one source's post found under another address altogether (a host move, a renamed
-    # slug, ?src=feed): the same title (post_title_key), posted within a day, the same body
-    # (same_post_body, migration 0052: the same hash, or one's opening is the other), not at a
-    # platform's own post address. The newer address wins: that row is updated with this url.
-    # Locked on the source and title, as _other_form locks the address.
+    # One source's post under another address altogether (host move, renamed slug; 0070): same title, posted within
+    # a day, same body (same_post_body), not a platform's post address. The newer address wins. Locked on the
+    # source and title.
     _TITLE_LOCK_SQL = ("SELECT pg_advisory_xact_lock(hashtextextended("
                        "'insight.post-title:' || %(source_id)s::text || post_title_key(%(title)s::text), 0))")
     _ELSEWHERE_SQL = f"""
@@ -260,8 +216,8 @@ class PostsRepository:
          LIMIT 1
     """
 
-    # Issue 0122: a page you saved that a feed now brings. The Saved source's rows at the address
-    # (normalised), and this source's own saved rows (saved_by_owner); _saved_copy decides.
+    # A page you saved that a feed now brings (0122): the Saved source's rows at the address and this source's own
+    # saved rows; _saved_copy decides.
     _SAVED_COPY_SQL = """
         SELECT p.id, p.url = %(url)s, p.source_id = %(source_id)s::uuid, s.platform = 'saved'
           FROM posts p JOIN sources s ON s.id = p.source_id
@@ -271,9 +227,7 @@ class PostsRepository:
          LIMIT 1
     """.replace("{saved}", SAVED_KEY)
 
-    # Bounded because each retry only happens when another writer moved the rows under us.
-    # Every resolver branch converges (see _resolve_external_id_collision), so exhausting
-    # this means something is genuinely wrong rather than merely contended.
+    # Bounded: a retry only happens when another writer moved the rows; every resolver branch converges.
     _CONFLICT_MAX_ATTEMPTS = 4
 
     _CONFLICT_LOOKUP_SQL = """
@@ -298,47 +252,28 @@ class PostsRepository:
                    %(source_id)s::uuid
                )
     """
-    # UNION ALL rather than OR so each arm uses its own index; a row matching both keys just
-    # comes back twice and is deduped by id. The ::text/::uuid casts are required - psycopg
-    # sends untyped parameters and Postgres cannot resolve `%(external_id)s IS NOT NULL`
-    # without them.
-    #
-    # Arm 2 is scoped to the URL ROW's source_id, not the incoming one, and the difference is
-    # what makes the retry loop terminate. ON CONFLICT (url) picks its victim by url alone and
-    # _post_update_assignments never reassigns source_id, so when two sources carry the same
-    # url the row being updated stays with its original owner - and the index entry it
-    # violates is therefore (that owner, external_id), which a lookup scoped to the incoming
-    # source_id cannot see. It would report "no blocker", the caller would replay the same
-    # doomed UPDATE, and upsert_post would burn all four attempts and raise. Falling back to
-    # the incoming source_id covers the no-url-row case, where the failed statement really was
-    # a plain INSERT under this source.
-    #
-    # The url row is the exact url's, else the first seen under the same normalized_url and
-    # title (issue 0049): to the resolver both are "the row this post already is".
+    # UNION ALL rather than OR so each arm uses its own index; the casts are required for untyped parameters.
+    # Arm 2 is scoped to the URL ROW's source_id, not the incoming one: ON CONFLICT (url) never reassigns
+    # source_id, so the violated entry is (that owner, external_id); scoping to the incoming source would see
+    # "no blocker" and replay a doomed UPDATE. The url row is the exact url's, else the same normalized_url and
+    # title's (0049).
 
     def upsert_post(self, cur: Cursor, post: Dict[str, Any], source_id: str) -> Tuple[str, bool]:
-        """Save single post. Returns (post_id, was_inserted).
+        """Save a single post. Returns (post_id, was_inserted).
 
-        Never raises on a post that already exists under either unique key: the write runs
-        inside a savepoint, and a posts_source_external_unique violation is resolved by
-        identity instead of aborting the caller's transaction.
+        Never raises on a post that already exists under either unique key: the write runs inside a savepoint and
+        a posts_source_external_unique violation is resolved by identity.
         """
-        # if new -> insert
-        # if exists -> do nothing
-        # if exists but different -> Update
 
-        # Unified Structure
-        url = post['url'] # Let KeyError happen
+        url = post['url']
         content = post.get("content", "")
         published_at = post.get("date", None)
         precision = published_precision(post)
         external_id = post.get("external_id", None)
 
-        # Lists -> JSON
         media_urls = self._json_dumps(post.get("media_urls", []))
         categories = self._json_dumps(post.get("categories", []))
 
-        # Optional Fields
         title = post.get("title", None)
         content_html = post.get("content_html", None)
         lang = post.get("lang", None)
@@ -351,8 +286,7 @@ class PostsRepository:
         canonical_url = fields.get("canonical_url")
         url_host = fields.get("url_host")
 
-        # Named parameters (not positional) so the INSERT and the three recovery UPDATEs can
-        # share one dict; the recovery statements touch different column subsets.
+        # Named parameters so the INSERT and the recovery UPDATEs can share one dict.
         params: Dict[str, Any] = {
             "source_id": source_id,
             "url": url,
@@ -376,8 +310,6 @@ class PostsRepository:
             "categories": categories,
         }
 
-        # SQL QUERY
-        # Build SQL query
         query = """
             INSERT INTO posts (
                 source_id,
@@ -433,19 +365,16 @@ class PostsRepository:
         for attempt in range(self._CONFLICT_MAX_ATTEMPTS):
             other_form = False
             try:
-                # The savepoint is what stops one bad row from poisoning the whole batch.
-                # Without it Postgres puts the backend in aborted-transaction state and every
-                # later statement fails with 25P02, so the caller's single terminal commit is
-                # never reached and every post gathered that cycle is rolled back.
+                # The savepoint stops one bad row from aborting the transaction (25P02) and losing the batch.
                 with self._savepoint(cur, "insight_upsert_post"):
                     row = self._saved_copy(cur, params)
                     if row is None:
-                        row = self._own_page(cur, params)   # issue 0167: a page's own source takes it back
+                        row = self._own_page(cur, params)   # a page's own source takes it back (0167)
                     other_form = row is None and self._other_form(cur, params)
                     row = row if row is not None or other_form else self._same_post_elsewhere(cur, params)
                     if not other_form and row is None:
-                        # 0215: stored as it is: nothing written, its parts, links and refs stand. Read first: an
-                        # INSERT ... ON CONFLICT that updates nothing still locks (writes) the stored row.
+                        # Stored as it is: nothing written. Read first: an ON CONFLICT that updates nothing
+                        # still locks the stored row.
                         cur.execute(f"SELECT id FROM posts WHERE url = %(url)s AND NOT ({self._post_update_changes()})",
                                     params)
                         same = cur.fetchone()
@@ -453,15 +382,13 @@ class PostsRepository:
                             return Saved((str(same[0]), False), changed=False)
                         cur.execute(query, params)
                         row = cur.fetchone()
-                        if row is None:   # it became as stored meanwhile (another writer): the same as above
+                        if row is None:   # another writer made it as stored meanwhile
                             cur.execute("SELECT id FROM posts WHERE url = %s", (url,))
                             return Saved((str(cur.fetchone()[0]), False), changed=False)
                     if row is not None:
-                        PostPartsRepository.write(cur, [str(row[0])])   # read once, when it is saved (issue 0076)
+                        PostPartsRepository.write(cur, [str(row[0])])   # read once, when it is saved
             except psycopg.errors.UniqueViolation as exc:
-                # ON CONFLICT (url) already absorbs posts_url_key, so the only violation that
-                # can reach here is the uncovered index. Anything else is unexpected and must
-                # stay loud rather than be swallowed by a resolver that cannot handle it.
+                # ON CONFLICT (url) absorbs posts_url_key; anything but the uncovered index must stay loud.
                 if exc.diag.constraint_name != self._CONFLICT_INDEX:
                     raise
                 resolved = self._resolve_external_id_collision(cur, params, attempt=attempt)
@@ -469,16 +396,14 @@ class PostsRepository:
                     return resolved
                 continue
             if other_form:
-                # Stored under another form of this address with the same title: update that row.
                 resolved = self._resolve_external_id_collision(cur, params, attempt=attempt)
                 if resolved is not None:
                     return resolved
                 continue
 
-            post_id = str(row[0])  # UUID → string
-            was_inserted = row[1]  # Boolean
+            post_id = str(row[0])
+            was_inserted = row[1]
 
-            # Log action
             action = "Inserted" if was_inserted else "Updated"
             self.logger.debug(f"{action} post: {url[:60]}...")
 
@@ -492,10 +417,8 @@ class PostsRepository:
     def _other_form(self, cur: Cursor, params: Dict[str, Any]) -> bool:
         """Whether this post is stored under another form of its url with the same title.
 
-        A post stored under its exact url takes the INSERT's ON CONFLICT (url) path and costs no
-        lock (every re-fetch of an unchanged feed). Otherwise the address is locked until the
-        caller's transaction ends (see _ADDRESS_LOCK_SQL) before looking, so a concurrent save
-        of another form cannot insert the same post twice.
+        An exact-url post takes ON CONFLICT (url) and costs no lock. Otherwise the address is locked until the
+        transaction ends (_ADDRESS_LOCK_SQL) so a concurrent save of another form cannot insert it twice.
         """
         if params.get("normalized_url") is None:
             return False
@@ -508,23 +431,19 @@ class PostsRepository:
 
     @staticmethod
     def _owns_page(cur: Cursor, params: Dict[str, Any]) -> bool:
-        """Whether the incoming post's source owns its page by issue 0167's rule (own_pages.owns)."""
+        """Whether the incoming post's source owns its page (own_pages.owns, 0167)."""
         cur.execute("SELECT platform, handle_or_url FROM sources WHERE id = %(source_id)s::uuid", params)
         found = cur.fetchone()
         return found is not None and own_pages.owns(found[0], found[1], params["url"])
 
     def _saved_copy(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
-        """A page you saved that this post is (issue 0122): that row, updated with this post at its
-        address, as (id, False); None when there is none (the other paths go on).
+        """A page you saved that this post is (0122): that row, updated with this post, as (id, False); else None.
 
-        - Saved as this source's post (metadata.saved_by_owner) at another form of the address: the
-          feed's form and title win. At the same address ON CONFLICT (url) already updates it.
-        - Saved under the Saved source at this address, normalised, when this source owns the page
-          (repo_linked.page_source, 0084 B's rule): the row moves to this source and stays one you
-          saved. A source that doesn't own the page (a link blog, an aggregator) leaves it as it was.
+        - Saved as this source's post at another form of the address: the feed's form and title win.
+        - Saved under the Saved source when this source owns the page (repo_linked.page_source): the row moves to
+          this source and stays saved. A source that doesn't own it (link blog, aggregator) leaves it.
 
-        One row, its id kept: the reader state, notes and opens stay; nothing is deleted. Left as it
-        was when another row holds this address or this source's external_id (no unique clash)."""
+        One row, its id kept; nothing is deleted. Left alone when another row holds the address or external_id."""
         if params.get("normalized_url") is None:
             return None
         cur.execute(self._SAVED_COPY_SQL, params)
@@ -539,8 +458,7 @@ class PostsRepository:
             if not in_saved:
                 return None
             owner = page_source(cur, params["url"])
-            # v10.15 item 5: a source with no post of the page's shape yet (a page watch's first fetch, newest page
-            # first) teaches page_source nothing; issue 0167's rule decides then: a website source on the page's site.
+            # a source with no post of the page's shape yet teaches page_source nothing: own_pages decides
             if owner is None and not self._owns_page(cur, params):
                 return None
             if owner is not None and owner != str(params["source_id"]):
@@ -550,8 +468,7 @@ class PostsRepository:
                     " AND external_id = %(external_id)s::text)))", dict(params, target=target))
         if cur.fetchone()[0]:
             return None
-        # A page INSIGHT collected by itself (issue 0123) moves too, but you never saved it; shown only inside its
-        # story until now (0126), it is a row of its source's feed.
+            # A page INSIGHT collected (0123) moves too, though you never saved it: it becomes a row of its feed.
         cur.execute(f"UPDATE posts SET source_id = %(source_id)s::uuid, metadata = (metadata - '{STORY_ONLY_KEY}') || jsonb_strip_nulls(jsonb_build_object("
                     f"'{SAVED_KEY}', COALESCE(metadata -> '{SAVED_KEY}', CASE WHEN metadata ? '{COLLECTED_KEY}' THEN NULL"
                     f" ELSE to_jsonb(fetched_at) END))) WHERE id = %(target)s::uuid",
@@ -561,8 +478,8 @@ class PostsRepository:
         self.logger.info("A saved page is the post of source %s now: %s", params["source_id"], params["url"][:80])
         return (cur.fetchone()[0], False)
 
-    # Issue 0167: the row another source holds at this address (exact, or the same address normalised when the held
-    # one names no fragment: a link blog's #fn1 or #:~:text= rows are other posts), with both sources.
+    # The row another source holds at this address (0167): exact, or normalised when the held one has no fragment
+    # (a link blog's #fn1 rows are other posts), with both sources.
     _HELD_SQL = """
         SELECT p.id, p.url, hs.id::text, hs.platform, hs.handle_or_url, ins.platform, ins.handle_or_url
           FROM posts p JOIN sources hs ON hs.id = p.source_id, sources ins
@@ -574,11 +491,9 @@ class PostsRepository:
     """
 
     def _own_page(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
-        """A page another source holds (issue 0167, utils/own_pages): when this source owns it and the holder doesn't,
-        the row moves to this source (hand_over) and is updated with this post, as (id, False). When the holder owns
-        it and this source doesn't (an aggregator's later fetch), this post becomes this source's citation of it:
-        `params` is pointed at the citation's address (the INSERT's ON CONFLICT then updates the citation) and None
-        is returned. Else None (as before: the holder's row is updated, its source kept)."""
+        """A page another source holds (0167, utils/own_pages). This source owns it and the holder doesn't: the row
+        moves here (hand_over) and is updated, as (id, False). The holder owns it and this source doesn't: `params`
+        is pointed at this source's citation of it and None is returned. Else None (the holder's row is updated)."""
         if params.get("normalized_url") is None or own_pages.is_citation_address(params.get("url")):
             return None
         cur.execute(self._HELD_SQL, params)
@@ -587,14 +502,14 @@ class PostsRepository:
             return None
         row_id, held_url, holder, holder_platform, holder_handle, platform, handle = found
         if (holder_platform or "").lower() == "saved":
-            return None   # a saved page: issue 0122's (_saved_copy)
+            return None   # a saved page: _saved_copy's
         incoming_owns = own_pages.owns(platform, handle, params["url"])
         holder_owns = own_pages.owns(holder_platform, holder_handle, params["url"])
         if incoming_owns and not holder_owns:
             if held_url != params["url"]:
                 cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE url = %(url)s)", params)
                 if cur.fetchone()[0]:
-                    return None   # this address is stored too (this source's own row): the other paths decide
+                    return None   # this source's own row is at this address: the other paths decide
             if not self.hand_over(cur, str(row_id), str(params["source_id"]), external_id=params.get("external_id")):
                 return None
             cur.execute("UPDATE posts SET {assignments} WHERE id = %(target_id)s::uuid RETURNING id".format(
@@ -606,7 +521,7 @@ class PostsRepository:
         return None
 
     def _as_citation(self, params: Dict[str, Any], page_id: str) -> None:
-        """Point an incoming post of a source that doesn't own its page at that source's citation of it (0167)."""
+        """Point an incoming post of a source that doesn't own its page at its citation of it (0167)."""
         page = params["normalized_url"]
         cite = own_pages.citation_address(page, str(params["source_id"]))
         metadata = json.loads(params.get("metadata") or "{}")
@@ -615,12 +530,10 @@ class PostsRepository:
                       url_host=extract_url_host(cite), metadata=self._json_dumps(metadata))
 
     def hand_over(self, cur: Cursor, post_id: str, owner_id: str, *, external_id: Optional[str] = None) -> bool:
-        """Move a stored post to the source that owns its page (issue 0167); the source that held it keeps a post
-        citing it. One row, its id kept: its stories, readings, labels, News rows, notes and reader state stay
-        with it; nothing is deleted. The citation (`own_pages.citation_address`) takes the held post's title, text,
-        dates and read state as they were, and metadata.cites; the moved row records metadata.taken_from. Its
-        external id goes when it would clash with one of the owner's (the owner's fetch brings its own). False when
-        the post is gone, already the owner's, or the owner's `external_id` is another of its rows'."""
+        """Move a stored post to the source that owns its page (0167); the holder keeps a citing post
+        (`own_pages.citation_address`) with the post's title, text, dates and read state. One row, its id kept:
+        everything attached stays; nothing is deleted. Its external id goes when it would clash with the owner's.
+        False when the post is gone, already the owner's, or `external_id` is another of the owner's rows'."""
         cur.execute("SELECT source_id::text, url, COALESCE(normalized_url, url) FROM posts WHERE id = %s::uuid FOR UPDATE",
                     (post_id,))
         found = cur.fetchone()
@@ -655,7 +568,7 @@ class PostsRepository:
             cur.execute("SELECT id FROM posts WHERE url = %s AND source_id = %s::uuid", (cite, holder))
             made = cur.fetchone()
             if made is None:
-                return False   # another source's row at the citation's address: left as it was
+                return False   # another source's row at the citation's address
         citation = str(made[0])
         cur.execute("""INSERT INTO post_reader_state (post_id, read_at, updated_at)
                        SELECT %s::uuid, read_at, now() FROM post_reader_state WHERE post_id = %s::uuid AND read_at IS NOT NULL
@@ -673,15 +586,14 @@ class PostsRepository:
         return True
 
     def _same_post_elsewhere(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
-        """This post stored by its source under another address (_ELSEWHERE_SQL): that row, moved to
-        this url and updated, as (id, False); None when there is none. A body shorter than the
-        stored one (a teaser of it) leaves the stored text."""
+        """This post stored by its source under another address (_ELSEWHERE_SQL): that row, moved to this url and
+        updated, as (id, False); else None. A body shorter than the stored one leaves the stored text."""
         if params.get("normalized_url") is None or not params.get("title"):
             return None
         cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE url = %(url)s)"
                     " OR platform_post_address(%(normalized_url)s::text)", params)
         if cur.fetchone()[0]:
-            return None   # stored as it is (a re-fetch), or a platform's post: its id is the post
+            return None   # stored as it is, or a platform's post (its id is the post)
         cur.execute(self._TITLE_LOCK_SQL, params)
         cur.execute(self._ELSEWHERE_SQL, params)
         found = cur.fetchone()
@@ -697,24 +609,13 @@ class PostsRepository:
     def _resolve_external_id_collision(
         self, cur: Cursor, params: Dict[str, Any], *, attempt: int = 0
     ) -> Optional[Tuple[str, bool]]:
-        """Settle a (source_id, external_id) or normalized_url clash by identity. Returns None to retry the insert.
-
-        Returns (post_id, False) - the row demonstrably already existed, so it can never be
-        an insert, and the `xmax = 0` trick only applies to the INSERT ... RETURNING path.
-
-        `attempt` is the caller's retry counter, used only to give up on writing external_id
-        once a replay has already proved that write cannot land.
+        """Settle a (source_id, external_id) or normalized_url clash by identity. Returns None to retry the insert,
+        else (post_id, False). `attempt`: the caller's retry count, used to stop writing external_id once a replay
+        proved that write cannot land.
         """
-        # The collision lookup runs inside its own read-only savepoint. It cannot violate
-        # anything, but any other failure (statement_timeout, pg_cancel_backend, a malformed
-        # source_id failing the ::uuid cast) would otherwise leave the connection in
-        # aborted-transaction state, and save_batch answers that by rolling back to the last
-        # commit - turning one bad post back into
-        # a lost batch of up to SAVE_COMMIT_BATCH good ones. Free in the currency that matters:
-        # Postgres assigns an XID to a subtransaction only when it writes, so a SELECT-only
-        # savepoint never enters the 64-entry per-backend subxid cache.
-        # fetchall() has to happen inside the block: _savepoint's RELEASE runs on this same
-        # cursor and discards the pending result set.
+        # A read-only savepoint: any failure (statement_timeout, a bad ::uuid cast) would otherwise abort the
+        # transaction and lose the batch. A SELECT-only savepoint gets no XID, so it costs no subxid cache slot.
+        # fetchall() must run inside the block: RELEASE on this cursor discards the pending result.
         with self._savepoint(cur, "insight_upsert_lookup"):
             cur.execute(self._CONFLICT_LOOKUP_SQL, params)
             lookup_rows = cur.fetchall()
@@ -728,20 +629,13 @@ class PostsRepository:
                 external_row_id = str(row[0])
 
         if url_row_id is None and external_row_id is None:
-            # Both rows vanished between the violation and this lookup - we lost a race with
-            # another writer. Nothing to resolve; let the caller replay the insert.
+            # Both rows vanished (a race with another writer): let the caller replay the insert.
             return None
 
         if url_row_id is not None and external_row_id is not None and url_row_id != external_row_id:
-            # THE TWO-ROW COLLISION. The incoming post's url belongs to one row and its
-            # external_id to another. external_id is deliberately NOT assigned below: writing
-            # it would violate posts_source_external_unique against the other row, and we
-            # cannot instead move that row's url onto this one because url is NOT NULL and
-            # totally unique - it has nowhere to go. So the url row wins the identity, the
-            # clash is stamped into metadata for a human to merge, and neither row is
-            # deleted: the reader state, interactions and notes cascade on delete and would
-            # take the owner's reading history with them. Merging is a reviewable operation,
-            # not an ingest-loop side effect.
+            # Two rows: the url belongs to one, the external_id to another. external_id is NOT written (it would
+            # violate against the other row) and url has nowhere to go, so the url row wins, the clash is stamped
+            # into metadata for a human to merge, and neither row is deleted (reader state would cascade away).
             self.logger.warning(
                 "external_id collision: post %s holds url %s while post %s holds "
                 "(source_id=%s, external_id=%s); updating the url row and leaving its "
@@ -765,12 +659,8 @@ class PostsRepository:
             )
             resolved = dict(params, target_id=url_row_id, conflicting_post_id=external_row_id)
         elif url_row_id is not None:
-            # The other row is gone or is the same row; the plain url-keyed update applies.
-            # Second time through, it is not: attempt > 0 means this exact write already
-            # violated the index once, so the blocking row exists but the lookup cannot see
-            # it. Drop external_id from the SET list rather than replay a statement we have
-            # watched fail - the loop is bounded, and exhausting it raises RuntimeError out
-            # of upsert_post, which save_batch then reports as one failed post.
+            # The plain url-keyed update. attempt > 0: this write already violated the index once, so external_id
+            # is dropped from the SET list rather than replaying a failed statement.
             statement = """
                 UPDATE posts SET
                     {assignments}
@@ -779,10 +669,7 @@ class PostsRepository:
             """.format(assignments=self._post_update_assignments(set_external_id=attempt == 0))
             resolved = dict(params, target_id=url_row_id)
         else:
-            # The common case: same post, moved url. LessWrong's pageUrl embeds a title slug
-            # and _id does not, so a rename decouples the two keys. Repair the url here so
-            # the next cycle takes the fast path instead of colliding again. external_id is
-            # already the incoming value by definition of how this row was found.
+            # Same post, moved url (a LessWrong rename): repair the url so the next cycle takes the fast path.
             statement = """
                 UPDATE posts SET
                     {assignments}
@@ -798,18 +685,15 @@ class PostsRepository:
                 if row is not None:
                     PostPartsRepository.write(cur, [str(row[0])])
         except psycopg.errors.UniqueViolation:
-            # Only the url-writing branches can land here, and only if another writer took
-            # that url or external_id in the meantime. Replaying converges: the next lookup
-            # now sees both rows and takes the two-row branch, which writes neither unique
-            # column and therefore cannot violate anything.
+            # Another writer took the url or external_id meanwhile. Replaying converges: the next lookup takes the
+            # two-row branch, which writes neither unique column.
             return None
 
         if row is None:
-            # Row disappeared between lookup and update.
             return None
         return (str(row[0]), False)
 
-    # Merges the incoming metadata exactly as the normal path does, then records the clash.
+    # The incoming metadata merged as the normal path does, plus the clash.
     _COLLISION_METADATA_EXPR = (
         "COALESCE(COALESCE(%(metadata)s::jsonb, metadata), jsonb_build_object()) || "
         "jsonb_build_object('external_id_conflict', jsonb_build_object("
@@ -823,11 +707,8 @@ class PostsRepository:
         return ",\n                ".join(f"{column} = {value}" for column, value in self._post_update_pairs(**kwargs))
 
     def _post_update_changes(self) -> str:
-        """0215: ON CONFLICT DO UPDATE's condition: the update would change the stored row (its updated_at aside),
-        from the same pairs as its SET list. A feed brings its last items at every fetch, nearly all as stored; writing
-        them again rewrote each row (a new row version: its TOAST, its indexes, its row triggers) and read its links
-        and refs again: on the scale copy's replayed day, 44% of the database's statement time (7 ms a post) and 224k
-        post_refs upserts."""
+        """ON CONFLICT DO UPDATE's condition: the update would change the stored row (updated_at aside). A re-fetched
+        feed item is nearly always as stored; rewriting it cost row versions and link reads (0215)."""
         pairs = [(column, value) for column, value in self._post_update_pairs(row_prefix="posts.")
                  if column != "updated_at"]
         return (f"({', '.join('posts.' + column for column, _ in pairs)}) IS DISTINCT FROM "
@@ -841,36 +722,26 @@ class PostsRepository:
         set_external_id: bool = True,
         metadata_expr: Optional[str] = None,
     ) -> List[Tuple[str, str]]:
-        """The (column, value) pairs of the SET list shared by ON CONFLICT DO UPDATE and the recovery UPDATEs.
-
-        One builder rather than four copies, because a post repaired through the collision
-        resolver must end up with exactly the columns it would have got on the fast path.
-        row_prefix is "posts." inside ON CONFLICT DO UPDATE - there a bare column name is
-        ambiguous against EXCLUDED and Postgres rejects the statement - and "" in a plain
-        UPDATE, where a bare name already means the pre-update row.
+        """The (column, value) pairs of the SET list shared by ON CONFLICT DO UPDATE and the recovery UPDATEs, so a
+        repaired post gets exactly the fast path's columns. row_prefix is "posts." inside ON CONFLICT (a bare name
+        is ambiguous against EXCLUDED) and "" in a plain UPDATE.
         """
         row = row_prefix
-        # A body read from the article page (metadata.full_content_fetched) is kept when the
-        # feed brings its summary again: the page is read once, when the post is new.
+        # A body read from the article page is kept when the feed brings its summary again.
         keep = (f"({row}metadata ? '{FULL_TEXT_FLAG}' AND NOT "
                 f"COALESCE(%(metadata)s::jsonb, '{{}}'::jsonb) ? '{FULL_TEXT_FLAG}')")
-        # The last meaningful change (issue 0039) is the saver's, not the kind's: a re-fetch keeps it.
-        # A teaser's page tries (issue 0062) are kept too, unless the kind brings newer ones.
-        # Where its page moved (issue 0108) too, and its canonical with it, unless the kind brings it again.
+        # Kept across a re-fetch unless the kind brings newer: the last meaningful change, page tries, where the
+        # page moved, its last page read and rules' version, saved/taken/cites/collected keys.
         moved = (f"({row}metadata ? '{MOVED_KEY}' AND NOT "
                  f"COALESCE(%(metadata)s::jsonb, '{{}}'::jsonb) ? '{MOVED_KEY}')")
-        # A teaser's last page read and its rules' version (issue 0140) too.
         metadata = (f"jsonb_strip_nulls(jsonb_build_object('{PAGE_TRIES_KEY}', {row}metadata -> '{PAGE_TRIES_KEY}',"
                     f" '{MOVED_KEY}', {row}metadata -> '{MOVED_KEY}',"
                     f" '{PAGE_OUTCOME_KEY}', {row}metadata -> '{PAGE_OUTCOME_KEY}',"
                     f" '{FULL_TEXT_RULE_KEY}', {row}metadata -> '{FULL_TEXT_RULE_KEY}'))"
                     f" || ({metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'})"
                     f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}',"
-                    # A page you saved stays one you saved (issue 0122), whatever the feed brings.
                     f" '{SAVED_KEY}', {row}metadata -> '{SAVED_KEY}',"
-                    # A page its own source took back, and a holder's citation of it (issue 0167).
                     f" '{TAKEN_KEY}', {row}metadata -> '{TAKEN_KEY}', '{CITES_KEY}', {row}metadata -> '{CITES_KEY}',"
-                    # And a page INSIGHT collected stays collected (issue 0123).
                     f" '{COLLECTED_KEY}', {row}metadata -> '{COLLECTED_KEY}'))")
         assignments: List[str] = []
         if set_url:
@@ -878,8 +749,7 @@ class PostsRepository:
         if set_external_id:
             assignments.append(f"external_id = COALESCE(%(external_id)s, {row}external_id)")
         assignments.extend([
-            # An undated item is dated when first seen (issue 0137 B9): a stored one with no date takes
-            # the time it was first fetched; a stored date is never moved by "seen".
+            # An undated item is dated when first seen; a stored date is never moved by "seen".
             f"published_at = COALESCE(%(published_at)s, {row}published_at,"
             f" CASE WHEN %(published_precision)s::text = 'seen' THEN {row}fetched_at END)",
             f"published_precision = CASE WHEN %(published_at)s::timestamptz IS NOT NULL THEN %(published_precision)s"
@@ -891,11 +761,11 @@ class PostsRepository:
             f"lang = COALESCE(%(lang)s, {row}lang)",
             f"content_hash = CASE WHEN {keep} THEN {row}content_hash ELSE COALESCE(%(content_hash)s, {row}content_hash) END",
             "language_code = %(language_code)s",
-            "language_confidence = %(language_confidence)s::real",   # the column's type: compared as stored (0215)
+            "language_confidence = %(language_confidence)s::real",   # the column's type: compared as stored
             "normalized_url = %(normalized_url)s",
             f"canonical_url = CASE WHEN {moved} THEN {row}canonical_url ELSE %(canonical_url)s END",
             "url_host = %(url_host)s",
-            # Attribution (issue 0066): every feed that brings a tweet as its repost adds its account.
+            # every feed that brings a tweet as its repost adds its account
             f"author = COALESCE(%(author)s, {row}author)",
             f"reposted_by = NULLIF(ARRAY(SELECT DISTINCT a FROM unnest(COALESCE({row}reposted_by, '{{}}')"
             f" || %(reposted_by)s::text[]) a ORDER BY 1), '{{}}')",
@@ -905,9 +775,7 @@ class PostsRepository:
             f" ELSE {metadata} END",
             "media_urls = %(media_urls)s::jsonb",
             "categories = %(categories)s::jsonb",
-            # fetched_at is when the post was first seen and is never moved: for a feed without
-            # dates it is the post's only date, and bumping it on every re-fetch made the
-            # same old posts jump to the top of the reader as new (chadnauseam.com).
+            # fetched_at (first seen) never moves: for an undated feed it is the post's only date.
             "updated_at = now()",
         ])
         return [(column, value) for column, value in (a.split(" = ", 1) for a in assignments)]
@@ -916,17 +784,12 @@ class PostsRepository:
     def _savepoint(self, cur: Cursor, name: str) -> Iterator[None]:
         """Isolate one statement so its failure cannot poison the caller's transaction.
 
-        Emits SAVEPOINT by hand instead of using psycopg's conn.transaction(): both ingest
-        callers open a plain non-autocommit connection and upsert_post issues its very first
-        statement, so conn.transaction() would emit BEGIN/COMMIT per post and silently move
-        the batch's commit boundary. Raw SAVEPOINT rides on psycopg's implicit BEGIN and
-        leaves the caller's single terminal commit exactly where it is. The savepoint is
-        released on both paths so the stack does not grow across thousands of posts.
+        Raw SAVEPOINT rather than conn.transaction(), which would emit BEGIN/COMMIT per post and move the batch's
+        commit boundary. Released on both paths so the stack does not grow.
         """
         conn = cur.connection
         if getattr(conn, "autocommit", False):
-            # No enclosing transaction to protect, and SAVEPOINT outside one is a no-op that
-            # makes ROLLBACK TO fail. conn.transaction() opens a real one for the statement.
+            # No transaction to protect (SAVEPOINT outside one makes ROLLBACK TO fail): open one for the statement.
             with conn.transaction():
                 yield
             return
@@ -942,8 +805,8 @@ class PostsRepository:
 
     @staticmethod
     def place_undated_backlog(cur: Cursor, post_ids: Sequence[str]) -> None:
-        """v10.13.9: undated older posts stored outside save_batch (a collected original, a page its feed missed) sort
-        as save_batch's undated backlog does: before their source's oldest post, never at the time they were read."""
+        """Undated older posts stored outside save_batch sort as its undated backlog does: before their source's
+        oldest post, never at the time they were read."""
         ids = [str(post_id) for post_id in post_ids if post_id]
         if ids:
             cur.execute(UNDATED_BACKLOG_SQL, {"ids": ids})
@@ -958,25 +821,19 @@ class PostsRepository:
     ) -> SaveBatchResult:
         """Upsert many drafts with per-post isolation; owns the transaction on `conn`.
 
-        live: the drafts are a live read's (the runner's saver), not an archive's: a new post dated
-        before its source's previous successful read (source_fetch_state.last_success_at, read here,
-        before the runner records this read's outcome after the save) was added to the feed after
-        INSIGHT last looked, and sorts at when it was first seen (ADDED_LATE_SLACK). A source with no
-        successful read yet (its first fetch: the backlog) has none, and a page read from a site's
-        backlog (BACKLOG_KEY) is never new to you.
+        live: a live read's drafts: a new post dated before the source's previous successful read (ADDED_LATE_SLACK)
+        sorts at when it was first seen; not on a first fetch or for a backlog page (BACKLOG_KEY).
 
-        Precondition: `conn` is not in autocommit mode and is idle. Commits every
-        `commit_every` attempted drafts (failures included: a failed post costs savepoints
-        too) and once at the end. A post that raises costs that post. If the failure left
-        the transaction aborted, everything since the last commit is rolled back and
-        reported as `discarded`, and the batch carries on.
+        Precondition: `conn` is not autocommit and is idle. Commits every `commit_every` attempted drafts and at the
+        end. A post that raises costs that post; if it aborted the transaction, everything since the last commit
+        is rolled back and reported as `discarded`, and the batch carries on.
         """
         commit_every = max(1, int(commit_every or SAVE_COMMIT_BATCH))
         result = SaveBatchResult()
-        # Everything saved since the last commit: (draft, post_id, was_inserted).
+        # saved since the last commit: (draft, post_id, was_inserted)
         window: List[Tuple[PostDraft, str, bool]] = []
         channels: Set[str] = set()   # Telegram sources with a new post: their albums are folded at the end
-        backlog_undated: Dict[str, List[str]] = {}   # a first fetch's undated posts, in its order (issue 0070)
+        backlog_undated: Dict[str, List[str]] = {}   # a first fetch's undated posts, in its order
 
         def commit() -> None:
             conn.commit()
@@ -986,7 +843,7 @@ class PostsRepository:
             cur.execute("SELECT s FROM unnest(%s::uuid[]) s WHERE EXISTS (SELECT 1 FROM posts WHERE source_id = s)",
                         (list({str(draft.source_id) for draft in drafts}),))
             fetched_before = {str(row[0]) for row in cur.fetchall()}
-            read_before: Dict[str, Any] = {}   # source -> its previous successful read (a live read's)
+            read_before: Dict[str, Any] = {}   # source -> its previous successful read
             if live:
                 cur.execute("SELECT source_id, last_success_at FROM source_fetch_state"
                             " WHERE source_id = ANY(%s::uuid[]) AND last_success_at IS NOT NULL",
@@ -1004,10 +861,7 @@ class PostsRepository:
                     result.failures.append(PostSaveFailure(post.get("url"), draft.source_id, "upsert", str(exc)))
                     result._count(draft.source_id, "failed")
                     self.logger.error("Failed to save post %s (source %s): %s", post.get("url"), draft.source_id, exc)
-                    # upsert_post normally leaves the transaction usable (its savepoints roll
-                    # the bad statement back), but verify rather than assume: an aborted
-                    # transaction rejects every later statement with 25P02, which would turn
-                    # one bad row back into a lost batch.
+                    # verify rather than assume the savepoint left the transaction usable
                     if _transaction_is_poisoned(conn):
                         conn.rollback()
                         self._discard(result, window)
@@ -1025,8 +879,8 @@ class PostsRepository:
                         result._count(draft.source_id, "inserted")
                         if str(post.get("url") or "").startswith(TELEGRAM_POST_PREFIX):
                             channels.add(draft.source_id)
-                        # an undated post of a source's first fetch, or an undated older post of any fetch (an
-                        # archive's page: v10.13.5), sorts before the source's oldest post, never at its fetch time
+                        # an undated post of a first fetch, or an undated older post, sorts before the source's
+                        # oldest post, never at its fetch time
                         if not post.get("date") and (backlog or str(draft.source_id) not in fetched_before):
                             backlog_undated.setdefault(str(draft.source_id), []).append(post_id)
                     else:
@@ -1038,7 +892,7 @@ class PostsRepository:
             self._fold_albums(cur, channels)
             for ids in backlog_undated.values():
                 cur.execute(UNDATED_BACKLOG_SQL, {"ids": ids})
-            if result.inserted_ids:   # 0196: a source's item filter hides the new posts it matches (kept, never deleted)
+            if result.inserted_ids:   # a source's item filter hides the new posts it matches (never deletes)
                 from insight_core.utils import item_filter
                 try:
                     with conn.transaction():
@@ -1049,9 +903,8 @@ class PostsRepository:
         return result
 
     def _fold_albums(self, cur: Cursor, source_ids: Iterable[str]) -> None:
-        """A Telegram album is one post (issue 0069): the pictures the bridge sent as items of their
-        own join the post they follow (migration 0051's fold_telegram_albums). A failure costs
-        only the folding, which the channel's next batch does again."""
+        """A Telegram album is one post (0069): fold_telegram_albums joins the bridge's picture items to the post they
+        follow. A failure costs only the folding, which the next batch does again."""
         for source_id in sorted(source_ids):
             try:
                 with self._savepoint(cur, "insight_fold_albums"):
@@ -1068,16 +921,11 @@ class PostsRepository:
     def _after_save(self, cur: Cursor, draft: PostDraft, post: Dict[str, Any], post_id: str,
                     was_inserted: bool, old: Optional[Dict[str, Any]], *, surface: bool,
                     read_before: Optional[Any] = None, changed: bool = True) -> bool:
-        """Issue 0039, after a post is written: a new post first seen NEW_TO_YOU_AFTER past its
-        date (surface), or dated more than ADDED_LATE_SLACK before its source's previous successful
-        read (read_before: its feed added it after that read), sorts at when it was first seen,
-        unless another source's post linked it
-        before (0058: LINKED_BEFORE_SQL; only other posts' links count, so reading this post's
-        own links first changes nothing); a watched post keeps its text's hash and
-        comes back when it changed meaningfully. Issue 0050: its outside links are read from what
-        was stored. In one savepoint (a post saved costs at most two; see SAVE_COMMIT_BATCH): a
-        failure here is logged and costs neither the post nor the batch. Returns whether the post
-        came back. 0215: a post stored as it was (`changed` False) has its links and refs as they were."""
+        """After a post is written: a new post first seen NEW_TO_YOU_AFTER past its date (surface), or dated
+        ADDED_LATE_SLACK before its source's previous read (read_before), sorts at when it was first seen, unless
+        another source's post linked it before (LINKED_BEFORE_SQL); its outside links are recorded; a watched post
+        comes back when it changed meaningfully. One savepoint; a failure is logged and costs neither the post nor
+        the batch. Returns whether the post came back. `changed` False: links and refs stand."""
         try:
             with self._savepoint(cur, "insight_after_save"):
                 if changed:
@@ -1114,16 +962,8 @@ class PostsRepository:
             ))
         self.logger.error("Transaction left in error state; rolled back %s uncommitted posts", len(window))
 
-    # ===============================
-    # READ OPERATIONS
-    # ===============================
-
     def get_source_post_stats(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
-        """Return aggregate storage stats for a single source.
-
-        oldest_external_id is the oldest post's external_id: where an archive continues from
-        (kind.start_checkpoint).
-        """
+        """Aggregate storage stats for one source; oldest_external_id is where an archive continues from."""
         query = """
             SELECT
                 COUNT(*) AS post_count,
@@ -1147,10 +987,6 @@ class PostsRepository:
             "oldest_external_id": row[4],
         }
 
-    # ===============================
-    # FULL TEXT (ingestion/full_text.py, scripts/repair_full_text.py)
-    # ===============================
-
     def stored_urls(self, urls: Sequence[str]) -> set:
         """Which of these urls are already stored."""
         if not urls:
@@ -1160,9 +996,8 @@ class PostsRepository:
             return {row[0] for row in cur.fetchall()}
 
     def kept_urls(self, urls: Sequence[str], source_id: str) -> set:
-        """Which of these urls a fetch of this source leaves unread (page watch, v10.15 item 5): the ones stored as its
-        post, or held by another source it would not take them from. One held where its save takes it back (a page in
-        Saved: one INSIGHT collected, or you saved; an aggregator's, issue 0167) is read: the save is what moves it."""
+        """Which of these urls a fetch of this source leaves unread (page watch): stored as its post, or held by
+        another source it would not take them from (one its save would take back is read)."""
         if not urls:
             return set()
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
@@ -1179,8 +1014,7 @@ class PostsRepository:
                 or own_pages.owns(holder_platform, holder_handle, url)}
 
     def stored_x_articles(self, urls: Sequence[str]) -> Dict[str, Dict[str, Any]]:
-        """Which of these urls are stored with their X Article read (metadata.x_article), each as stored:
-        {url: {title, content, content_html, media_urls, metadata}} (the Nitter kind keeps it, kinds/x_articles.py)."""
+        """These urls stored with their X Article read: {url: {title, content, content_html, media_urls, metadata}}."""
         if not urls:
             return {}
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
@@ -1190,17 +1024,15 @@ class PostsRepository:
                              "media_urls": row[4] or [], "metadata": row[5] or {}} for row in cur.fetchall()}
 
     def drop_story_only(self, post_id: str) -> None:
-        """A post shown only inside its story (issue 0126) becomes a row of its feed: you saved it."""
+        """A post shown only inside its story (0126) becomes a row of its feed: you saved it."""
         with db.transaction(self.db_url) as cur:
             cur.execute(f"UPDATE posts SET metadata = metadata - '{STORY_ONLY_KEY}' WHERE id = %s::uuid AND metadata ? '{STORY_ONLY_KEY}'",
                         (post_id,))
 
     def teasers_to_read_again(self, source_id: str, *, now: datetime, max_tries: int, apart: timedelta,
                               limit: int) -> List[Dict[str, Any]]:
-        """The source's stored teasers whose last page read failed (issue 0062), tried fewer than
-        max_tries times, the last at least `apart` ago; oldest try first. Each as a post the saver
-        writes back in place (its date None, so the stored one stays): url, title, bodies, media,
-        categories and metadata as stored."""
+        """The source's stored teasers whose last page read failed, tried fewer than max_tries times, the last at
+        least `apart` ago; oldest try first. Each as a post the saver writes back in place (date None)."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -1225,15 +1057,12 @@ class PostsRepository:
                              retry: bool = False, limit: Optional[int] = None,
                              rule: Optional[int] = None, outcomes: Sequence[str] = (),
                              skip_hosts: Sequence[str] = ()) -> List[Dict[str, Any]]:
-        """Stored posts whose body is shorter than short_chars, or a paid teaser of any length,
-        never read from its page, newest first, each with its source. retry includes those a
-        repair already tried.
+        """Stored posts shorter than short_chars, or a paid teaser, never read from their page, newest first, each
+        with its source. retry includes those a repair already tried.
 
-        With `rule` (issue 0140): instead, the posts never read in full whose rules' version
-        (metadata.full_text_rule) is older than `rule` and whose last page read ended in one of
-        `outcomes` or left none; short, or (a read-more cut marker, checked by the caller) holding a
-        link to their own address; no paid teaser (they need the session, not a rule); none at
-        `skip_hosts` or under them (a tweet, a Telegram message: never an article page)."""
+        With `rule`: instead, posts never read in full whose metadata.full_text_rule is older than `rule` and whose
+        last read ended in `outcomes` or none; short, or linking to their own address; no paid teaser; none at or
+        under `skip_hosts`."""
         if rule is not None:
             hosts = "|".join(re.escape(host) for host in skip_hosts) or r"no-host\.invalid"
             cur.execute(
@@ -1285,9 +1114,8 @@ class PostsRepository:
         ]
 
     def save_full_text(self, cur: Cursor, post_id: str, post: Dict[str, Any]) -> None:
-        """Store the full body of a stored post; its metadata is merged, never replaced. Its links
-        are read again by the next story job (issue 0050). An undated post takes the page's date
-        (issue 0070) and sorts at it, no longer where its first fetch placed it."""
+        """Store the full body of a stored post; metadata is merged, never replaced. An undated post takes the page's
+        date and sorts at it."""
         fields = build_post_fields(post)
         cur.execute(
             """
@@ -1346,8 +1174,7 @@ class PostsRepository:
         return [(str(row[0]), row[1]) for row in cur.fetchall()]
 
     def save_contents(self, cur: Cursor, contents: Sequence[Tuple[str, str]]) -> None:
-        """New plain text for stored posts, and the content hash it gives: the hash decodes
-        codes only once, so a double-escaped body ("&amp;#39;") hashes differently decoded."""
+        """New plain text for stored posts, and its content hash."""
         new = dict(contents)
         if not new:
             return
@@ -1359,12 +1186,9 @@ class PostsRepository:
 
     @staticmethod
     def drop_hidden_link_labels(cur: Cursor) -> int:
-        """Take the screen-reader labels inside links (0063's rule, parsing._without_hidden_link_labels)
-        out of the bodies stored before the reader dropped them (issue 0068), from the stored HTML
-        only: nothing is fetched. The plain text follows when it is that HTML's text; the hash
-        follows, and the next story job reads the post's links again. Returns how many changed.
-        The bodies are read a batch at a time (issue 0072: all at once, 2,958 of them, 214 MB on the
-        lab, took the API to 796 MB)."""
+        """Take screen-reader labels inside links (parsing._without_hidden_link_labels) out of stored HTML bodies;
+        nothing is fetched. The plain text and hash follow. Returns how many changed. Reads a batch at a time to
+        bound memory (0072)."""
         from insight_core.ingestion.kinds.parsing import HIDDEN_HINT_RE, _without_hidden_link_labels, strip_html
 
         rows = []

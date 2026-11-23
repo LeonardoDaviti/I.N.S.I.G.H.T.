@@ -1,8 +1,6 @@
-"""The Happening (issue 0166 step 2): a reading as a key (a table of readings and the key each makes, or none), and
-Pairing's `happening` source on a test database: off by default, on it pairs two posts of one happening across
-languages and days, never a roundup, never one source with itself.
-
-The DB part runs only on a database whose name ends in _test (it empties the mx_* tables inside its transaction)."""
+"""The Happening (0166 step 2): a reading as a key (a table of readings and the key each makes, or none), and
+Pairing's `happening` source on a test database: off by default; on, it pairs two posts of one happening across
+languages and days, never a roundup, never one source with itself. DB part only on a _test database."""
 from __future__ import annotations
 
 import dataclasses
@@ -210,7 +208,7 @@ class Source(unittest.TestCase):
         del roundup, later, other_deal   # a roundup, a deal 37 days on, a deal of another amount: none
 
     def test_each_group_its_window_and_only_measured_groups(self):
-        """legal: 7 days; a release (E1 did not measure it) is not paired by default; on, 72 hours."""
+        """legal: 7 days; a release (not measured) is not paired by default; on, 72 hours."""
         s1, s2, s3 = self.source(), self.source(), self.source()
         a = self.post(s1, 0, reading("sued", ["Acme"], "Widgetco"), [ACME, WIDGETCO])
         b = self.post(s2, 6 * 24, reading("sued", ["Widgetco", "Acme"], "a patent case"), [ACME, WIDGETCO])

@@ -1,6 +1,5 @@
-"""Issue 0210, the consumers (markx/consumers.py): a kind whose answers no feature reads is not asked: its tasks are
-born closed (kept, with the reason), its open ones closed, its planner skipped; switched on, they open again. Against
-the run's own _test database. Every post is synthetic."""
+"""The consumers (0210, markx/consumers.py): a kind whose answers no feature reads is not asked: its tasks are born
+closed (with the reason), its open ones closed, its planner skipped; switched on, they open again. A _test database."""
 from __future__ import annotations
 
 import sys

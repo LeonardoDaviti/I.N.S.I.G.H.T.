@@ -1,7 +1,6 @@
-"""Voices (issue 0132 A): what the suggestion rules read (utils/voice_rules.py), the owner's voices and decisions
-(migration 0080), and the "Also on" lines of a feed page. SQL only here; services/voices_service.py decides.
-
-A confirmed voice of 2+ channels is what the story job counts once (SourceFacts.voice_of reads `counted`)."""
+"""Voices: what the suggestion rules read (utils/voice_rules.py), the owner's voices and decisions, and the
+"Also on" lines of a feed page. SQL only here; services/voices_service.py decides. A confirmed voice of 2+
+channels is what the story job counts once (SourceFacts.voice_of reads `counted`)."""
 from __future__ import annotations
 
 import json
@@ -11,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 
 from psycopg import Cursor
 
-from insight_core.markx.pairing import ix_date   # Mark IX's time (0190)
+from insight_core.markx.pairing import ix_date
 from insight_core.utils import byline
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.post_links import source_kind
@@ -39,8 +38,6 @@ def counted(cur: Cursor) -> Dict[str, str]:
 
 
 class VoicesRepository:
-    # ---- what the suggestion rules read --------------------------------------------------------
-
     @staticmethod
     def channels(cur: Cursor) -> Tuple[Dict[str, Channel], Set[str], Dict[str, str]]:
         """(every source as voice_rules reads it, the posts that are reposts, post id -> its source)."""
@@ -115,8 +112,8 @@ class VoicesRepository:
                     outside: Optional[Dict[Tuple[str, str], List[Any]]] = None) -> Dict[Tuple[str, str], PairCounts]:
         """(A, B) -> what A's posts say of B: its links (post_links; a YouTube description's addresses too) to B's
         addresses, header/footer and bare profile links among them, and A's reposts of B's tweets.
-        `outside` (0132 C2), when given, gets (A, key) -> [own posts, example posts] for A's own posts linking a bare
-        profile address nobody follows (voice_rules.not_followed)."""
+        `outside`, when given, gets (A, key) -> [own posts, example posts] for A's own posts linking a bare profile
+        address nobody follows (voice_rules.not_followed)."""
         import re
         key_to: Dict[str, Set[str]] = defaultdict(set)
         for sid, c in channels.items():
@@ -215,8 +212,6 @@ class VoicesRepository:
                             e.copies_own += 1
                             e.example("copies", mine)
 
-    # ---- 0132 C2: profiles and the channels nobody follows ---------------------------------------
-
     @staticmethod
     def discover_candidates(cur: Cursor) -> List[Dict[str, Any]]:
         """Discover's last kept list (system_settings discover_list, read only, never made here): its suggestions and
@@ -245,8 +240,6 @@ class VoicesRepository:
             if key:
                 out.add(key)
         return out
-
-    # ---- the owner's voices ---------------------------------------------------------------------
 
     @staticmethod
     def voice_of(cur: Cursor, source_ids: Sequence[str]) -> Dict[str, Optional[str]]:
@@ -366,8 +359,6 @@ class VoicesRepository:
         from insight_core.db.repo_stories import source_account
         cur.execute("SELECT platform, handle_or_url FROM sources WHERE id = ANY(%s::uuid[])", (list(source_ids),))
         return sorted({a for p, h in cur.fetchall() if (a := source_account(p, h)) and a.startswith("x.com/")})
-
-    # ---- "Also on <channel>" ---------------------------------------------------------------------
 
     @staticmethod
     def also_on(cur: Cursor, items: List[Dict[str, Any]], *, scope_kind: str, scope_id: Optional[str],

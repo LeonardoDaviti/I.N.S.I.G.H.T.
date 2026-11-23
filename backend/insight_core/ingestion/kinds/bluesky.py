@@ -1,8 +1,6 @@
-"""bluesky: a Bluesky profile (https://bsky.app/profile/<handle or did>) read on the public AppView (issue 0137 B10).
+"""bluesky: a Bluesky profile (https://bsky.app/profile/<handle or did>) read on the public AppView.
 
-Behind INSIGHT_BLUESKY (default off): off, the kind matches nothing and a bsky.app address goes to
-generic_rss as before (a profile's own RSS link, when the finder sees one). On, the feed finder
-answers "direct" for a profile address, as for every kind but generic_rss.
+Behind INSIGHT_BLUESKY (default off): off, the kind matches nothing and a bsky.app address goes to generic_rss.
 
 - The profile first (app.bsky.actor.getProfile): an account labelled `!no-unauthenticated` asks not to
   be shown to logged-out readers. INSIGHT reads logged out, so nothing is read: KindUnavailable says so.

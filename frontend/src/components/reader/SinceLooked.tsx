@@ -12,10 +12,8 @@ import { LoadingState } from '../states';
 const postPath = (id: string) => `/posts/${encodeURIComponent(id)}`;
 
 /**
- * Issue 0271, "Since you looked" (News's Show): what came since the reader's one look, in three plain lists: News rows
- * begun since (as News ranks them), rows a voice joined since (the voices that joined, the first new post), and each
- * track's new things (a count and its top lines). Opening it moves the look to now, once the list is shown; reading
- * it again shows what came after that.
+ * "Since you looked" (News's Show): what came since the reader's last look, in three lists: News rows begun since,
+ * rows a voice joined since, and each track's new things. Opening it moves the look to now, once the list is shown.
  */
 export default function SinceLooked() {
   const api = useApi();

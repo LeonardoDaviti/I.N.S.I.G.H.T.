@@ -1,14 +1,12 @@
-"""Stealth v10.13.1, search for a name and its version (the owner's case of 2026-11-10, a model name and its version):
+"""Search for a name and its version:
 
-1. A name word followed by a version number in a query ("zorblax 5.2") matches only where the two stand together, one
-   or two words apart, in the post's own vector (Russian and English posts) and in Mark X's English layer; a post
-   with the name and another model's 5.2 apart does not match. "zorblax" alone and "5.2" alone match as before.
-2. Entity first: with Mark X on, best match ranks the posts whose current mentions hold the query's entity (the
-   version's, with a version) as subject or actor above the posts that only match its words; best match within each;
-   off, or newest first, as before.
+1. A name word followed by a version ("zorblax 5.2") matches only where the two stand together, one or two words
+   apart, in the post's own vector and in Mark X's English layer; each alone matches as before.
+2. Entity first: with Mark X on, best match ranks posts whose current mentions hold the query's entity as subject or
+   actor above those matching only its words; off, or newest first, as before.
 3. Entity cards: the version's entity before the family's; a card needs 2+ posts or a subject or actor role.
 
-Rows are committed, so the classes run only against a `_test` database. Every name, post and source is synthetic."""
+Rows are committed, so the classes run only against a `_test` database. Everything is synthetic."""
 from __future__ import annotations
 
 import os
@@ -147,7 +145,7 @@ class NameAndVersionInSearch(_Api):
                     self.assertEqual(sorted(self.ids("5.2", order=order)), sorted([ru, en, apart, bench]))
 
     def test_the_line_marks_the_name_and_the_version_each(self):
-        # the pair in its title; its text has the two words apart: the line still marks each (as before v10.13.1)
+        # the pair in its title; its text has the two words apart: the line still marks each
         pid = self.post("Zorblax 5.2", "Сегодня Acme выпустила Zorblax. Он быстрее, чем версия 4, и номер его 5.2.")
         found = self.post("Сводка", "Короткая сводка.")
         self.read(found, "Acme released Zorblax 5.2, a faster model.")
@@ -202,8 +200,8 @@ class NameAndVersionInSearch(_Api):
         self.assertEqual(mx_search.entity_first_posts(self.cur, "quillon 5.2"), [])
 
     def test_a_title_that_is_the_query_ranks_before_the_entitys_posts(self):
-        """v10.13.8: the thing's own page (its title is the query, less "The") comes first, before a post naming the
-        entity as subject; a title that only holds the query stays after them (the joke card, above)."""
+        """The thing's own page (its title is the query, less "The") comes first, before a post naming the entity as
+        subject; a title that only holds the query stays after them."""
         filler = " ".join(["Длинный текст о других делах и новостях недели."] * 30)
         own = self.post("The Quillon delivery playbook", "How teams ship with it, step by step.", at=self.at(5))
         about = self.post("Обзор недели", f"{filler} Все читают Quillon delivery playbook.", at=self.at(1))

@@ -1,29 +1,11 @@
-"""GET /metrics (issue 0216): INSIGHT's own numbers in Prometheus' text format, for the owner's Prometheus and Grafana.
+"""GET /metrics: INSIGHT's own numbers in Prometheus' text format (`collect`, `render`; no client library).
 
-cAdvisor sees each container's total only. On 2026-11-16 that hid three things for hours: a "job peak" of 1.4 GB that
-was the scheduler parent's high-water carried into its children, decision runs held for 47 hours (low CPU read as a
-win), and which job makes insight-ingestion's 1-3.6 GB sawtooth. These are the numbers that tell them apart:
-
-  - each process's own memory and CPU: the scheduler's parent (its heartbeat, utils/heartbeat.py, written every 30 s
-    with utils/peak.own) and each API process (its beat, written by the API's supervisor);
-  - each job's runs (markx/jobs.py's mx_jobs: the last run's seconds, its own peak and CPU, ok and failed runs as
-    counters (migration 0151), seconds since its last success, whether it runs now and since when, whether work
-    waits for it); the decision run's stages and whether Mark IX holds it; Mark IX's rebuild progress; the source
-    stats job (mx_settings);
-  - the worker's queue (open and leased tasks by kind: markx/kept_counts, no count over mx_tasks), the calls made
-    (a counter) and the answers of the last hour; the re-ask guard's held tasks (markx/holds.py, 0210); the kept
-    pages' age (mx_kept_pages);
-  - Postgres' statement time (pg_stat_statements: the total, and the top 5 statements by id, as
-    /api/operations/db-statements lists them with their text);
-  - the newest ingestion run: its seconds, posts fetched and saved, and the age of the newest successful one.
-
-Everything is read from files in the logs volume and from the database in one connection (a few indexed statements;
-`collect`), never from the ingestion processes. A part that fails is left out and counted in
-insight_metrics_part_errors, so one missing table never empties the page. Labels stay few: a process, a job, a stage,
-a task kind, a page, five statement ids. A job's label is `insight_job`, never `job`: Prometheus sets `job` (and
-`instance`) on every series it scrapes and would rename ours to exported_job. `render` writes the text format by hand (no client library). GET /metrics is
-outside /api, so the frontend's nginx never proxies it: only the compose network and the host reach it
-(DEPLOYMENT.md, "Monitoring").
+Per-process memory and CPU (cAdvisor sees only container totals), each job's runs, the worker's queue, the kept
+pages, Postgres' statement time and the newest ingestion run. Read from the logs volume's beat files and one
+read-only database transaction, never from the ingestion processes; a failing part is left out and counted in
+insight_metrics_part_errors. Labels stay few; a job's label is `insight_job`, never `job` (Prometheus sets `job`
+itself and would rename ours). /metrics is outside /api, so nginx never proxies it: only the compose network and the
+host reach it.
 """
 from __future__ import annotations
 
@@ -43,7 +25,7 @@ MB = 2**20
 TOP_STATEMENTS = 5
 API_FRESH = 120.0     # an API process's beat older than this is a process that ended: not shown
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
-ALERT_RSS_MB = 3072.0  # a process's resident memory past this alerts (INSIGHT_ALERT_RSS_MB; the scheduler's ~1.4 GB today)
+ALERT_RSS_MB = 3072.0  # a process's resident memory past this alerts (INSIGHT_ALERT_RSS_MB)
 
 
 @dataclass
@@ -276,7 +258,7 @@ def source_stats(page: Page, cur: Any, now: datetime) -> None:
 
 
 def worker(page: Page, cur: Any, now: datetime) -> None:
-    """The worker's queue (kept counts), its calls (a counter) and the last hour's answers; the held tasks (0210)."""
+    """The worker's queue (kept counts), its calls (a counter) and the last hour's answers; the held tasks."""
     from insight_core.markx import holds, kept_counts
     tasks = page("insight_worker_tasks")
     for kind, by_status in kept_counts.queue_counts(cur).items():

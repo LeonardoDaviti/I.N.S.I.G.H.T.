@@ -1,8 +1,7 @@
-"""One Voice module (issue 0189): who a post counts as and how many voices posts are, behind utils/voice.py, with
-the engines' rules as named policies. Moving every caller behind it changed no output: on seeded random worlds each
-policy gives what the code it replaced gave (tests/legacy/voice_v1016.py, the v10.16 code word for word), the keys
-are the stored forms, and the SQL fragments say in a query what the Python says. Byline holds who wrote a post: its
-one "RT by @" pattern, repost_of and the repost tests."""
+"""One Voice module (0189): who a post counts as and how many voices posts are, behind utils/voice.py, with the
+engines' rules as named policies. On seeded random worlds each policy gives what the code it replaced gave
+(tests/legacy/voice_v1016.py), the keys are the stored forms, and the SQL fragments say what the Python says. Byline
+holds who wrote a post: its one "RT by @" pattern, repost_of and the repost tests."""
 from __future__ import annotations
 
 import random
@@ -157,7 +156,7 @@ class Byline(unittest.TestCase):
         self.assertIsNone(byline.RT_BY.match("rt by @acme: hello"))
 
     def test_the_repost_tests_read_as_before(self):
-        def old_is_repost(kind, platform, handle, own, title, author, reposted_by, forwarded):   # source_stats v10.16
+        def old_is_repost(kind, platform, handle, own, title, author, reposted_by, forwarded):   # the legacy rule
             if forwarded or (title or "").startswith("RT by @"):
                 return True
             if byline.repost_of(platform, handle, author, reposted_by) is not None:
@@ -180,8 +179,7 @@ class Byline(unittest.TestCase):
 
 
 class BuiltVoices(unittest.TestCase):
-    """markx/built.py counts a story's voices by Voice's MARKX rule: a saved page is no voice (0189's one fix; v10.16
-    counted every member's source)."""
+    """markx/built.py counts a story's voices by Voice's MARKX rule: a saved page is no voice (0189)."""
 
     def test_a_saved_page_is_no_voice(self):
         P = built.Post
@@ -204,7 +202,7 @@ class BuiltVoices(unittest.TestCase):
 
 
 class StoryGates(unittest.TestCase):
-    """back's and later's "Mark IX story of 2+ sources" gate counts voices: a saved page is none (0189's second fix)."""
+    """back's and later's "Mark IX story of 2+ sources" gate counts voices: a saved page is none (0189)."""
 
     def test_a_thread_and_a_saved_page_are_one_voice(self):
         from insight_core.markx import back

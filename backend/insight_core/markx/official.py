@@ -1,67 +1,15 @@
-"""Official channels (issue 0196, Stealth v10.18): INSIGHT follows the original postings by itself.
+"""Official channels (0196): for an announced event whose actor's own post is not in the story, find the actor's own
+channels, prove them and (mode `on`) follow the proven, wanted ones, each with its item filter.
 
-An event your sources reported whose actor's own post is not in the story: who is the actor, which of its own channels
-are proven, and (switched on) the proven, wanted ones followed automatically, each with its item filter. Non-official
-sources are never added by this module. The decision is one module's, keyed on the actor (the channel book): an
-actor's channels are found once and reused by its later events.
-
-    counts = run(db_url, now=...)          # the jobs process's pass (bounded; resumable; Postgres state only)
-    rows = book(cur, actor_ids)            # every reader: {actor: [channel rows]}, one query
-    page = view(cur)                       # the review view: what was found, why, from where, how; undo
-    undo(cur, channel_id)                  # the owner's Undo: the source switched off, never added again
-    pages = pages_wanted(cur, now, ...)    # the originals step's `cited` planner (pages 2+ voices link)
-
-**The pipeline** (every discovery): discovered (a candidate, with where it came from) -> suggested (the review view:
-why, from where, how) -> checked by the worker (one `source_judge` question on the add path's test read: worth adding,
-fits the reader's tracks and sources; its item filter) -> added (official only; on, under the day's cap) or kept as
-`would_add` (Shadow) or `refused` with why.
-
-**Events** (services/discover_main_source.py's rules, deepened for one voice): the Mark X stories of the last
-WITHIN_DAYS of an announced type (event_types.ANNOUNCED: never a lawsuit, a regulator's action, a leak), with one
-voice or more. The actor's own post in the story: nothing to do (`held`).
-
-**The actor**: the story's maker by identity, else the org or person the readings name as the event's (0170's rule);
-else the web search's (`websearch` kind, guide websearch-official-v1: one question an actor-thing pair, kept in
-mx_official_lookups and reused). A maker the search found for a makerless thing is written once, through identity's
-one owner (entity_facts.set_maker, by `web`).
-
-**Candidates**, no request first: the actor's own pages the members carry (0170's `_own_pages`) -> their channel
-(`channel_of`: an X account, a Telegram channel, a site's section); the code addresses of the actor's things and of
-the event's things (0138's mx_entity_addresses `code`) -> `<repo>/releases.atom`; the actor's handles (0168: the
-owner's yes, its own sources' accounts) -> its X account; only when these give none, the web search's channels and its
-announcement's channel. Cut by shape before any request: a site's root, one page, a platform's or code host's or model
-hub's page that is no account, help, docs, CDN and file hosts, a forum thread (discover_main_source.channel_of).
-
-**Proof** (code; all three, else no channel):
-  1. owned by the actor: the channel's handle, site name or repository owner is one of the actor's names or a name of
-     a thing it makes (0170's `owned_by`), or the web search's actor's name or own site; an employee's account is not
-     the actor's; a repository the search names when the post links another of the same name is refused;
-  2. a dated stream: the add path's test read (source_judge's: the feed finder, then page watching; an account through
-     its kind) gives MIN_DATED+ dated items;
-  3. announcements: a releases feed, an account, a section that announces by its host or path or by the dated
-     stream its read returned (discover_main_source.announcing, 0241); the event's own page in its read is no proof
-     (a product's page sits under its product section).
-0241: a section candidate's site gives its news section too (site_sections: the announcing sections your posts link
-there, a newsroom before an investor-relations section), and a section there that announces less is dropped. An
-account the bridge could not read is read again after RETRY_DAYS (RETRIES times), never refused as "gone".
-Plus **not covered**: an enabled source on the channel that carries the page means the gap is a join, a section or a
-backfill: `covered`, never a new source.
-
-**Wanted**: the actor has 2+ announced events in WITHIN_DAYS, or the event 3+ voices; one channel of a kind a site;
-the worker's judgement says follow and fits the reader. Else `refused` with its reasons, asked again after
-REFUSED_DAYS.
-
-**Add** (mode `on`): through the add path every add takes (scout.default_add_source: POST /api/sources' own,
-the address the finder or page watching resolved at the test read), settings {added_by: official, official: {...}},
-the item filter (utils/item_filter.put), then the archive back to the reading window (follow_archive). At most
-ADDS_PER_DAY (config INSIGHT_OFFICIAL_ADDS_PER_DAY, default 5) a day: above it they wait as `would_add`. Undo turns
-the source off (its posts kept) and the channel is never added again by the module.
-
-**Modes** (INSIGHT_OFFICIAL): `off`; `shadow` (the default: every step but the add, recorded `would_add`); `on`.
-
-Runs in the jobs process (markx/jobs.py, the job `official`), never in the API: at most EVENTS_PER_RUN events,
-READS_PER_RUN test reads and LOOKUPS_PER_RUN web-search questions a pass; its state in Postgres (mx_official_events,
-mx_official_channels, mx_official_lookups, mx_official_runs; keep everything: a new state is a new row).
+Entry points: `run` (the jobs process's bounded, resumable pass: `plan` finds candidates, `advance` judges and
+decides), `book` (readers: {actor: channel rows}), `view` and `undo` (the review page), `pages_wanted` (the originals
+step's `cited` planner). A candidate is a channel of the actor's own pages, code addresses or handles (the web search
+only when these give none), cut by shape before any request; it is added only when owned by the actor, a dated stream
+(MIN_DATED+ items) and announcing, wanted (GATE_EVENTS / GATE_VOICES, the worker's `follow` and fits) and not already
+covered by a source; else `refused` with why. Never adds a non-official source; at most ADDS_PER_DAY adds a day
+(INSIGHT_OFFICIAL_ADDS_PER_DAY); modes (INSIGHT_OFFICIAL) `off`, `shadow` (default: all but the add, `would_add`),
+`on`. Undo switches the source off and the channel is never added again. State in mx_official_*; a new state is a new
+row (keep everything). Never runs in the API.
 """
 from __future__ import annotations
 
@@ -93,13 +41,13 @@ PRIORITY = -2                     # the worker's questions: after the owner's ta
 LOOKUP_GUIDE = "websearch-official-v1"
 LOOKUP_KIND = "websearch"
 LOOKUP_SEARCHES = 4
-RETRY_DAYS = 3                    # 0241: an account the bridge could not read is read again after this,
+RETRY_DAYS = 3                    # an account the bridge could not read is read again after this,
 RETRIES = 5                       #       this many times, then refused for REFUSED_DAYS
-REREAD_MARK = "official_reread_v1026"   # mx_settings: the first v10.26 pass's time (the rows refused before it)
+REREAD_MARK = "official_reread_v1026"   # mx_settings: the time before which refused rows are read once again
 REREAD_WHY = "read again: scraping regardless of a feed (v10.26)"
-SITE_SECTION_POSTS = 2            # 0241: an announcing section of the actor's site: this many of your posts link it
+SITE_SECTION_POSTS = 2            # an announcing section of the actor's site: this many of your posts link it
 STATES = ("candidate", "proven", "would_add", "added", "undone", "refused", "covered")
-# The view's order (0241): what waits for the owner first, then the rest.
+# the view's order: what waits for the owner first
 VIEW_ORDER = ("would_add", "added", "candidate", "proven", "covered", "refused", "undone")
 _GITHUB_REPO = re.compile(r"^https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", re.I)
 _NOT_REPO = frozenset({"orgs", "topics", "sponsors", "features", "marketplace", "settings", "about", "pricing",
@@ -134,10 +82,8 @@ class Chan:
 
 
 def channel(url: str) -> Optional[Chan]:
-    """The channel a page or an account of an actor's is published in, by shape (no request), or None: an X or Telegram
-    account (a post's author), a YouTube channel, a GitHub repository's releases feed (the repository, never an org's
-    page), a site's section (never its root, a help, docs or file host, a forum thread: discover_main_source.channel_of).
-    """
+    """The channel a page or account is published in, by shape (no request), or None: an X or Telegram account, a
+    YouTube channel, a GitHub repository's releases feed, a site's section (discover_main_source.channel_of)."""
     from insight_core.services import discover_main_source as D
     from insight_core.utils.addresses import site_of, host_of
     url = (url or "").strip()
@@ -175,7 +121,7 @@ def channel(url: str) -> Optional[Chan]:
         c = ch.key.split("/", 1)[1]
         return Chan(ch.key, "telegram", ch.url, c, "t.me")
     if not ch.prefix or (ch.prefix == "/" and not D.announcing(ch.url)):
-        return None                          # a site's root says who, not where (0241: but newsroom.<site>'s root)
+        return None                          # a site's root says who, not where (but newsroom.<site>'s root)
     return Chan(ch.key, "section", ch.url, (site_of(host_of(ch.url)) or "").split(".")[0], ch.site, ch.prefix)
 
 
@@ -191,12 +137,9 @@ def _forms(name: Optional[str]) -> Set[str]:
 
 def owned(ch: Chan, *, mk: Any = None, actor: Optional[str] = None, names: Sequence[str] = (),
           sites: Sequence[str] = (), repos: Sequence[str] = ()) -> Optional[str]:
-    """How the channel is the actor's (a short reason), or None: its owner (handle, site name, repository owner) is
-    one of the actor's names or a thing it makes (0170's owned_by, through the story's Makers `mk`), or one of `names`'
-    forms (the web search's actor), or its site one of `sites` (the actor's own site, as found). A code address of a
-    thing (0138) is no proof of its owner: posts link third parties' plugins and forks of a thing (measured: 6 of the
-    first 99 candidates), so a repository counts only when its owner holds the actor's name. `repos` is kept for the
-    callers' disagreement check.)"""
+    """How the channel is the actor's (a short reason), or None: its owner is one of the actor's names or things'
+    (owned_by, via the story's Makers `mk`) or of `names`, or its site one of `sites`. A repository counts only when
+    its owner holds the actor's name (posts link third parties' forks and plugins). `repos` is unused here."""
     from insight_core.markx import names as N
     from insight_core.services import discover_main_source as D
     from insight_core.utils.addresses import site_of, host_of
@@ -207,8 +150,7 @@ def owned(ch: Chan, *, mk: Any = None, actor: Optional[str] = None, names: Seque
         forms |= _forms(n)
     if forms and any(f in forms for f in N.handle_forms(ch.owner)):
         return f"{ch.owner} is its name"
-    # Discover's name rule (discover_rules.own_names / same_owner, 0109): a word of the owner is one of the actor's
-    # names (4+ letters, its words, its words run together, a parenthesised other name), or starts or ends with it.
+    # Discover's name rule (discover_rules.own_names / same_owner): a word of the owner is one of the actor's names
     from insight_core.utils.discover_rules import own_names, same_owner
     held: Set[str] = set()
     for n in names:
@@ -294,15 +236,13 @@ def _shown(r: Dict[str, Any]) -> Dict[str, Any]:
             "created_at": r["created_at"].isoformat() if r.get("created_at") else None}
 
 
-VIEW_LIMIT = 100                  # the view's page (0241: was the newest 200 rows, the would_add ones not among them)
+VIEW_LIMIT = 100                  # the view's page
 VIEW_MAX = 500
 
 
 def view(cur: Any, *, offset: int = 0, limit: int = VIEW_LIMIT, states: Sequence[str] = ()) -> Dict[str, Any]:
-    """The review view: the channel book's rows a page at a time (`offset`, `limit`; `states`: only these), in
-    VIEW_ORDER (what waits for the owner first: would_add, added, candidate; then the rest), the newest first within
-    a state; with why, from where, how; `counts` by state over every row (not the page's), `total` the rows `states`
-    selects; the day's adds and the cap; the mode."""
+    """The review view: the current rows a page at a time (`states`: only these), in VIEW_ORDER, newest first within
+    a state; `counts` by state over every row, `total` the rows `states` selects; the day's adds, the cap, the mode."""
     states = [s for s in states if s in STATES]
     offset, limit = max(0, int(offset)), max(1, min(int(limit), VIEW_MAX))
     rank = "CASE state " + " ".join(f"WHEN '{s}' THEN {i}" for i, s in enumerate(VIEW_ORDER)) + " ELSE 99 END"
@@ -338,8 +278,8 @@ def added_today(cur: Any, now: Optional[datetime] = None) -> int:
 
 
 def undo(cur: Any, channel_id: str) -> Dict[str, Any]:
-    """The owner's Undo: the channel's source switched off (its posts kept), the row `undone`; the module never adds
-    that channel again. KeyError: no such current row."""
+    """The owner's Undo: the channel's source switched off (posts kept), the row `undone`, never added again.
+    KeyError: no such current row."""
     got = _rows(cur, "id = %s", (channel_id,))
     if not got:
         raise KeyError(channel_id)
@@ -367,8 +307,8 @@ def _event_outcome(cur: Any, ev: Any, outcome: str, detail: Dict[str, Any]) -> N
 
 
 def pick_events(cur: Any, now: datetime, *, scan: int = EVENTS_SCAN) -> List[Any]:
-    """The window's announced events of one voice or more not settled yet, newest first, at most `scan` of them read
-    (their stories, actors, own pages and things' code addresses: discover_main_source.events)."""
+    """The window's unsettled announced events of one voice or more, newest first, at most `scan` read in full
+    (discover_main_source.events)."""
     from insight_core.services import discover_main_source as D
     picked, checked = D.pick(cur, now, within=WITHIN_DAYS, min_voices=1)
     settled = _settled(cur)
@@ -386,8 +326,7 @@ def _sources(cur: Any) -> Dict[str, Any]:
 
 
 def coverage(ch: Chan, pages: Sequence[str], sources: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """The source already on the channel that carries the event (0170's covers): {id, name, enabled} or None. A
-    releases feed is covered by a source at its address."""
+    """The source already on the channel that carries the event's pages: {id, name, enabled} or None."""
     from insight_core.services import discover_main_source as D
     if ch.kind == "releases":
         return None                         # _releases_followed answers for a repository
@@ -429,15 +368,8 @@ SiteSections = Callable[[str], Sequence[Tuple[Chan, int, int]]]
 
 def candidates(ev: Any, *, handles: Sequence[Tuple[str, str]] = (), lookup: Optional[Dict[str, Any]] = None,
                site_sections: Optional[SiteSections] = None) -> Tuple[List[Cand], List[Dict[str, Any]]]:
-    """(the event's owned candidates, the ones refused by ownership with why). Pure. In order: its own pages'
-    channels, its things' code addresses, the actor's handles, then (only when those give none) the web search's.
-
-    0241, the company's news section: a section candidate's site is the actor's, and that site's announcing sections
-    (`site_sections(site)`: [(channel, discover_main_source.announcing rank, posts linking it)], the best first) are
-    candidates too. A section on the site that announces less than the site's best (a plans or docs page under which
-    the event's page sits; an investor-relations section beside a newsroom) is no candidate then: refused with why.
-    A section that announces nothing and has no announcing section beside it stays a candidate: its read must show
-    an announcing stream (_proof)."""
+    """(the event's owned candidates, the ones refused with why). Pure. In order: its own pages' channels, its things'
+    code addresses, the actor's handles, then (only when those give none) the web search's; then `_site_sections`."""
     out: Dict[str, Cand] = {}
     refused: List[Dict[str, Any]] = []
     code_repos = sorted({(channel(u).site if channel(u) else "") for us in ev.addresses.values() for u in us} - {""})
@@ -496,9 +428,8 @@ def candidates(ev: Any, *, handles: Sequence[Tuple[str, str]] = (), lookup: Opti
 
 def _site_sections(ev: Any, out: Dict[str, Cand], refused: List[Dict[str, Any]], names: Sequence[str],
                    sites: Sequence[str], site_sections: Optional[SiteSections]) -> None:
-    """candidates' last step (0241): each section candidate's site (and the web search's actor's site) gives its best
-    announcing section, owned by the actor's name or site (never a third party's site an own page sits on); the
-    sections there that announce less are dropped, with why."""
+    """candidates' last step (0241): each section candidate's site (and the web search's actor's site) adds its best
+    announcing section when owned by the actor; that site's sections announcing less are dropped, with why."""
     from insight_core.services import discover_main_source as D
     from insight_core.utils.addresses import site_of, host_of
     if site_sections is None:
@@ -525,9 +456,8 @@ def _site_sections(ev: Any, out: Dict[str, Cand], refused: List[Dict[str, Any]],
 
 def site_sections(cur: Any, sites: Iterable[str], *, min_posts: int = SITE_SECTION_POSTS
                   ) -> Dict[str, List[Tuple[Chan, int, int]]]:
-    """{site: [(an announcing section of the site, its discover_main_source.announcing rank, your posts' links into
-    it)]}, the best first (the rank, then the links), from the pages your sources link (post_links, one query for
-    the sites of a pass). Sections of min_posts links or more."""
+    """{site: [(announcing section, its announcing rank, posts linking it)]}, best first, from post_links (one
+    query); sections of min_posts links or more."""
     from insight_core.services import discover_main_source as D
     sites = sorted({s for s in sites if s})
     if not sites:
@@ -630,8 +560,7 @@ def plan(cur: Any, now: datetime, counts: Counter, *, lookups: int = LOOKUPS_PER
     releases = _releases_followed(cur)
     book = identity.lazy_book(cur)
     asked = 0
-    # 0241: the sites' announcing sections, one query for the own pages' sites of the pass (a web search's actor's
-    # site not among them: one query more)
+    # the sites' announcing sections: one query for the pass's own-page sites, one more per other site
     first = {c.site for ev in evs[:events_per_run] for c in (channel(o.url) for o in ev.pages)
              if c is not None and c.kind == "section"}
     by_site: Dict[str, List[Tuple[Chan, int, int]]] = {s: [] for s in first}
@@ -722,10 +651,8 @@ def plan(cur: Any, now: datetime, counts: Counter, *, lookups: int = LOOKUPS_PER
 def _proof(row: Dict[str, Any], j: Dict[str, Any]) -> Tuple[Optional[str], Dict[str, Any]]:
     """(why it is no proven channel, or None; the proof as shown) from the judgement's test read.
 
-    0241: a section is proven by its path or by the stream its read returned (discover_main_source.announcing), never
-    by the event's page sitting in its read (`holds` is shown, not proof: a product's page sits under its product
-    section). An account the read could not reach (a bridge's failure: the bridge answers 404 for an account it could
-    not load) is no dead account: `retry`, read again after RETRY_DAYS, never "gone" for REFUSED_DAYS."""
+    A section is proven by its path or its read's stream announcing, never by holding the event's page (`holds` is
+    shown only). An account the bridge could not read is not dead: `retry` after RETRY_DAYS, up to RETRIES times."""
     from insight_core.services import discover_main_source as D
     sig = j.get("signals") or {}
     rate = sig.get("rate") or {}
@@ -818,8 +745,8 @@ def decide(cur: Any, row: Dict[str, Any], j: Dict[str, Any], now: datetime, coun
 
 
 def add_source(cur: Any, row: Dict[str, Any], j: Dict[str, Any]) -> Dict[str, Any]:
-    """The add, through the add path every add takes (scout.default_add_source: POST /api/sources' own, at the address
-    the feed finder or page watching resolved at the test read), the item filter kept, the archive queued."""
+    """The add, through the add path every add takes (scout.default_add_source, at the test read's resolved address),
+    the item filter kept, the archive queued."""
     from insight_core.markx import scout
     from insight_core.utils import item_filter
     resolved = j.get("resolved") or {}
@@ -859,11 +786,8 @@ def advance(db_url: str, now: datetime, counts: Counter, *, reads: int = READS_P
     from insight_core.markx import repo
     with database.transaction(db_url) as cur:
         waiting = _rows(cur, "state = 'candidate' ORDER BY created_at")
-        # 0241: an account the bridge could not read again after RETRY_DAYS (and the accounts refused before as
-        # "no dated stream" for the same failure). 0240/0241, once: the rows refused before the v10.26 rules
-        # (REREAD_MARK, the first pass's time) as "no dated stream" (scraping regardless may read them now: read
-        # again, the cached judgement not reused) or "no announcements" (the news-section rule: decided again on
-        # the judgement's read). A row decided again is past the mark: never twice.
+        # looked at again: refused past REFUSED_DAYS; unreadable accounts after RETRY_DAYS; once, rows refused before
+        # REREAD_MARK as "no dated stream" (read again) or "no announcements" (decided again). Never twice.
         mark = repo.get_setting(cur, REREAD_MARK)
         if mark is None:
             mark = now.isoformat()
@@ -932,14 +856,13 @@ def run(db_url: str, *, now: Optional[datetime] = None, reader: Optional[Any] = 
                 return {"mode": m, "skipped": "another pass runs"}
             plan(cur, now, counts)
         advance(db_url, now, counts, reader=reader, add=add)
-        # 0235: Discover's suggestions judged every day, the fastest growing first (source_judge owns it; was
-        # check_suggestions here: the first 300 rows by link volume)
+        # Discover's suggestions judged daily (source_judge owns it)
         from insight_core.markx import source_judge
         counts["suggestions_judged"] += source_judge.daily(db_url, now, reader=reader)
     except Exception as exc:  # noqa: BLE001 - recorded; the next pass resumes from Postgres
         log.exception("Official channels: the pass failed")
         error = str(exc)[:300]
-    out = {"mode": m, **dict(counts), "peak_mb": peak.mb()}   # 0215: its own, not the scheduler's
+    out = {"mode": m, **dict(counts), "peak_mb": peak.mb()}
     if error:
         out["error"] = error
     with database.transaction(db_url) as cur:
@@ -957,12 +880,9 @@ CITED_VOICES = 2
 
 def pages_wanted(cur: Any, now: datetime, *, limit: int = 40,
                  kind_of: Optional[Callable[..., str]] = None) -> List[Dict[str, Any]]:
-    """For the originals step (services/originals_service.plan_cited): the pages CITED_VOICES+ voices linked in
-    CITED_DAYS (a publication's feeds one voice: sources.voice_id), not stored, not asked, of no followed source (0114 and F2 own those; an added official channel's pages are its feed's),
-    passing the exclusions: a front page, Discover's
-    places that are no source (references, docs, apps, archives, documents), pricing, legal, help and README pages, a
-    media host, a code host's or model hub's repository (0138's entity originals read those), a tweet (from a quote
-    only). The most voices first."""
+    """For the originals step (originals_service.plan_cited): the pages CITED_VOICES+ voices linked in CITED_DAYS,
+    not stored, not asked, of no followed source, and not excluded (front pages, references, docs, apps, archives,
+    documents, pricing, legal, help, media hosts, code hosts and model hubs, tweets). Most voices first."""
     from insight_core.utils import entity_originals as E
     from insight_core.utils.addresses import host_of, site_of, is_tweet
     from insight_core.utils.discover_rules import app_address, archive_address, document_address, reference_address

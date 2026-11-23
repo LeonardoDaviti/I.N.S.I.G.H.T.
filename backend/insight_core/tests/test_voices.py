@@ -1,7 +1,6 @@
-"""Voices (issue 0132 A): the suggestion rules, the role rule's "official", the owner's decisions, stories counting a
-confirmed voice once (and nothing regrouping until one is confirmed), "Also on <channel>", the voice page's scope.
-
-Every name, address and post here is invented."""
+"""Voices (0132 A): the suggestion rules, the role rule's "official", the owner's decisions, stories counting a
+confirmed voice once (nothing regrouping until one is confirmed), "Also on <channel>", the voice page's scope.
+Everything here is invented."""
 from __future__ import annotations
 
 import contextlib
@@ -122,9 +121,9 @@ class SuggestionTests(unittest.TestCase):
         self.assertIsNone(verdict(found, "yt", "x"), "2/10 profile links, no name: nothing")
 
     def test_a_few_citations_of_a_profile_are_no_links_section(self):
-        # v10.6.1 (the owner, 2026-11-08): a small blog linking an organisation's site in 2 of its 6 posts cites it;
-        # it is not that organisation's channel. Alone, a profile link joins only as a links section would: in most
-        # posts, of enough posts. With a link back or a shared name, the 30% standing link still joins.
+        # a small blog linking an organisation's site in some of its posts cites it, it is not its channel; alone, a
+        # profile link joins only as a links section would (in most posts, of enough posts); with a link back or a
+        # shared name, the 30% standing link still joins
         chans = {"blog": channel("blog", name="Ann Lee", posts=6), "org": channel("org", name="Gauge Lab", posts=140)}
         cites = {("blog", "org"): counts(link_posts=2, link_posts_own=2, profile_posts=2)}
         self.assertIsNone(verdict(judge(chans, cites, {}, {}), "blog", "org"), "2/6 profile links, nothing back")
@@ -216,8 +215,8 @@ class SuggestionTests(unittest.TestCase):
 
 class PossibleShapeTests(unittest.TestCase):
     def test_a_channel_possible_with_a_confirmed_voice_shows_once(self):
-        # v10.6.1 (the owner, 2026-11-08): after a voice is confirmed, a channel sharing its name was listed once per
-        # channel of the voice; it is one question, "this channel and that voice", asked once.
+        # after a voice is confirmed, a channel sharing its name is one question, "this channel and that voice", asked
+        # once (never once per channel of the voice)
         from insight_core.services.voices_service import one_question_per_voice
         src = lambda i, v=None: {"id": i, "name": i, "voice_id": v}   # noqa: E731
         pairs = [{"a": src("gh", "V"), "b": src("medium")}, {"a": src("x", "V"), "b": src("medium")},
@@ -256,8 +255,8 @@ class CountingTests(unittest.TestCase):
         self.assertEqual(voice.count(posts, voice.Policy.STORIES_IX), 2)
 
     def test_the_rules_stamp_reads_no_voice(self):
-        """The deploy regroups nothing: the sample has no confirmed voice, so its owners, prints and stamp are the
-        ones before voices (a source with no voice keeps its facts' print)."""
+        """The deploy regroups nothing: with no confirmed voice its owners, prints and stamp are the ones before voices
+        (a source with no voice keeps its facts' print)."""
         from insight_core.db.repo_stories import SourceFacts
         from insight_core.services.stories_service import StoriesService
         from insight_core.utils import stamps

@@ -10,10 +10,7 @@ import { useSourcesHealth } from './useSourcesHealth';
 export const FOLDERS_KEY = ['folders'] as const;
 export const SOURCE_URLS_KEY = ['reader-source-urls'] as const;
 
-/**
- * Names for the reader's scopes: the tracks (folders) and every source's display
- * name, from the cached `['sources-health']` rows that Settings → Health also uses.
- */
+/** Names for the reader's scopes (tracks and sources), from the cached `['sources-health']` rows. */
 export function useReaderDirectory() {
   const folders = useFolders();
   const health = useSourcesHealth();
@@ -55,11 +52,8 @@ export interface DirectorySource extends SearchableSource {
 }
 
 /**
- * Every source the reader can open, for the rail's filter: all health rows
- * (enabled or not, in the Main feed or not) with their readable label, kind
- * and, once `withUrls` is on, their feed URL. The URLs come from
- * GET /api/sources, fetched only when the owner starts filtering;
- * until then (or if it fails) a source matches on its names and kind.
+ * Every source the reader can open, for the rail's filter: all health rows with their label and kind; with
+ * `withUrls`, their feed URL from GET /api/sources (fetched only once filtering starts; else names and kind match).
  */
 export function useSourceDirectory(withUrls: boolean): { sources: DirectorySource[]; isPending: boolean } {
   const api = useApi();

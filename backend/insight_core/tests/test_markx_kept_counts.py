@@ -1,6 +1,5 @@
-"""Mark X's totals, kept (issue 0195, migration 0132, markx/kept_counts.py): the tasks by kind and status and the
-calls' totals always equal the GROUP BY and sums over every row they replace, through inserts, leases, answers,
-failures, deletes and folds. One transaction per test, rolled back; a _test database; invented rows only."""
+"""Mark X's kept totals (0195, markx/kept_counts.py): the tasks by kind and status and the calls' totals always equal
+the GROUP BY and sums they replace, through every change. Rolled back; a _test database; invented rows only."""
 from __future__ import annotations
 
 import unittest

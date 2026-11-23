@@ -1,16 +1,8 @@
 /**
- * Prototypes (Design Studio D6), as pure functions over their README text, so
- * the coverage test and the studio read them the same way.
- *
- * A prototype is a folder `prototypes/<yyyy-mm-dd>-<slug>/` with a README.md
- * that opens with a `meta` block:
- *   hypothesis: one sentence the comparison should prove or disprove
- *   principles: the P-numbers it serves (P1, P4)
- *   page: the page doc it compares against (post)
- *   states: the states to compare on, the first is the default (long-title, article)
- *   status: draft | review | accepted | rejected
- *   created: yyyy-mm-dd, the folder's date
- * and an index.tsx whose default export wraps the real page in its frame.
+ * Prototypes as pure functions over their README text, so the coverage test and the studio read them the same way.
+ * A prototype is a folder `prototypes/<yyyy-mm-dd>-<slug>/` with an index.tsx whose default export wraps the real
+ * page, and a README.md opening with a `meta` block: hypothesis, principles, page (the page doc compared against),
+ * states (the first is the default), status (draft | review | accepted | rejected), created (the folder's date).
  */
 import { parseDoc } from './coverage';
 

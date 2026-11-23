@@ -26,7 +26,6 @@ class PlatformFilter(logging.Filter):
         self.platform = platform.lower()
     
     def filter(self, record):
-        # Check if the message is related to the specific platform
         logger_name = record.name.lower()
         module_name = record.module.lower() 
         return self.platform in logger_name or self.platform in module_name

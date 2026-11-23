@@ -1,7 +1,6 @@
-"""0130 D (Stealth v10.5): translation. A post's language (its reading's lang before the feed's code), the request
-route (idempotent, first in the lease, a failed task opened again), the view the post page shows, the owner's ✓ / ✗ as
-Mark X labels (migration 0078), the Mark X News leads planner (non-English leads of the newest written run, once a
-post), the guide translate-v2. Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""Translation (0130 D): a post's language (its reading's lang before the feed's code), the request route, the view
+the post page shows, the owner's ✓ / ✗ as Mark X labels, the News leads planner, the guide translate-v2. Synthetic
+data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import random

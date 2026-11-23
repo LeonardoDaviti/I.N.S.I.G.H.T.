@@ -11,8 +11,8 @@ import { renderWithProviders } from '../../test/render';
 const makeFakeApi = (methods: Record<string, unknown>) => makeApi(methods as Parameters<typeof makeApi>[0]);
 const now = new Date().toISOString();
 
-// Issue 0144: a person's own posts ("By"), every story with all its posts and the original first, a Mark IX story
-// marked, loose posts by role with mentions collapsed; the story window on the Worker tab.
+// A person's page (0144): their own posts ("By"), every story with all its posts and the original first, a Mark IX
+// story marked, loose posts by role with mentions collapsed; the story window on the Worker tab.
 const page: MarkxEntityPage = {
   entity: { id: 'e1', name: 'Ivo Kestrel', type: 'person', maker: null, level: 'thing', version: null, variant: null,
     size: null, build: null, status: 'provisional', family: null },
@@ -74,8 +74,7 @@ describe('the person page (issue 0144)', () => {
   });
 
   it('shows the reader no section label, no accuracy line and no old stories to label; Research carries the name', async () => {
-    // v10.35: the owner never labels by default (Claude reviews), so the page offers no old stories to check even
-    // when the API still sends them; the "Mark X entities" kicker and the accuracy paragraph are gone.
+    // the owner never labels by default (Claude reviews): no old stories to check, even when the API sends them
     open({ getMarkxEntity: vi.fn().mockResolvedValue({ ...page, sample: [{ story: 's9', first_at: now, answer: null }] }) });
     await screen.findByRole('region', { name: 'A weekend tool' });
     expect(screen.queryByText('Mark X entities')).not.toBeInTheDocument();
@@ -84,7 +83,7 @@ describe('the person page (issue 0144)', () => {
     expect(screen.queryByRole('region', { name: 'Old stories to check' })).not.toBeInTheDocument();
     expect(screen.queryByText(/old stor(y|ies) offered to check/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'missed a post' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Research this' })).toBeNull();   // v10.36: no Research link on an entity page
+    expect(screen.queryByRole('link', { name: 'Research this' })).toBeNull();   // no Research link on an entity page
   });
 });
 

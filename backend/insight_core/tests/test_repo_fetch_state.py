@@ -1,8 +1,5 @@
-"""FetchStateRepository against the real database (rollback pattern, spec §5.2).
-
-One transaction per test, rolled back in tearDown: the scratch sources, their posts and
-their fetch state vanish, so this is safe on the live DB. Every assertion is scoped to the
-test's own scratch rows.
+"""FetchStateRepository against the real database: one transaction per test, rolled back in tearDown, so it is safe
+on the live DB; every assertion is scoped to the test's own scratch rows.
 """
 from __future__ import annotations
 
@@ -227,8 +224,7 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertIsNone(view[bare]["state"])
 
     def test_last_post_is_when_the_newest_post_reached_you(self):
-        # A page published long ago but surfaced today (issue 0039) keeps its source from
-        # reading as quiet in Tidy up (issue 0046).
+        # a page published long ago but surfaced today (0039) keeps its source from reading as quiet in Tidy up (0046)
         self.cur.execute(
             "INSERT INTO posts (source_id, url, published_at, fetched_at, surfaced_at) VALUES (%s, %s, %s, %s, %s)",
             (self.source, f"https://test.invalid/mark-ix/surfaced/{self.source}", NOW - 400 * 24 * H, NOW, NOW),
@@ -237,7 +233,7 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertEqual(view[self.source]["last_post_at"], NOW)
 
     def test_schedule_view_carries_the_newest_page_reads(self):
-        # Issue 0032: metadata.page_read of the newest PAGE_READS_IN_HEALTH page-read posts.
+        # metadata.page_read of the newest PAGE_READS_IN_HEALTH page-read posts (0032)
         for i in range(PAGE_READS_IN_HEALTH + 2):
             self.cur.execute(
                 "INSERT INTO posts (source_id, url, fetched_at, metadata) VALUES (%s, %s, %s, %s::jsonb)",
@@ -250,7 +246,7 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertEqual(self.repo.load_schedule_view(self.cur, source_ids=[insert_scratch_source(self.cur)])[0]["page_reads"], [])
 
     def test_schedule_view_says_whether_the_newest_paid_post_is_a_teaser(self):
-        # Issue 0084: paid_preview is metadata.paywalled of the newest only_paid post.
+        # paid_preview is metadata.paywalled of the newest only_paid post (0084)
         for i, (audience, paywalled) in enumerate([("everyone", False), ("only_paid", True), ("only_paid", False)]):
             self.cur.execute(
                 "INSERT INTO posts (source_id, url, fetched_at, metadata) VALUES (%s, %s, %s, %s::jsonb)",
@@ -273,8 +269,7 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertEqual(self.repo.load_schedule_view(self.cur, source_ids=[]), [])
 
     def test_schedule_view_counts_the_posts_opened_later_or_kept(self):
-        # Issue 0046: an open, a reading session, Later, Keep and a part-read post count;
-        # read_at alone ("mark read up to here") does not.
+        # an open, a reading session, Later, Keep and a part-read post count; read_at alone does not (0046)
         self.add_posts(self.source, [NOW - i * H for i in range(7)])
         self.cur.execute("SELECT id FROM posts WHERE source_id = %s ORDER BY published_at DESC", (self.source,))
         opened, session, later, kept, started, read_only, untouched = [str(r[0]) for r in self.cur.fetchall()]

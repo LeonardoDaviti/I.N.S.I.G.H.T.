@@ -22,12 +22,10 @@ const CATALOG = { prototypes: PROTOTYPES, pages: PAGES, widthOf: (page: string, 
 const SUBJECTS = benchSubjects(PROTOTYPES, PAGES);
 
 /**
- * Bench mode (verdict C), the checkout for every new design feature: two
- * large frames side by side on the same fixtures, the current page against a
- * prototype (or one state of a page against another), with a shared state,
- * width, theme and data (fixtures, or the real API read-only). The drawer holds what the comparison is for and how it
- * ends; accept and reject are instructions to the agent, never browser
- * writes, because the docs are files (D6). On phones the panes stack.
+ * Bench mode, the checkout for every new design feature: two large frames side by side on the same fixtures (the
+ * page against a prototype, or one state against another) with shared state, width, theme and data. The drawer
+ * holds what the comparison is for; accept and reject are instructions to the agent, never browser writes (the
+ * docs are files). On phones the panes stack.
  */
 export default function BenchMode() {
   const [params, setParams] = useSearchParams();
@@ -200,7 +198,7 @@ function PageNotes({ view }: { view: BenchView }) {
   );
 }
 
-/** A unified diff in one tone family (P2): added lines in the text colour, removed ones in the third tone. */
+/** A unified diff in one tone family: added lines in the text colour, removed ones in the third tone. */
 function DocDiff({ diff }: { diff: string }) {
   return (
     <pre className="mt-2 max-h-[22rem] overflow-auto rounded-md border border-line bg-bg px-4 py-3 font-mono text-[0.75rem] leading-[1.6]">
@@ -222,7 +220,7 @@ function DocDiff({ diff }: { diff: string }) {
   );
 }
 
-/** Accept or reject, as the exact words to give the agent (D6). */
+/** Accept or reject, as the exact words to give the agent. */
 function Decide({ id }: { id: string }) {
   const [reason, setReason] = useState('');
   return (

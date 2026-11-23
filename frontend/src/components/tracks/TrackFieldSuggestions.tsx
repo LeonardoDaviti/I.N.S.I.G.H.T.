@@ -5,11 +5,8 @@ import { Button } from '../ui';
 import { errorMessage } from '../../lib/apiError';
 import { fieldWord, kindWord, schemaKey, suggestionsKey, withField } from './briefWords';
 
-/**
- * "Suggested fields" (v10.41, FIX 6): the fields INSIGHT suggests a track's kinds add, read from its rows and posts.
- * Never applied by INSIGHT: Add is the owner's schema edit (a new version, the track's posts read again under it);
- * Dismiss keeps a field from being suggested again. Hidden when there is nothing to suggest.
- */
+/** "Suggested fields": fields INSIGHT suggests a track's kinds add, from its rows and posts. Never applied by INSIGHT:
+ *  Add is the owner's schema edit; Dismiss keeps a field from being suggested again. Hidden when there are none. */
 export default function TrackFieldSuggestions({ trackId }: { trackId: string }) {
   const client = useQueryClient();
   const sugg = useQuery({ queryKey: suggestionsKey(trackId), queryFn: () => briefApi.suggestions(trackId), staleTime: 60_000, retry: false });

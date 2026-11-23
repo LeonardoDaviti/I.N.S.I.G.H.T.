@@ -1,6 +1,5 @@
-"""/api/status's health (issue 0188): computed from real checks, with its reasons; the loops' heartbeats.
-
-No database: the reads are stubbed; what is tested is the decision."""
+"""/api/status's health (0188): computed from real checks, with its reasons; the loops' heartbeats. No database: the
+reads are stubbed; what is tested is the decision."""
 from __future__ import annotations
 
 import os
@@ -133,8 +132,8 @@ class MarkXHealth(_Env):
         self.assertEqual(out["checks"]["markx"]["jobs"]["decide"]["failures"], 4)
 
     def test_names_why_mark_ix_holds_the_decision_run(self):
-        """0209: an old decision run's reason says why none starts (Mark IX's story job holds its lock), and a rebuild
-        going on for hours is a warning with its progress. 0215: a rebuild alone holds no run."""
+        """An old decision run's reason says why none starts (Mark IX's story job holds its lock), and a rebuild going
+        on for hours is a warning with its progress; a rebuild alone holds no run (0209, 0215)."""
         ix = {"locked": False, "rebuild": "in progress", "done": 1200, "total": 157752, "phase": "stories",
               "started_at": (NOW - timedelta(hours=5)).isoformat()}
         out = self.run_health({"decide": self.job()}, NOW - timedelta(hours=45), {"laptop": NOW}, ix=ix)

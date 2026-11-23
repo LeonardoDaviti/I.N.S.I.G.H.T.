@@ -1,30 +1,10 @@
-"""0130 D (Stealth v10.5): translation, 0086 F5 (Haiku kept all the meaning in 87%, misled in 2%: Russian tech slang).
+"""Translation of non-English posts (issue 0130 D): the `translate` kind's tasks, its answers and the owner's labels.
 
-**The kind** is 0086's `translate` (schemas.KINDS: its guide, the answer {title_en, text_en}; validate._translate: the
-post's numbers survive, the length stays within 0.5-2x; tasks.translate_input: the title and the first 2,500 characters).
-Its answer is the task's valid call (mx_calls.answer); nothing else is stored. The guide stays translate-v1: translate-v2
-(v1 with a tech-slang glossary) was measured against it on F5's 150 posts on 2026-11-07 and kept less of the meaning
-(77% against 81%), so it is not adopted (plan/issues/0130d-built.md).
-
-**Asked two ways:**
-  - on request: POST /api/markx/posts/{id}/translate (the "Translate" button on a non-English post) adds the task at
-    priority -1, so the next worker run leases it first; asking again is the same task (an existing one is raised to
-    -1; one that failed three times is opened again, because the owner asked);
-  - for Mark X News leads: `plan` (tasks.PLANNERS["translate"], run when a worker leases `translate` and fewer than its
-    limit are open, as the read and read3 planners are) adds one for each non-English lead (the row's first post) of the
-    newest written Mark X News run inside News' window, once a post. At lease time rather than as a stage of the decision
-    run: no stage, no job state and no change to decide.py; the leads are read from the rows the last run wrote, and a
-    translation is only ever needed by a worker that is about to answer it.
-
-**A post's language:** its newest Mark X reading's `lang` when it names one, else posts.language_code ('und' and ''
-name none); a post is non-English when that is known and not `en` (en-GB is en). The reading comes first because the
-feed's field mislabels posts (the prototype found English READMEs that list "Русский" marked ru).
-
-**The owner's ✓ / ✗** (POST /api/markx/posts/{id}/translation/label {answer: right | wrong | undo, note?}) is a label
-like the others (mx_labels, item kind `translation`, migration 0078): a = the translate task, b = the post; the newest
-counts, an undo takes it back. GET /api/markx/translations/score counts them by guide.
-
-Only mx_* tables are written; Mark IX's are read.
+The answer {title_en, text_en} is the task's valid call; nothing else is stored. Asked on request (`ask`: the post
+page's button, priority ASKED, a failed task opened again) and for Mark X News leads (`plan`, tasks.PLANNERS
+["translate"], at lease time). A post's language (`language`) is its newest Mark X reading's `lang`, else the feed's
+language_code (the feed's field mislabels posts). The owner's ✓ / ✗ is a label (mx_labels, item kind `translation`,
+a = the task, b = the post; the newest counts); `score` counts them by guide. Only mx_* tables are written.
 """
 from __future__ import annotations
 
@@ -178,10 +158,6 @@ def plan(cur: Any, *, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] = N
 
 
 # ---- the routes (included into markx/api.py's router: its prefix and its switch; no bearer: the app's own) ---------
-# GET  /api/markx/posts/{id}/translation          the view above (404: no such post)
-# POST /api/markx/posts/{id}/translate            asks for it: {task_id, new, view}; 400 when the post is English
-# POST /api/markx/posts/{id}/translation/label    {answer: right | wrong | undo, note?} -> the view; 404: no translation
-# GET  /api/markx/translations/score              the owner's labels by guide
 
 router = APIRouter()
 

@@ -60,10 +60,7 @@ function JobDetail({ job }: { job: JobRun }) {
   );
 }
 
-/**
- * The job history under Sources → ingestion: recent jobs, and the one picked
- * in full. The pick lives in `?job=`, so a run toast's "View job" opens it.
- */
+/** The job history: recent jobs, and the one picked (`?job=`, so a run toast's "View job" opens it) in full. */
 export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loading: boolean }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get('job');

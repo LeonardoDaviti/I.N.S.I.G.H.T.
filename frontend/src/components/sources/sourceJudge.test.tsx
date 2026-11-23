@@ -1,6 +1,5 @@
-// 0173 ("Is this worth it?", Mark X): the tap, the wait for the worker, the verdict with its reasons and the items it
-// relied on, Ask again; in the Add source dialog once a feed is found, and on Discover's rows. Nothing is followed by
-// it. Synthetic data only.
+// "Is this worth it?" (0173): the tap, the worker's verdict and Ask again, in Add source and on Discover's rows;
+// nothing is followed by it. Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

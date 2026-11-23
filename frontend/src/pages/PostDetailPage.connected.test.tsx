@@ -5,7 +5,7 @@ import { POST_ID, baseApi, renderPost, rssPost } from './PostDetailPage.testkit'
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
 import type { FeedStory, PostConnected } from '../services/api';
 
-// Connected on the post page (issue 0125): after the text, before the story; the post never waits on it.
+// Connected on the post page (0125): after the text, before the story; the post never waits on it.
 
 const OTHER = '00000000-0000-4000-8000-0000000000b1';
 

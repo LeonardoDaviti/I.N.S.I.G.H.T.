@@ -1,25 +1,12 @@
-"""An API that stops answering is restarted by itself (issue 0117, the owner's option A: in insight-ingestion).
+"""Restart a hung API (0117): Docker restarts only exited processes, never unhealthy ones.
 
-Docker restarts nothing for being unhealthy (`restart: unless-stopped` acts only when the process exits). On 5 Nov
-the API answered nothing for over 20 minutes until the owner looked.
-
-Two halves, because insight-ingestion can't restart another container without the Docker socket, and mounting the
-socket gives a container root on the host (so it isn't done):
-  - **The judge, in insight-ingestion** (`Watchdog`, a thread beside the scheduler): every 30 s it asks the API's
-    /api/version over the compose network, 5 s at most. After 4 failures in a row (2 minutes) it asks for a restart:
-    it writes a request file in the logs volume both containers mount (INSIGHT_LOG_DIR, /app/logs), and records the
-    restart as an `api_restart` job (the operations page lists it with the failures): the time, the failing check,
-    the last 50 log lines. Then it waits 5 minutes before judging again. An API that isn't there (the connection
-    refused, the name unknown: stopped, or starting) is no hang and counts nothing (0124).
-  - **The door, in the API container** (`RestartDoor`, run by scripts/api_supervisor.py, a process of its own, so a
-    hung API process can't block it): it sees the request within a second or two, saves the evidence first (SIGUSR1
-    to each API process: main.py registers `faulthandler` on it, which writes every thread's stack to
-    api-stacks.log even while Python is stuck), hands the dump back (a done file the judge attaches to the job), then
-    stops uvicorn, and the container exits: Docker's restart policy starts it again. A request written before its
-    API started, or over a minute old, is set aside and the judge's record says "Not restarted" (0124).
-  - Only the API is restarted: the database, ingestion and the frontend never are.
-  - **No restart loop:** at most 3 restarts an hour. After that it stops restarting, logs "the API keeps failing",
-    and records it once as an `api_restart` job (the operations overview's alerts show it).
+Two halves, because restarting another container needs the Docker socket, which would give root on the host:
+the judge (`Watchdog`, a thread in insight-ingestion) probes /api/version and, after FAILURES failures in a row,
+records an `api_restart` job and writes a request file in the shared logs volume; the door (`RestartDoor`, run by
+scripts/api_supervisor.py in the API container, a process a hung API can't block) takes the request, dumps every
+API thread's stack (SIGUSR1 to faulthandler) for the judge, and the supervisor stops uvicorn so Docker starts it
+again. An absent API (refused, unknown name) is no hang; a stale request is never honoured (0124); at most CAP
+restarts per WINDOW. Only the API is ever restarted.
 """
 from __future__ import annotations
 
@@ -86,11 +73,8 @@ ABSENT = "absent"        # nothing listens (refused) or the name doesn't resolve
 
 
 def classify(exc: BaseException) -> Any:
-    """A failed check's kind (0124): ABSENT when no API is there to answer (the connection refused: nothing listens,
-    as while the container starts or its migrations run; the name unknown: compose's DNS drops a stopped container),
-    else False, a failure that counts (a timeout, an error answer). A hung event loop still has its listening socket:
-    the kernel takes the connection and nobody answers, so a hang is a timeout, never a refusal; a full listen queue
-    drops the handshake, which is a timeout too."""
+    """ABSENT when no API is there (refused, unknown name: stopped or starting), else False, a failure that counts.
+    A hung event loop keeps its listening socket, so a hang is a timeout, never a refusal."""
     reason = getattr(exc, "reason", exc) if isinstance(exc, urllib.error.URLError) else exc
     if isinstance(reason, (ConnectionRefusedError, socket.gaierror)):
         return ABSENT
@@ -149,8 +133,7 @@ class Watchdog:
             return "cooling"
         answer = self.check()
         if answer == ABSENT:
-            # 0124: no API to answer (stopped by hand, or starting: its migrations, uvicorn not listening yet) is no
-            # hang, and a restart can't help it: the count starts again from the API's first timeout.
+            # no API (stopped or starting) is no hang and a restart can't help: the count starts again
             if not self.absent:
                 logger.info("API watchdog: the API is not running (stopped or starting): not a hang, no restart")
             self.absent = True
@@ -174,8 +157,7 @@ class Watchdog:
             if self.gave_up_at is None:
                 self.gave_up_at = now
                 until = min(self.restarts) + self.window
-                # No clock time in the message (0124): the container's zone is UTC, the reader's isn't. The times
-                # are ISO UTC in the payload ("at", "until"), and the page writes them in the reader's zone.
+                # no clock time in the message: the container is UTC; the page shows the payload's times locally
                 message = (f"The API keeps failing: {len(self.restarts)} restarts in the last hour, so no more for "
                            f"{max(0.0, until - now) / 60:.0f} min; it has not answered for {failing_for / 60:.0f} min")
                 logger.error("API watchdog: %s (until %s)", message, _iso(until))
@@ -220,7 +202,7 @@ class Watchdog:
             os.remove(path)
         except (OSError, ValueError):
             return None
-        if done.get("stale"):   # 0124: the door found the request too old to honour; its record says so
+        if done.get("stale"):   # the door found the request too old to honour
             logger.warning("API watchdog: the API did not restart: %s", done["stale"])
             job_id = (done.get("request") or {}).get("job_id")
             if job_id:
@@ -312,9 +294,8 @@ class RestartDoor:
         return os.path.join(self.directory, name)
 
     def stale(self, request: Dict[str, Any], written: float) -> Optional[str]:
-        """Why a request is too old to honour, or None (0124): written before this API started (asked of an API that
-        is gone: stopped, or replaced by a deploy), or more than `max_age` ago (the door looks every second, so a
-        request it didn't see then had no door: no API was running)."""
+        """Why a request is too old to honour, or None: written before this API started, or more than `max_age` ago
+        (the door looks every second, so an older request found no API running)."""
         try:
             at = datetime.fromisoformat(str(request["at"])).timestamp()
         except (KeyError, ValueError, TypeError):

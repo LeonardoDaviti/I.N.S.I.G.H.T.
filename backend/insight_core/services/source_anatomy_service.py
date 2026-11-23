@@ -1,11 +1,7 @@
-"""Source anatomy (issue 0054): for every source at once, how it is read and what it gives.
+"""Source anatomy: for every source at once, how it is read and what it gives, from stored data only.
 
-How it is read comes from what INSIGHT already stores (nothing is fetched): its kind as the
-runner resolves it, its address, full text, change watching (0039), conditional fetching
-(0044) and its schedule and last fetch, the health row's own fields (so this view and source
-health never disagree). What it gives is counted by repo_source_anatomy over the last
-WINDOW_DAYS and all time: posts and how many you read, the stories it is in and how many it
-reported first (0050), the classics it cited (0051) and the outside links it gave (0050).
+How it is read uses the health row's own fields, so this view and source health never disagree; what it gives is
+counted by repo_source_anatomy over WINDOW_DAYS and all time.
 """
 from __future__ import annotations
 
@@ -20,7 +16,7 @@ from insight_core.ingestion import full_text
 from insight_core.services.operations_service import OperationsService, health_row
 
 WINDOW_DAYS = 30
-KEPT_FOR = timedelta(minutes=10)   # issue 0206: the kept anatomy is sent at most this old (its generated_at says when)
+KEPT_FOR = timedelta(minutes=10)   # the kept anatomy is sent at most this old
 
 # How a source is read, by the name of the kind that reads it. A site adapter (Gwern,
 # LessWrong, ...) is a site reader whatever its name.
@@ -48,10 +44,8 @@ def anatomy_kind(kind: Any) -> str:
 
 
 def full_text_mode(kind_key: str, kind: Any, source: Dict[str, Any], pages_read: bool) -> str:
-    """on: it reads each post's article page (a feed with full text on that needed it, or a kind
-    whose posts are pages); off: a feed with full text switched off; feed: the feed or platform
-    carries the whole post (a feed whose posts never needed their page, Telegram, X, Reddit,
-    YouTube)."""
+    """on: it reads each post's article page; off: full text switched off; feed: the feed or platform carries the
+    whole post."""
     if kind_key in READS_PAGES:
         return "on"
     if getattr(kind, "name", "") == "generic_rss":
@@ -81,14 +75,14 @@ def anatomy_row(source: Dict[str, Any], kind: Any, health: Dict[str, Any], readi
         "platform": source.get("platform"),
         "enabled": health["enabled"],
         "kind": key,
-        # A feed whose page reads all left the summary (issue 0140) still reads them: on.
+        # a feed whose page reads all left the summary still reads them: on
         "full_text": full_text_mode(key, kind, source, bool(reading.get("pages_read") or reading.get("teasers"))),
-        # Its posts left as the feed's summary, by their last page read's outcome (issue 0140): {outcome: count}.
+        # posts left as the feed's summary: {last page read's outcome: count}
         "teasers": dict(reading.get("teasers") or {}),
         # null: its kind cannot do it.
         "watch_changes": health["watch_changes"] if health["watchable"] else None,
         "watched_pages": int(reading.get("watched_pages") or 0),
-        # 0138 F2: its pages other posts linked that its feed never carried, read once as its posts
+        # its pages other posts linked that its feed never carried, read once as its posts
         "feed_misses": int(reading.get("feed_misses") or 0),
         "validators": bool(reading.get("validators")) if getattr(kind, "conditional", False) else None,
         "status": health["status"],
@@ -110,11 +104,8 @@ class SourceAnatomyService:
         self.operations = operations
 
     def anatomy_page(self) -> bytes:
-        """GET /api/sources/anatomy's bytes (issue 0206): the anatomy (`anatomy`, the one path) kept at most KEPT_FOR
-        old (its `generated_at` says when it was made) and while no source was added, removed or moved between
-        folders (the kept input "folders"); else made, kept and sent. Its counts and schedules move with every fetch
-        and its window with the clock: a report as of `generated_at` (0.65-0.8 s an open at the server's size before,
-        every open)."""
+        """GET /api/sources/anatomy's bytes: the kept anatomy while at most KEPT_FOR old and no source was added,
+        removed or moved between folders; else made, kept and sent. A report as of its `generated_at`."""
         from insight_core.markx import kept_pages
         now = self.operations.clock()
         with db.transaction(self.db_url) as cur:
@@ -146,7 +137,7 @@ class SourceAnatomyService:
             reading = repo.reading(cur)
             cur.execute("SELECT source_id::text, count(*) FROM story_originals WHERE kind = 'missed' "
                         "AND source_id IS NOT NULL GROUP BY 1")
-            for sid, n in cur.fetchall():   # 0138 F2
+            for sid, n in cur.fetchall():
                 reading.setdefault(sid, {})["feed_misses"] = n
             counts: Dict[str, Dict[str, Sequence[int]]] = {
                 "posts": repo.posts(cur, since),

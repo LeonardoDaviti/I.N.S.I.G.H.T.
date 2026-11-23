@@ -1,4 +1,4 @@
-"""The rules of a story's original (issues 0114, 0123): tokens, page dates, wanted links, the budget, the kinds."""
+"""The rules of a story's original (0114, 0123): tokens, page dates, wanted links, the budget, the kinds."""
 from __future__ import annotations
 
 import sys
@@ -40,7 +40,7 @@ class DateTests(unittest.TestCase):
         self.assertEqual(page_date("https://blog.example.com/2026/10/21/a-post"), datetime(2026, 10, 21, tzinfo=timezone.utc))
         self.assertEqual(page_date("https://example.com/news/2026-09/a-post"), datetime(2026, 9, 1, tzinfo=timezone.utc))
         self.assertIsNone(page_date("https://example.com/news/a-post"))
-        # v10.13.5: a month by name with its day
+        # a month by name with its day
         self.assertEqual(page_date("https://blog.example.com/2008/Jul/7/a-link/"), datetime(2008, 7, 7, tzinfo=timezone.utc))
         self.assertEqual(page_date("https://example.com/2019/september/03/x"), datetime(2019, 9, 3, tzinfo=timezone.utc))
         self.assertIsNone(page_date("https://example.com/2025/Feb/30/x/"))

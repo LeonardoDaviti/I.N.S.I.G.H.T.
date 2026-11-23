@@ -6,10 +6,9 @@ Owner-run only; nothing runs it automatically.
     python -m insight_core.scripts.refresh_page_corpus --fetch [name…] # read each page again, compare
     python -m insight_core.scripts.refresh_page_corpus --fetch --write # …and keep the new copies
 
---fetch downloads each page once (2 s apart, INSIGHT's User-Agent), trims it as the corpus
-does and reports, per page, each expectation whose result changed between the stored copy
-and the live page. --write replaces the stored copies and their fetch date; the
-expectations themselves are only ever edited by hand (tests/fixtures/pages/expectations.json).
+--fetch downloads each page once (2 s apart, INSIGHT's User-Agent), trims it as the corpus does and reports each
+expectation whose result changed. --write replaces the stored copies; the expectations are only edited by hand
+(tests/fixtures/pages/expectations.json).
 """
 from __future__ import annotations
 

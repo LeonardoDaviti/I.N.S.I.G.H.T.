@@ -1,8 +1,6 @@
-"""0275 (Stealth v10.33)'s routes: questions with citations on the search page (markx/questions.py). Included into
-markx/api.py's router (404 when Mark X is off, as every /api/markx path; 404 too while `search.answers` is off).
-
-POST /api/markx/questions {q}     the reader's question: its posts found and its Haiku question queued -> the view
-GET  /api/markx/questions/{id}    the view; the page polls it while `status` is "waiting"
+"""The routes of questions with citations on the search page (markx/questions.py), included into markx/api.py's
+router (404 when Mark X is off, and while `search.answers` is off). The page polls a question while its `status` is
+"waiting".
 """
 from __future__ import annotations
 

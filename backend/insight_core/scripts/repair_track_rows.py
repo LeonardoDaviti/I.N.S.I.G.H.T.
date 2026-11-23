@@ -1,14 +1,11 @@
-"""Make every topic track's rows one a thing again, once, by hand (Stealth v10.41).
+"""Make every topic track's rows one a thing again, once, by hand.
 
     python -m insight_core.scripts.repair_track_rows [--track <folder id>] [--no-ask] [--dry-run]
 
-Before v10.41 a track's report joined any row that shared a key value (a link, a hardware string) and joins followed
-through it, so one row absorbed reports that were not one thing. track_things.repair splits each such row by strong
-identity (a member thing merged into it is current again; its other reports move to a thing of their own, nothing
-is deleted), joins a split-off thing to an older row of its identity, merges every touched row's fields again, and
-asks each catalog post (track_things.CATALOG_ROWS rows of one kind only it gave) again under track-things-v3, whose
-answer folds those rows into one. A transaction a track; `--dry-run` rolls each back and prints the plan only.
-Prints one JSON line a track: rows before, splits, groups split off, rejoined, catalogs, asked.
+track_things.repair splits each row that absorbed reports of different things by strong identity (nothing is
+deleted), rejoins split-off things to an older row of their identity, merges fields again, and asks each
+catalog post again under track-things-v3. A transaction a track; `--dry-run` rolls each back and prints the
+plan. Prints one JSON line a track.
 """
 from __future__ import annotations
 

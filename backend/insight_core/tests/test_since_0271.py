@@ -1,8 +1,6 @@
-"""Issue 0271, "Since you looked": the reader's one look; News rows begun since it (in News's order) and rows a voice
-joined since it (a confirming report, a release row's benchmarks); each track's new things (track_brief.since_lines,
-tested with the quick look in test_track_briefer_0245).
-
-The pure part as a function; the routes over ASGI with a fake service; the look on the database (rolled back)."""
+""""Since you looked" (0271): the reader's one look; News rows begun since it and rows a voice joined since it; each
+track's new things (track_brief.since_lines, tested in test_track_briefer_0245). The pure part as a function; the
+routes over ASGI with a fake service; the look on the database (rolled back)."""
 from __future__ import annotations
 
 import sys

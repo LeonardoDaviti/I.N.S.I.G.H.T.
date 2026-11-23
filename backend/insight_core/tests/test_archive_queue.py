@@ -1,5 +1,5 @@
-"""Issue 0130: the archive queue (one Telegram, one Nitter archive at a time; Resume interrupted archives) and the
-normalised-address repair (E1) with its invariant. Commits rows: a _test database only."""
+"""The archive queue (0130: one Telegram, one Nitter archive at a time; Resume interrupted archives) and the
+normalised-address repair with its invariant. Commits rows: a _test database only."""
 from __future__ import annotations
 
 import asyncio

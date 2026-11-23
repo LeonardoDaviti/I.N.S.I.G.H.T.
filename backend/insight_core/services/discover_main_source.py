@@ -1,61 +1,10 @@
-"""Discover's "main source missing" (issue 0170, INSIGHT v10.15 D): the events your sources covered whose actor's own
-channel you don't hold, and the channel to follow.
+"""Discover's "main source missing" (0170): announced events (`events`) whose actor's own channel (`channel_of` of
+its own pages, `_own_pages`) you don't follow, judged `missing` or `wrong_section` (`judge`); a channel a switched-off
+source covers is never suggested (0200). Measured: plan/research/exp-2026-11-12/e5e7.
 
-Measured (plan/research/exp-2026-11-12/e5e7, E5): of company and person events with 2+ posts, 53-65% hold no post
-from the actor's own channel; the event's own links point to the actor's main post in 59 of 76; following the
-channel the finder or page watching found would have held it in ~47% (up to 68%).
-
-**Which events.** A current Mark X story of 2+ voices (its members' sources) in the last WITHIN_DAYS whose story type
-(markx/built.event_type over read-v3) is one an actor announces itself (ANNOUNCED): never a lawsuit, a regulator's
-action or a filing (`policy_legal`), a scoop or a leak (`leak_rumour`), nor commentary, digests or tutorials, which
-have no own announcement. A story with no read-v3 reading has no type and is never flagged. Its **actor** is the
-story's maker by identity (perspectives.Story.maker), else the org or person half its members or more name as subject
-or actor (read through the merges, entities not marked not_entity); and the readings must name it as the event's
-(`named_actor`): the first of a reading's main actors once or more, among them in half the readings or more (a
-reporter cited beside the actors, "..., an outlet reports", or an outlet the members only talk about, is not).
-
-**Its own page.** A page the members carry that is the actor's: its owner (`owner`: an X account, a site's
-registrable name, <name>.github.io's <name>) is one of the actor's names or the name of a thing the actor makes
-(`owned_by`: <product>.ai, @<product>ai), or it is an address of the actor or of a thing it makes (0138's
-mx_entity_addresses, release and work pages). A page counts as the event's own post when it is a member's own address
-(held by an aggregator or a repost), 2+ members link it, it is a short link post's main link, it is the story's
-source page (built's: the page members link when none of them is the original), or it is a post on X. Code hosts,
-model hubs and platforms are nobody's channel, and neither are Discover's places that are no source (references and
-docs, papers, records, apps, files) nor product, pricing and legal pages; a home page says who, not what.
-
-**Its channel.** An X post: the account (x.com/<user>). A Telegram post: the channel. A site's page: its SECTION, the
-first path segment of a page two or more deep (/blog/, /news/, /newsroom/; with a language segment before it,
-/en/blog/), else the site's root; the finder starts there, never at the home page. One channel an event: its best
-evidenced own page's (held, then the most linked, then a main link, then the source page).
-
-**The verdicts.** The story holds a post of the actor's (its source's name names the actor, or the source is the
-channel's account or a site source on the channel's site): nothing. Else, for each of its channels:
-  - no source on it: `missing`, follow the channel;
-  - an enabled source on it covers the page (an account; a page watch whose prefix the page is under; a feed that
-    holds posts in the page's section, or holds nothing yet): nothing for the whole event, its source is followed (a
-    page stored under an aggregator, or published before the follow, is ingestion's to fix);
-  - only a source switched off covers it: nothing (issue 0200, v10.17.1: the owner switched it off, so it is never
-    suggested again; before, `disabled`, surfaced, as was a switched-off source whose name is the actor's);
-  - enabled sources on the site, none covering it: `wrong_section`, a second section for the same site.
-A story's members are its posts from sources not switched off (repo_stories.suggestable_sql): a switched-off source's
-posts are no voice of an event here and never say the actor's own post is held.
-
-Measured before it was adopted (2026-11-12, a read-only run on the local census copy of Oct 5 - Nov 5, which has no
-read-v3: every type let through): 141 stories of 2+ voices, 18 events flagged in 17 rows, 16 plausible by E5's rows
-(a reporter as the actor, 1; a model card section, 1); the type gate removes the rest on the server.
-
-**The test.** When the jobs process makes the list (0206; was: on opening Discover, in the API), at most TESTS_PER_RUN
-channels shown without a test in CHECK_DAYS are tested, as Discover's follow test (services/discover_reads.py): an account through its source kind; a section
-through the feed finder on the section (where_linked.follow, the event's own pages as the linked articles: `holds`
-says how many of them a feed or page keeps), then, when it found neither a feed nor a page to watch, page watching's
-preview of the section with its prefix. Stored in system_settings `discover_main_source` with its date. Off with
-INSIGHT_DISCOVER_READS=0. Nothing is ever added here: Follow opens Add source on the channel (the feed finder, then page
-watching), as every add.
-
-Reads Mark X's tables, never writes them. Issue 0206: the list is made by the jobs process (`keep`, the view
-"main_source", when an open found it not kept for its inputs) and kept; the API sends the kept page, or the newest one
-while it is made again, and makes it only before the first build of its code. The tests run there too, never in the
-API.
+The jobs process builds and keeps the list (`keep`, 0206) and runs at most TESTS_PER_RUN follow tests
+(`test_channel`); the API only sends the kept page (`MainSource.served`). Reads Mark X's tables, never writes them;
+nothing is ever added here (Follow opens Add source).
 """
 from __future__ import annotations
 
@@ -69,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.markx import event_types, reading5   # 0212: reading5
+from insight_core.markx import event_types, reading5
 from insight_core.utils.addresses import PLATFORM_SITES, host_of, is_tweet, publication_of, site_of, tweet_author
 from insight_core.utils.discover_rules import CHECK_DAYS, PLACE_TESTS
 from insight_core.utils.entity_originals import CODE_SITES, MODEL_HUBS, RELEASE, WORK
@@ -82,17 +31,16 @@ KEY = "discover_main_source"      # system_settings: {"tests": {channel key: {la
 HIDE_PREFIX = "main:"             # a row's key in discover_hidden (Not interested), apart from Discover's own keys
 WITHIN_DAYS = 30
 MIN_VOICES = 2
-ANNOUNCED = event_types.ANNOUNCED  # the seam's list (0190): a happening its actor announces, never a lawsuit's
+ANNOUNCED = event_types.ANNOUNCED  # a happening its actor announces, never a lawsuit's
 ACTOR_TYPES = ("org", "person")
 ACTOR_ROLES = ("subject", "actor")
 ADDRESS_KINDS = (RELEASE, WORK)
-SHOWN = 20                        # rows returned
-POSTS_SHOWN = 5                   # an event's posts shown
+SHOWN = 20
+POSTS_SHOWN = 5
 TESTS_PER_RUN = 8
 CACHE_SECONDS = 600
-KINDS = ("missing", "wrong_section")   # 0200: "disabled" (a switched-off source surfaced) is no longer made
-# Hosts whose pages are a platform's, not an owner's (perspectives.PLATFORMS's, X and Telegram aside: their posts are
-# an account's), and the paper, code and model hosts: nobody's channel.
+KINDS = ("missing", "wrong_section")
+# platform, paper, code and model hosts: nobody's channel (X and Telegram posts are an account's)
 _PLATFORM_SITES = frozenset().union(*PLATFORM_SITES.values()) | {"medium.com", "substack.com", "arxiv.org",
                                                                    "piped.video", "linkedin.com"}
 _TELEGRAM_POST = re.compile(r"^[A-Za-z0-9_]{4,}$")
@@ -103,9 +51,9 @@ _TELEGRAM_POST = re.compile(r"^[A-Za-z0-9_]{4,}$")
 @dataclass(frozen=True)
 class Channel:
     key: str                  # x.com/<user>, t.me/<channel>, or <publication><prefix> (example.com/blog/)
-    kind: str                 # account | site
-    platform: str             # x | telegram | site
-    url: str                  # what Follow opens Add source on: the account, or the section's page
+    kind: str
+    platform: str
+    url: str                  # what Follow opens Add source on
     prefix: Optional[str] = None      # a site's section ("/blog/", "/" for the site's root)
     site: str = ""
 
@@ -122,42 +70,38 @@ def segments(url: str) -> List[str]:
     return [s for s in urllib.parse.urlparse(url).path.split("/") if s]
 
 
-# 0196: a first segment that only groups (a forum's /c/<category>/, a site's /category/<name>/): the section is the
-# group's, one segment deeper (measured: a forum's whole /c/ was proposed for its announcements category).
+# a first segment that only groups (/c/<category>/): the section is one segment deeper (0196)
 CONTAINER_SEGMENTS = frozenset({"c", "category", "categories", "tag", "tags"})
-# A first segment that is one thread or one item, never a section (a forum topic /t/<slug>/<id>).
+# a first segment that is one thread or item, never a section (/t/<slug>/<id>)
 THREAD_SEGMENTS = frozenset({"t", "topic", "topics", "thread", "threads", "d", "discussion", "discussions"})
-# Hosts that are help, docs, status or file servers: never a channel (0196: help., docs. and cdn. pages were proposed).
+# help, docs, status or file hosts: never a channel (0196)
 NOT_CHANNEL_HOSTS = re.compile(r"^(help|support|docs|doc|developer-docs|cdn|static|assets|status|download|downloads|"
                                r"files|media|img|images|api|console|app|platform|dashboard|login|accounts|store|shop)\.")
 
 
 def section_of(url: str) -> str:
-    """A page's section prefix: "/<first segment>/" of a page two or more segments deep whose first segment is no date
-    or number (/blog/<slug>, /newsroom/2026/10/<slug>), a language's with it (/en/blog/), else "/" (a page at the
-    site's root, a site by date). 0196: a grouping segment's group with it (/c/announcements/)."""
+    """A page's section prefix: /blog/ of /blog/<slug> (no date or number), /en/blog/, /c/announcements/; else "/"."""
     segs = [s.lower() for s in segments(url)]
     lang = segs[:1] if segs and LANGUAGE.match(segs[0]) and len(segs) >= 3 else []
     rest = segs[len(lang):]
-    if rest and rest[0] in CONTAINER_SEGMENTS:   # its group (/c/announcements/), never the container alone
+    if rest and rest[0] in CONTAINER_SEGMENTS:   # never the container alone
         return "/" + "/".join([*lang, rest[0], rest[1]]) + "/" if len(rest) >= 2 and not NUMBERISH.match(rest[1]) else "/"
     if len(rest) >= 2 and not NUMBERISH.match(rest[0]):
         return "/" + "/".join([*lang, rest[0]]) + "/"
     return "/"
 
 
-# ---- the company's news section (0241: one rule; official channels' candidates and proof, Discover's card lead) ----
+# ---- the company's news section (0241: one rule for official channels and Discover's card lead) ----
 
-# A path segment, or one of its words (news-events, press_all), that announces: a newsroom, news, a blog, press,
-# releases, changelogs, an agency's alerts. Segments that start with news or press (newsevents, pressreleases) too.
+# a path segment, or one of its words (news-events), that announces; segments starting with news or press too
 ANNOUNCING_WORDS = frozenset({
     "news", "newsroom", "blog", "blogs", "press", "pressroom", "announcement", "announcements", "release", "releases",
     "update", "updates", "changelog", "changes", "whats", "research", "engineering", "stories", "posts", "articles",
     "insights", "media", "advisories", "alerts", "bulletins", "statements"})
-# A host's first label that announces by itself (newsroom.<site>, blog.<site>): its root is the section.
+# a host's first label that announces by itself (blog.<site>): its root is the section
 ANNOUNCING_HOSTS = frozenset({"news", "newsroom", "press", "pressroom", "blog", "blogs", "stories", "engineering",
                               "updates", "changelog"})
-# An investor-relations host or section: its news announces, but the newsroom beside it comes first.
+# investor relations announces, but a newsroom beside it comes first
 IR_WORDS = frozenset({"ir", "investor", "investors", "investorrelations", "investor-relations"})
 NEWSROOM, INVESTORS, NOTHING = 2, 1, 0
 
@@ -169,8 +113,7 @@ def _seg_announces(seg: str) -> bool:
 
 
 def _says(url: str, *, whole: bool) -> Tuple[bool, bool]:
-    """(it announces, it is investor relations) by its host's first label and its path: the whole path (a section's or
-    a feed's own address), or only the section a page sits in (an item's page: its slug says nothing)."""
+    """(announces, is investor relations) by host label and the whole path, or (not `whole`) the page's section."""
     full = _full(url) or ""
     host = host_of(full).removeprefix("www.")
     label = host.split(".")[0] if host and host != site_of(host) else ""   # a site called newsroom.<tld> is no section
@@ -184,17 +127,9 @@ def _says(url: str, *, whole: bool) -> Tuple[bool, bool]:
 
 
 def announcing(url: str, *, address: Optional[str] = None, items: Sequence[str] = (), via: Optional[str] = None) -> int:
-    """How a site's section announces: NEWSROOM (2) a newsroom, news, blog, press, releases or changelog section by
-    its host or its path; INVESTORS (1) the same of an investor-relations host or section (a company's newsroom beside
-    it comes first); NOTHING (0) a section that announces nothing (a plans, prompts, solutions, docs, resources page,
-    a shop's category). The one rule for "the company's news section" (official channels' candidates and proof;
-    Discover's card lead reads it the same way: `announcing(url)`).
-
-    A section whose path says nothing announces by the dated stream its test read returned (`address`: the address
-    the read resolved, `items`: its dated items' pages, `via`: feed | page | kind): the address announces by its path
-    (a press-releases feed, a newsroom page), or half its items or more sit in an announcing section, or it is a feed
-    whose items sit under the section itself (a site's /p/ posts). The event's own page under a section is no proof:
-    a product's page sits under its product section. Pure."""
+    """NEWSROOM, INVESTORS or NOTHING for a site's section, by its path, else by its test read (`address` resolved,
+    `items` its dated pages, `via`): the address's path, half the items in announcing sections, or a feed's items
+    under the section itself. Pure."""
     ann, ir = _says(url, whole=True)
     if not ann and address:
         a_ann, a_ir = _says(address, whole=True)
@@ -213,8 +148,7 @@ def announcing(url: str, *, address: Optional[str] = None, items: Sequence[str] 
 
 
 def channel_of(url: str) -> Optional[Channel]:
-    """The channel a page of an actor's is published in, or None (a home page, a platform's page, a paper, code or a
-    model hub)."""
+    """The channel a page is published in, or None (a home page, platform, paper, code host, model hub, reference)."""
     full = _full(url)
     if not full:
         return None
@@ -231,8 +165,7 @@ def channel_of(url: str) -> Optional[Channel]:
     if (not segs or site in _PLATFORM_SITES or site in CODE_SITES or site in MODEL_HUBS or host.endswith(".hf.space")
             or any(test(full) for _, test in PLACE_TESTS) or REFERENCE.search(_path(full)) or LEGAL.search(_path(full))
             or NOT_CHANNEL_HOSTS.match(host.removeprefix("www.")) or segs[0].lower() in THREAD_SEGMENTS):
-        return None   # no source (Discover's places: references, papers, records, apps, files; a product, pricing or
-        # legal page; 0196: a help, docs or file host's page, one forum thread)
+        return None
     prefix = section_of(full)
     pub = publication_of(host)
     parsed = urllib.parse.urlparse(full)
@@ -247,9 +180,9 @@ class Src:
     id: str
     name: str
     enabled: bool
-    kind: str                         # post_links.source_kind: site, x, telegram, reddit, hn, saved, ...
-    account: Optional[str] = None     # repo_stories.source_account
-    host: str = ""                    # its address's host
+    kind: str                         # post_links.source_kind
+    account: Optional[str] = None
+    host: str = ""
     watch: Optional[str] = None       # a page watch's prefix (its listing page's path when unset); None: a feed
     sections: FrozenSet[Tuple[str, str]] = frozenset()   # (publication, section) of its stored posts
 
@@ -260,8 +193,7 @@ def page_section(url: str) -> Tuple[str, str]:
 
 
 def on_channel(src: Src, ch: Channel) -> bool:
-    """Whether a source is on the channel: its account, or a site source whose address is on the channel's site (a
-    link blog's posts at other sites' addresses never make it theirs)."""
+    """Whether a source is on the channel: its account, or a site source whose own address is on the channel's site."""
     if ch.kind == "account":
         return bool(src.account) and src.account == ch.key
     if src.kind != "site":                       # an aggregator (hn, saved) is never a site's channel
@@ -271,7 +203,7 @@ def on_channel(src: Src, ch: Channel) -> bool:
 
 def covers(src: Src, ch: Channel, page: str) -> Optional[bool]:
     """Whether a source on the channel carries the page: an account always; a page watch when the page is under its
-    prefix on its host; a feed when it holds posts in the page's section (None: it holds nothing yet, unknown)."""
+    prefix; a feed when it holds posts in the page's section (None: it holds nothing yet)."""
     if ch.kind == "account":
         return True
     pub, section = page_section(page)
@@ -307,9 +239,9 @@ class Event:
     member_sources: Set[str]
     actor_sources: Set[str]           # the sources whose name is the actor's
     posts: List[Dict[str, Any]]
-    things: List[str] = field(default_factory=list)   # 0196: the products its members name as subject (most first)
-    addresses: Dict[str, List[str]] = field(default_factory=dict)   # 0196: {thing or actor: its code addresses (0138)}
-    mk: Any = field(default=None, repr=False, compare=False)          # 0196: the story's Makers (owned_by asks it)
+    things: List[str] = field(default_factory=list)   # the products its members name as subject (most first)
+    addresses: Dict[str, List[str]] = field(default_factory=dict)   # {thing or actor: its code addresses}
+    mk: Any = field(default=None, repr=False, compare=False)          # the story's Makers
 
 
 def _verdict(ch: Channel, pages: Sequence[str], sources: Sequence[Src]) -> Tuple[Optional[str], Optional[Src]]:
@@ -318,7 +250,7 @@ def _verdict(ch: Channel, pages: Sequence[str], sources: Sequence[Src]) -> Tuple
     if not on:
         return "missing", None
     covering = [s for s in on if any(covers(s, ch, p) is not False for p in pages)]
-    if covering:   # followed, or switched off by the owner (0200): never suggested again
+    if covering:   # followed, or switched off by the owner: never suggested again
         return None, None
     enabled = [s for s in on if s.enabled]
     if enabled:
@@ -360,7 +292,7 @@ def judge(events: Sequence[Event], sources: Dict[str, Src]) -> List[Dict[str, An
         verdicts = [(ch, owns, *_verdict(ch, [o.url for o in owns], srcs)) for ch, owns in channels.values()]
         if any(kind is None for _, _, kind, _ in verdicts):
             continue                                         # its source is followed
-        if verdicts:                                         # the main post's channel: the best evidenced
+        if verdicts:                                         # the best evidenced own page's channel
             ch, owns, kind, src = verdicts[0]
             add(kind, ch, src, ev, owns[0])
     rows = []
@@ -371,7 +303,7 @@ def judge(events: Sequence[Event], sources: Dict[str, Src]) -> List[Dict[str, An
         g["latest"] = g["events"][0]["first_at"] if g["events"] else None
         rows.append(g)
     rows.sort(key=lambda g: g["key"])
-    rows.sort(key=lambda g: g["latest"] or "", reverse=True)      # stable: the latest first within a count
+    rows.sort(key=lambda g: g["latest"] or "", reverse=True)
     rows.sort(key=lambda g: -len(g["events"]))
     return rows
 
@@ -433,16 +365,16 @@ def _stories(cur: Any, since: datetime) -> Dict[str, Dict[str, Any]]:
                       FROM mx_story_posts sp JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
                       JOIN posts p ON p.id = sp.post_id JOIN sources so ON so.id = p.source_id
                      WHERE sp.valid_to IS NULL AND sp.role = 'member' AND s.first_at >= %s
-                       AND {suggestable_sql("p.source_id")}""", (since,))   # 0200: a switched-off source's are no voice
+                       AND {suggestable_sql("p.source_id")}""", (since,))   # a switched-off source's are no voice
     rows = cur.fetchall()
-    types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
+    types = event_types.types_of(cur, [r[1] for r in rows])
     out: Dict[str, Dict[str, Any]] = {}
     for sid, pid, src, at, headline, first_at, platform, handle in rows:
         et, origin = types[pid]
         s = out.setdefault(sid, {"headline": headline or "", "first_at": first_at, "posts": {}})
         if pid not in s["posts"] or et is not None:
             s["posts"][pid] = built.Post(id=pid, source=src, at=at, event_type=et, origin=origin,
-                                         kind=source_kind(platform, handle))   # a saved page is no voice (0189)
+                                         kind=source_kind(platform, handle))   # a saved page is no voice
     return out
 
 
@@ -472,8 +404,7 @@ def _actor(st: Any, book: Any) -> Optional[str]:
 
 
 def owner(u: str) -> Optional[str]:
-    """Who a page (perspectives.nurl's form) belongs to: perspectives.owner, but a site by its registrable name
-    (site_of): a writer on a hosting platform (<name>.github.io) is <name>, a co.uk-like site its first label."""
+    """Who a page belongs to: perspectives.owner, but a site by its registrable name's first label."""
     from insight_core.markx import perspectives as P
     host = u.split("/", 1)[0]
     site = site_of(host)
@@ -483,8 +414,7 @@ def owner(u: str) -> Optional[str]:
 
 
 def owned_by(mk: Any, o: Optional[str], actor: str) -> bool:
-    """Whether an owner (a handle, a site's name) is the actor's: one of its names (Makers.is_maker), or the name of a
-    thing the actor makes (<product>.ai, @<product>ai: the product's maker)."""
+    """Whether an owner is the actor: one of its names, or a thing it makes (<product>.ai, @<product>ai)."""
     from insight_core.markx import names as N
     if not o:
         return False
@@ -498,9 +428,7 @@ def owned_by(mk: Any, o: Optional[str], actor: str) -> bool:
 
 
 def named_actor(actors: Sequence[Sequence[str]], is_actor: Callable[[str], bool]) -> bool:
-    """Whether the readings name the actor as the event's: the first of its main actors in one reading or more, and
-    among them in half the readings or more (`actors`: each read member's main.actors; a reporter cited beside the
-    actors, or a subject the members only talk about, is not)."""
+    """Whether the readings' main actors name the actor first in one or more and at all in half or more."""
     named = [any(is_actor(x) for x in xs) for xs in actors]
     return any(xs and is_actor(xs[0]) for xs in actors) and sum(named) * 2 >= len(actors) > 0
 
@@ -548,12 +476,11 @@ def _own_pages(st: Any, actor: str, addresses: Set[str]) -> List[OwnPage]:
 
 
 def _named(cur: Any, mk: Any) -> Dict[str, Tuple[Set[str], Set[str]]]:
-    """{source: (the entity roots its name names, with their ancestors; its name's handle forms)}: a source is an
-    actor's own when the actor is among them (perspectives.Makers.author_is, read once for every source)."""
+    """{source: (the entity roots its name names, with ancestors; its name's handle forms)}."""
     from insight_core.markx import names as N
     cur.execute("SELECT id::text, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) FROM sources")
     rows = cur.fetchall()
-    mk.book.prime(keys=[N.key(name) for _sid, name in rows])   # v10.17 (0186): the sources' names, one read
+    mk.book.prime(keys=[N.key(name) for _sid, name in rows])   # every source's name in one read
     out = {}
     for sid, name in rows:
         r = mk.of_name(name)
@@ -566,9 +493,7 @@ Picked = Tuple[Dict[str, Tuple[Dict[str, Any], str, int]], int]
 
 
 def pick(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, min_voices: int = MIN_VOICES) -> Picked:
-    """The window's stories of `min_voices`+ voices whose event type is announced ({story: (story, type, voices)}) and
-    how many stories of that many voices were checked: all `events` reads of the stories besides their texts and
-    mentions. 0196: official channels take one voice (the trigger was a single forum post)."""
+    """({story: (story, type, voices)} of the announced `min_voices`+ stories, how many such stories were checked)."""
     from insight_core.markx import built
     stories = _stories(cur, now - timedelta(days=within))
     picked: Dict[str, Tuple[Dict[str, Any], str, int]] = {}
@@ -589,7 +514,7 @@ PRODUCT_TYPES = ("model", "product", "software", "dataset", "project")
 
 
 def _things(st: Any, book: Any) -> List[str]:
-    """0196: the products (entity_facts.PRODUCTS' types) the members name as subject or actor, the most named first."""
+    """The products the members name as subject or actor, the most named first."""
     from insight_core.markx import schemas
     c: Counter = Counter()
     for i in st.ids:
@@ -605,17 +530,15 @@ def _things(st: Any, book: Any) -> List[str]:
 
 def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Optional[Picked] = None,
            bare: bool = False) -> Tuple[List[Event], int]:
-    """The events to judge (the module's rule) and how many stories of 2+ voices were checked. `picked`: `pick`'s
-    answer, when the caller has it. 0196 (`bare`, official channels): also the events with no actor the readings name,
-    or with no own page and no source of the actor's (their actor is the web search's to find), each with its things
-    and their code addresses."""
+    """(the events to judge, stories checked). `bare` (official channels): also events with no named actor or no own
+    page, with their things' code addresses."""
     from insight_core.markx import built, identity, schemas
     from insight_core.markx import entity_addresses as EA
     from insight_core.markx import perspectives as P
     picked, checked = picked if picked is not None else pick(cur, now, within=within)
     if not picked:
         return [], checked
-    book = identity.lazy_book(cur)   # v10.17 (0186): what the stories ask of the book, not the whole book
+    book = identity.lazy_book(cur)   # only what the stories ask, not the whole book
     sts = built.stories_of(cur, picked, book=book)
     actors: Dict[str, str] = {}
     for sid, st in sts.items():
@@ -626,7 +549,7 @@ def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Option
         from insight_core.markx import names as N, tasks
         ids = sorted({i for sid in actors for i in sts[sid].ids})
         read = {**tasks.readings(cur, ids, "read-v2"), **tasks.readings(cur, ids, "read-v3")}
-        if reading5.is_on(cur):   # 0212: ent-v5's main actors first while its switch is on
+        if reading5.is_on(cur):   # ent-v5's main actors first while its switch is on
             read.update(tasks.readings(cur, ids, reading5.GUIDE))
         for sid, a in list(actors.items()):
             st = sts[sid]
@@ -640,7 +563,7 @@ def events(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, picked: Option
                 del actors[sid]
     if not actors and not bare:
         return [], checked
-    # the actor's and its things' own addresses (0138), read through the merges
+    # the actor's and its things' own addresses, read through the merges
     things: Dict[str, Set[str]] = defaultdict(set)
     for sid, a in actors.items():
         st = sts[sid]
@@ -708,9 +631,7 @@ def page(found: Dict[str, Any], tested: Dict[str, Any], hidden: Set[str], *, lim
 
 async def test_channel(http: Any, registry: Any, ch: Dict[str, Any], pages: Sequence[str], *, limiter: Any = None,
                        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> Dict[str, Any]:
-    """A channel's follow test: {label (feed | page | other_feed | headlines | blocked), holds (of `pages`: the most a
-    feed or page found keeps), feeds [{url, title, holds}], pages [{url, prefix, found, holds}], preview {prefix, found,
-    items [{url, title}]} (page watching of the section, when the finder found neither), at}."""
+    """A channel's follow test: {label, holds (most of `pages` a found feed or page keeps), feeds, pages, preview}."""
     from insight_core.ingestion import where_linked
     from insight_core.ingestion.gates import HostLimiter
     from insight_core.ingestion.kinds import page_watch
@@ -749,7 +670,7 @@ async def test_channel(http: Any, registry: Any, ch: Dict[str, Any], pages: Sequ
 
 
 def to_test(answer: Dict[str, Any], tested: Dict[str, Any], now: datetime, *, limit: int = TESTS_PER_RUN) -> List[Dict[str, Any]]:
-    """The shown rows' channels to test: missing or wrong-section ones without a test in CHECK_DAYS, the first `limit`."""
+    """The shown rows' channels without a test in CHECK_DAYS, the first `limit`."""
     out, seen = [], set()
     for r in answer["rows"]:
         ch = r["channel"]
@@ -761,10 +682,7 @@ def to_test(answer: Dict[str, Any], tested: Dict[str, Any], now: datetime, *, li
 
 
 class MainSource:
-    """The list (`found`: the scan, the one path) and its tests over the web (`run_tests`). Issue 0206: nothing kept in
-    the process (each API process held its own copy, and an open that found it stale made it again: 17-20 s on the
-    server); the page is kept (markx/kept_pages.py), built by the jobs process (`keep`), and the API sends it
-    (`served`)."""
+    """The list (`found`) and its web tests (`run_tests`); nothing kept in the process, the page is in kept_pages."""
 
     def __init__(self, db_url: str, *, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
         self.db_url, self.clock = db_url, clock
@@ -786,9 +704,8 @@ class MainSource:
         return page(found, tested, hidden, limit=limit)
 
     def kept_found(self) -> Dict[str, Any]:
-        """The list as kept (`found`'s JSON, with when it was made: `built_at`): the one kept for its inputs
-        (`page_inputs`) within KEPT_FOR; else the newest kept while the jobs process makes it again (wanted here);
-        else, before the first build of this code, made here as before and kept."""
+        """The kept list (`found` with `built_at`): the one kept for its inputs within KEPT_FOR; else the newest kept,
+        and the jobs process is asked to rebuild; else (before this code's first build) made here and kept."""
         import json
         from insight_core.db import database as db
         from insight_core.markx import jobs, kept_pages
@@ -809,8 +726,7 @@ class MainSource:
         return json.loads(got)
 
     def served(self, *, limit: int = SHOWN) -> Dict[str, Any]:
-        """GET /api/discover/main-source: the kept list (`kept_found`) with the tests and the hidden rows read now (an
-        owner's Not interested shows at once) and `built_at`."""
+        """GET /api/discover/main-source: the kept list with the tests and hidden rows read now, and `built_at`."""
         found = self.kept_found()
         return {"success": True, **self.answer(limit=limit, found=found), "built_at": found.get("built_at")}
 
@@ -837,24 +753,21 @@ class MainSource:
         return len(todo)
 
 
-# ---- the kept page (issue 0206) --------------------------------------------------------------------------------
+# ---- the kept page ---------------------------------------------------------------------------------------------
 
 PAGE = "main_source"
-KEPT_FOR = timedelta(seconds=CACHE_SECONDS)   # what the stamp leaves out (readings between runs, the clock): this old
+KEPT_FOR = timedelta(seconds=CACHE_SECONDS)   # bounds what the stamp leaves out (readings between runs, the clock)
 
 
 def kept_key() -> str:
-    """The kept list's key: the code (a list another code made is never sent, not even as the newest)."""
+    """The kept list's key: the code stamp (a list another code made is never sent)."""
     from insight_core.markx import kept_pages
     return f"found@{kept_pages.code_stamp()[:16]}"
 
 
 def page_inputs(cur: Any) -> List[Any]:
-    """What the list (the scan) is made from that changes between the jobs' builds, in a few indexed reads: the newest
-    decision run (its stories, memberships and readings) and the sources as the list reads them (address, kind, name,
-    enabled: never their updated_at, which every fetch moves). A worker's readings between runs and the clock are
-    KEPT_FOR's (the list was cached CACHE_SECONDS before, per process). The tests and the hidden rows are read with
-    every answer."""
+    """The list's inputs that change between builds: the newest decision run and the sources as the list reads them
+    (never updated_at, which every fetch moves)."""
     from insight_core.markx import repo
     last = repo.last_run(cur)
     cur.execute("""SELECT (SELECT count(*) || ':' || md5(COALESCE(string_agg(
@@ -874,9 +787,7 @@ def kept_missing(cur: Any, now: datetime) -> bool:
 
 def keep(db_url: str, *, http: Any = None, registry: Any = None,
          clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> Dict[str, Any]:
-    """The jobs process (markx/jobs.py, the view "main_source"): the list made (`found`, its inputs read before) and
-    kept; then the shown channels due a test tested over the web (off with INSIGHT_DISCOVER_READS=0), which the next
-    answer reads."""
+    """The jobs process's build: the list made and kept, then the shown channels due a test tested."""
     from insight_core.db import database as db
     from insight_core.markx import kept_pages
     from insight_core.services import discover_reads

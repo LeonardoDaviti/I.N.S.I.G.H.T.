@@ -2,12 +2,8 @@ import * as Dialog from '@radix-ui/react-dialog';
 import type { ReactNode } from 'react';
 import { Button } from '../ui';
 
-/**
- * A confirmation for a consequential action (a forced run, a delete). Modal,
- * centred, an `alertdialog`; focus starts on Cancel so Enter never confirms by
- * accident. The overlay and panel fade/scale in under 200ms with a strong
- * ease-out, and only fade when the user prefers reduced motion (spec §F.7).
- */
+/** A confirmation for a consequential action (a forced run, a delete): an `alertdialog` whose focus starts on Cancel,
+ *  so Enter never confirms by accident. Fades/scales in under 200ms; only fades under reduced motion. */
 export default function ConfirmDialog({
   open,
   title,
@@ -39,7 +35,7 @@ export default function ConfirmDialog({
         >
           <Dialog.Title className="flex items-start gap-2.5 text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg">
             {destructive ? (
-              // Monochrome destructive mark: an inverted block with ×, never a hue.
+              // monochrome destructive mark: an inverted block with ×, never a hue
               <span aria-hidden="true" className="mt-[0.1875rem] inline-flex h-[1.125rem] w-[1.125rem] shrink-0 items-center justify-center rounded-sm bg-inverse text-[0.8125rem] leading-none text-inverse-fg">
                 ×
               </span>
