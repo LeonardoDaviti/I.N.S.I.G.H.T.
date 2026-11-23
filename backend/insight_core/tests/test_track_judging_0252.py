@@ -34,7 +34,10 @@ class Verdicts(unittest.TestCase):
                  "We describe how our adapters translate tool calls between the planner and the sandbox, with tests.")
 
     def check(self, answer, q=None):
-        return validate.check("track", dict({"id": "x", "subtopic": None}, **answer), self.Q if q is None else q)[1]
+        fit = {"subject": "the post", "fits": answer["in"], "matches": "tools and methods" if answer["in"] else None,
+               "excluded": None}   # v10.41 (track-v3): a stated fit that agrees with `in`
+        return validate.check("track", dict({"id": "x", "subtopic": None}, **fit, **answer),
+                              self.Q if q is None else q)[1]
 
     def test_a_why_that_names_the_post_is_a_verdict(self):
         self.assertIsNone(self.check({"in": True, "confidence": 0.8, "why": "Harness adapters for tool calls, with tests."}))
@@ -75,7 +78,7 @@ class Verdicts(unittest.TestCase):
         new80 = {"post_id": "b", "confidence": 0.8, "at": NOW}
         new70 = {"post_id": "c", "confidence": 0.7, "at": NOW}
         self.assertEqual([it["post_id"] for it in sorted([old95, new70, new80], key=tracks.discover_order(cal))],
-                         ["b", "a", "c"])
+                         ["b", "c", "a"], "v10.41: by week first, then by band within the week")
 
 
 @requires_test_db
@@ -169,7 +172,8 @@ class NoVerdictNoOut(_Judging):
                       text="Our adapters translate tool calls between the planner and the sandbox, with tests.")
         self.plan()
         tid = self.row(p)["task"]
-        junk = {"id": "x", "in": False, "confidence": 0.0, "subtopic": None, "why": "Not applicable to this track."}
+        junk = {"id": "x", "subject": "a post", "fits": False, "matches": None, "excluded": None, "in": False,
+                "confidence": 0.0, "subtopic": None, "why": "Not applicable to this track."}
         status, body = self.answer((tid, junk))
         self.assertEqual((status, body["valid"]), (200, 0), body)
         self.assertEqual(self.row(p)["status"], "open", "asked once more")
@@ -217,13 +221,13 @@ class GuideUpgrade(_Judging):
         with mock.patch.object(tracks, "REASK_PER_DAY", 2):
             self.plan(days=None)
             first = {p: self.row(p) for p in (new, mid, old, ancient, labelled)}
-            self.assertEqual([p for p, r in first.items() if r["guide"] == "track-v2"], [new, mid], "newest first, 2")
+            self.assertEqual([p for p, r in first.items() if r["guide"] == "track-v3"], [new, mid], "newest first, 2")
             self.plan(days=None)
             self.assertEqual(self.row(old)["guide"], "track-v1", "the day's cap holds")
             self.cur.execute("UPDATE mx_track_items SET reasked_at = reasked_at - interval '25 hours' WHERE track_id = %s",
                              (self.folder,))
             self.plan(days=None)
-        self.assertEqual(self.row(old)["guide"], "track-v2", "the next day")
+        self.assertEqual(self.row(old)["guide"], "track-v3", "the next day")
         self.assertEqual(self.row(ancient)["guide"], "track-v1", f"older than {tracks.REASK_DAYS} days: kept as is")
         self.assertEqual(self.row(labelled)["guide"], "track-v1", "the owner's label decides: not asked")
         r = self.row(new)
@@ -236,7 +240,7 @@ class GuideUpgrade(_Judging):
         self.cur.execute("SELECT c.answer->>'why' FROM mx_calls c WHERE c.task_id = %s", (r["asked_before"][0],))
         self.assertEqual(self.cur.fetchone()[0], self.OLD_WHY, "kept")
         got = self.why(new)
-        self.assertEqual((got["guide"], got["waiting_again"]), ("track-v2", False))
+        self.assertEqual((got["guide"], got["waiting_again"]), ("track-v3", False))
         with mock.patch.object(tracks, "REASK_PER_DAY", 100):
             self.cur.execute("UPDATE mx_track_items SET reasked_at = reasked_at - interval '3 days' WHERE track_id = %s",
                              (self.folder,))
@@ -248,23 +252,25 @@ class DiscoverOrder(_Judging):
     """(4) Discover shows the newest fits first within a band, the cap the same."""
 
     def test_newest_first_within_bands(self):
-        old = [self.post(title=f"Old sure {k}", source=self.other, at=NOW - (200 + k) * DAY) for k in range(3)]
-        fresh = self.post(title="Fresh fit", source=self.other, at=NOW - DAY)
-        unsure = self.post(title="Fresh unsure", source=self.other)
-        for p in old + [fresh, unsure]:
+        old = [self.post(title=f"Old sure {k}", source=self.other, at=NOW - 7 * (k + 1) * DAY) for k in range(3)]
+        ancient = self.post(title="Ancient sure", source=self.other, at=NOW - 200 * DAY)
+        fresh = self.post(title="Fresh fit", source=self.other, at=NOW)
+        unsure = self.post(title="Fresh unsure", source=self.other, at=NOW)
+        for p in old + [ancient, fresh, unsure]:
             self.vector(p, NEAR)
-        self.plan()
-        for p in old:
+        self.plan(days=None)
+        for p in old + [ancient]:
             self.judge(p, verdict(conf=0.95))
         self.judge(fresh, verdict(conf=0.8))
         self.judge(unsure, verdict(conf=0.65))
         with mock.patch.object(tracks, "DISCOVER_ITEMS", 2):
             disc = [it["post_id"] for it in self.page()["discover"]]
-            self.assertEqual(disc, [fresh, old[0]])
+            self.assertEqual(disc, [fresh, unsure], "v10.41: this week's first, by band within it")
             got = self.why(fresh)
             self.assertEqual((got["position"], got["of"], got["shown"]), (1, 5, True))
-            got = self.why(unsure)
+            got = self.why(old[2])
             self.assertEqual((got["position"], got["shown"]), (5, False))
+            self.assertEqual(self.why(ancient)["state"], "checking", "v10.41: older than the last weeks: the check's")
 
 
 class SeveralTracks(_Judging):

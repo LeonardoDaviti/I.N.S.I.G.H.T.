@@ -12,7 +12,7 @@ import { plural } from '../../lib/format';
 import TrackSheet from './TrackSheet';
 import TrackScout from './TrackScout';
 import {
-  baseline, foundByLine, isNew, joinLine, newSince, precisionLine, rankWords, shadowLine, stateWords, suggestionLine, footerLine,
+  baseline, discoverLine, foundByLine, isNew, joinLine, newSince, precisionLine, rankWords, shadowLine, stateWords, suggestionLine, footerLine,
   toolLine, trackNewLine, whyLine,
 } from './trackWords';
 import { bylineText } from '../../lib/byline';
@@ -114,6 +114,26 @@ function Suggestions({ page }: { page: TrackPage }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** v10.41: the ✓ examples the judge, asked against the description alone, says do not fit: shown, never removed. */
+function MisleadingExamples({ page }: { page: TrackPage }) {
+  const bad = page.examples.misleading ?? [];
+  if (!bad.length) return null;
+  return (
+    <section aria-label="Examples that may mislead the judge" className="mb-4 rounded border border-line px-3 py-2">
+      <p className="text-[0.8125rem] font-semibold text-fg-2">These examples may mislead the judge</p>
+      <p className="text-[0.75rem] text-fg-3">You marked them ✓, but the description doesn’t ask for them; the judge follows your examples. Undo the ✓ or widen the description.</p>
+      <ul>
+        {bad.map((e) => (
+          <li key={e.post_id} className="text-[0.8125rem] leading-6 text-fg-2 [overflow-wrap:anywhere]">
+            <TextLink to={`/posts/${encodeURIComponent(e.post_id)}`}>{e.title || '(no title)'}</TextLink>
+            {e.why ? <span className="text-fg-3"> — {e.why}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -276,6 +296,7 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
         </p>
         <Button size="sm" variant="ghost" className="mt-1 text-[0.75rem]" onClick={() => setEditing(true)}>edit the topic</Button>
       </div>
+      <MisleadingExamples page={page} />
       <Suggestions page={page} />
       <Tools tools={page.tools ?? []} shadow={page.shadow?.tools} />
       {page.sections.some((s) => s.id) && shadowLine(page.shadow?.subtopics) ? (
@@ -294,7 +315,7 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
         <h2 className="border-b border-line pb-1 text-[0.8125rem] font-semibold text-fg-2">
           Discover <span className="font-normal text-fg-3">· {counts.discover ?? 0}</span>
         </h2>
-        <p className="mt-1 text-[0.75rem] text-fg-3">Posts from your other sources that look like this track. ✓ takes one in; ✗ teaches it what doesn’t belong.</p>
+        <p className="mt-1 text-[0.75rem] text-fg-3">{discoverLine(counts, page.discover_per_week, page.discover_weeks)}</p>
         {page.discover.length ? <ul>{page.discover.map((it) => <Row key={it.post_id} folderId={folderId} item={it} discover />)}</ul>
           : <p className="mt-2 text-[0.8125rem] text-fg-2">Nothing waiting.</p>}
       </section>

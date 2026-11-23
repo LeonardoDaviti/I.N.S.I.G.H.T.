@@ -3,7 +3,8 @@ import { request } from '../lib/request';
 import type { Byline } from '../lib/byline';
 
 export type TrackLabel = 'in' | 'out';
-export type TrackPlace = 'track' | 'joined' | 'discover' | 'out';
+/** v10.41: `checked_out` (the blind check said out) and `checking` (past its week's review lane, the check decides). */
+export type TrackPlace = 'track' | 'joined' | 'discover' | 'checked_out' | 'checking' | 'out';
 
 export interface TrackItem {
   post_id: string;
@@ -104,10 +105,17 @@ export interface TrackPage {
   };
   sections: TrackSection[];
   discover: TrackItem[];
-  counts: Partial<Record<'track' | 'joined' | 'discover' | 'out' | 'waiting' | 'judged', number>>;
+  /** v10.41: each week's review lane (the rest the blind check decides). */
+  discover_per_week?: number;
+  discover_weeks?: number;
+  counts: Partial<Record<'track' | 'joined' | 'discover' | 'checked_out' | 'checking' | 'out' | 'waiting' | 'judged', number>>;
   calibration: TrackCalibration | null;
   suggestions: TrackSuggestion[];
-  examples: { in: Array<{ post_id: string; title: string }>; out: Array<{ post_id: string; title: string }> };
+  examples: {
+    in: Array<{ post_id: string; title: string }>; out: Array<{ post_id: string; title: string }>;
+    /** v10.41: ✓ examples the judge, asked against the description alone, says do not fit (flagged, never removed). */
+    misleading?: Array<{ post_id: string; title: string; why: string | null; subject?: string | null }>;
+  };
   subtopics: TrackSubtopic[];
   /** 0207: the tools the track's practitioners use or build. */
   tools?: TrackTool[];
@@ -131,7 +139,8 @@ export type SubtopicEdit =
   | { action: 'add'; name: string; definition?: string };
 
 /** Where one post stands in a track and why (issue 0185, GET /tracks/{id}/why): stored rows only. */
-export type TrackWhyState = 'in' | 'joined' | 'discover' | 'out' | 'waiting' | 'invalid' | 'not_asked';
+export type TrackWhyState = 'in' | 'joined' | 'discover' | 'checked_out' | 'checking' | 'out' | 'waiting' | 'invalid'
+  | 'not_asked';
 export type TrackWhyReason = 'not_a_topic' | 'labelled' | 'outside_window' | 'not_planned' | 'not_embedded' | 'no_profile'
   | 'history_pending' | 'below_bar';
 export interface TrackWhy {

@@ -626,6 +626,67 @@ def _track(a: Dict[str, Any], input: str) -> Optional[str]:
     return _one_line_why(a) or track_verdict_error(a, input)
 
 
+# v10.41 (track-v3, track-check-v2): a verdict must agree with its own stated fit. Production (v10.38): 34 of Cool 3D
+# Projects' top 100 Discover/joined posts were `in` at 0.85-0.9 with a why saying they don't fit ("nothing to do with
+# printing"): the model wrote `in` first and its reason after, following the reader's examples. The answer now states
+# the post's subject and whether `Belongs:` asks for it BEFORE `in`, and `in` is checked against those fields (never
+# against the why's wording): `in` true needs `fits` true, a `matches` quote of `Belongs:` and no `excluded`; a
+# quote must be the question's own words (its 5-letter stems all in that part of the header), so `fits` names what
+# the reader asked for, not what the post resembles.
+_HEADER_PARTS = ("TRACK: ", "Belongs: ", "Not: ", "Sub-topics: ", "Marked in by the reader:", "Marked out by the reader:")
+
+
+def header_part(input: Optional[str], name: str) -> Optional[str]:
+    """The part of a track question's header that starts with `name` ("Belongs: ", "Not: "), up to the next part; None
+    when the question has none (tracks.header writes them)."""
+    head = "\n" + (input or "").partition(POST_MARK)[0]
+    at = head.find("\n" + name)
+    if at < 0:
+        return None
+    body = head[at + 1 + len(name):]
+    ends = [i for i in (body.find("\n" + p) for p in _HEADER_PARTS) if i >= 0]
+    return body[:min(ends)] if ends else body
+
+
+def _quotes(quote: Optional[str], part: Optional[str], field: str) -> Optional[str]:
+    words = _cite_words(quote or "")
+    if not words:
+        return f"{field}: copy the words of the track's header it names (at least one word of 4+ letters)"
+    if part is not None and not words <= _cite_words(part):
+        return f"{field}: copy it from the track's header, its own words (not {sorted(words - _cite_words(part))[:3]})"
+    return None
+
+
+def track_fit_error(a: Dict[str, Any], input: Optional[str]) -> Optional[str]:
+    """v10.41: why a track-v3 answer's `in` disagrees with its stated fit (None: it agrees). See _HEADER_PARTS's note."""
+    fits, verdict = bool(a.get("fits")), bool(a.get("in"))
+    if verdict and not fits:
+        return "in: true, but fits is false; the verdict follows the fit you stated (in is false when it does not fit)"
+    if verdict and a.get("excluded"):
+        return "in: true, but excluded names `Not:`; anything under `Not:` is out"
+    if fits:
+        if not a.get("matches"):
+            return "matches: fits is true, so copy the words of `Belongs:` the subject is an instance of"
+        err = _quotes(a.get("matches"), header_part(input, "Belongs: "), "matches")
+        if err:
+            return err
+    elif a.get("matches"):
+        return "matches: null when fits is false"
+    if a.get("excluded"):
+        not_part = header_part(input, "Not: ")
+        if input and POST_MARK in input and not_part is None:
+            return "excluded: this track has no `Not:`; null"
+        return _quotes(a.get("excluded"), not_part, "excluded")
+    return None
+
+
+def _track_v3(a: Dict[str, Any], input: str) -> Optional[str]:
+    """v10.41: the track-v2 checks (`_track`; the post is named by its `subject` or its `why`: the subject is the
+    answer's own statement of what the post is), and `in` agrees with the fit stated before it (track_fit_error)."""
+    named = {**a, "why": f"{a.get('why') or ''} {a.get('subject') or ''}"}
+    return _one_line_why(a) or track_verdict_error(named, input) or track_fit_error(a, input)
+
+
 def _subtopics(a: Dict[str, Any], input: str) -> Optional[str]:
     """0207 (subtopics-v2): each key is one of the question's groups, named once; names are not repeated; a definition
     is one line."""
@@ -1036,7 +1097,9 @@ GUIDE_CHECKS = {"websearch-official-v1": _websearch_official,
                 "digest-v3": _digest_rows,   # v10.29: digest-v2's points, stating facts
                 "collide-makers-v1": _collide_makers,   # 0250: two maker groups of one bare name
                 "judge-read-v2": _judge_read,           # 0258: join's and pair's quotes are their own question's
-                "track-fields-v1": lambda a, input: _track_fields(a, input)}   # v10.41: fields a track misses
+                "track-fields-v1": lambda a, input: _track_fields(a, input),   # v10.41: fields a track misses
+                "track-v3": _track_v3,                  # v10.41: a track verdict agrees with its stated fit
+                "track-check-v2": _track_v3}            # ... the blind check's too
 
 
 def unwrap(kind: str, answer: Any) -> Any:

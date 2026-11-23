@@ -30,9 +30,13 @@ belonged, on the server copy: 0145-built.md); then the highest value that keeps
 PASS_SHARE of the ✓ examples passing, each ✓ scored against the profile made without it (leave-one-out, so the
 examples don't vouch for themselves). Each plan logs passed / scanned per track (mx_tracks.stats).
 
-**The judge** (`track`, guide track-v2 (0207; track-v1 before), 10 posts a call): per post {in, confidence 0-1, subtopic, why}. Its input is
+**The judge** (`track`, guide track-v3 (v10.41; track-v2 0207, track-v1 before), 10 posts a call): per post {subject,
+fits, matches, excluded, in, confidence 0-1, subtopic, why}. Its input is
 the track's header (name, what belongs, what doesn't, the locked sub-topics, the 4 newest ✓ and 2 newest ✗ examples,
-titles cut) and the post (markx text v1, TEXT_CHARS). Validated like other kinds (validate._track: `why` one line).
+titles cut) and the post (markx text v1, TEXT_CHARS). Validated like other kinds (validate._track: `why` one line;
+v10.41 validate._track_v3: `in` agrees with the fit stated before it, its quotes the header's own words: a verdict
+that contradicts its own fit is asked again, then invalid, never counted). The reader's ✓ examples that the judge,
+asked against the description alone, says do not fit are flagged on the page (`plan_examples`, never removed).
 
 **Where a judged post goes** (read when the page is built, so it follows the labels and the precision):
   - an owner ✗: out (kept, counted); an owner ✓: in the track;
@@ -43,6 +47,8 @@ titles cut) and the post (markx text v1, TEXT_CHARS). Validated like other kinds
     labels; each item keeps its own `rank`); **joined by INSIGHT** (in the track, marked, with ✓ / ✗) when the
     track's passive `in`s at or above some band have JOIN_MIN_LABELS+ labels, JOIN_PRECISION+ of them ✓ and a
     Wilson lower bound of JOIN_LOWER+: those at or above the lowest such band join. When that stops holding they go back to Discover;
+    v10.41 (`review_lane`): Discover keeps each week's DISCOVER_PER_WEEK first; the rest is `checking` until the blind
+    check joins it, and a passive `in` the check said out is `checked_out` (counted, not shown);
   - `out`: kept with its verdict, never shown, counted.
 
 **Sub-topics** (0207: markx/track_subtopics.py owns them): found from the posts in the track (their vectors), each
@@ -100,7 +106,10 @@ MAX_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 HISTORY_PRIORITY = 1000        # history tasks come after the new posts' (priority = this + age in days)
 REASK_DAYS = 90                # 0252: a guide change re-asks the verdicts of posts this recent ...
 REASK_PER_DAY = 300            # ... at most this many a track a day (the re-ask's tasks: HISTORY_PRIORITY + age)
-CHECK_GUIDE = "track-check-v1"   # 0256: the blind check of a passive `in` (the `track` kind's second guide)
+CHECK_GUIDE = "track-check-v2"   # 0256: the blind check of a passive `in` (the `track` kind's second guide); v10.41: v2
+EXAMPLE_SUBJECT = "post_track"   # v10.41: a ✓ example asked against the description alone (`plan_examples`): a post
+                                 # for a track, as the judge's; no mx_track_items row names it (its input tells it apart)
+EXAMPLES_ASKED = 20            # ... the newest this many ✓ examples (the page's)
 CHECK_SUBJECT = "post_track_check"
 CHECK_JOIN = 0.85              # 0256: a passive `in` the check says in at this confidence or more joins the track
 CHECK_RUNS = 2                 # v10.30: the check is asked this many times; it says in only when every run does (the
@@ -128,6 +137,14 @@ DISCOVER_ITEMS = 100
 # 0252: Discover's order: confidence bands (their lower edges), newest first within a band. By confidence alone, the
 # year-old 0.95s filled the DISCOVER_ITEMS shown and this week's 0.8 sat at 759 of 3,089.
 DISCOVER_BANDS = (0.8, 0.6, 0.0)
+# v10.41: Discover is sized to review: each week (of the posts' dates, Monday 00:00 UTC) shows its DISCOVER_PER_WEEK
+# best passive `in`s (the band's calibrated precision, then the confidence, then the newest); the rest is the blind
+# check's to decide (joined when it says in, `checked_out` when out, `checking` until it answered), never an
+# un-reviewable pile (production, 2026-11-23: Cool Projects 11,241 waiting in Discover, the page showed 100). Only the
+# last DISCOVER_WEEKS weeks have a lane (the server copy: Cool Projects' Discover spanned 577 weeks, 25 a week would
+# still be 5,300): Discover holds at most DISCOVER_WEEKS x DISCOVER_PER_WEEK = DISCOVER_ITEMS, all of them shown.
+DISCOVER_PER_WEEK = 25
+DISCOVER_WEEKS = 4
 def _date(p: str = "p") -> str:
     """A folder's post date: the post's own (Pairing's ordinary date), as the feed shows it."""
     return pairing.ordinary_date(p)
@@ -361,6 +378,58 @@ def examples(cur: Cursor, folder_id: Any) -> Dict[str, List[str]]:
     return {"in": [p for p, (a, _) in got if a == "in"], "out": [p for p, (a, _) in got if a == "out"]}
 
 
+# v10.41: the reader's ✓ examples that clash with the track's own description. The judge follows the examples (Cool 3D
+# Projects' ✓ examples hold a photo editor and a kitchen timer, and the judge let in a linter and a chatbot feature
+# "despite" saying they don't fit). Each of the newest EXAMPLES_ASKED ✓ examples is asked once per description, by
+# the judge's own guide, against the description alone (no examples in its header); one it says does not fit is
+# flagged on the track page ("these examples may mislead the judge"). It is never removed: the owner decides.
+
+def example_questions(cur: Cursor, track: Dict[str, Any], ids: Sequence[str],
+                      posts: Dict[str, tasks.Post]) -> Dict[str, str]:
+    """{example post: its question}: the track's header without examples, and the post."""
+    head = header(cur, track, {"in": [], "out": []})
+    return {pid: track_input(head, posts[pid]) for pid in ids if pid in posts}
+
+
+def plan_examples(cur: Cursor, ts: Sequence[Dict[str, Any]]) -> int:
+    """v10.41: an example-fit question (`track` kind, the judge's guide, subject EXAMPLE_SUBJECT) for each ✓ example
+    not asked under the track's current description yet (read first: a plan with nothing new writes nothing).
+    Bounded by the examples themselves. Tasks added."""
+    schemas.ensure_guides(cur)
+    guide = schemas.KINDS[KIND].guide
+    added = 0
+    for t in ts:
+        ids = examples(cur, t["folder_id"])["in"][:EXAMPLES_ASKED]
+        if not ids:
+            continue
+        posts = tasks.load_posts(cur, ids)
+        qs = example_questions(cur, t, ids, posts)
+        asked = repo.tasks_for(cur, kind=KIND, guide=guide, inputs=qs.values())
+        for pid, q in qs.items():
+            if q not in asked:
+                _, new = repo.add_task(cur, kind=KIND, guide=guide, subject_kind=EXAMPLE_SUBJECT, input=q,
+                                       a=pid, b=t["folder_id"], priority=0)
+                added += new
+    return added
+
+
+def misleading_examples(cur: Cursor, track: Dict[str, Any], ids: Sequence[str],
+                        posts: Dict[str, tasks.Post]) -> List[Dict[str, Any]]:
+    """v10.41: the ✓ examples (of `ids`) the judge, asked against the description alone, says do not fit:
+    [{post_id, title, why, subject}], in `ids`' order. An example not answered yet is not flagged."""
+    qs = example_questions(cur, track, ids, posts)
+    got = repo.tasks_for(cur, kind=KIND, guide=schemas.KINDS[KIND].guide, inputs=qs.values())
+    out = []
+    for pid, q in qs.items():
+        task = got.get(q)
+        ans = _answered_verdict(cur, task["id"]) if task else None
+        if ans and not (ans[1].get("in") and ans[1].get("fits", True)):
+            p = posts[pid]
+            out.append({"post_id": pid, "title": p.title or p.text[:EXAMPLE_CHARS], "why": ans[1].get("why"),
+                        "subject": ans[1].get("subject")})
+    return out
+
+
 def _vectors(cur: Cursor, ids: Sequence[str]) -> Dict[str, List[float]]:
     if not ids:
         return {}
@@ -591,7 +660,8 @@ def _history(cur: Cursor, t: Dict[str, Any], prep: Dict[str, Any], head: str, *,
 
 def _reask(cur: Cursor, t: Dict[str, Any], head: str, skip: set, *, budget: int, now: datetime) -> int:
     """0252: the verdicts of the current description answered under an older guide than the kind's, of posts dated in
-    the last REASK_DAYS, asked once more under the current guide (newest first; at most `budget` and what is left of
+    the last REASK_DAYS, asked once more under the current guide (v10.41: the `in`s first, they place a post; then
+    newest first; at most `budget` and what is left of
     REASK_PER_DAY for the track since a day ago). The row's task becomes the new one; the old one goes to
     `asked_before` (its answer kept in mx_calls), and the old verdict stays until the new task's first valid answer
     (`_fill`). A post the owner labelled (`skip`) is not asked. How many tasks were added."""
@@ -606,7 +676,7 @@ def _reask(cur: Cursor, t: Dict[str, Any], head: str, skip: set, *, budget: int,
                       JOIN mx_tasks k ON k.id = i.task_id JOIN posts p ON p.id = i.post_id
                      WHERE i.track_id = %(t)s AND i.version = %(v)s AND i.verdict IS NOT NULL AND k.guide <> %(g)s
                        AND {_date()} >= %(since)s AND NOT (i.post_id = ANY(%(skip)s::uuid[]))
-                     ORDER BY {_date()} DESC, p.id DESC LIMIT %(limit)s""",
+                     ORDER BY i.verdict DESC, {_date()} DESC, p.id DESC LIMIT %(limit)s""",
                 {"t": t["folder_id"], "v": t["version"], "g": guide, "since": now - timedelta(days=REASK_DAYS),
                  "skip": sorted(skip), "limit": left})
     rows = cur.fetchall()
@@ -647,6 +717,7 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
     room = cap - open_tasks(cur)
     ts = described(cur)
     checked = plan_checks(cur, ts, now=now) if ts else 0   # 0256: its own cap, never the judge's
+    checked += plan_examples(cur, ts) if ts else 0         # v10.41: bounded by the ✓ examples
     if room <= 0 or not ts:
         return checked
     if days is tasks.SETTING:
@@ -791,13 +862,17 @@ def plan_checks(cur: Cursor, ts: Sequence[Dict[str, Any]], *, now: Optional[date
         budget = -(-(room - added) // max(1, len(ts) - k)) if room - added > 0 else 0
         if budget <= 0:
             break
+        # v10.41: then a join an older check guide let in (its in contradicting its own why, track-check-v1) is
+        # checked again under CHECK_GUIDE; it keeps its old check until the new one is settled (`_fill_check`)
         cur.execute(f"""SELECT i.post_id::text, {_date()} FROM mx_track_items i JOIN posts p ON p.id = i.post_id
-                         WHERE i.track_id = %(t)s AND i.version = %(v)s AND i.verdict AND i.check_task_id IS NULL
+                          LEFT JOIN mx_tasks ck ON ck.id = i.check_task_id
+                         WHERE i.track_id = %(t)s AND i.version = %(v)s AND i.verdict
+                           AND (i.check_task_id IS NULL OR (i.check_in AND ck.guide <> %(g)s))
                            AND p.source_id NOT IN (SELECT source_id FROM source_folders WHERE folder_id = %(t)s)
                            AND NOT EXISTS (SELECT 1 FROM mx_labels l WHERE l.item_kind = %(k)s AND l.labeller = 'owner'
                                               AND l.b = %(t)s AND l.a = i.post_id)
-                         ORDER BY {_date()} DESC, p.id DESC LIMIT %(n)s""",
-                    {"t": t["folder_id"], "v": t["version"], "k": ITEM_KIND, "n": budget})
+                         ORDER BY i.check_task_id IS NOT NULL, {_date()} DESC, p.id DESC LIMIT %(n)s""",
+                    {"t": t["folder_id"], "v": t["version"], "k": ITEM_KIND, "n": budget, "g": CHECK_GUIDE})
         rows = cur.fetchall()
         if not rows:
             continue
@@ -835,9 +910,12 @@ def _fill_check(cur: Cursor, task_id: Any, answer: Dict[str, Any]) -> int:
     conf = min(float(r.get("confidence") or 0) for r in runs) if ok else \
         max(float(r.get("confidence") or 0) for r in runs if not r.get("in"))
     why = next((r.get("why") for r in runs if bool(r.get("in")) == ok), answer.get("why"))
+    # v10.41: a row checked again (plan_checks) takes its new task's settled answer over its old check's
     cur.execute("""UPDATE mx_track_items SET check_in = %s, check_confidence = %s, check_why = %s, checked_at = now()
-                    WHERE check_task_id = %s AND check_in IS NULL""",
-                (ok, conf, _clean(why, schemas.TRACK_WHY_CHARS), task_id))
+                    WHERE check_task_id = %s
+                      AND (check_in, check_confidence, check_why) IS DISTINCT FROM (%s, %s::real, %s)""",
+                (ok, conf, _clean(why, schemas.TRACK_WHY_CHARS), task_id, ok, conf,
+                 _clean(why, schemas.TRACK_WHY_CHARS)))
     return cur.rowcount
 
 
@@ -886,14 +964,15 @@ def discover_order(cal: Dict[str, Any]):
     """0252: Discover's order, a sort key (ascending): the item's DISCOVER_BANDS band of confidence, the bands ranked
     by `rank_of` their edge (calibrated precision, or the edge itself until RANK_MIN_LABELS labels), then newest
     first, then the surer, then the post. The page's lane, the kept page's filled items and the why's position all
-    read it."""
+    read it. v10.41: by week first (`week_of`, the newest week first), and within a week by band, then the surer, then
+    the newest: each week's first DISCOVER_PER_WEEK are its review lane (`review_lane`)."""
     tiers = {e: rank_of(cal, e) for e in DISCOVER_BANDS}
 
-    def key(it: Dict[str, Any]) -> Tuple[float, float, float, str]:
+    def key(it: Dict[str, Any]) -> Tuple[float, float, float, float, str]:
         c = float(it.get("confidence") or 0)
         edge = next(e for e in DISCOVER_BANDS if c >= e - 1e-9)
         at = it.get("at")
-        return (-tiers[edge], -(at.timestamp() if at else float("-inf")), -c, it["post_id"])
+        return (-week_of(at), -tiers[edge], -c, -(at.timestamp() if at else float("-inf")), it["post_id"])
     return key
 
 
@@ -960,7 +1039,42 @@ def placed(cur: Cursor, track: Dict[str, Any], *, shown: bool = True) -> Dict[st
             it["place"] = "out"
         it["rank"] = rank_of(cal, it["confidence"])
         it["calibrated"] = cal["labels"] >= RANK_MIN_LABELS
+    review_lane(items, cal)
     return {"items": items, "calibration": cal}
+
+
+def week_of(at: Optional[datetime]) -> float:
+    """v10.41: the week a post is in (its Monday 00:00 UTC, epoch seconds; -inf undated)."""
+    if at is None:
+        return float("-inf")
+    d = at.astimezone(timezone.utc)
+    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() - d.weekday() * 86400
+
+
+def review_lane(items: Sequence[Dict[str, Any]], cal: Dict[str, Any], *, now: Optional[datetime] = None) -> None:
+    """v10.41: Discover sized to review (DISCOVER_PER_WEEK's note). Of the passive `in`s placed in Discover, the blind
+    check's settled `out` is `checked_out` (counted, not shown); of the others, each of the last DISCOVER_WEEKS weeks'
+    DISCOVER_PER_WEEK first in `discover_order` stay in Discover, and the rest (an older week's all: the history pass
+    reads years back) are `checking` (the check decides them: joined, or checked out). With the checks switched off,
+    Discover is as before."""
+    if not checks_on():
+        return
+    now = now or datetime.now(timezone.utc)
+    first = week_of(now) - (DISCOVER_WEEKS - 1) * 7 * 86400
+    lane = []
+    for it in items:
+        if it["place"] != "discover":
+            continue
+        if it.get("check_in") is False:
+            it["place"] = "checked_out"
+        else:
+            lane.append(it)
+    per: Counter = Counter()
+    for it in sorted(lane, key=discover_order(cal)):
+        w = week_of(it.get("at"))
+        per[w] += 1
+        if w < first - 1e-6 or per[w] > DISCOVER_PER_WEEK:
+            it["place"] = "checking"
 
 
 def _iso(t: Optional[datetime]) -> Optional[str]:
@@ -1056,7 +1170,8 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
             "sources": active_sources(cur, folder_id)}
     if not is_topic(t):
         return {"track": base, "sections": [], "discover": [], "counts": {}, "calibration": None, "suggestions": [],
-                "examples": {"in": [], "out": []}, "subtopics": [], "tools": [], "footer": None, "prefilter": None}
+                "examples": {"in": [], "out": [], "misleading": []}, "subtopics": [], "tools": [], "footer": None,
+                "prefilter": None}
     from insight_core.markx import track_kept
     got = track_kept.placed(cur, t)   # issue 0195: the kept placement (its shown items filled below), else live
     kept = got is not None
@@ -1107,9 +1222,12 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
     stats = t.get("stats") or {}
     return {"track": {**base, "version": t["version"], "version_at": _iso(t["version_at"])},
             "sections": sections, "discover": [_shown(it) for it in disc[:DISCOVER_ITEMS]],
+            "discover_per_week": DISCOVER_PER_WEEK, "discover_weeks": DISCOVER_WEEKS,
             "counts": dict(counts), "calibration": cal, "suggestions": suggestions(cur, folder_id, now=now),
-            "examples": {k: [{"post_id": p, "title": shown_ex[p].title or shown_ex[p].text[:EXAMPLE_CHARS]}
-                             for p in ex[k][:20] if p in shown_ex] for k in ("in", "out")},
+            "examples": {**{k: [{"post_id": p, "title": shown_ex[p].title or shown_ex[p].text[:EXAMPLE_CHARS]}
+                                for p in ex[k][:20] if p in shown_ex] for k in ("in", "out")},
+                         # v10.41: the ✓ examples that clash with the description (flagged, never removed)
+                         "misleading": misleading_examples(cur, t, ex["in"][:EXAMPLES_ASKED], shown_ex)},
             "subtopics": [{**{k: s[k] for k in ("id", "name", "definition", "keys", "locked", "made_by", "named_by",
                                                 "state")},
                            "created_at": _iso(s["created_at"]), "count": len(groups.get(s["id"], []))} for s in subs],

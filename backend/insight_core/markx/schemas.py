@@ -432,6 +432,16 @@ TRACK_SCHEMA = {
     "properties": {"in": {"type": "boolean"}, "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                    "subtopic": _STR_OR_NULL, "why": {"type": "string", "minLength": 1}},
 }
+# v10.41 (track-v3, track-check-v2): the verdict follows a fit stated before it. `subject` the post's main subject,
+# `fits` whether `Belongs:` asks for it, `matches` the words of `Belongs:` it is an instance of (copied), `excluded` the
+# words of `Not:` it is (copied). validate._track_v3 checks that `in` agrees with them and that the quotes are the
+# question's own: a verdict that contradicts its own stated fit is no verdict (asked again, then invalid; never counted).
+TRACK_SCHEMA_V3 = {
+    "type": "object",
+    "required": ["subject", "fits", "matches", "excluded", "in", "confidence", "why"],
+    "properties": {"subject": {"type": "string", "minLength": 1}, "fits": {"type": "boolean"},
+                   "matches": _STR_OR_NULL, "excluded": _STR_OR_NULL, **TRACK_SCHEMA["properties"]},
+}
 # 0207: the sub-topics the clustering found, named (subtopics-v2: each group keyed g1..gK in the question, its name and
 # a one-line definition), the posts placed into them (subtopic-place-v1: each post p1..pN into s1..sK or none), and
 # a sub-topic's digest (digest-v1: 2-4 points, each citing the question's posts [n] it
@@ -764,7 +774,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # 0132 B: a source's stance and framing
     Kind("back", "back-v1", "story", BACK_SCHEMA),                   # 0136: an old Mark IX story back in the news
     Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # 0133 v4.2: ent-v4.2's second question (ent42.py)
-    Kind("track", "track-v2", "post_track", TRACK_SCHEMA),           # 0145: does a post belong in a track (tracks.py); 0207: v2
+    Kind("track", "track-v3", "post_track", TRACK_SCHEMA_V3),        # 0145: does a post belong in a track (tracks.py); 0207: v2; v10.41: v3
     Kind("subtopics", "subtopics-v2", "track", SUBTOPIC_NAMES_SCHEMA),   # 0207: the sub-topics found, named (0145's v1
                                                                          # proposed them; its rows are kept)
     Kind("digest", "digest-v1", "track", DIGEST_SCHEMA),             # 0207: a sub-topic's digest with citations
@@ -870,7 +880,9 @@ def guide_of(cur, kind: str) -> Optional[str]:
 GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "websearch-official-v1": ("websearch", OFFICIAL_SCHEMA),
     "track-v1": ("track", TRACK_SCHEMA),   # 0207: the judge before track-v2; its open questions are still answered
+    "track-v2": ("track", TRACK_SCHEMA),   # v10.41: the judge before track-v3 (no stated fit); its open questions are still answered
     "track-check-v1": ("track", TRACK_SCHEMA),   # 0256: the blind check of a passive `in` (tracks.plan_checks)
+    "track-check-v2": ("track", TRACK_SCHEMA_V3),   # v10.41: the blind check, its verdict following its stated fit
     "digest-v2": ("digest", DIGEST_SCHEMA),   # 0245: a track brief's "what changed", citing its rows (track_brief.py)
     "digest-v3": ("digest", DIGEST_SCHEMA),   # v10.29: the same, its points state facts (no reporting words, no hedges)
     "collide-makers-v1": ("collide", COLLIDE_MAKERS_SCHEMA),   # 0250: two maker groups of one bare name (identity.split_names)

@@ -92,7 +92,8 @@ export function toolLine(t: TrackTool): string {
 export function footerLine(f: NonNullable<TrackPage['footer']>, counts: TrackPage['counts']): string {
   return [`$${f.cost_usd.toFixed(2)} so far`, `$${f.cost_per_day.toFixed(2)} a day`,
     `${f.items_per_day} items a day`, plural(f.tasks, 'question'),
-    counts.out ? `${plural(counts.out, 'post')} judged out (kept)` : null].filter(Boolean).join(' · ');
+    counts.out ? `${plural(counts.out, 'post')} judged out (kept)` : null,
+    counts.checked_out ? `${plural(counts.checked_out, 'post')} taken out by the blind check` : null].filter(Boolean).join(' · ');
 }
 
 const NOT_ASKED: Record<string, string> = {
@@ -120,6 +121,10 @@ export function whyLine(w: TrackWhy): string {
       const cut = w.shown === false && w.cut ? ` — below the Discover cut (the page shows ${w.cut})` : '';
       return `In Discover${at}: Haiku says it belongs${conf}, but its source is not in this track${said}${cut}${older}`;
     }
+    case 'checked_out':
+      return `Out (the blind check): Haiku said it belongs${conf}${said}, and the second, blind check said it doesn’t`;
+    case 'checking':
+      return `Waiting for the blind check: Haiku says it belongs${conf}${said}, past this week’s Discover picks; the check joins it or takes it out`;
     case 'out':
       return (w.label === 'out' ? 'Out: your ✗' : `Out: Haiku says it doesn’t belong${conf}${said}`) + older;
     case 'waiting':
@@ -132,4 +137,10 @@ export function whyLine(w: TrackWhy): string {
       if (w.reason === 'below_bar') return `Not asked: its source is not in this track, and the finders did not put it up${w.bar != null ? ` (bar ${w.bar.toFixed(2)})` : ''}`;
       return `Not asked: ${NOT_ASKED[w.reason ?? ''] ?? 'never judged for this track'}`;
   }
+}
+
+/** v10.41: Discover's line: each recent week's best picks for review; the rest the blind check decides. */
+export function discoverLine(counts: { discover?: number; checking?: number }, perWeek = 25, weeks = 4): string {
+  const rest = counts.checking ? ` · ${plural(counts.checking, 'more post')} waiting for the blind check, which joins them or takes them out` : '';
+  return `Posts from your other sources that look like this track: each week’s ${perWeek} best of the last ${plural(weeks, 'week')}, for your review. ✓ takes one in; ✗ teaches it what doesn’t belong.${rest}`;
 }

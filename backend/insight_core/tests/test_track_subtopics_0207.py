@@ -75,7 +75,7 @@ class Pure(unittest.TestCase):
                   {"post_id": "f", "place": "track", "verdict": True, "confidence": 0.95, "label": None}]
         self.assertEqual(sorted(finders.taught(placed, neg=["f"])), ["a", "c", "e"])
         self.assertIn("tool", finders.FINDERS)
-        self.assertEqual(track_tools.judged_in(placed), ["a", "b", "c", "d", "e", "f"])
+        self.assertEqual(track_tools.judged_in(placed), ["a", "b", "c", "e", "f"], "v10.41: never Discover's")
 
 
 class _Subtopics(_Tracks):

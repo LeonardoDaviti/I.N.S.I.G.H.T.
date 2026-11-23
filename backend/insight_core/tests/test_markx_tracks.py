@@ -36,15 +36,28 @@ def b64(v):
     return base64.b64encode(struct.pack(f"<{len(v)}e", *v)).decode("ascii")
 
 
+FROM_TRACK = "<the first words of the question's Belongs:>"   # _Tracks.answer copies them in (track-v3's `matches`)
+
+
 def verdict(inside=True, conf=0.9, sub="storage and organisers", why="Acme's Widget release: a wall storage system to print, modular, cheap."):
-    return {"id": "x", "in": inside, "confidence": conf, "subtopic": sub if inside else None, "why": why}
+    """A track-v3 answer whose stated fit agrees with `in` (v10.41)."""
+    return {"id": "x", "subject": "the post's subject", "fits": inside, "matches": FROM_TRACK if inside else None,
+            "excluded": None, "in": inside, "confidence": conf, "subtopic": sub if inside else None, "why": why}
+
+
+def with_matches(answer, input):
+    """`answer` with FROM_TRACK replaced by the first words of its question's `Belongs:` (a quote the check accepts)."""
+    if not isinstance(answer, dict) or answer.get("matches") != FROM_TRACK:
+        return answer
+    part = validate.header_part(input, "Belongs: ") or "useful prints"
+    return {**answer, "matches": " ".join(part.split()[:3])}
 
 
 class Pure(unittest.TestCase):
     def test_the_kinds_and_their_guides(self):
-        self.assertEqual((schemas.KINDS["track"].guide, schemas.KINDS["track"].subject), ("track-v2", "post_track"))
+        self.assertEqual((schemas.KINDS["track"].guide, schemas.KINDS["track"].subject), ("track-v3", "post_track"))
         self.assertEqual((schemas.KINDS["subtopics"].guide, schemas.KINDS["subtopics"].subject), ("subtopics-v2", "track"))
-        self.assertIn("in", schemas.guide_body("track-v2"))
+        self.assertIn("fits", schemas.guide_body("track-v3"))
         for k in ("track", "subtopics"):
             self.assertIn(k, tasks.PLANNERS)
 
@@ -135,6 +148,17 @@ class _Tracks(_Api):
         self.cur.execute("SELECT post_id::text, origin, version, task_id FROM mx_track_items WHERE track_id = %s",
                          (self.folder,))
         return {p: (o, v, t) for p, o, v, t in self.cur.fetchall()}
+
+    def answer(self, *rows, **kw):
+        """v10.41: a verdict() answer's `matches` quotes its own question (with_matches)."""
+        filled = []
+        for t, a in rows:
+            if isinstance(a, dict) and a.get("matches") == FROM_TRACK:
+                self.cur.execute("SELECT input FROM mx_tasks WHERE id = %s", (str(t),))
+                got = self.cur.fetchone()
+                a = with_matches(a, got[0] if got else "")
+            filled.append((t, a))
+        return super().answer(*filled, **kw)
 
     def judge(self, post, answer):
         tid = self.items()[post][2]
@@ -407,7 +431,8 @@ class Routing(_Tracks):
             self.assertEqual((status, body["valid"]), (200, 1), body)
         places = live()
         self.assertEqual(places[sure], "joined", "two runs in at 0.9 and 0.88")
-        self.assertEqual((places[unsure], places[no]), ("discover", "discover"), "0.7 then 0.95: the weakest run is 0.7")
+        self.assertEqual((places[unsure], places[no]), ("discover", "checked_out"),
+                         "0.7 then 0.95: the weakest run is 0.7; v10.41: the check's out leaves Discover")
         self.cur.execute("SELECT verdict FROM mx_track_items WHERE post_id = %s", (no,))
         self.assertTrue(self.cur.fetchone()[0], "the judge's verdict is kept as it was")
         self.label(sure, "out")                                             # the owner's label wins
