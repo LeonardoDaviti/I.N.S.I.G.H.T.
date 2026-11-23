@@ -319,30 +319,42 @@ class NewsService:
 
     @staticmethod
     def ranked(cur: Any, items: List[Dict[str, Any]], order: Optional[str] = None) -> Dict[str, Any]:
-        """Mark X's rows with their kept rank (markx/news_rank), ordered by `order` or the switch ("ranked": Notable
-        first, then rank score; "coverage": the score's order). {items, order}."""
-        from insight_core.markx import news_rank
+        """Mark X's rows with their kept rank (markx/news_rank), ordered by `order` or the switch ("personal": the
+        rank score times the row's personal factor, markx/personal.py; "ranked": Notable first, then rank score;
+        "coverage": the score's order). Every ranked row carries `news.personal` in any order. {items, order}."""
+        from insight_core.markx import news_rank, personal
         want = order if order in news_rank.ORDERS else news_rank.mode(cur)
         shown = news_rank.analysis_mode(cur) == "shown"
         ranks = news_rank.read(cur, [i["story"]["id"] for i in items])
+        facts = {}
         for i in items:
+            r = ranks.get(i["story"]["id"])
+            if r is not None:
+                lead = (str(i["source_id"]), i.get("source_display_name")) if i.get("source_id") else None
+                facts[i["story"]["id"]] = ((r["why"] or {}).get("personal"), lead)
+        mine = personal.for_items(cur, facts)
+        for i in items:
+            if i["story"]["id"] in mine:
+                i["news"]["personal"] = mine[i["story"]["id"]]
             r = ranks.get(i["story"]["id"])
             if r is not None:
                 why = r["why"] or {}
                 i["news"]["rank"] = {"significance": r["significance"], "coverage": r["coverage"], "fit": r["fit"],
                                      "score": r["score"], "event": why.get("event"), "effect": why.get("effect"),
                                      "usable": why.get("usable"), "why": why.get("why")}
-            i["news"]["notable"] = bool(want == "ranked" and r is not None and r["notable"])
+            i["news"]["notable"] = bool(want != "coverage" and r is not None and r["notable"])
             if shown and r is not None:
                 lines = {p["id"]: p for p in i["story"].get("posts") or []}
                 i["news"]["analysis"] = [
                     {"id": pid, "title": lines[pid]["title"], "source": lines[pid]["source_display_name"],
                      "author": ((lines[pid].get("repost") or {}).get("author") or lines[pid]["source_display_name"])}
                     for pid in ((r["why"] or {}).get("analysis") or []) if pid in lines][:news_rank.ANALYSIS_MAX]
-        if want == "ranked":
+        if want != "coverage":
             def score(i: Dict[str, Any]) -> float:
                 r = i["news"].get("rank")
-                return r["score"] if r else news_rank.combine(None, news_rank.coverage(i["news"]["score"]), 0.0)
+                s = r["score"] if r else news_rank.combine(None, news_rank.coverage(i["news"]["score"]))
+                return news_rank.personal_score(s, (i["news"].get("personal") or {}).get("factor")
+                                                if want == "personal" else None)
             # stable: the score's order breaks ties
             items.sort(key=lambda i: (not i["news"]["notable"], PARTS.index(i["news"]["part"]), -score(i)))
         return {"items": items, "order": want}

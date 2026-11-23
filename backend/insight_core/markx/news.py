@@ -657,7 +657,7 @@ def ranked_key(row: Dict[str, Any], rank: Optional[Dict[str, Any]], now: datetim
     """News ranked for the reader: the Notable lane first, then the last 48 hours, each by its kept rank score (an
     unranked row by its coverage), then `rank_key`'s order."""
     from insight_core.markx import news_rank
-    score = rank["score"] if rank else news_rank.combine(None, news_rank.coverage(row["score"]), 0.0)
+    score = rank["score"] if rank else news_rank.combine(None, news_rank.coverage(row["score"]))
     return (not (rank or {}).get("notable"), row["first_at"] < now - timedelta(hours=48), -float(score),
             *rank_key(row, now)[1:])
 
@@ -734,7 +734,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     order = news_rank.mode(cur)
     for i in items:
         i["rank"] = ranks.get(i["id"])
-    items.sort(key=lambda i: ranked_key(i, i["rank"], now) if order == "ranked" else rank_key(i, now))
+    items.sort(key=lambda i: ranked_key(i, i["rank"], now) if order != "coverage" else rank_key(i, now))
     from insight_core.markx import folds   # each line's fold, the header's count
     fold_count = folds.annotate(cur, items)
     from insight_core.markx import built   # how each row's story is built, its original first

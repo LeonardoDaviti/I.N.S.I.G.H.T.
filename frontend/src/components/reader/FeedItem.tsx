@@ -23,6 +23,7 @@ import { TextLink } from '../ui/TextLink';
 
 // "Also on <channel>": its own chunk, loaded the first time a row has one (the reader's JS budget).
 const AlsoOn = lazy(() => import('./AlsoOn'));
+const ForYou = lazy(() => import('./ForYou'));   // v10.42: a News row's why-for-you and its teaching
 
 function lengthLabel(item: FeedItemData): string | null {
   if (item.duration_seconds) return formatClock(item.duration_seconds);
@@ -381,6 +382,9 @@ function FeedItem({
           </ul>
         ) : null}
         {item.also_on?.length ? <Suspense fallback={null}><AlsoOn lines={item.also_on} now={now} /></Suspense> : null}
+        {item.news?.personal && item.story ? (
+          <Suspense fallback={null}><ForYou personal={item.news.personal} row={item.story.id} post={item.id} /></Suspense>
+        ) : null}
       </div>
       {showThumb ? (
         <div className="mt-0.5 hidden aspect-video w-20 shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">

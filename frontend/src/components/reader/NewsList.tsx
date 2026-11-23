@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useMemo, useState } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useMemo, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
@@ -46,6 +46,8 @@ function storyLine(item: FeedItem): string | undefined {
 }
 
 const RANKED = { name: 'News', sectionOf, storyLine };
+const ORDERS: NewsOrder[] = ['personal', 'ranked', 'coverage'];
+const ORDER_WORDS: Record<NewsOrder, string> = { personal: 'For you', ranked: 'Global only', coverage: 'By coverage' };
 
 /**
  * View news: the stories 2 or more of your sources covered, of the Main feed, a track or one source, in parts by
@@ -53,6 +55,7 @@ const RANKED = { name: 'News', sectionOf, storyLine };
  * part), its other posts one click away; reading it marks it as the feed does. Loaded a page at a time; it never
  * reorders under you. The rows are Mark X's ("Older News view" shows Mark IX's; when Mark X has none the API
  * answers Mark IX's and the page says so), ranked for the reader ("Notable for you"; "By coverage" is one click away).
+ * v10.42: "For you" (the default) is that order times your interest; "Global only" the order without it.
  */
 export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenChange, onUnreadDelta }: {
   scope: string;
@@ -92,7 +95,8 @@ export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenCh
   const canSwitch = older || (first !== undefined && first.mark === 'x');
   // the other order of Mark X's rows, when the API says which one it sent
   const shownOrder = !older && first?.mark === 'x' ? first.order : undefined;
-  const otherOrder: NewsOrder | undefined = shownOrder === 'ranked' ? 'coverage' : shownOrder === 'coverage' ? 'ranked' : undefined;
+  // v10.42: For you (global x your interest), Global only, By coverage: the orders not shown, one click each.
+  const otherOrders: NewsOrder[] = shownOrder ? ORDERS.filter((o) => o !== shownOrder) : [];
   const unreadCount = useMemo(() => unreadRows(query.data?.pages ?? []), [query.data]);
 
   // "Mark all News read" (the button, and Shift+A): every row the scope lists, after a confirm, with Undo
@@ -156,14 +160,18 @@ export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenCh
             onClick={() => setMark(older ? 'main' : 'ix')}>
             {older ? 'Back to News' : 'Older News view'}
           </button>
-          {otherOrder ? (
+          {otherOrders.length ? (
             <>
               {' · '}
-              {shownOrder === 'coverage' ? 'By coverage. ' : null}
-              <button type="button" className="underline underline-offset-2 hover:text-fg-1"
-                onClick={() => setOrder(otherOrder)}>
-                {otherOrder === 'coverage' ? 'By coverage' : 'Ranked for you'}
-              </button>
+              {shownOrder && shownOrder !== 'personal' ? `${ORDER_WORDS[shownOrder]}. ` : null}
+              {otherOrders.map((o, n) => (
+                <Fragment key={o}>
+                  {n ? ' · ' : null}
+                  <button type="button" className="underline underline-offset-2 hover:text-fg-1" onClick={() => setOrder(o)}>
+                    {ORDER_WORDS[o]}
+                  </button>
+                </Fragment>
+              ))}
             </>
           ) : null}
         </p>

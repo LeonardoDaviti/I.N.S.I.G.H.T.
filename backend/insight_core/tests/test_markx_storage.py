@@ -18,7 +18,7 @@ from insight_core.markx import repo
 from insight_core.tests._db import db_url, requires_db
 
 MIGRATION = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0068_markx_shadow.sql"
-TABLES = {"mx_track_field_dismissals", "mx_questions", "mx_guides", "mx_tasks", "mx_calls", "mx_readings", "mx_mentions", "mx_embeddings", "mx_candidates",
+TABLES = {"mx_interests", "mx_interest_weights", "mx_track_field_dismissals", "mx_questions", "mx_guides", "mx_tasks", "mx_calls", "mx_readings", "mx_mentions", "mx_embeddings", "mx_candidates",
           "mx_runs", "mx_stories", "mx_story_posts", "mx_connections", "mx_news", "mx_briefings", "mx_labels"}
 
 
@@ -124,7 +124,7 @@ class MigrationTests(_Rollback):
         """A second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 102)      # the mx_* tables every migration adds
+        self.assertEqual(self.cur.fetchone()[0], 104)      # the mx_* tables every migration adds (0175: two)
 
     def test_only_the_names_vectors_have_an_hnsw_cosine_index(self):
         """The posts' vectors have no index; the names' keep theirs (identity.vector_neighbours)."""
