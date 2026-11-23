@@ -487,7 +487,8 @@ def inputs(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = No
                                                                    ORDER BY x.id)))
                               FROM mx_track_thing_reports r JOIN mx_track_things x ON x.id = r.thing_id
                               JOIN posts p ON p.id = r.post_id
-                             WHERE x.track_id = %(t)s::uuid AND {TT.post_date()} >= %(s)s AND {TT.post_date()} < %(e)s),
+                             WHERE x.track_id = %(t)s::uuid AND {TT.post_date()} >= %(s)s AND {TT.post_date()} < %(e)s
+                               AND p.filtered_by IS NULL),   -- v10.44: a post hidden leaves the issue
                            (SELECT md5(string_agg(concat_ws(':', id, status, merged_into, updated_at), ',' ORDER BY id))
                               FROM mx_track_things WHERE track_id = %(t)s::uuid AND status = 'merged'),
                            (SELECT json_build_array(count(*), max(c.created_at)) FROM mx_track_brief_asks a
@@ -583,6 +584,7 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
     rows = [dict(x, new=True) for x in TT.current(cur, tid)
             if x["found_at"] > since and x["kind"] in kinds and x["first_at"] is not None and x["first_at"] >= fresh]
     rs = TT.reports(cur, tid, [x["id"] for x in rows])
+    rows = TT.reported(rows, rs)
     also = _also(cur, t, since, None, joined=True, fresh=fresh)
     posts = _posts(cur, tid, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])} | set(also)))
     order = _order(kinds)
@@ -762,6 +764,7 @@ def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit
         return True
     kept = [x for x in TT.current(cur, tid, kind) if passes(x)]
     rs = TT.reports(cur, tid, [x["id"] for x in kept])
+    kept = TT.reported(kept, rs)
     posts = _posts(cur, tid, sorted({r["post"] for x in kept for r in rs.get(x["id"], [])}))
     views = {x["id"]: thing_view(d, x, rs.get(x["id"], []), posts) for x in kept}
     want = words(q)
