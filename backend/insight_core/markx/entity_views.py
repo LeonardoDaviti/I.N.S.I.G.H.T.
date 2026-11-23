@@ -722,21 +722,32 @@ def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
     if not kept_pages.has(cur, "entity_queue", _queue_key(), kept_pages.NO_RUN,
                           kept_pages.stamp("entity_queue", _queue_key(), lst.strict)):
         return True
+    return bool(_hot_due(cur, last["id"], now))
+
+
+def _hot_due(cur: Any, run_id: Any, now: datetime) -> List[Tuple[str, bool]]:
+    """v10.38: the most opened pages (`_hot`) with no row of the newest run by this code sent until after the next
+    looks: the ones the jobs process builds (`kept_missing` asks whether any; `keep_pages` builds these only). One
+    build a run: a page an input made stale between runs (an automatic merge anywhere is an owner mark; on the server
+    ~21 an hour, so every page) is built when opened, as before 0232. Before, every look the list was due for (each
+    current mention set changes it: every ~90 s while the worker answers) built all HOT_PAGES again (20-45 cpu-s)."""
+    from insight_core.markx import kept_pages
     hot = _hot(cur)
     if not hot:
-        return False
-    keys = [kept_pages.shaped(_page_key(e, r), PAGE_SHAPE) for e, r in hot]
-    cur.execute("""SELECT count(DISTINCT key) FROM mx_kept_pages WHERE page = 'entity' AND key = ANY(%s)
+        return []
+    keys = {kept_pages.shaped(_page_key(e, r), PAGE_SHAPE): (e, r) for e, r in hot}
+    cur.execute("""SELECT DISTINCT key FROM mx_kept_pages WHERE page = 'entity' AND key = ANY(%s)
                       AND run_id = %s AND code = %s AND (until IS NULL OR until > %s)""",
-                (keys, last["id"], kept_pages.code_stamp(), now + timedelta(seconds=2 * KEPT_GAP)))
-    return cur.fetchone()[0] < len(keys)
+                (list(keys), run_id, kept_pages.code_stamp(), now + timedelta(seconds=2 * KEPT_GAP)))
+    kept = {k for (k,) in cur.fetchall()}
+    return [er for k, er in keys.items() if k not in kept]
 
 
 def keep_pages(cur: Any, *, now: Optional[datetime] = None, budget: float = HOT_SECONDS) -> Dict[str, Any]:
     """In the jobs process (jobs.Jobs.entities), in one snapshot: the list and the queue's first page when not kept
-    for their inputs, then the most opened entity pages not kept for theirs (most opened first, within `budget`
-    seconds: the rest are built when opened or at the next build). Each by the routes' own path (`entity_list`,
-    `queue`, `kept_full`), kept as the routes keep them."""
+    for their inputs, then the most opened entity pages with no row of the newest run (`_hot_due`; most opened first,
+    within `budget` seconds: the rest are built when opened or at the next build). Each by the routes' own path
+    (`entity_list`, `queue`, `kept_full`), kept as the routes keep them."""
     import time
     from insight_core.markx import kept_pages
     now = now or datetime.now(timezone.utc)
@@ -758,7 +769,9 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None, budget: float = HOT_
         out["bytes"][page], out["build_seconds"][page] = len(body), seconds
     t_hot = time.monotonic()
     hot = {"pages": 0, "left": 0, "failed": 0, "slowest": 0.0}
-    for eid, replies in _hot(cur):
+    from insight_core.markx import repo
+    last = repo.last_run(cur)
+    for eid, replies in (_hot_due(cur, last["id"], now) if last is not None else []):
         if time.monotonic() - t_hot > budget:
             hot["left"] += 1
             continue
