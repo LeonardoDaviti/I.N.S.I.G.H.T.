@@ -15,7 +15,7 @@ from insight_core.tests import test_markx_timeline as TL
 from insight_core.tests.test_markx_api import _Api, call
 
 T0, H, D = base.T0, base.H, base.D
-SIBLINGS = False   # v10.38: entity_bands.json chains.siblings (its measure there)
+SIBLINGS = True   # owner 2026-11-23: sibling launches switched on below the bar (87.5%)
 GUIDE_SHA256 = "be24941d7e58424f6561ed1866cd5d13ccccebdc8b20e527d88ccf36aa598771"   # frozen before held-out round 2
 
 
