@@ -921,8 +921,9 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
 
 
 def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
-    """The post page's Mark X panel: its reading, its entities and their roles, its Mark X stories (role, reason, the
-    judge's words) and connections, each with its reason."""
+    """The post page's Mark X panel: its reading (with its event type, subtype and origin from the type guides'
+    readings, v10.44), its entities and their roles, its Mark X stories (role, reason, the judge's words) and
+    connections, each with its reason."""
     from insight_core.markx import repo
     from insight_core.markx import reading5
     rank = reading5.rank_sql("guide")
@@ -931,6 +932,10 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
     r = cur.fetchone()
     reading = None if r is None else {"guide": r[0], "kind": r[1], "events": r[2], "lang": r[3], "headline": r[4],
                                       "main": (r[5] or {}).get("main"), "mentions": (r[5] or {}).get("mentions") or []}
+    if reading is not None:   # v10.44: the event type and subtype a row's kind is made of (event_types.of_posts)
+        from insight_core.markx import event_types
+        typed = event_types.of_posts(cur, [post_id]).get(post_id) or event_types.NONE
+        reading.update({"event_type": typed.type, "subtype": typed.subtype, "origin": typed.origin})
     from insight_core.markx import entity_views
     linked = entity_views.post_entities(cur, post_id)
     from insight_core.markx import schemas

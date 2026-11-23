@@ -27,7 +27,10 @@ subject of TRACK_MIN+ posts of a topic track is TRACK_PRIOR (a mild prior). A ta
 adds up five liked things), the kind's and the sources'; when a thing the reader named disagrees with the kind, the
 thing wins (a quant release of a model the reader follows rises; one of a model they do not follow sinks). The sum p
 is clipped to +-P_MAX and the row's factor is exp(SCALE * p), x0.47 to x2.1. `why` names the largest reason in words
-("you follow Inkling 2 Small", "you lowered 'builds of an existing model'").
+("you follow Inkling 2 Small", "you lowered 'builds of an existing model'"). v10.44: a thing counts by its role and
+place in the row (`presence`: a subject or actor of the lead or of most posts fully, a mention in one member not at
+all), a source by its share of the row (`source_share`: the lead's fully); a reason names a thing, source or kind by
+its shown name, never an id or an address, and one with no such name is no reason (`shown_name`, `source_names`).
 
 **Where it runs.** The facts and the learned weights in the jobs process (news_rank.keep); the API reads the taps and
 the learned weights of the shown rows' keys only (`weights`: one small query each) and scores each row in Python.
@@ -40,7 +43,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 DIMS = ("thing", "kind", "source")
 ANSWERS = ("more", "less", "none", "undo")
@@ -127,11 +130,16 @@ def kind_of(event: Optional[str], main: Optional[Dict[str, Any]], shippers: Sequ
 
 
 def facts_of(mentions: Sequence[Tuple[str, str, str, str, Optional[str], Optional[str]]], event: Optional[str],
-             sources: Sequence[str], typed: Sequence[Tuple[Optional[str], Optional[str]]] = ()) -> Dict[str, Any]:
+             sources: Sequence[str], typed: Sequence[Tuple[Optional[str], Optional[str]]] = (),
+             lead: Optional[Tuple[str, Optional[str]]] = None) -> Dict[str, Any]:
     """Pure: one row's facts from its posts' mentions [(post, role, entity id, name, type, maker)], its significance
-    event and its posts' sources. {things: [{id, name, type, role, posts}], kind, sources}."""
+    event, its posts' sources (one a post) and its lead (post id, source id). {things: [{id, name, type, role, posts,
+    core, lead_role}], kind, sources, source_posts, n, lead_source}: `core` the posts naming the thing as subject or
+    actor, `lead_role` its best role in the lead post (v10.44: what `presence` weighs)."""
     best: Dict[str, Dict[str, Any]] = {}
     posts: Dict[str, set] = defaultdict(set)
+    core: Dict[str, set] = defaultdict(set)
+    in_lead: Dict[str, str] = {}
     makers: Dict[str, Counter] = defaultdict(Counter)
     actors: set = set()
     publishers: set = set()
@@ -139,6 +147,10 @@ def facts_of(mentions: Sequence[Tuple[str, str, str, str, Optional[str], Optiona
         if role not in ROLE_FACTOR or not eid:
             continue
         posts[eid].add(pid)
+        if role in ("subject", "actor"):
+            core[eid].add(pid)
+        if lead and pid == lead[0] and (eid not in in_lead or ROLES.index(role) < ROLES.index(in_lead[eid])):
+            in_lead[eid] = role
         if role == "actor":
             actors.add(eid)
         elif role == "source":
@@ -152,6 +164,8 @@ def facts_of(mentions: Sequence[Tuple[str, str, str, str, Optional[str], Optiona
     things = sorted(best.values(), key=lambda t: (rank[t["role"]], -len(posts[t["id"]]), t["name"] or ""))[:THINGS_MAX]
     for t in things:
         t["posts"] = len(posts[t["id"]])
+        t["core"] = len(core[t["id"]])
+        t["lead_role"] = in_lead.get(t["id"])
     subjects = [t for t in things if t["role"] == "subject"]
     main = None
     if subjects:
@@ -161,7 +175,9 @@ def facts_of(mentions: Sequence[Tuple[str, str, str, str, Optional[str], Optiona
     shippers = [best[eid]["name"] for eid, _n in acting.most_common()]
     named = [t["name"] for eid, t in best.items() if eid in actors or eid in publishers]
     kind = subtype_kind(typed) or kind_of(event, main, shippers, named)
-    return {"things": things, "kind": kind, "sources": sorted(set(sources))}
+    return {"things": things, "kind": kind, "sources": sorted(set(sources)), "source_posts": dict(Counter(sources)),
+            "n": max(len(sources), max((len(v) for v in posts.values()), default=0)),
+            "lead_source": lead[1] if lead else None}
 
 
 def row_facts(cur: Any, rows: Sequence[Dict[str, Any]], events: Mapping[str, Optional[str]]) -> Dict[str, Dict[str, Any]]:
@@ -170,6 +186,7 @@ def row_facts(cur: Any, rows: Sequence[Dict[str, Any]], events: Mapping[str, Opt
     (event_types.of_posts), its significance event (`events`) and its posts' sources."""
     from insight_core.markx import event_types
     of_post: Dict[str, List[str]] = defaultdict(list)
+    source_of: Dict[str, str] = {}
     for r in rows:
         for p in r.get("posts") or []:
             of_post[p["post_id"]].append(str(r["id"]))
@@ -179,6 +196,7 @@ def row_facts(cur: Any, rows: Sequence[Dict[str, Any]], events: Mapping[str, Opt
     if ids:
         cur.execute("SELECT id::text, source_id::text FROM posts WHERE id = ANY(%s::uuid[])", (ids,))
         for pid, sid in cur.fetchall():
+            source_of[pid] = sid
             for rid in of_post[pid]:
                 sources[rid].append(sid)
         cur.execute("""SELECT m.post_id::text, m.role, m.entity_id::text, COALESCE(e.shown_name, e.name, m.name),
@@ -191,8 +209,12 @@ def row_facts(cur: Any, rows: Sequence[Dict[str, Any]], events: Mapping[str, Opt
     types = event_types.of_posts(cur, ids) if ids else {}
     typed = {str(r["id"]): [(types[p["post_id"]].type, types[p["post_id"]].subtype) for p in r.get("posts") or []
                             if p["post_id"] in types] for r in rows}
+
+    def lead(r: Dict[str, Any]) -> Optional[Tuple[str, Optional[str]]]:
+        first = (r.get("posts") or [None])[0]       # a row's posts in lead order (news.lead_order)
+        return (first["post_id"], source_of.get(first["post_id"])) if first else None
     return {str(r["id"]): facts_of(mentions.get(str(r["id"]), ()), events.get(str(r["id"])),
-                                   sources.get(str(r["id"]), ()), typed[str(r["id"])]) for r in rows}
+                                   sources.get(str(r["id"]), ()), typed[str(r["id"])], lead(r)) for r in rows}
 
 
 # ---- what the reader taught ---------------------------------------------------------------------------------
@@ -414,27 +436,78 @@ def _words(dim: str, w: Weight, amount: float, name: str, kind_words: str = "") 
     return f"you often read {what}" if amount > 0 else f"you rarely open {what}"
 
 
+_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def shown_name(name: Optional[str]) -> Optional[str]:
+    """A name a reason may show: never an id or an address (v10.44: "you rarely open f91c49bc-…"); None otherwise."""
+    name = " ".join((name or "").split())
+    if not name or _ID.match(name) or "://" in name or name.lower().startswith("www."):
+        return None
+    return name
+
+
+def presence(thing: Dict[str, Any], n: int) -> float:
+    """How much of a row a thing is (v10.44), 0..1, by its role and place: a subject or actor of the lead post or of
+    most posts is the row (1); a subject or actor of fewer members, their share of the row; a publisher or mention
+    counts only in the lead (half its role's factor) or in most posts (half its role's factor times its share), else
+    not at all (production c67ad1c9 rose x1.49 for "Brave", named once by a member)."""
+    n = max(int(n or 1), 1)
+    core, lead_role = int(thing.get("core") or 0), thing.get("lead_role")
+    if lead_role in ("subject", "actor") or core * 2 > n:
+        return 1.0
+    if core:
+        return core / n
+    if lead_role:
+        return 0.5 * ROLE_FACTOR.get(lead_role, 0.5)
+    posts = int(thing.get("posts") or 0)
+    return 0.5 * ROLE_FACTOR.get(thing.get("role"), 0.5) * posts / n if posts * 2 > n else 0.0
+
+
+def source_share(f: Dict[str, Any], source: str, lead: Optional[str]) -> float:
+    """How much of a row a source is (v10.44): the lead's source 1, another its share of the row's posts, halved
+    (production f44a0877, a Hacker News lead: "you rarely open blognot", a member's source)."""
+    counts = f.get("source_posts")
+    if source == lead or not counts:
+        return 1.0
+    return 0.5 * counts.get(source, 0) / max(int(f.get("n") or 1), 1)
+
+
 def score(ws: Mapping[Tuple[str, str], Weight], facts: Optional[Dict[str, Any]],
-          source_names: Mapping[str, str] = {}) -> Dict[str, Any]:
-    """Pure: a row's interest {p, factor, why, reasons [{dim, key, name, amount, words}]} (see the module)."""
+          source_names: Mapping[str, str] = {}, lead_source: Optional[str] = None) -> Dict[str, Any]:
+    """Pure: a row's interest {p, factor, why, reasons [{dim, key, name, amount, words}]} (see the module). A thing's
+    weight counts by its `presence` (facts kept before v10.44, without `core`: a tap fully, a learned weight by its
+    role's factor), a source's by its `source_share` (`lead_source`: the shown row's lead's source, else the kept
+    one); a reason with no name to show (an id, an address) is no reason."""
     f = facts or {}
     reasons: List[Dict[str, Any]] = []
+    lead = lead_source or f.get("lead_source")
+    n = f.get("n") or 1
 
-    def part(dim: str, items: List[Tuple[str, str, float]]) -> List[Dict[str, Any]]:
+    def thing_factor(t: Dict[str, Any]) -> Callable[[Weight], float]:
+        if "core" in t:
+            return lambda w, k=presence(t, n): k
+        return lambda w: 1.0 if w.by != "learned" else ROLE_FACTOR.get(t["role"], 0.5)
+
+    def part(dim: str, items: List[Tuple[str, Optional[str], Callable[[Weight], float]]]) -> List[Dict[str, Any]]:
         got = []
         for key, name, factor in items:
             w = ws.get((dim, key))
             if w is None or w.value == 0:
                 continue
-            amount = w.value if w.by != "learned" else w.value * factor
-            got.append({"dim": dim, "key": key, "name": name or w.name or key, "amount": round(amount, 4), "w": w})
+            shown = shown_name(name) or shown_name(w.name)
+            amount = round(w.value * factor(w), 4)
+            if shown is None or amount == 0:
+                continue
+            got.append({"dim": dim, "key": key, "name": shown, "amount": amount, "w": w})
         pos = max((g for g in got if g["amount"] > 0), key=lambda g: g["amount"], default=None)
         neg = min((g for g in got if g["amount"] < 0), key=lambda g: g["amount"], default=None)
         return [g for g in (pos, neg) if g]
 
-    things = part("thing", [(t["id"], t["name"], ROLE_FACTOR.get(t["role"], 0.5)) for t in f.get("things") or []])
-    sources = part("source", [(s, source_names.get(s), 1.0) for s in f.get("sources") or []])
-    kind = part("kind", [(f["kind"]["key"], f["kind"]["words"], 1.0)]) if f.get("kind") else []
+    things = part("thing", [(t["id"], t["name"], thing_factor(t)) for t in f.get("things") or []])
+    sources = part("source", [(s, source_names.get(s), lambda w, k=source_share(f, s, lead): k)
+                              for s in f.get("sources") or []])
+    kind = part("kind", [(f["kind"]["key"], f["kind"]["words"], lambda w: 1.0)]) if f.get("kind") else []
     named = [g for g in things if g["w"].by in ("reader", "seed")]
     for g in kind:
         if any((n["amount"] > 0) != (g["amount"] > 0) for n in named):
@@ -467,15 +540,38 @@ def teachable(facts: Optional[Dict[str, Any]], source: Optional[Tuple[str, str]]
             "source": ({"id": source[0], "name": source[1], "answer": tap("source", source[0])} if source else None)}
 
 
+def source_names(cur: Any, ids: Iterable[str]) -> Dict[str, str]:
+    """{source id: the name a reason shows} (v10.44): its display name, else its name, else its address's
+    publication (a feed's host, "garymarcus.substack.com"), else its handle ("blognot"); never an address."""
+    from insight_core.utils.addresses import host_of, publication_of
+    ids = sorted({i for i in ids if i and _ID.match(i)})
+    if not ids:
+        return {}
+    cur.execute("""SELECT id::text, NULLIF(btrim(settings->>'display_name'), ''), NULLIF(btrim(settings->>'name'), ''),
+                          handle_or_url FROM sources WHERE id = ANY(%s::uuid[])""", (ids,))
+    out = {}
+    for sid, display, name, handle in cur.fetchall():
+        got = shown_name(display) or shown_name(name)
+        if got is None and handle:
+            got = shown_name(publication_of(host_of(handle))) if "://" in handle else shown_name(handle)
+        if got:
+            out[sid] = got
+    return out
+
+
 def for_items(cur: Any, rows: Mapping[str, Tuple[Optional[Dict[str, Any]], Optional[Tuple[str, str]]]]
               ) -> Dict[str, Dict[str, Any]]:
     """In the API: {row: {p, factor, why, reasons, teach}} for {row: (its kept facts, (lead source id, name))}."""
     keys = [k for facts, src in rows.values() for k in keys_of(facts)] + [("source", s[0]) for _f, s in rows.values() if s]
     ws = weights(cur, keys)
-    names = {s[0]: s[1] for _f, s in rows.values() if s}
+    names = source_names(cur, [k for d, k in keys if d == "source" and (d, k) in ws]
+                         + [s[0] for _f, s in rows.values() if s])
     out = {}
     for rid, (facts, src) in rows.items():
-        out[rid] = {**score(ws, facts, names), "teach": teachable(facts, src, ws)}
+        if src:
+            src = (src[0], shown_name(src[1]) or names.get(src[0]) or src[1])
+        shown = {**names, **({src[0]: src[1]} if src and shown_name(src[1]) else {})}
+        out[rid] = {**score(ws, facts, shown, src[0] if src else None), "teach": teachable(facts, src, ws)}
     return out
 
 
@@ -495,4 +591,5 @@ def post_facts(cur: Any, post_id: str) -> Dict[str, Any]:
     facts = row_facts(cur, [{"id": post_id, "posts": [{"post_id": post_id}]}], {})[post_id]
     facts["kind"] = row[1] if row else None
     ws = weights(cur, keys_of(facts) + [("source", got[0])])
-    return {"post": post_id, "row": row[0] if row else None, **teachable(facts, (got[0], got[1]), ws)}
+    name = source_names(cur, [got[0]]).get(got[0]) or got[1]
+    return {"post": post_id, "row": row[0] if row else None, **teachable(facts, (got[0], name), ws)}

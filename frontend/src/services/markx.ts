@@ -127,6 +127,10 @@ export interface MarkxPostPanel {
     headline: string | null;
     main: { headline_en?: string; actors?: string[]; object?: string; action?: string; date?: string | null } | null;
     mentions: { name: string; role: string }[];
+    /** v10.44: the event type and its subtype ("model_release" / "build"), from the type guides' readings. */
+    event_type?: string | null;
+    subtype?: string | null;
+    origin?: string | null;
   } | null;
   entities: { name: string; type: string | null; role: string | null; maker: string | null; family: string | null;
     version: string | null; variant: string | null; span: string; entity_id?: string | null;

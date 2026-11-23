@@ -103,7 +103,7 @@ REPAIRS: Sequence[Repair] = (
     Repair("repair_track_rows", "v10.41", "One row a thing in topic tracks",
            "Track rows that absorbed reports of different things are split; catalog posts are asked again.",
            _repair_track_rows),
-    Repair("repair_saved_titles", "v10.42", "Title saved pages again",
+    Repair("repair_saved_titles", "v10.44", "Title saved pages again",
            "Unreadable saved pages titled by a link's words (“here”) get a real title and their address's date.",
            _repair_saved_titles),
     Repair("repair_foreign_pages", "v10.42", "Move another site's pages out of a source",

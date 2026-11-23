@@ -50,6 +50,12 @@ export default function MarkXPanel({ postId, url }: { postId: string; url?: stri
                   <span className="text-fg">{data.reading.kind}</span>
                   {data.reading.events ? ` · events: ${data.reading.events}` : ''}
                   {data.reading.lang ? ` · ${data.reading.lang}` : ''}
+                  {data.reading.event_type ? (
+                    <span className="block text-fg-3">
+                      type: {data.reading.event_type.replace(/_/g, ' ')}
+                      {data.reading.subtype ? ` · subtype: ${data.reading.subtype.replace(/_/g, ' ')}` : ''}
+                    </span>
+                  ) : null}
                   {data.reading.headline ? <span className="block text-fg">{data.reading.headline}</span> : null}
                   {data.reading.mentions.length ? (
                     <span className="block text-fg-3">mentions: {data.reading.mentions.map((m) => `${m.name} (${m.role})`).join(', ')}</span>

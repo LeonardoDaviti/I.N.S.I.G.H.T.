@@ -225,7 +225,8 @@ describe('the post page panel', () => {
   it('is folded, and loads only when opened', async () => {
     const panel: MarkxPostPanel = {
       post_id: 'p1', read: true,
-      reading: { guide: 'read-v2', kind: 'report', events: 'one', lang: 'en', headline: 'Acme released Widget 4.1', main: null, mentions: [] },
+      reading: { guide: 'read-v2', kind: 'report', events: 'one', lang: 'en', headline: 'Acme released Widget 4.1', main: null, mentions: [],
+        event_type: 'model_release', subtype: 'build' },
       entities: [{ name: 'Widget 4.1', type: 'product', role: 'subject', maker: 'Acme', family: 'Widget', version: '4.1', variant: null, span: 'Widget 4.1' }],
       stories: [{ id: 's1', headline: 'Acme releases Widget 4.1', first_at: now, posts: 2, role: 'member', reason: 'judge:pair', p: 0.9,
         relation: 'same_event', words: 'Both report it.' }],
@@ -236,6 +237,7 @@ describe('the post page panel', () => {
     expect(getMarkxPost).not.toHaveBeenCalled();
     await userEvent.click(screen.getByText('Mark X'));
     expect(await screen.findByText('Acme released Widget 4.1')).toBeInTheDocument();
+    expect(screen.getByText('type: model release · subtype: build')).toBeInTheDocument();   // v10.44
     expect(screen.getByText(/Haiku: same event 0.90, a story Mark IX doesn't have/)).toBeInTheDocument();
     expect(screen.getByText('follows up')).toBeInTheDocument();
     expect(getMarkxPost).toHaveBeenCalledWith('p1');

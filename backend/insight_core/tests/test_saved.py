@@ -372,6 +372,26 @@ class SaveRouteTests(unittest.TestCase):
         _, body = self.save({self.PAGE: HttpError("HTTP 403", status=403)}, url=self.PAGE, title="пишет")
         self.assertEqual((body["status"], body["title"]), ("saved", "Phone bans in schools raise test scores, a study finds"))
 
+    def test_v10_44_the_repair_does_not_title_a_page_by_its_own_bad_title_and_counts_only_changes(self):
+        """Production 928442eb: the repair matched the saved page's own row (its citation of itself) and wrote
+        "пишет → пишет", counted retitled: 1."""
+        from insight_core.scripts import repair_saved_titles
+        self._linking_post("пишет")
+        _, body = self.save({self.PAGE: HttpError("HTTP 403", status=403)}, url=self.PAGE, title="пишет")
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # the stale state production had
+            cur.execute("UPDATE posts SET title = 'пишет', url_host = 'saved.test.invalid', metadata = metadata || "
+                        "jsonb_build_object('cites', jsonb_build_object('url', %s::text, 'normalized_url', %s::text)) "
+                        "WHERE id = %s", (self.PAGE, self.PAGE, body["post_id"]))
+        with psycopg.connect(db_url()) as conn:
+            got = repair_saved_titles.run(conn, dry_run=False, db_url=db_url())
+        mine = [c for c in got["changes"] if c["post_id"] == body["post_id"]]
+        self.assertEqual([c["title"] for c in mine], [["пишет", "School phone bans study scores"]])
+        ((title,),) = self._rows("SELECT title FROM posts WHERE id = %s", body["post_id"])
+        self.assertEqual(title, "School phone bans study scores")
+        with psycopg.connect(db_url()) as conn:
+            again = repair_saved_titles.run(conn, dry_run=False, db_url=db_url())
+        self.assertFalse([c for c in again["changes"] if c["post_id"] == body["post_id"]], "nothing left to change")
+
     def test_v10_42_a_page_already_a_feeds_post_keeps_its_source_and_title(self):
         source = self._feed_source()
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:

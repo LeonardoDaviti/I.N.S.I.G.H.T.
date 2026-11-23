@@ -144,6 +144,53 @@ class ARowsInterest(unittest.TestCase):
         self.assertEqual(got["source"], {"id": "s1", "name": "Unsloth AI", "answer": None})
 
 
+class ByRoleAndPlace(unittest.TestCase):
+    """v10.44, production c67ad1c9 ("Tails 7.16" x1.49 for "you follow Brave", a member's one mention) and f44a0877
+    (an HN lead: "you rarely open blognot", a member's source); reasons never name an id or an address."""
+    TAILS = [("lead", "subject", "tails", "Tails 7.16", "software", None),
+             ("lead", "actor", "tor", "Tor Project", "org", None),
+             ("member", "subject", "tails", "Tails 7.16", "software", None),
+             ("member", "mention", "brave", "Brave", "product", None)]
+
+    def test_a_mention_in_one_member_lifts_nothing_a_subject_of_the_lead_fully(self):
+        f = P.facts_of(self.TAILS, "release_update", ["torblog", "shattered"], lead=("lead", "torblog"))
+        self.assertEqual({t["id"]: (t["core"], t["lead_role"]) for t in f["things"]},
+                         {"tails": (2, "subject"), "tor": (1, "actor"), "brave": (0, None)})
+        ws = {("thing", "brave"): tap("thing", "more")}
+        self.assertEqual(P.score(ws, f)["factor"], 1.0)
+        ws = {("thing", "tails"): tap("thing", "more")}
+        self.assertEqual(P.score(ws, f)["why"], "you follow Tails 7.16")
+        self.assertAlmostEqual(P.score(ws, f)["p"], P.LABEL["thing"])
+
+    def test_presence_by_role_and_place(self):
+        self.assertEqual(P.presence({"core": 0, "lead_role": "mention", "posts": 1, "role": "mention"}, 4),
+                         0.5 * P.ROLE_FACTOR["mention"])                     # named in the lead: a little
+        self.assertEqual(P.presence({"core": 1, "lead_role": None, "posts": 1, "role": "subject"}, 4), 0.25)
+        self.assertEqual(P.presence({"core": 3, "lead_role": None, "posts": 3, "role": "subject"}, 4), 1.0)
+        self.assertEqual(P.presence({"core": 0, "lead_role": None, "posts": 1, "role": "mention"}, 2), 0.0)
+
+    def test_a_members_source_counts_by_its_share_the_leads_fully(self):
+        f = P.facts_of([], None, ["hn", "blognot"], lead=("lead", "hn"))
+        ws = {("source", "blognot"): P.Weight(-0.2, "learned"), ("source", "hn"): P.Weight(-0.2, "learned")}
+        got = P.score(ws, f, {"blognot": "blognot", "hn": "Hacker News"})
+        self.assertEqual(got["why"], "you rarely open Hacker News")
+        alone = P.score({("source", "blognot"): ws[("source", "blognot")]}, f, {"blognot": "blognot"})
+        self.assertEqual([(r["name"], r["amount"]) for r in alone["reasons"]], [("blognot", -0.05)])
+        self.assertIsNone(alone["why"])                                      # too small to name
+        self.assertEqual(P.score(ws, f, {"blognot": "blognot", "hn": "Hacker News"}, lead_source="blognot")["why"],
+                         "you rarely open blognot")                          # the shown row's lead counts fully
+
+    def test_no_id_or_address_is_ever_a_reason(self):
+        sid = "f91c49bc-2d9b-4517-a767-edde87624f1a"
+        ws = {("source", sid): P.Weight(-0.2, "learned"), ("source", "feed"): P.Weight(-0.2, "learned", name=None)}
+        f = {"things": [], "kind": None, "sources": [sid, "feed"]}
+        got = P.score(ws, f, {"feed": "https://garymarcus.substack.com/feed"})
+        self.assertEqual((got["reasons"], got["why"], got["p"]), ([], None, 0.0))
+        for bad in (sid, "https://x.test/feed", "www.x.test", "", None):
+            self.assertIsNone(P.shown_name(bad))
+        self.assertEqual(P.shown_name("garymarcus.substack.com"), "garymarcus.substack.com")
+
+
 class Taught(_Api):
     def test_the_newest_tap_counts_and_undo_goes_back_to_what_was_learned(self):
         with self.conn.transaction():

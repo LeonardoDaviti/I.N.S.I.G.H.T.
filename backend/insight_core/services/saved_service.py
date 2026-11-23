@@ -347,24 +347,31 @@ class SavedService:
             row = cur.fetchone()
         return str(row[0]) if row else None
 
-    def known_title(self, urls: List[str]) -> Optional[str]:
+    def known_title(self, urls: List[str], *, exclude_post: Optional[str] = None,
+                    not_title: Optional[str] = None) -> Optional[str]:
         """The title the stored data gives a page that could not be read (v10.42), else None: a followed source's
         post citing it (issue 0167: a link blog's item for it, its title), else page_titles.evidence (one title for
         a page you don't follow: the words its linking posts quote, link words that read as a title, a link post's
-        title; never a bare "writes" or "here", tree_rules.origin_title)."""
+        title; never a bare "writes" or "here", tree_rules.origin_title). `exclude_post`: a post that is not its own
+        evidence (the saved page being retitled); `not_title`: a title that does not count (the bad one, v10.44)."""
         normalized = sorted({n for n in map(normalize_url, urls) if n})
         if not normalized:
             return None
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute(f"SELECT {shown_title()} FROM posts p WHERE p.url_host = ANY(%s) AND p.metadata ? %s"
                         " AND p.metadata -> %s ->> 'normalized_url' = ANY(%s) AND btrim(COALESCE(p.title, '')) <> ''"
+                        " AND (%s::uuid IS NULL OR p.id <> %s::uuid)"
+                        f" AND (%s::text IS NULL OR lower(btrim({shown_title()})) <> lower(btrim(%s)))"
                         " ORDER BY p.fetched_at, p.id LIMIT 1",
-                        ([extract_url_host(u) for u in normalized], CITES_KEY, CITES_KEY, normalized))
+                        ([extract_url_host(u) for u in normalized], CITES_KEY, CITES_KEY, normalized,
+                         exclude_post, exclude_post, not_title, not_title))
             row = cur.fetchone()
             if row and row[0]:
                 return row[0]
             titles = page_titles.evidence(cur, SourceFacts(cur), normalized)
-        return next((titles[u] for u in normalized if titles.get(u)), None)
+        bad = " ".join((not_title or "").split()).lower()
+        return next((titles[u] for u in normalized
+                     if titles.get(u) and " ".join(titles[u].split()).lower() != bad), None)
 
     def first_linked(self, urls: List[str], saved_at: datetime) -> Optional[datetime]:
         """When the first dated post linking one of these addresses showed the link (LINKED_SINCE), never later

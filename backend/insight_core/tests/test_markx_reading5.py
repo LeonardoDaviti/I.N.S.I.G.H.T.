@@ -217,6 +217,9 @@ class InShadow(_Db):
         got = event_types.of_posts(self.cur, [new])[new]
         self.assertEqual((got.type, got.subtype), ("model_release", "build"))
         self.assertEqual(repo.current_guide(self.cur, new), "ent-v5")
+        from insight_core.markx import news   # v10.44: the post panel shows them
+        shown = news.post_panel(self.cur, new)["reading"]
+        self.assertEqual((shown["event_type"], shown["subtype"]), ("model_release", "build"))
 
 
 class TheSubtype(unittest.TestCase):

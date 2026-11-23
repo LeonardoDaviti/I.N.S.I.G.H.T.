@@ -38,11 +38,14 @@ def run(conn, *, dry_run: bool, db_url: Optional[str] = None) -> Dict[str, Any]:
         for post_id, url, title, published_at, fetched_at in cur.fetchall():
             if titled_link_text(" ".join((title or "").split())):
                 continue
-            new_title = service.known_title([url]) or unread_title("", url)
+            new_title = service.known_title([url], exclude_post=post_id, not_title=title) or unread_title("", url)
             linked = service.first_linked([url], fetched_at or datetime.now(timezone.utc))
             day = address_day_before(url, fetched_at or datetime.now(timezone.utc))
             new_date = day if day is not None and published_at is not None and published_at == linked and day < published_at \
                 else published_at
+            if " ".join((new_title or "").split()).lower() == " ".join((title or "").split()).lower() \
+                    and new_date == published_at:
+                continue   # nothing would change (v10.44: "пишет → пишет" counted as retitled)
             changes.append({"post_id": post_id, "url": url, "title": [title, new_title],
                             "published_at": [str(published_at), str(new_date)]})
             if not dry_run:
