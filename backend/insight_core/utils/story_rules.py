@@ -52,6 +52,11 @@ SAME_TITLE_MIN_WORDS = 5                  # the prototype's, not measured
 SAME_ADDRESS_WITHIN = SAME_TEXT_WITHIN    # two posts at one address (0064), as a shared text
 LINK_WITHIN = timedelta(hours=72)         # the prototype's, not measured
 THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's own tweet it quotes, else the one before it (0066, 0103); not measured
+# v10.39: a reply that opens a run of its account's replies (the next one within THREAD_BURST) THREAD_GAP or more after
+# the tweet before it is another thread, its first tweet not stored (Artificial Analysis's Muse Ember thread hung from
+# the Decision Index thread of 18 hours before). Measured on the 11-19 server copy: 7 of 7 such edges joined two threads.
+THREAD_GAP = timedelta(hours=1)
+THREAD_BURST = timedelta(minutes=2)
 # A post with 3+ anchors is a roundup: the prototype's value. Measured, the rule: its first link's
 # join is right 34 of 40 times on the lab (0050); no other count compared.
 ROUNDUP_ANCHORS = 3
@@ -363,9 +368,18 @@ def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
             quoted = own_row.get(own_quote(p) or "")
             if quoted is not None and _order(quoted) < _order(p) and p.t - quoted.t <= THREAD_WITHIN:
                 out[p.id] = quoted.id
-            elif i and run[i - 1].own_tweet and p.t - run[i - 1].t <= THREAD_WITHIN:
+            elif i and run[i - 1].own_tweet and p.t - run[i - 1].t <= THREAD_WITHIN and not opens_thread(run, i):
                 out[p.id] = run[i - 1].id
     return out
+
+
+def opens_thread(run: Sequence[StoryPost], i: int) -> bool:
+    """Whether the reply `run[i]` (its source's timeline, in time order) begins another thread than the tweet before it:
+    its account's next reply follows within THREAD_BURST (a thread is written in one go) while the tweet before it is
+    THREAD_GAP or more earlier. A lone late reply ("update, 18 hours later") still continues the tweet before it."""
+    p, nxt = run[i], run[i + 1] if i + 1 < len(run) else None
+    return (p.t - run[i - 1].t >= THREAD_GAP and nxt is not None and nxt.own_tweet and bool(nxt.reply_to)
+            and nxt.t - p.t <= THREAD_BURST)
 
 
 @dataclass

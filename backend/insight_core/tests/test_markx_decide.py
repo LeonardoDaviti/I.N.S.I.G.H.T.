@@ -91,6 +91,16 @@ class Rules(unittest.TestCase):
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
         self.assertEqual({q.tid for q in self.plan(config=D.Config.prototype()) if q.story == "A"}, {"check:A:b"})
 
+    def test_the_tree_root_is_the_origin_not_the_earliest_post(self):
+        """v10.39: Nvidia's "A Message to Our Company" (11-08) was the first post of the Google TPU story, hung from
+        its root by `none` (a TechCrunch aside linked both): the earliest post was taken for the origin and never
+        checked. The origin is the member with no parent reason; the earliest is checked like any other."""
+        self.stories["A"] = [D.Member("a", "report", "none"), D.Member("b", "report"), D.Member("c", "report", "citation")]
+        self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:a", "check:A:c"})
+        self.stories["A"] = [D.Member("a", "report", "citation"), D.Member("b", "report", "citation"),
+                             D.Member("c", "report", "citation")]   # a page origin: no root post, the earliest as before
+        self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
+
     def test_a_check_never_shows_an_empty_story(self):
         """0112 bug 2: the checked post as the story's only report showed Haiku "Headline: (empty)" and no member.
         Then it shows the story's other members, any role; with none at all, nothing is asked."""

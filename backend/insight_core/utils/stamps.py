@@ -342,6 +342,11 @@ def posts() -> List[Dict[str, Any]]:
           html="<p>A new tokenizer release</p>"),
         p("t9", "s-x2", _at(152), "R to @author_y: and the routing numbers hold up", "https://x.com/author_y/status/1900000000000000303",
           links=[(SELF_A, "t7")], author="author_y", html=_self_quote("and the routing numbers hold up", SELF_A)),
+        # v10.39: a run of replies (a minute apart) an hour after the account's tweet before it is another thread
+        p("t10", "s-x2", _at(153), "R to @author_y: a second thread on the tokenizer, part two",
+          "https://x.com/author_y/status/1900000000000000304", author="author_y", html="<p>tokenizer two</p>"),
+        p("t11", "s-x2", _at(153, 1), "R to @author_y: a second thread on the tokenizer, part three",
+          "https://x.com/author_y/status/1900000000000000305", author="author_y", html="<p>tokenizer three</p>"),
         # A paper's abstract and its PDF are one page (issue 0106): two voices linking either path, one story
         p("q1", "s-gamma", _at(190), "Notes on a routing preprint", "https://gamma.example/research/routing-preprint",
           links=[(PAPER, None)]),

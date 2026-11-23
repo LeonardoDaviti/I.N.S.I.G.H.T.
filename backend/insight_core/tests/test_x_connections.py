@@ -163,6 +163,19 @@ class XRulesTests(unittest.TestCase):
         self.assertEqual({p.id for p in story.posts}, {"s", "t0", "t1", "t2"})
         self.assertEqual(story.voices, 1)
 
+    def test_a_run_of_replies_hours_later_is_another_thread(self):
+        """v10.39: Artificial Analysis's Muse Ember thread (its first tweet not stored) hung from the Decision Index
+        thread of 18 hours before. A reply opening a run of replies (the next within 2 minutes) an hour or more after
+        the tweet before it continues no stored tweet; a lone reply hours later still continues the one before it."""
+        posts = [tweet("d0", "aa", "artanalysis", n=ID),
+                 tweet("d1", "aa", "artanalysis", n=ID + 1, minutes=0.1, reply_to="artanalysis"),
+                 tweet("m1", "aa", "artanalysis", n=ID + 2, minutes=18 * 60, reply_to="artanalysis"),
+                 tweet("m2", "aa", "artanalysis", n=ID + 3, minutes=18 * 60 + 1, reply_to="artanalysis"),
+                 tweet("u1", "aa", "artanalysis", n=ID + 4, minutes=22 * 60, reply_to="artanalysis")]
+        self.assertEqual(threads(posts), {"d1": "d0", "m2": "m1", "u1": "m2"})
+        just = [p for p in posts if p.id != "m2"]
+        self.assertEqual(threads(just)["m1"], "d1", "a lone late reply continues the tweet before it")
+
     def test_tweets_of_one_second_follow_their_ids(self):
         posts = [tweet("z0", "pa", "forecast_fan", n=ID),
                  tweet("a2", "pa", "forecast_fan", n=ID + 2, reply_to="forecast_fan"),
