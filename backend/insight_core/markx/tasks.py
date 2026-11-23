@@ -821,7 +821,11 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
 # all day: 63 runs in 104 minutes on the server, 0.6 s each); the decision run's graph stage plans it too.
 BACKGROUND_PLANNED = ("check", "cite", "track", "relate", "stop",   # 0165 C: stop (stops.plan, no declared inputs)
                       "chain",                                       # 0219: story chains (graph.plan_chains, after stop)
-                      "derive")                                      # 0234: based_on checks (graph.plan_derive)
+                      "derive",                                      # 0234: based_on checks (graph.plan_derive)
+                      # v10.42: a track's digests, things and same-thing pairs: each pass read every row of every
+                      # track and added work, so it never rested and ran on every lease (13.5, 2.2 and 11.3 s mean
+                      # on the server, 2026-11-23: about half the API's core)
+                      "digest", "track_things", "track_same")
 
 
 def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None) -> bool:

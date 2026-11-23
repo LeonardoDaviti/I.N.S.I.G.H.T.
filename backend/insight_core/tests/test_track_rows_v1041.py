@@ -13,6 +13,7 @@ Synthetic data only (invented tracks); the DB tests run on a database whose name
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 from insight_core.markx import track_brief as TB, track_things as TT
@@ -48,6 +49,21 @@ class Pure(unittest.TestCase):
         self.assertEqual((got["speed"]["value"], got["speed"]["post"], got["speed"]["quote"]),
                          ({"number": 28.0}, "p2", "28 tok/s"), "most posts' value, its earliest report's quote")
         self.assertEqual(TT.merged_fields(rs[:2])["speed"]["post"], "p1", "a tie: the earliest post")
+
+
+    def test_incremental_pairs_are_the_full_pairs_with_a_changed_row(self):
+        """v10.42: `only` gives exactly the full pass's pairs that hold one of its rows; `skip` leaves pairs out."""
+        kind = {"kind": "setup", "fields": [{"name": "name", "type": "text", "key": True}]}
+        names = ["Zq box one", "Zq box two", "Zq tower", "Yx tower", "Yx dock", "Wv dock", "Wv box"]
+        things = [{"id": f"t{k}", "fields": {"name": v(n, n)}} for k, n in enumerate(names)]
+        rs = {t["id"]: [{"post": f"p{k}", "values": t["fields"]}] for k, t in enumerate(things)}
+        full = TT.same_pairs(kind, things, rs, {})
+        self.assertTrue(full)
+        for only in ({"t2"}, {"t0", "t4"}, set()):
+            self.assertEqual(TT.same_pairs(kind, things, rs, {}, only=only),
+                             [p for p in full if only & {p[0], p[1]}], only)
+        skip = {full[0][:2]}
+        self.assertEqual(TT.same_pairs(kind, things, rs, {}, skip=skip), full[1:])
 
 
 class Rows(_Briefer):
@@ -92,6 +108,11 @@ class Rows(_Briefer):
         self.assertEqual((status, body["valid"]), (200, 1), body)
         self.assertEqual(len(TT.current(self.cur, f, "setup")), 1)
         self.assertEqual(self.run_planner("track_same"), 0)
+        with mock.patch.object(TT, "reports", wraps=TT.reports) as read:
+            self.cur.execute("UPDATE system_settings SET value = jsonb_build_object('at', now() + interval '1 hour') "
+                             "WHERE key = %s", (TT.SAME_PASS + str(f),))
+            self.assertEqual(self.run_planner("track_same"), 0)
+        self.assertEqual(read.call_count, 0, "v10.42: no row changed since the last pass: the track is not read")
 
     def test_repair_splits_a_row_that_absorbed_others_and_keeps_every_report(self):
         f = self.setup_track()
