@@ -55,7 +55,6 @@ TRACK_POSTS = 400      # a track's newest posts of the window read
 # "reddit" is closed (0262), "hn" is a forum.
 PERSON_WORDS = frozenset({"x", "telegram", "youtube", "bluesky", "code", "hub", "account"})
 NOT_PERSON = frozenset({"reddit", "hn", "site"})
-HOWS = ("quote", "repost", "mention", "link", "maker")
 CODE_HOST = "git" + "hub.com/"
 
 

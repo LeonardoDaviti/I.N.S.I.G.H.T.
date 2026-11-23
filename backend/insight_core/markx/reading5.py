@@ -29,7 +29,6 @@ SETTING = "reading_guide"
 MODES = ("off", "shadow", "on")
 DEFAULT = "off"
 CHARS, LINKS = 6000, 12                     # ent-v4.2's cut and cite's links (0212 section 3)
-OLD_KINDS = ("read", "read3", "entities")   # what `on` stops asking for a post ent-v5 reads (cite stays)
 _GUIDE_RE = r"^[a-z0-9][a-z0-9.\-]*$"
 
 

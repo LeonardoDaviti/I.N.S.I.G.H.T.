@@ -208,18 +208,13 @@ class TaskTests(_Rollback):
         row = repo.get_task(self.cur, low)
         self.assertEqual((row["attempts"], row["last_error"], row["leased_by"]), (3, "third", None))
 
-    def test_release_and_expired_leases(self):
+    def test_release_leases(self):
         g = self.guide()
         t1, _ = self.task(g, "one")
-        t2, _ = self.task(g, "two")
+        self.task(g, "two")
         repo.lease_tasks(self.cur, kinds=["read"], limit=100, worker="w1")
         self.assertGreaterEqual(repo.release_tasks(self.cur, "w1"), 2)
         self.assertEqual(repo.get_task(self.cur, t1)["status"], "open")
-        repo.lease_tasks(self.cur, kinds=["read"], limit=100, worker="w1")
-        self.cur.execute("UPDATE mx_tasks SET lease_until = now() - interval '1 minute' WHERE id = %s", (t2,))
-        self.assertGreaterEqual(repo.expire_leases(self.cur), 1)
-        self.assertEqual(repo.get_task(self.cur, t2)["status"], "open")
-        self.assertEqual(repo.get_task(self.cur, t1)["status"], "leased")
 
 
 class AnswerTablesTests(_Rollback):
@@ -243,7 +238,6 @@ class AnswerTablesTests(_Rollback):
             {"span": "Maker", "name": "Maker", "name_key": "maker", "type": "org", "role": "actor"}])
         self.assertEqual(n, 2)
         self.assertEqual([m["n"] for m in repo.mentions(self.cur, post, eg)], [0, 1])
-        self.assertEqual(repo.posts_naming(self.cur, "maker model 4.1", version="4.1"), [post])
         self.assertEqual(repo.add_mentions(self.cur, post_id=post, guide=eg, call_id=good, mentions=[
             {"span": "x", "name": "x", "name_key": "x"}]), 0)    # a post's mentions under a guide are written once
 
@@ -254,7 +248,6 @@ class AnswerTablesTests(_Rollback):
         repo.put_embedding(self.cur, post_id=c, model="test-m", text_hash="h1", vector=vec(0.0, 1.0))
         self.assertFalse(repo.put_embedding(self.cur, post_id=a, model="test-m", text_hash="h1", vector=vec(1.0)))   # same text
         self.assertTrue(repo.put_embedding(self.cur, post_id=a, model="test-m", text_hash="h2", vector=vec(1.0)))    # text changed
-        self.assertEqual(repo.embedding_hashes(self.cur, [a, b], "test-m"), {a: "h2", b: "h1"})
         self.assertTrue(repo.put_embedding(self.cur, post_id=b, model="test-m", text_hash="h1", vector=vec(0.9, 0.1),
                                            model_sha256="build-1"))   # the build recorded
         self.assertEqual(repo.embedding_builds(self.cur, "test-m"), {None: 2, "build-1": 1})
@@ -306,7 +299,9 @@ class ValidToTests(_Rollback):
         self.assertEqual(repo.stories_of_post(self.cur, post), [])
         self.assertTrue(repo.open_membership(self.cur, story_id=self.story, post_id=post, role="mention",
                                              reason="judge:join", run_id=self.run, p=0.65, at=closed_at))
-        history = repo.membership_history(self.cur, self.story, post)
+        self.cur.execute("SELECT * FROM mx_story_posts WHERE story_id = %s AND post_id = %s "
+                         "ORDER BY valid_from, valid_to NULLS LAST", (self.story, post))
+        history = repo._rows(self.cur)
         self.assertEqual([(h["role"], h["valid_to"] is None) for h in history], [("member", False), ("mention", True)])
         self.assertEqual(history[0]["valid_to"], closed_at)
         self.assertEqual(repo.stories_of_post(self.cur, post), [self.story])

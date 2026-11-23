@@ -58,7 +58,7 @@ class TheDevelopsRow(unittest.TestCase):
         self.assertEqual(back.SPECIFIC, ("model", "product", "software", "paper", "document", "dataset", "event", "law",
                                          "other"))
         self.assertEqual((later.MAIN_SHARE, later.AGAIN), (0.5, timedelta(days=30)))
-        self.assertEqual(later.LONG_TYPES, ("paper", "document", "dataset", "method", "model", "software"))
+        self.assertEqual(later.ALWAYS_TYPES + later.RELEASE_TYPES, ("paper", "document", "dataset", "method", "model", "software"))
         with mock.patch.dict(pairing.POLICIES, {pairing.DEVELOPS: pairing.policy(pairing.DEVELOPS, release_types=())}):
             pol = pairing.policy(pairing.DEVELOPS)
             self.assertFalse(pairing.specific(pol, "model", level="version"))   # the gate is the row's

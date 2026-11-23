@@ -510,10 +510,6 @@ def track_input(head: str, p: tasks.Post) -> str:
     return head + "\n\nPOST\n" + tasks.post_block(p, LINKS, TEXT_CHARS)
 
 
-def one_line(text: str) -> bool:
-    return "\n" not in (text or "").strip()
-
-
 # ---- planning ----------------------------------------------------------------------------------------
 
 def _age(at: Optional[datetime], now: datetime) -> int:

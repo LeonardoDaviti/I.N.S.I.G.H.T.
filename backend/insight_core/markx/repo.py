@@ -233,13 +233,6 @@ def release_tasks(cur: Cursor, worker: str) -> int:
     return cur.rowcount
 
 
-def expire_leases(cur: Cursor) -> int:
-    """Leases past their end back to open: how many (0086 Safety 5: no task stays leased past its lease)."""
-    cur.execute("UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL "
-                "WHERE status = 'leased' AND lease_until < now()")
-    return cur.rowcount
-
-
 def answer_task(cur: Cursor, task_id: Id) -> bool:
     """A valid answer closes its task: False when it was already answered or failed (nothing changes)."""
     cur.execute("UPDATE mx_tasks SET status = 'answered', answered_at = now(), lease_until = NULL, leased_by = NULL "
@@ -391,18 +384,6 @@ def mentions(cur: Cursor, post_id: Id, guide: Optional[str] = None) -> List[Dict
     return _rows(cur)
 
 
-def posts_naming(cur: Cursor, name_key: str, *, version: Optional[str] = None, role: Optional[str] = None,
-                 guide: Optional[str] = None) -> List[UUID]:
-    """The posts that name `name_key` (with this exact version, role, guide when given), in id order."""
-    where, params = ["name_key = %s"], [name_key]
-    for column, value in (("version", version), ("role", role), ("guide", guide)):
-        if value is not None:
-            where.append(f"{column} = %s")
-            params.append(value)
-    cur.execute(f"SELECT DISTINCT post_id FROM mx_mentions WHERE {' AND '.join(where)} ORDER BY post_id", params)
-    return [r[0] for r in cur.fetchall()]
-
-
 # ---- embeddings and candidates ---------------------------------------------------------------------
 
 def vector_text(vector: Sequence[float]) -> str:
@@ -429,13 +410,6 @@ def put_embedding(cur: Cursor, *, post_id: Id, model: str, text_hash: str, vecto
 def embedding_builds(cur: Cursor, model: str) -> Dict[Optional[str], int]:
     """{model_sha256: vectors} stored under `model` (one build per database: build plan corrections 6)."""
     cur.execute("SELECT model_sha256, count(*) FROM mx_embeddings WHERE model = %s GROUP BY 1", (model,))
-    return dict(cur.fetchall())
-
-
-def embedding_hashes(cur: Cursor, post_ids: Iterable[Id], model: str) -> Dict[UUID, str]:
-    """{post_id: text_hash} of the posts embedded under `model` (what a run needn't embed again)."""
-    cur.execute("SELECT post_id, text_hash FROM mx_embeddings WHERE post_id = ANY(%s::uuid[]) AND model = %s",
-                ([str(p) for p in post_ids], model))
     return dict(cur.fetchall())
 
 
@@ -509,10 +483,6 @@ def set_story_headline(cur: Cursor, story_id: Id, *, headline: Optional[str], he
                 (headline, headline_call, story_id))
 
 
-def set_story_card(cur: Cursor, story_id: Id, card_call: Id) -> None:
-    cur.execute("UPDATE mx_stories SET card_call = %s WHERE id = %s", (card_call, story_id))
-
-
 # ---- memberships (valid_to: null = current) -------------------------------------------------------
 
 def open_membership(cur: Cursor, *, story_id: Id, post_id: Id, role: str, reason: str, run_id: Id,
@@ -545,13 +515,6 @@ def stories_of_post(cur: Cursor, post_id: Id) -> List[UUID]:
     cur.execute("SELECT story_id FROM mx_story_posts WHERE post_id = %s AND valid_to IS NULL ORDER BY valid_from, story_id",
                 (post_id,))
     return [r[0] for r in cur.fetchall()]
-
-
-def membership_history(cur: Cursor, story_id: Id, post_id: Id) -> List[Dict[str, Any]]:
-    """Every membership the post has had in the story, closed ones included, oldest first."""
-    cur.execute("SELECT * FROM mx_story_posts WHERE story_id = %s AND post_id = %s "
-                "ORDER BY valid_from, valid_to NULLS LAST", (story_id, post_id))
-    return _rows(cur)
 
 
 # ---- connections (valid_to: null = current) -------------------------------------------------------

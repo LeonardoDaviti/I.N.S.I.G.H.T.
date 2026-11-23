@@ -31,8 +31,6 @@ from insight_core.utils.url_normalization import normalize_url
 
 # The kinds of reason a row's line comes from, in the rule's order.
 QUOTE, SENTENCE, TITLE, LINK_WORDS = "quote", "sentence", "title", "link_words"
-STORED_KINDS = (QUOTE, SENTENCE, LINK_WORDS)   # read from the post; TITLE is the target's, read with the row
-OUTSIDE_KINDS = (QUOTE, SENTENCE)
 
 QUOTE_MAX = 300
 ANCHOR_MAX = 320

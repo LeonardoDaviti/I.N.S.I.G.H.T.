@@ -57,7 +57,6 @@ SHOWN_KEY = "anchors_shown"               # mx_settings: which engine the pages 
 SHADOW_KEY = "anchors_shadow"
 BACK_SINCE_KEY = "back_anchors_since"
 POL = back.DEVELOPS
-TRIG_ORDER = ("H", "E", "L")
 
 
 def shown(cur: Any) -> str:
@@ -274,10 +273,6 @@ def _wholes(cur: Any, posts: Sequence[Any]) -> List[Any]:
                 (order, [p.id for p in posts], order))
     out = {r[0] for r in cur.fetchall()}
     return [p for p in posts if p.id not in out]
-
-
-def _reach() -> timedelta:
-    return max((hi for _lo, hi in POL.develops_windows.values()), default=timedelta(0))
 
 
 def _one_anchor(rows: List[Dict[str, Any]], posts_of: Any) -> List[Dict[str, Any]]:

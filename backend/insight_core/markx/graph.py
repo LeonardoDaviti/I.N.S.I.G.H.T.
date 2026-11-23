@@ -64,7 +64,6 @@ RULE_OTHER, RULE_OWN, RULE_NEXT = "author_link_other", "author_link_own", "entit
 RULE_SERIES, NEXT_IN_SERIES = "series", "next_in_series"   # 0134: a same-source link that is series navigation
 LINK_RULES = (RULE_OTHER, RULE_OWN, RULE_SERIES)
 JUDGED_LINK_RULES = (RULE_OTHER, RULE_OWN)   # the judge refines these; a series edge is never asked
-RULES = LINK_RULES + (RULE_NEXT,)
 P_OTHER, P_OWN = 1.0, 0.9     # decision 1: the same source's links are edges at p 0.9
 MEANINGFUL = ("same_event", "follows_up", "next_version", "builds_on", "refers_back")
 REFINES = ("builds_on", "follows_up", "same_event")   # what the judge may make of an author-link edge

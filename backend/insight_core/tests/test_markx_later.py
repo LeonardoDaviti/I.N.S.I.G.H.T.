@@ -71,7 +71,7 @@ class _Later(_Back):
 
     def long(self, *, first=40, last=30, name="Widget 4.1", type="model", entity=None, links=()):
         """A story of two sources about `name`: by default a specific release of it (an entity of its own)."""
-        if entity is None and name and type in later.LONG_TYPES:
+        if entity is None and name and type in later.ALWAYS_TYPES + later.RELEASE_TYPES:
             entity = self.release(name, type) if type in later.RELEASE_TYPES else self.ent(name, type)
         a = self.post(source=self.source, at=self.at(first), links=links)
         b = self.post(source=self.other, at=self.at(last), links=links)

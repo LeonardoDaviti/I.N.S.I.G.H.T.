@@ -113,14 +113,12 @@ COLLIDE_RATE = 0.002        # v10.24: the collisions' seconds a linked mention b
 EMB_BAR, EMB_TOPK = 0.80, 10
 JAC_BAR = 0.50
 GRAM_CAP, GRAM_TOP = 400, 60
-AUTO_CONF = 0.9             # Haiku `same` at or above: automatic; 0130: the bands in entity_bands.json decide (this is their first row)
 RULE_CONF = 0.97            # a rule's merge, for the chain guard's order
 MAX_CLUSTER = 6
 ALIAS_CAP, COLLIDE_CAP = 10000, 1000   # new questions a run adds of each (a pair over it waits for the nightly pass)
 COLLIDE_RUNS = 3
 COLLIDE_MENTIONS = 8
 COLLIDE_SPAN_DAYS = 365   # 0220: a name whose posts span a year or more is asked whether it is one thing
-QUEUE_ONLY = {"paren", "handle_extra_word", "maker_unstated", "fields_parser"}
 TYPES_VERSIONED = {"model", "product", "software", "project", "dataset"}
 ANCHOR_RE = re.compile(r"(github\.com|huggingface\.co)/([\w.-]+)/([\w.-]+)", re.I)
 ANSWERS = ("same", "other_version", "different", "not_entity")
@@ -3876,9 +3874,6 @@ def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, cal
         return None
     book.redirect[frm] = (to, automatic)
     return got[0]
-
-
-PAIR_KINDS = ("alias", "alias2", "alias3", "alias4")   # a pair's questions (alias3 and alias4: one between them)
 
 
 class _Lookup:

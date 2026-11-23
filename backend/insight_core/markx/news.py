@@ -28,7 +28,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from insight_core.markx import pairing
 from insight_core.utils import voice
 
-TAGS = ("NEW", "MERGED", "SPLIT", "CHANGED", "SAME")
 HAIKU_PER_MILLION = (0.10, 0.50)     # 0086 H: Haiku 5.5, $ per million tokens in and out (what the API would cost)
 
 

@@ -82,12 +82,6 @@ def is_article_post(post: Mapping[str, Any]) -> bool:
     return bool(ARTICLE_LINK_RE.search(own))
 
 
-def is_stub(post: Mapping[str, Any]) -> bool:
-    """An article post whose own text is the link alone (what the reader got before v10.13.10)."""
-    own, _ = _split(str(post.get("content_html") or ""))
-    return is_article_post(post) and not _intro(own)
-
-
 def _intro(own_html: str) -> str:
     """The tweet's own html without its article link, "" when nothing else is said."""
     kept = ARTICLE_ANCHOR_RE.sub(lambda m: "" if ARTICLE_LINK_RE.search(m.group(0)) else m.group(0), own_html)

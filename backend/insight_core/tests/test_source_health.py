@@ -280,14 +280,12 @@ class SourceHealthTests(unittest.TestCase):
 
     def test_the_status_set_has_one_source(self):
         from insight_core.services.operations_service import (
-            EMPTY_SOURCE_HEALTH,
             HEALTH_STATUS_ORDER,
             HealthStatus,
             summarize_health,
         )
         self.assertEqual(HEALTH_STATUS_ORDER, tuple(s.value for s in HealthStatus))
-        self.assertEqual(summarize_health([]), EMPTY_SOURCE_HEALTH["summary"])
-        self.assertEqual(set(EMPTY_SOURCE_HEALTH["summary"]),
+        self.assertEqual(set(summarize_health([])),
                          {"due_now", "deferred", "backoff", "unavailable", "errors", "silent", "stalled"},
                          "the wire keys are API contract (spec F.4; issue 0178 added silent, 0242 stalled)")
 

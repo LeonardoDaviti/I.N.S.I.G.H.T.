@@ -206,11 +206,6 @@ def stories_shown(cur: Any, book: Any, sids: Sequence[str]
     return posts, roles, heads
 
 
-def lines_for(posts: Sequence[Tuple[datetime, str, str, str]], roles: Mapping[str, Mapping[str, str]], root: str) -> List[Line]:
-    """A story's posts as question lines about the thing `root`."""
-    return [Line(at, src, title, (roles.get(p) or {}).get(root)) for at, p, src, title in sorted(posts)]
-
-
 def answered(cur: Any, *, stories: Optional[Iterable[str]] = None, since: Optional[datetime] = None
              ) -> List[Tuple[str, str, bool, datetime]]:
     """Every stored stop answer, the newest task's first valid call a (story, entity) pair: [(story, entity as asked,
