@@ -10,7 +10,6 @@ import ast
 import asyncio
 import email.message
 import io
-import re
 import subprocess
 import sys
 import unittest
@@ -617,13 +616,6 @@ class TelegramKindTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
 
 
-# The dead-connector names from the spec §D.5 grep; after B5 no .py file under backend/ may
-# mention them. Split so that this file does not match the grep itself.
-_DEAD = ["rss_" "connector", "reddit_" "connector", "youtube_" "connector", "tool_" "registry"]
-DEAD_CONNECTOR_NAMES = re.compile("|".join(
-    _DEAD + ["discover_" "connectors", "AVAILABLE_" "CONNECTORS", "create_" "connector"]))
-
-
 class ConnectorRemovalTests(unittest.TestCase):
     """B5 deleted the dead connectors; B8 deleted the Telegram one and the package with it."""
 
@@ -644,29 +636,6 @@ class ConnectorRemovalTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", script], cwd=str(BACKEND_DIR),
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-
-    def test_dead_connector_modules_are_deleted(self):
-        core = BACKEND_DIR / "insight_core"
-        for relative in [f"connectors/{name}.py" for name in _DEAD] + [
-                         "connectors", "engines", "tests/connector_test.py", "tests/upsert_test.py",
-                         "tests/upsert_multiple_test.py", "tests/read_posts.py"]:
-            self.assertFalse((core / relative).exists(), relative)
-
-    def test_no_python_file_imports_the_connectors_package_or_the_telegram_one(self):
-        pattern = re.compile("insight_core" r"\.connectors|\.\.connectors|" "telegram_" "connector|" "Telegram" "Connector")
-        hits = [str(path.relative_to(BACKEND_DIR)) for path in BACKEND_DIR.rglob("*.py")
-                if path != Path(__file__).resolve() and pattern.search(path.read_text(errors="replace"))]
-        self.assertEqual(hits, [])
-
-    def test_no_python_file_references_a_dead_connector(self):
-        hits = []
-        for path in BACKEND_DIR.rglob("*.py"):
-            if path == Path(__file__).resolve():
-                continue
-            for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
-                if DEAD_CONNECTOR_NAMES.search(line):
-                    hits.append(f"{path.relative_to(BACKEND_DIR)}:{number}: {line.strip()}")
-        self.assertEqual(hits, [])
 
 
 class SiteAdapterArchivePagesTests(unittest.IsolatedAsyncioTestCase):

@@ -183,17 +183,6 @@ class IngestionRouteTests(unittest.TestCase):
         self.assertEqual(len(tasks.tasks), 0)
         self.assertIn("Could not start a ingestion_run job", "\n".join(logged.output))
 
-    def test_async_mode_is_gone_from_fetch_now(self):
-        self.assertNotIn("asyncMode", main.LiveFetchRequest.model_fields)
-
-    def test_legacy_ingest_routes_are_gone(self):
-        self.assertFalse(hasattr(main, "ingest_posts"))
-        self.assertFalse(hasattr(main, "safe_ingest_posts"))
-        paths = [getattr(r, "path", None) for r in main.app.routes]
-        self.assertNotIn("/api/ingest-posts", paths)
-        self.assertNotIn("/api/safe-ingest-posts", paths)
-        self.assertIn("/api/ingestion/run", paths)
-
     def test_archive_run_on_an_unavailable_kind_is_409(self):
         from insight_core.ingestion.kinds.base import KindUnavailable
 

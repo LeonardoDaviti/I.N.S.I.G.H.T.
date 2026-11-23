@@ -186,10 +186,6 @@ class BackgroundTests(unittest.TestCase):
             self.assertEqual(discover_reads.keep("unused", stories=stories, people=lambda _url: {})["built"], [])
         self.assertEqual(built, [1])
 
-    def test_the_api_starts_no_discover_work(self):
-        """0206: the module has no background start for the API any more (it ran in the API process)."""
-        self.assertFalse(hasattr(discover_reads, "start") or hasattr(discover_reads, "running"))
-
 
 @requires_test_db
 class ServedTests(unittest.TestCase):

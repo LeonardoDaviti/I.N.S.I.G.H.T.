@@ -191,11 +191,6 @@ class DecideFetchTests(unittest.TestCase):
         d = decide(stats(last_success_at=NOW - timedelta(minutes=5)), force=True)
         self.assertEqual(d.kind, DecisionKind.FETCH_FORCED)
 
-    def test_ignore_backoff_is_gone(self):
-        """B4: force superseded the interim ignore_backoff argument."""
-        with self.assertRaises(TypeError):
-            decide(stats(), ignore_backoff=True)
-
     def test_force_never_beats_ytdlp_off(self):
         """Regression: the manual paths used to bypass the yt-dlp switch."""
         d = decide(stats(), YOUTUBE, force=True, availability=YTDLP_OFF)

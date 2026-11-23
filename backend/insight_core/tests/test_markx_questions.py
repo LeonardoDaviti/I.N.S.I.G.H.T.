@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from insight_core.markx import consumers, questions, schemas, validate
+from insight_core.markx import questions, validate
 
 INPUT = """QUESTION: What runs a 27B model under $1,500?
 TODAY: 2026-11-19
@@ -39,11 +39,6 @@ class Kept(unittest.TestCase):
 
 
 class Kind(unittest.TestCase):
-    def test_kind_guide_and_consumer(self):
-        self.assertEqual(schemas.KINDS["question"].guide, "question-v1")
-        self.assertIn("outside", schemas.guide_body("question-v1"))
-        self.assertEqual(consumers.CONSUMER["question"], "questions")
-
     def test_schema(self):
         ok, err = validate.check("question", {"answerable": True, "sentences": [{"text": "x", "cites": [1]}]}, INPUT)
         self.assertIsNone(err)

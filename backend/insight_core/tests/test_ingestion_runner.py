@@ -196,7 +196,8 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         sources = [_source(url) for url in errors]
         rows = {s["id"]: FetchStateRow(source_id=s["id"], last_outcome="error", consecutive_failures=10)
                 for s in sources}
-        h = _Harness(sources, [_rss_kind(fail)], rows=rows)
+        clock = SleepClock()   # the timed-out host is waited out (a minute) on a fake clock, not a real one
+        h = _Harness(sources, [_rss_kind(fail)], rows=rows, gates=SpyFetchGates(clock=clock, sleep=clock.sleep))
         await h.run(force=True)
         waits = {s["handle_or_url"]: h.state.rows[s["id"]].next_retry_at - NOW for s in sources}
         self.assertEqual(waits["https://gateway.test/rss"], timedelta(hours=12))

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,6 +40,11 @@ from insight_core.tests._kind_fakes import FakeKind
 
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
 H = timedelta(hours=1)
+
+
+def _no_budget_store(*_args, **_kwargs):
+    raise ConnectionError("no database in these tests")
+
 
 YTDLP = PolitenessProfile(concurrency_pool="ytdlp", requires="ytdlp",
                           cadence_floor=timedelta(hours=168), min_posts_per_fetch=15)
@@ -108,6 +114,15 @@ def make_service(view: list[dict] | None = None) -> OperationsService:
     service._load_schedule_view = lambda source_ids=None: [  # type: ignore[method-assign]
         r for r in rows if source_ids is None or r["id"] in source_ids
     ]
+    # host_limits reads the learned budgets from the database; there is none here ("postgresql:///unused"), and the
+    # pool waited out its timeout on every get_source_health (10-20 s a test). Unreadable at once, the same path:
+    # health does not fail for it and host_limits is [].
+    real_host_limits = service.host_limits
+
+    def host_limits():
+        with unittest.mock.patch("insight_core.ingestion.ports.DbHostBudgetStore.load_all", _no_budget_store):
+            return real_host_limits()
+    service.host_limits = host_limits  # type: ignore[method-assign]
     return service
 
 

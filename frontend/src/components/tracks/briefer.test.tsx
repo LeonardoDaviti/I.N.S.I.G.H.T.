@@ -2,7 +2,7 @@
 // (garden tools, board games, bread baking): the quick look, the weekly issue, the tables, the schema editor and the
 // rail's count, and none of it while the backend's switch is off. Synthetic data only; no word of these tracks is in
 // the code.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -160,6 +160,10 @@ describe('the briefer words', () => {
 // ---- the track page -----------------------------------------------------------------------------------------------
 
 describe('the quick look on a track page', () => {
+  // the page words the look's day against today: today is NOW, three days after it (the real clock made LOOKED a
+  // date, not a weekday, once a week had passed)
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW); });
+  afterEach(() => { vi.useRealTimers(); });
   it('shows nothing of the briefer while the switch is off', async () => {
     vi.spyOn(tracksApi, 'page').mockResolvedValue(PAGE);
     vi.spyOn(tracksApi, 'look').mockResolvedValue({ before: { track: LOOKED, subtopics: {} }, now: { track: LOOKED, subtopics: {} } });

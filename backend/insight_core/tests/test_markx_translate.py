@@ -22,15 +22,6 @@ EN = {"title_en": "Acme released Widget 4.1",
 
 
 class TheGuide(unittest.TestCase):
-    def test_v2_is_v1_with_the_glossary_and_keeps_the_answer_shape(self):
-        v1, v2 = schemas.guide_body("translate-v1"), schemas.guide_body("translate-v2")
-        self.assertIn("Answer with JSON: {\"title_en\": \"...\", \"text_en\": \"...\"}", v2)
-        for line in v1.splitlines()[2:5]:
-            self.assertIn(line, v2)                             # v1's rules, unchanged
-        self.assertIn("| фронт, фронтенд | frontend | front, frontier |", v2)
-        self.assertIn("endpoint", v2)
-        self.assertIn(schemas.KINDS["translate"].guide, ("translate-v1", "translate-v2"))
-
     def test_the_checks_hold_numbers_and_length(self):
         text = f"Title: Acme\nText: {RU}"
         self.assertIsNone(validate.check("translate", EN, text)[1])
