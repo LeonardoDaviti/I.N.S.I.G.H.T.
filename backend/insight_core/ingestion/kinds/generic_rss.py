@@ -4,8 +4,10 @@ A live fetch asks conditionally (304: no new posts); a teaser post is expanded f
 (ingestion/full_text.py) and a stored teaser whose page read failed is read again later. The archive reads the
 feed, then each strategy of archive_ladder that finds more (feed paging, platform API, sitemap, listing pages,
 opt-in Web Archive), resumable by its checkpoint; address-found posts are read one page each with page watch's
-reader. It keeps to the source's own site (archive_ladder.source_site: `foreign_site`), stops on `low_yield`, and
-waits MIN_PAGE_DELAY_S between crawled pages. Nothing stored is removed."""
+reader. It keeps to the source's own site (archive_ladder.source_site: `foreign_site`): every address strategy's
+page is asked archive_ladder.own_site before it is read (_sitemap_post), and a listing reads the shape of the feed's
+items on that site, so a page another site's (a link blog's links) is a linked page, never the source's post. It
+stops on `low_yield`, and waits MIN_PAGE_DELAY_S between crawled pages. Nothing stored is removed."""
 from __future__ import annotations
 
 import asyncio
@@ -290,12 +292,19 @@ class GenericRssKind(BaseKind):
             hint = None
 
     @staticmethod
-    def _foreign(source: Source, checkpoint: dict) -> bool:
+    def _own(source: Source, checkpoint: Optional[dict]) -> Tuple[str, str]:
+        """(the source's own site an archive keeps to, its feed): the site its ladder recorded, else the feed's
+        (older ladders recorded none). Every address strategy asks archive_ladder.own_site of these two."""
+        feed = str(source.get("handle_or_url") or "")
+        ladder = (checkpoint or {}).get("ladder") if isinstance((checkpoint or {}).get("ladder"), dict) else {}
+        return str(ladder.get("site") or feed), feed
+
+    @classmethod
+    def _foreign(cls, source: Source, checkpoint: dict) -> bool:
         """Whether a checkpoint reads another site than the source's own: its sitemap's site or its listing on
         neither the feed's site nor the site its ladder recorded (older ladders recorded none)."""
-        feed = str(source.get("handle_or_url") or "")
+        site, feed = cls._own(source, checkpoint)
         ladder = checkpoint.get("ladder") if isinstance(checkpoint.get("ladder"), dict) else {}
-        site = str(ladder.get("site") or feed)
         starts = ladder.get("starts") if isinstance(ladder.get("starts"), dict) else {}
         named = [checkpoint.get("site") if checkpoint.get("mode") == SITEMAP_MODE else None,
                  checkpoint.get("listing") if checkpoint.get("mode") == LISTING_MODE else None]
@@ -388,7 +397,7 @@ class GenericRssKind(BaseKind):
             held.add(key)
             if pages_fetched > start_pages:
                 await self._polite(rate)
-            post = await self._sitemap_post(source, loc, lastmod)
+            post = await self._sitemap_post(source, loc, lastmod, site=self._own(source, checkpoint)[0])
             if not isinstance(post, dict):
                 skipped[SKIP_UNREADABLE if post == UNREADABLE else SKIP_NO_POST] += 1
                 post = None
@@ -402,8 +411,7 @@ class GenericRssKind(BaseKind):
     async def _addressed(self, source: Source, checkpoint: dict, urls: List[Any], held: set, rate: Any = None):
         """Pages read one each from an address list (listing, Web Archive) from the checkpoint's next_index. An
         address off the source's own site is never read."""
-        feed = str(source.get("handle_or_url") or "")
-        site = str((checkpoint.get("ladder") or {}).get("site") or feed)
+        site, feed = self._own(source, checkpoint)
         collected, pages_fetched = resume_counts(checkpoint)
         start_pages = pages_fetched
         skipped = skipped_counts(checkpoint)
@@ -425,7 +433,7 @@ class GenericRssKind(BaseKind):
                 continue
             if pages_fetched > start_pages:
                 await self._polite(rate)
-            post = await self._sitemap_post(source, loc, None, archived=stamp)
+            post = await self._sitemap_post(source, loc, None, archived=stamp, site=site)
             if not isinstance(post, dict):
                 skipped[SKIP_UNREADABLE if post == UNREADABLE else SKIP_NO_POST] += 1
                 post = None
@@ -549,7 +557,11 @@ class GenericRssKind(BaseKind):
         """The blog's listing pages, one archive page each (their post links kept in the checkpoint, read by the
         shape the feed's items have), following rel=next or /page/N/; then each listed post one page each."""
         ladder = checkpoint.get("ladder") or {}
-        shape = archive_ladder.post_shape(ladder.get("items") or [])
+        # the shape of the feed's items on the source's own site (as the ladder's probe reads it): a link blog's
+        # items link other sites, and a listing's links there are linked pages, never the source's posts
+        site, feed = self._own(source, checkpoint)
+        shape = archive_ladder.post_shape([item for item in ladder.get("items") or []
+                                           if archive_ladder.own_site(item, site, feed)])
         urls: List[str] = list(checkpoint.get("urls") or [])
         walked = {normalize_url(url) for url in urls}
         listing, number = checkpoint.get("listing"), int(checkpoint.get("listing_page") or 1)
@@ -663,12 +675,17 @@ class GenericRssKind(BaseKind):
 
 
     async def _sitemap_post(self, source: Source, url: str, lastmod: Optional[datetime], *,
-                            archived: Optional[str] = None) -> Any:
+                            archived: Optional[str] = None, site: Optional[str] = None) -> Any:
         """One older post from an address list, read from its page as page watch reads one; None when the page is
         no post, UNREADABLE when it cannot be read (a host limiting us stops the archive: it resumes). `archived`:
-        the Web Archive's capture, read when the live page is gone (404 / 410)."""
+        the Web Archive's capture, read when the live page is gone (404 / 410). A page off the source's own site
+        (`site`, its ladder's, else the feed's: archive_ladder.own_site) is never its post and is not read: an
+        address strategy stores only the source's own pages; what it links elsewhere is a linked page."""
         from insight_core.ingestion.kinds.page_watch import article_post, not_post, page_date
 
+        feed = str(source.get("handle_or_url") or "")
+        if not archive_ladder.own_site(url, site or feed, feed):
+            return None
         try:
             page, _ = await self.http.get_text(url)
         except HttpError as exc:
