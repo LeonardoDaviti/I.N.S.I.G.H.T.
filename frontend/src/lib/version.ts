@@ -1,8 +1,6 @@
 /**
- * The running version on the Ingestion tab (issue 0020), in the project's Mark
- * scheme: `I.N.S.I.G.H.T. Mark IX v9.1 · b9fcc6e · 27 Oct 2026`. The web app's
- * build is stamped by Vite from `VITE_INSIGHT_*`; the API's comes from
- * GET /api/version. Both come from the repo's `VERSION` file through `update`.
+ * The running version line (`I.N.S.I.G.H.T. Mark IX v9.1 · b9fcc6e · 27 Oct 2026`): the web build is stamped by
+ * Vite from `VITE_INSIGHT_*`, the API's comes from GET /api/version; both from the repo's `VERSION` file.
  */
 import type { BuildVersion } from '../services/api';
 
@@ -36,11 +34,7 @@ function mark(version: string | null): string | null {
   return version?.match(/^(Mark \S+) /)?.[1] ?? null;
 }
 
-/**
- * The line for the web build and the API's (`undefined` until it answers, or
- * when it can't). Different builds say both, plainly, with their shared Mark
- * written once.
- */
+/** The line for the web build and the API's (`undefined` until it answers); different builds say both, the Mark once. */
 export function versionLine(web: BuildVersion, api: BuildVersion | undefined): string {
   if (!api || (api.version === web.version && api.commit === web.commit)) {
     return ['I.N.S.I.G.H.T. ' + label(web.version, web.commit), commitDate(web.commit_date)].filter(Boolean).join(' · ');

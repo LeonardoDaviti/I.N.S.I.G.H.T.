@@ -4,8 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 
 import ReaderPage from './ReaderPage';
-// The feed's dialogs are lazy chunks (the reader's JS budget). Imported with the file, they
-// open in the same turn instead of racing findBy against their first transform.
+// The feed's dialogs are lazy chunks: imported with the file, they open in the same turn instead of racing findBy.
 import '../components/reader/ShortcutHelp';
 import '../components/ops/ConfirmDialog';
 import { feedItem, feedPage } from '../components/reader/fixtures';
@@ -325,7 +324,7 @@ describe('ReaderPage', () => {
   });
 });
 
-// The retired track page (Design Studio D5): a folder scope is just its posts.
+// The retired track page: a folder scope is just its posts.
 describe('ReaderPage, folder scope', () => {
   it('a folder is just its posts: no briefing, no milestones', async () => {
     render(base({
@@ -337,7 +336,7 @@ describe('ReaderPage, folder scope', () => {
   });
 });
 
-// Issue 0003: the scope name is one click from where the source is managed.
+// The scope name is one click from where the source is managed (0003).
 describe('ReaderPage, the scope name links into Sources', () => {
   const api = () => base({
     getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])),

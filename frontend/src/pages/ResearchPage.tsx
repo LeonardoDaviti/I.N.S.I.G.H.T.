@@ -9,7 +9,7 @@ import { plural } from '../lib/format';
 import { bylineText } from '../lib/byline';
 import { scoutLine, unreadLine } from '../services/scout';
 import {
-  accountLine, referencesLine, researchApi, researchHref, seedWords, statusLine,
+  accountLine, referencesLine, researchApi, researchHref, seedText, seedWords, statusLine,
   type ResearchChannel, type ResearchPage as Data, type ResearchPaper, type ResearchPostRow,
 } from '../services/research';
 
@@ -89,8 +89,8 @@ function Run({ runId }: { runId: string }) {
   if (query.isPending) return <LoadingState label="Loading the research" rows={6} />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} title="Could not load the research" />;
   const d: Data = query.data;
-  const seed = d.run.seed.length > 120 ? `${d.run.seed.slice(0, 117)}…` : d.run.seed;
   const entities = d.held.filter((h) => h.entity);
+  const seed = seedText(d.run.seed_kind, d.run.seed, 120, entities.find((h) => h.entity?.id === d.run.entity_id)?.entity?.name);
   const linking = d.held.filter((h) => h.post_id);
   const these_are = d.maker.these_are;
   const cannot = [...d.channels.cannot];
@@ -210,9 +210,13 @@ function Run({ runId }: { runId: string }) {
 function Start() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const [seed, setSeed] = useState(params.get('seed') ?? '');
+  // From an entity (?seed=<id>&name=<name>) the field shows its name; left as is, the run starts from the id itself.
+  const given = params.get('seed') ?? '';
+  const named = params.get('name');
+  const [seed, setSeed] = useState(named ?? given);
   const runs = useQuery({ queryKey: ['markx-research-runs'], queryFn: () => researchApi.runs(), staleTime: 30_000 });
-  const start = useMutation({ mutationFn: () => researchApi.start(seed), onSuccess: (r) => navigate(researchHref(r.id)) });
+  const start = useMutation({ mutationFn: () => researchApi.start(named !== null && seed === named ? given : seed),
+    onSuccess: (r) => navigate(researchHref(r.id)) });
   return (
     <>
       <PageHeader title="Research" meta="A link, a name, a post you paste or a question: INSIGHT finds what it has, the maker, its channels, its papers and who discusses it." />
@@ -228,8 +232,8 @@ function Start() {
           <ul>
             {runs.data.map((r) => (
               <li key={r.id} className="py-0.5 text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]">
-                <TextLink to={researchHref(r.id)}>{r.seed.length > 90 ? `${r.seed.slice(0, 87)}…` : r.seed}</TextLink>
-                <span className="text-fg-3"> · {seedWords(r.seed_kind)} · {r.status}</span>
+                <TextLink to={researchHref(r.id)}>{seedText(r.seed_kind, r.seed, 90)}</TextLink>
+                <span className="text-fg-3">{r.seed_kind === 'entity' ? '' : ` · ${seedWords(r.seed_kind)}`} · {r.status}</span>
               </li>
             ))}
           </ul>
@@ -240,10 +244,8 @@ function Start() {
 }
 
 /**
- * Research (issue 0162, Mark X): `/research` starts one (a textarea: a link, a name, a pasted post or a question;
- * `?seed=` fills it), `/research/:runId` is a run's page, kept: In INSIGHT, the same announcement elsewhere, the
- * maker (with "These are <name>: yes / no"), channels to follow (Follow / Not this one), papers, discussion found, and
- * what could not be read and why; Watch this makes a track of it; Run again shows what is new.
+ * Research (Mark X): `/research` starts one (a link, a name, a pasted post or a question; `?seed=` fills it),
+ * `/research/:runId` is a run's page, kept. Watch this makes a track of it; Run again shows what is new.
  */
 export default function ResearchPage() {
   const { runId } = useParams();

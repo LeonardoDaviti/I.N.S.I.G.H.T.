@@ -22,7 +22,7 @@ class PostFieldsUtilityTests(unittest.TestCase):
         self.assertEqual(host, "example.com")
 
     def test_one_post_has_one_normalized_url_however_the_link_is_written(self):
-        """Issue 0049: a fragment, utm_ tags, http, www. and a trailing slash name the same post."""
+        """A fragment, utm_ tags, http, www. and a trailing slash name the same post (0049)."""
         forms = [
             "https://simonwillison.net/2026/Aug/10/openclaw/#atom-everything",
             "https://simonwillison.net/2026/Aug/10/openclaw/",
@@ -33,9 +33,8 @@ class PostFieldsUtilityTests(unittest.TestCase):
                          {"https://simonwillison.net/2026/Aug/10/openclaw"})
 
     def test_a_mail_or_analytics_tracker_names_no_other_page(self):
-        """Issue 0109 B1: a newsletter's mail tracker (HubSpot, Mailchimp, Marketo, ConvertKit, beehiiv, Vero,
-        Omeda, Eloqua, MailerLite, Drip, Klaviyo), an analytics cookie handed over (_ga, _gl) or an ad click
-        id is the page it marks: on the server's data one essay was 3 Discover lines by its ?_hsenc= alone."""
+        """A newsletter's mail tracker, an analytics cookie handed over (_ga, _gl) or an ad click id is the page it
+        marks (0109 B1)."""
         page = "https://journal.example/2017/feature-visualization"
         tracked = [
             "?_hsenc=p2ANqtz-8abc&_hsmi=2", "?_ga=2.1.2-3", "?_gl=1*abc*_ga*MTE", "?__hstc=1.2&__hssc=3&__hsfp=4",
@@ -59,8 +58,7 @@ class PostFieldsUtilityTests(unittest.TestCase):
         self.assertNotEqual(normalize_url("https://app.test/#!/post/1"), normalize_url("https://app.test/#!/post/2"))
 
     def test_a_link_whose_port_is_not_a_number_is_not_an_address(self):
-        """Found on the server's data: one post's link read "http://host:  some text", and the
-        ValueError it raised stopped the whole story job."""
+        """A malformed link ("http://host:  some text") never raises, so it cannot stop the story job."""
         self.assertIsNone(normalize_url("http://example.com:  Good morning, this is prose/"))
         self.assertIsNone(extract_url_host("http://example.com:abc/x"))
         self.assertEqual(normalize_url("https://example.com:8443/x"), "https://example.com:8443/x")
@@ -127,7 +125,7 @@ class DisplayTitleTests(unittest.TestCase):
                          "Update the claude-api skill: a new default model, build-eval and hillclimb guides (#1930)")
 
     def test_a_title_cut_with_brackets_by_the_telegram_bridge_is_the_body_first_line(self):
-        # tg.i-c-a.su cuts titles with " [...]" (turbo_bench, 2026-10-21).
+        # a bridge cuts titles with " [...]"
         body = "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного ей».\n\nДальше текст."
         for cut in ("🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного е [...]",
                     "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного е […]"):
@@ -135,8 +133,8 @@ class DisplayTitleTests(unittest.TestCase):
                              "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного ей».")
 
     def test_a_title_the_bridge_glued_from_two_lines_ends_where_the_first_line_did(self):
-        """Server data, 2026-10-30: the Telegram bridge joins a post's lines with no space ("SpaceXДатацентр"),
-        the stored body keeps it; 3,360 titles. The first line ends where the space is missing."""
+        """A bridge joins a post's lines with no space ("SpaceXДатацентр"): the first line ends where the space is
+        missing."""
         body = "Anthropic арендуют Colossus у SpaceX Датацентр Маска на 200+ тысяч видеокарт в итоге оказался не нужен"
         self.assertEqual(display_title("Anthropic арендуют Colossus у SpaceXДатацентр Маска на 200+ тысяч [...]", body),
                          "Anthropic арендуют Colossus у SpaceX")
@@ -150,7 +148,7 @@ class DisplayTitleTests(unittest.TestCase):
                          "a cut title with every space kept is the body's first line, as before")
 
     def test_a_placeholder_title_is_empty_so_the_text_says_what_the_post_is(self):
-        """Issue 0069 (R5): placeholders told by shape, never by a list of phrases per site."""
+        """Placeholders told by shape, never by a list of phrases per site (0069)."""
         self.assertEqual(display_title("[Photo]", "А теперь наша любимая рубрика..."), "А теперь наша любимая рубрика...")
         self.assertEqual(display_title("[Video]", ""), "[Video]", "a post with no words keeps its placeholder")
         self.assertEqual(display_title("RT by @toolsmith_pete: Image", "jason (@jxn_co) Post your best codex billboard"),
@@ -177,7 +175,7 @@ class DisplayTitleTests(unittest.TestCase):
         self.assertEqual(display_title("Ghostty 1.4", "The release notes."), "Ghostty 1.4", "a one-line title stands")
 
     def test_a_whole_title_glued_from_two_lines_ends_where_the_first_line_did(self):
-        """seeall_notes/4011: the bridge glued two lines into a title it did not cut."""
+        """A bridge glued two lines into a title it did not cut."""
         body = ("🤖 OpenAI удвоила лимиты во всех тарифах Pro – за $100, $200 и $500 Изменения уже действуют. "
                 "Заодно отменили сокращение лимитов")
         self.assertEqual(display_title("🤖 OpenAI удвоила лимиты во всех тарифах Pro – за $100, $200 и $500Изменения уже действуют.", body),
@@ -198,7 +196,7 @@ class DisplayTitleTests(unittest.TestCase):
 
 
 class TitlesLeftOpenTests(unittest.TestCase):
-    # Issue 0070, B6: the titles 0069 B left open, each a class.
+    # Titles left open by 0069, each a class (0070).
     def test_a_link_then_a_list_is_titled_by_the_link_and_a_list_mark_is_no_word(self):
         title = "RT by @oddlogic_games: http://agentville.world\n\n> accessible for AI newcomers\n> voice chat for everything"
         self.assertEqual(display_title(title, "agentville.world > accessible for AI newcomers > voice chat"), "agentville.world")
@@ -237,7 +235,7 @@ class TitlesLeftOpenTests(unittest.TestCase):
 
 
 class TitleNotReadTwiceTests(unittest.TestCase):
-    # Issue 0070: a title taken from the body isn't read twice; the body starts after it.
+    # A title taken from the body isn't read twice; the body starts after it (0070).
     def test_a_telegram_posts_first_line_leaves_its_body(self):
         content = "Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику.\nТеренс Тао и другие."
         html = "<p><b>Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику.</b><br/>Теренс Тао и другие.</p>"
@@ -270,7 +268,7 @@ class TitleNotReadTwiceTests(unittest.TestCase):
 
 
 class BridgeTitleTests(unittest.TestCase):
-    """Issue 0072: a title the Telegram bridge cut ends where the post's headline ends."""
+    """A title the Telegram bridge cut ends where the post's headline ends (0072)."""
 
     def test_a_cut_title_ends_at_the_htmls_line_not_the_texts(self):
         html = ('<a href="https://media.test/1.jpg"><img src="https://media.test/1/thumb.jpeg"/></a><br/><br/>'
@@ -306,7 +304,7 @@ class BridgeTitleTests(unittest.TestCase):
 
 
 class TitleAddressTests(unittest.TestCase):
-    """Issue 0072: a title doesn't end in an address, and a label's line ends it."""
+    """A title doesn't end in an address, and a label's line ends it (0072)."""
 
     def test_a_trailing_address_leaves_the_title(self):
         self.assertEqual(display_title("Вышла новая модель https://models.test/news/new-model/", ""), "Вышла новая модель")
@@ -328,7 +326,7 @@ class TitleAddressTests(unittest.TestCase):
                          "a title wrapped in lines reads as one")
 
     def test_an_address_the_sentence_leads_to_stays_bare(self):
-        # Issue 0072 D2: a preposition, "Quoting" or a colon leads to the address: it is the sentence's object.
+        # a preposition, "Quoting" or a colon leads to the address: it is the sentence's object
         for title, shown in [("Quoting https://site.test/security.txt", "Quoting site.test/security.txt"),
                              ("Moved to https://code.test/org/skills", "Moved to code.test/org/skills"),
                              ("Transcripts are all done by https://tool.test", "Transcripts are all done by tool.test"),
@@ -358,7 +356,7 @@ class TitleAddressTests(unittest.TestCase):
 
 
 class QuoteCardTests(unittest.TestCase):
-    """Issue 0072: Nitter's quote card says who is quoted and where, never the post's words."""
+    """Nitter's quote card says who is quoted and where, never the post's words (0072)."""
     ADDRESS = '<p><a href="https://nitter.net/ann/status/2115097309847630047?s=20">nitter.net/ann/status…</a></p>\n'
     CARD = ('<hr/>\n<blockquote>\n<b>Ann Lee (@ann)</b>\n<p>\n<p>Here is one more output of mine.<br>\n<br>\nThe speed is good, and I would put it above the model I used before this week for most of my daily work.</p>\n'
             '<img src="https://nitter.local/pic/a.jpg" />\n</p>\n<footer>\n— <cite><a href="https://nitter.local/ann/status/'
@@ -381,7 +379,7 @@ class QuoteCardTests(unittest.TestCase):
         self.assertNotIn("(@ann)", text)
 
     def test_the_card_s_byline_opens_the_quoted_post_on_x(self):
-        """Issue 0126 (3): "Name (@handle) · open post ↗", the quoted tweet's x.com address, never the Nitter host."""
+        """"Name (@handle) · open post ↗", the quoted tweet's x.com address, never the Nitter host (0126)."""
         quoted = "https://x.com/ann/status/2115097309847630047"
         _, _, html = reading_text("R to @ann: x.com/ann/status…", self.TEXT, self.ADDRESS + self.CARD)
         linked = quote_byline_linked(html, quoted)
@@ -404,7 +402,7 @@ class QuoteCardTests(unittest.TestCase):
 
 
 class RedditFooterTests(unittest.TestCase):
-    """Issue 0072: Reddit's "submitted by /u/x [link] [comments]" is the item's footer, never its text."""
+    """Reddit's "submitted by /u/x [link] [comments]" is the item's footer, never its text (0072)."""
     THREAD = "https://www.reddit.com/r/sub/comments/1/a_model_is_now_open_weight/"
     FOOTER = (' &#32; submitted by &#32; <a href="https://www.reddit.com/user/someone"> /u/someone </a> <br/> '
               '<span><a href="{link}">[link]</a></span> &#32; <span><a href="' + THREAD + '">[comments]</a></span>')
@@ -418,7 +416,7 @@ class RedditFooterTests(unittest.TestCase):
         self.assertIsNone(link_post_target(self.THUMB.format(own="", footer=self.FOOTER.format(link=self.THREAD))), "a text post links itself")
 
     def test_a_picture_or_a_video_is_said_so(self):
-        # Issue 0072 D4: Reddit's picture and video hosts are what the post shares; a short link is a thread.
+        # Reddit's picture and video hosts are what the post shares; a short link is a thread
         for link, kind in [("https://i.redd.it/a1b2.png", "picture"), ("https://i.pics.test/c3.jpeg?x=1", "picture"),
                            ("https://v.redd.it/d4e5", "video"), ("https://models.test/news/open", "page")]:
             self.assertEqual(link_post_target(self.THUMB.format(own="", footer=self.FOOTER.format(link=link))), link)
@@ -438,7 +436,7 @@ class RedditFooterTests(unittest.TestCase):
 
 
 class FeedLinesTests(unittest.TestCase):
-    # Issue 0070: hnrss's four lines are a Hacker News row's counts, never its text.
+    # hnrss's four lines are a Hacker News row's counts, never its text (0070).
     TEXT = ("Article URL: https://www.sec.gov/Archives/edgar/s1.htm Comments URL: https://news.ycombinator.com/item?id=50242939 "
             "Points: 1675 # Comments: 1628")
     HTML = ('<p>Article URL: <a href="https://www.sec.gov/s1.htm">https://www.sec.gov/s1.htm</a></p>\n'

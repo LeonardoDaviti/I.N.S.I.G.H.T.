@@ -1,7 +1,4 @@
-"""
-Business logic for source management.
-Handles CRUD operations for sources table.
-"""
+"""Sources: add, switch, update, delete and list the sources table's rows."""
 import urllib.parse
 from typing import Any, Dict, List, Tuple
 
@@ -15,7 +12,7 @@ from insight_core.ingestion.kinds.parsing import web_address
 from insight_core.logs.core.logger_config import get_component_logger
 
 def _valid_page_watch(value: Any) -> Dict[str, Any]:
-    """settings.page_watch (issue 0028): {} or {"prefix": "/news/"}."""
+    """settings.page_watch: {} or {"prefix": "/news/"}."""
     if not isinstance(value, dict):
         raise ValueError("page_watch must be an object")
     prefix = value.get("prefix")
@@ -37,8 +34,8 @@ class SourcesService:
                 return self.repo.get_all_sources(cur)
     
     def removed_sources(self) -> Dict[Tuple[str, str], Any]:
-        """{(platform, handle_or_url): removed_at} of the addresses removed (or switched away
-        from) and not added again (issue 0072)."""
+        """{(platform, handle_or_url): removed_at} of the addresses removed (or switched away from) and not added
+        again."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.repo.removed(cur)
 
@@ -106,12 +103,9 @@ class SourcesService:
         return {"source_id": source_id, "platform": platform, "handle": handle}
 
     def switch_source(self, source_id: str, url: str, page_watch: Dict[str, Any] | None = None) -> Dict[str, Any]:
-        """Point a source at a new address (issue 0036): a feed, or a page to follow
-        (page_watch {} or {"prefix"}). One transaction: the address, settings.page_watch, and
-        a clean fetch state (no failures, no backoff, no doctor finding). The id, name, tracks,
-        read state and posts stay; posts match by URL, so nothing is duplicated.
-        Returns the old {handle_or_url, page_watch}. LookupError for no such source,
-        ValueError for a bad address or one that is already a source."""
+        """Point a source at a new address (a feed, or a page to follow with `page_watch`), with a clean fetch state,
+        in one transaction; its id, name, tracks, read state and posts stay. Returns the old {handle_or_url,
+        page_watch}. LookupError for no such source, ValueError for a bad address or one already a source."""
         handle = web_address(url, "An address is needed to switch to")
         if urllib.parse.urlparse(handle).scheme.lower() not in ("http", "https"):
             raise ValueError("A source can only switch to an http or https address")
@@ -124,7 +118,7 @@ class SourcesService:
                     raise LookupError(f"Source {source_id} not found")
                 FetchStateRepository().clear_failures(cur, source_id,
                                                       new_address=old["handle_or_url"] != handle)
-                # The address it left is no source now: an import never adds it back (issue 0072).
+                # an import never adds the address it left back
                 if old["handle_or_url"] != handle:
                     self.repo.remember_removed(cur, old["platform"], old["handle_or_url"])
                 self.repo.forget_removed(cur, old["platform"], handle)
@@ -134,8 +128,7 @@ class SourcesService:
         return {"handle_or_url": old["handle_or_url"], "page_watch": (old.get("settings") or {}).get("page_watch")}
 
     def delete_source(self, source_id: str) -> bool:
-        """Delete source (and cascade delete its posts). The cascade can run for minutes: the process's statement
-        timeout, not a request's (issue 0188)."""
+        """Delete a source and, by cascade, its posts; the cascade can take minutes (long statement timeout)."""
         with db.long_statements(), db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 deleted = self.repo.delete_source(cur, source_id)
@@ -154,14 +147,12 @@ class SourcesService:
         """Get source with merged settings (platform defaults + overrides)."""
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
-                # Get source basic info
                 sources = self.repo.get_all_sources(cur)
                 source = next((s for s in sources if s["id"] == source_id), None)
                 
                 if not source:
                     raise LookupError(f"Source {source_id} not found")
                 
-                # Get merged settings
                 settings = self.repo.get_source_settings(cur, source_id)
                 
                 return {
@@ -175,16 +166,13 @@ class SourcesService:
             with conn.cursor() as cur:
                 sources_with_counts = self.repo.get_sources_with_post_counts(cur)
                 
-                # Add settings to each source
                 for source in sources_with_counts:
                     source["settings"] = self.repo.get_source_settings(cur, source["id"])
                 
                 return sources_with_counts
 
     def list_sources(self) -> List[Dict[str, Any]]:
-        """GET /api/sources (issue 0105): every source with its settings and post count, as
-        get_all_sources_with_settings, without each source's archive history (kept in the database:
-        the source's own settings and the archive status still read it)."""
+        """GET /api/sources: every source with its settings and post count, without its archive history."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             sources = self.repo.get_sources_with_post_counts(cur)
             settings = self.repo.listed_settings(cur)
@@ -193,10 +181,7 @@ class SourcesService:
         return sources
 
     def update_source_settings(self, source_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update settings for a source.
-        Validates settings before updating.
-        """
+        """Validate and update a source's settings."""
         validated_settings = self._valid_settings(settings)
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -214,12 +199,10 @@ class SourcesService:
 
     @staticmethod
     def _valid_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
-        """The settings a user may set, the numbers parsed. ValueError for a value that is not a number.
-
-        Posts per fetch is not one of them: it is the kind's own number (issue 0027)."""
+        """The settings a user may set, the numbers parsed (ValueError otherwise). Posts per fetch is the kind's."""
         valid_keys = {"display_name", "fetch_delay_seconds", "priority", "page_watch", "watch_changes"}
         validated = {k: v for k, v in settings.items() if k in valid_keys}
-        # Watch for changes (issue 0039): re-read its stored pages now and then. Off by default.
+        # watch_changes: re-read its stored pages now and then (off by default)
         if "watch_changes" in validated and not isinstance(validated["watch_changes"], bool):
             raise ValueError("watch_changes must be true or false")
         if "page_watch" in validated:
@@ -233,8 +216,8 @@ class SourcesService:
         return validated
 
     def name_if_unnamed(self, source_id: str, name: str) -> bool:
-        """Name a source that has no name (issue 0178: what its feed or page calls itself); a name the owner set
-        is never written over. True when it was named."""
+        """Name an unnamed source (what its feed or page calls itself); an owner's name is never written over.
+        True when it was named."""
         name = " ".join(str(name or "").split())
         if not name:
             return False

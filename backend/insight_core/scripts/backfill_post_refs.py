@@ -1,11 +1,10 @@
-"""Read the refs of every post stored before post_refs (issue 0125), once, and time it.
+"""Read the refs of every post stored before post_refs, once, and time it.
 
     python -m insight_core.scripts.backfill_post_refs [--db DSN] [--batch N]
 
-The story job does the same at its start (StoriesService.fill_refs: the backend's first start after the deploy
-runs it in the background); this runs it by hand. A batch a transaction, `FOR UPDATE SKIP LOCKED`, resumable
-(posts.refs_scanned_at: a stopped run goes on where it stopped). Then the signature pass over every source's refs.
-Prints {posts, rows, seconds, peak_mb} as JSON. Reads no page, fetches nothing.
+The story job does the same at its start (StoriesService.fill_refs); this runs it by hand. A batch a transaction,
+`FOR UPDATE SKIP LOCKED`, resumable (posts.refs_scanned_at), then the signature pass over every source's refs.
+Prints {posts, rows, seconds, peak_mb} as JSON. Fetches nothing.
 """
 from __future__ import annotations
 

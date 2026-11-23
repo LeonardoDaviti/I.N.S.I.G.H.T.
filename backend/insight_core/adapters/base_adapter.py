@@ -1,8 +1,7 @@
-"""Base for the seven site adapters. BaseSourceAdapter implements SourceKind directly.
+"""Base for the site adapters: BaseSourceAdapter implements SourceKind directly.
 
-A site adapter is a source kind like any other (spec §D.2): it takes the shared KindHttp,
-uses the pure helpers in ingestion/kinds/parsing.py, and yields one ArchivePage per page
-of its archive. Its politeness profile is a host lock with PAGE_DELAY_SECONDS between pages.
+A site adapter takes the shared KindHttp, uses ingestion/kinds/parsing.py's helpers and yields one ArchivePage per
+page of its archive, PAGE_DELAY_SECONDS apart.
 """
 
 from __future__ import annotations
@@ -31,16 +30,14 @@ class BaseSourceAdapter(BaseKind):
     adapter_type: ClassVar[str] = "base"
     # The discovered index is the whole archive; Gwern overrides (candidate pages).
     available_basis = "exact"
-    page_based = True        # its posts come from the site's own lists (issue 0039)
-    reads_posts = True       # read_post: one page of its site, as the site reader reads it (issue 0084 B)
+    page_based = True        # its posts come from the site's own lists
+    reads_posts = True       # read_post: one page of its site, as the site reader reads it
     PAGE_DELAY_SECONDS: ClassVar[float] = 1
-    # Checkpoint modes this adapter writes; a checkpoint is resumable when its mode is one
-    # of these and it carries RESUME_KEY.
+    # a checkpoint is resumable when its mode is one of these and it carries RESUME_KEY
     CHECKPOINT_MODES: ClassVar[frozenset[str]] = frozenset({"site_index"})
     RESUME_KEY: ClassVar[str] = "next_index"
     PAGE_SIZE: ClassVar[int] = 20
-    # Every entry its index lists is a post (an issue of a newsletter): a run of them read as no post means the
-    # site's layout changed, not that they are category pages (issue 0130 B2).
+    # every index entry is a post: a run of them read as no post means the site's layout changed
     LISTS_ONLY_POSTS: ClassVar[bool] = False
 
     def __init__(self, http: Any):

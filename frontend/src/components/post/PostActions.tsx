@@ -5,20 +5,18 @@ import { cn } from '../../lib/utils';
 import { buttonVariants } from '../ui';
 
 /**
- * The post's actions, icon-only, in the top-right corner of the title block:
- * open the original, open its discussion (when the feed names one, e.g. the
- * Hacker News thread), read later (the clock) and keep (the star), both offered
- * here whatever the read state (issue 0022), copy the text. Each has a tooltip and an
- * aria-label. Press feedback is the shared `scale(0.97)`, but only for a pointer
- * press: a key press (`:focus-visible`) does not move the button.
+ * The post's actions, icon-only, in the post page's sticky band left of Aa: open the original, open its discussion
+ * (when the feed names one), read later and keep (whatever the read state), copy the text. Each has a tooltip and an
+ * aria-label.
  */
-// Concatenated, not merged: tailwind-merge would drop the base focus outline.
-// `[&:active:not(:focus-visible)]` outranks the base `active:` scale, so a key
-// press (Space/Enter on a focus-visible button) does not scale.
+// Concatenated, not merged: tailwind-merge would drop the base focus outline. `[&:active:not(:focus-visible)]`
+// outranks the base `active:` scale, so a key press does not scale the button.
 const ICON_ACTION = [
   buttonVariants({ variant: 'ghost', size: 'icon' }),
   '[&:focus-visible:active]:scale-100 motion-reduce:[&:active]:scale-100',
   '[&_svg]:!h-[1.125rem] [&_svg]:!w-[1.125rem]',
+  // the band's height (2rem, as Back and Aa), narrower under 360px so the row never overflows
+  '!h-8 !w-8 max-[359px]:!w-7',
 ].join(' ');
 
 const TIP = cn(
@@ -54,7 +52,7 @@ export interface PostActionsProps {
 export default function PostActions({ url, discussionUrl, starred, starring, onStar, later, onLater, copied, onCopy }: PostActionsProps) {
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={400}>
-      <div role="group" aria-label="Post actions" className="-mr-2 -mt-1.5 flex shrink-0 items-center">
+      <div role="group" aria-label="Post actions" className="flex shrink-0 items-center">
         {url ? (
           <Action tip="Open original">
             <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open original" className={ICON_ACTION}>

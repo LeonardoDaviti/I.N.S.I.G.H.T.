@@ -1,4 +1,4 @@
-"""Discover's Pages (issue 0113): each story's root you don't follow and haven't stored, one row a page."""
+"""Discover's Pages (0113): each story's root you don't follow and haven't stored, one row a page."""
 from __future__ import annotations
 
 import sys

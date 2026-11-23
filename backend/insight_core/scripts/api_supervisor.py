@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
-"""The API container's first process under tini (docker/start-backend.sh): runs uvicorn's processes and the work that
-must happen once per container start, not once per API process (issue 0112 Decided 11).
+"""The API container's first process under tini (docker/start-backend.sh): runs uvicorn's processes and the work
+that must happen once per container start, not once per API process.
 
     python -m insight_core.scripts.api_supervisor uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 
-- **Before uvicorn serves:** the API's jobs a restart ended are marked interrupted (issue 0070). Done here, once: in
-  each API process's start it would also close the other process's running jobs whenever uvicorn replaces a hung one.
-  In a child process waited for (issue 0202), so this process never builds the services: it stays ~24 MB, not ~60.
-- **Then uvicorn**, as a child, with INSIGHT_API_SUPERVISED=1 so main.py's lifespan leaves the start work to this.
-- **The start work, once, in a child process of its own:** the search refill and the start's story job (then Mark
-  X's first decision run is asked for), as main.py's lifespan ran them in one process.
+- Before uvicorn serves: the API's jobs a restart ended are marked interrupted (once, so a replaced API process
+  never closes the other's running jobs), in a waited-for child so this process stays small.
+- Then uvicorn as a child, with INSIGHT_API_SUPERVISED=1 so main.py's lifespan leaves the start work to this;
+  the start work (search refill, start story job, then Mark X's first decision run) in a child of its own.
 - SIGTERM and SIGINT go to uvicorn; this exits with uvicorn's exit code.
-- **The watchdog's door (issue 0117):** every second it looks for a restart request from the watchdog in
-  insight-ingestion (services/api_watchdog.py). Asked, it saves every API process's thread stacks, stops uvicorn and
-  exits with RESTART_EXIT, so Docker's restart policy starts the container again. Being a process of its own, a hung
-  API process can't block it. A request written before this process started, or over a minute old, is set aside,
-  never honoured (0124: one left from a stop or a deploy killed the fresh API 4 s into its start).
-- **Open files (0124):** it raises its soft open-files limit (65,536, as compose sets) before uvicorn starts, so
-  every API process inherits it; and every 5 s it counts each API process's open files: one held at 90% of its limit
-  at 3 looks in a row is ended (SIGKILL), and uvicorn starts another in its place.
-- **Each API process's numbers (0216):** every 30 s it writes each API process's resident memory, high-water and CPU
-  seconds (utils/peak.of: /proc/<pid>/status and /stat) as that process's heartbeat ("api-<pid>", utils/heartbeat.py),
-  which GET /metrics and /api/status read. No thread or work in the API processes themselves.
+- The watchdog's door: every second it looks for a restart request from services/api_watchdog.py; asked, it
+  saves the API processes' stacks, stops uvicorn and exits with RESTART_EXIT. A request older than this process
+  or a minute is set aside, never honoured.
+- Open files: raises the soft limit before uvicorn starts, and ends an API process held near its limit
+  (OpenFilesGuard); uvicorn starts another.
+- Every 30 s it writes each API process's memory and CPU as its heartbeat ("api-<pid>"), read by GET /metrics
+  and /api/status.
 """
 from __future__ import annotations
 
@@ -46,17 +40,16 @@ RESTART_EXIT = 75          # asked to restart by the watchdog (EX_TEMPFAIL): Doc
 STOP_GRACE = 15.0          # seconds uvicorn gets to stop before it is killed
 
 
-OPEN_FILES = 65536         # the soft open-files limit asked for (compose sets the same, issue 0124)
+OPEN_FILES = 65536         # the soft open-files limit asked for (compose sets the same)
 GUARD_SHARE = 0.9          # an API process holding this share of its limit ...
 GUARD_LOOKS = 3            # ... at this many looks in a row (GUARD_EVERY apart) is ended: uvicorn starts another
 GUARD_EVERY = 5.0
-BEAT_EVERY = 30.0          # 0216: each API process's numbers written this often (utils/heartbeat.BEAT_SECONDS)
+BEAT_EVERY = 30.0          # each API process's numbers written this often (utils/heartbeat.BEAT_SECONDS)
 
 
 def beat_api_processes(pids: Sequence[int]) -> int:
-    """0216: each API process's {rss_mb, hwm_mb, cpu_s} as its heartbeat "api-<pid>". 0233: and every other API
-    beat removed, a process that ended (heartbeat.only): the beats are the processes alive now. The beats written.
-    Never raises."""
+    """Write each API process's {rss_mb, hwm_mb, cpu_s} as its heartbeat "api-<pid>" and remove every other API
+    beat (heartbeat.only). Returns the beats written. Never raises."""
     from insight_core.utils import heartbeat, peak
     written = []
     for pid in pids:
@@ -73,9 +66,8 @@ def beat_api_processes(pids: Sequence[int]) -> int:
 
 def raise_open_files(get: Optional[Callable[[], tuple]] = None, set_: Optional[Callable[[int, int], None]] = None,
                      want: int = OPEN_FILES) -> int:
-    """The soft open-files limit raised to `want` (never past the hard one), inherited by uvicorn's processes: the
-    container's default soft limit is 1,024, and after a long hang one process accepted the queued connections past
-    it (0124, the v10.0.2 review's W4). Returns the soft limit now. Never raises."""
+    """Raise the soft open-files limit to `want` (never past the hard one), inherited by uvicorn's processes: the
+    container default of 1,024 was exceeded after a long hang (0124). Returns the soft limit now. Never raises."""
     import resource
     get = get or (lambda: resource.getrlimit(resource.RLIMIT_NOFILE))
     set_ = set_ or (lambda soft, hard: resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard)))
@@ -113,11 +105,10 @@ def open_files_limit(pid: int, proc: str = "/proc") -> Optional[int]:
 
 
 class OpenFilesGuard:
-    """A process left at its open-files limit is ended (0124). At its limit it can't accept a connection (each
-    accept fails: "Too many open files") nor open a database connection, so it answers a share of requests late or
-    never, and nothing ends that state by itself: the review saw it 7 minutes on. uvicorn starts a new process when
-    one exits (its supervisor checks each 0.5 s), so ending it is the recovery; with one process, `end` restarts the
-    container. A burst that drains between two looks is left alone. `processes`, `count`, `limit`, `end` are seams."""
+    """A process left at its open-files limit is ended (0124): it can accept no connection nor open a database
+    connection, and nothing ends that state by itself. uvicorn starts a new process when one exits; with one
+    process, `end` restarts the container. A burst that drains between two looks is left alone. `processes`,
+    `count`, `limit`, `end` are seams."""
 
     def __init__(self, *, processes: Callable[[], List[int]], end: Callable[[int], None],
                  count: Callable[[int], Optional[int]] = open_files, limit: Callable[[int], Optional[int]] = open_files_limit,
@@ -152,7 +143,7 @@ class OpenFilesGuard:
 
 
 def close_interrupted_jobs() -> int:
-    """The API's jobs a restart ended (issue 0070), before any API process serves: no request has started one yet."""
+    """The API's jobs a restart ended, closed before any API process serves (none has started one yet)."""
     from insight_core.services.registry import services
     try:
         closed = services().operations.close_interrupted_jobs("manual")
@@ -174,9 +165,8 @@ def _close_jobs_main() -> None:
 
 
 def close_interrupted_jobs_in_child(wait: float = CLOSE_JOBS_WAIT) -> int:
-    """close_interrupted_jobs in a spawned child, waited for (issue 0202): reading them builds the services (~36 MB
-    of imports and a connection pool), which this long-lived process would keep for the container's life. Returns the
-    child's exit code (0: done; it logs what it closed). Never raises: the API starts anyway."""
+    """close_interrupted_jobs in a spawned child, waited for: it builds the services, which this long-lived process
+    would otherwise keep. Returns the child's exit code (0: done). Never raises: the API starts anyway."""
     try:
         from insight_core.scripts.api_supervisor import _close_jobs_main as target   # by its name, also when run as -m
         process = multiprocessing.get_context("spawn").Process(target=target, name="api-close-jobs")
@@ -193,8 +183,8 @@ def close_interrupted_jobs_in_child(wait: float = CLOSE_JOBS_WAIT) -> int:
 
 
 def start_work() -> None:
-    """The start's background work, once per container (a child process; main.py's functions, as its lifespan ran
-    them): the search refill and the story job side by side, then Mark X's first decision run is asked for."""
+    """The start's background work, once per container (a child process): the search refill and the story job side
+    by side, then Mark X's first decision run is asked for."""
     logging.basicConfig(level=logging.INFO)
     import main
     threads = [threading.Thread(target=main.fill_search_vectors, name="search-fill"),
@@ -228,8 +218,7 @@ class Supervisor:
 
     def start(self) -> subprocess.Popen:
         self.close_jobs()
-        # issue 0188: the API's processes open connections as "api" (db/database.py's roles); the start work, a
-        # process of this one's, keeps the default
+        # the API's processes open connections as "api" (db/database.py's roles); the start work keeps the default
         env = {**os.environ, SUPERVISED: "1", "INSIGHT_DB_ROLE": "api"}
         self.child = self.popen(self.command, env=env)
         try:
@@ -290,7 +279,7 @@ class Supervisor:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    started = time.time()   # a restart request written before this is never honoured (0124: stopped, or a deploy)
+    started = time.time()   # a restart request written before this is never honoured
     from insight_core.logs.core.logger_config import setup_logging
     setup_logging(debug_mode=False)
     command = list(sys.argv[1:] if argv is None else argv)
@@ -314,7 +303,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             os.kill(pid, signal.SIGKILL)
     guard = OpenFilesGuard(processes=lambda: api_processes(child.pid), end=end)
     next_guard = [time.monotonic() + GUARD_EVERY]
-    next_beat = [time.monotonic() + GUARD_EVERY]   # 0216: the first once uvicorn's processes are up
+    next_beat = [time.monotonic() + GUARD_EVERY]   # the first once uvicorn's processes are up
 
     def tick() -> None:
         if not supervisor.restart_asked and door.honour() is not None:

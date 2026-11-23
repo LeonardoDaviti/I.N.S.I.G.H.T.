@@ -1,39 +1,12 @@
 """substack: a Substack publication, paid posts included when the owner's cookie is set.
 
-The public RSS feed truncates paid posts. The publication's JSON API does not when the
-request carries a subscriber's session cookie (substack.sid): /api/v1/archive lists posts
-newest first (body_html empty), /api/v1/posts/<slug> returns the body the account can read.
-
-The cookie is sent only to the publications the owner pays for (issue 0084): Substack's
-subscriptions API (SUBSCRIPTIONS_URL) is asked once per fetch run (kept SUBSCRIPTIONS_TTL_S in
-memory) and paid_publication_hosts reads it defensively. A publication you pay for is read as
-before; any other is read without the cookie, its paid posts stored as their teaser
-(metadata.paywalled=true), never an error. When the subscriptions answer can't be read, or
-names no publication as paid, the cookie is sent everywhere and a teaser is stored, never an
-error (we can't tell whom you pay). A 401/403 there means the session expired: a publication
-with a truncated paid post is UNAVAILABLE, free ones are read without the cookie.
-
-The cookie is read through the credential seam (ingestion/credentials.py): the value saved
-in Sources → Connections (never the environment). It is read at request time, so a new cookie
-applies on the next fetch without a restart. Without one the public (truncated) body is
-stored with metadata.paywalled=true.
-For a publication you pay for, a rejected cookie (401/403) or an only_paid post that still
-comes back truncated (Substack answers 200 with the teaser for a stale cookie) means the
-session expired: the
-source is UNAVAILABLE (never backoff) until the owner updates the cookie. The cookie is
-never logged or put in an error message.
-
-All Substack publications share one host key (one backend), floored in gates.HOST_FLOORS;
-post requests within a source are spaced by the profile's page delay.
-
-The archive API changed (issue 0130 B1, seen from the owner's server on 2026-11-07): it answered every
-`/api/v1/archive?sort=new&offset=0&limit=12` with HTTP 400 {"param":"offset","value":"0","msg":"Invalid value"}.
-Nothing was probed from the lab, so the request is made robust rather than fitted to a guess: the first page is
-asked with no offset at all (later pages keep offset=N, N >= 1), and when the API refuses a page anyway (any
-answer but a list, other than a host limiting us or the session expiring) the archive goes on from the
-publication's sitemap (page watch's reader of it: its /p/<slug> addresses, newest lastmod first), each post read
-from /api/v1/posts/<slug> as before, the stored ones left unread (checkpoint mode "substack_sitemap"). Unverified
-until the owner's server runs it.
+Reads the JSON API (/api/v1/archive newest first, /api/v1/posts/<slug> for bodies), which returns paid bodies when
+the request carries the subscriber's substack.sid cookie (from the credential seam, read at request time; never
+logged). The cookie goes only to publications the subscriptions API says you pay for (`_access`: FULL, PREVIEW,
+EXPIRED, UNKNOWN); others store paid posts as teasers (metadata.paywalled=true), never an error. For a paid
+publication a rejected cookie or a still-truncated paid post means the session expired: UNAVAILABLE, never
+backoff. All publications share one host key (gates.HOST_FLOORS). When the archive API refuses a page the archive
+goes on from the publication's sitemap (SITEMAP_MODE, 0130).
 """
 from __future__ import annotations
 
@@ -71,7 +44,7 @@ SUBSTACK_PROFILE = PolitenessProfile(concurrency_pool="host-lock", page_delay_s=
 ARCHIVE_PAGE_SIZE = 12
 EXPIRED_REASON = "Substack session expired — update it in Sources → Connections"
 MISSING_NOTICE = "Paid posts arrive as teasers. Add your Substack session in Sources → Connections"
-# Without tvOnly Substack answers 400 (seen 2026-10-27); its list can be empty when signed in.
+# Without tvOnly Substack answers 400; its list can be empty when signed in.
 SUBSCRIPTIONS_URL = "https://substack.com/api/v1/subscriptions?tvOnly=false"
 PAID_AUDIENCES = frozenset({"only_paid", "founding"})
 PREVIEW_NOTICE = "Paid posts: preview only (no subscription)"
@@ -92,13 +65,13 @@ TRUNCATED_RATIO = 0.6
 
 _AUTH_ERROR_RE = re.compile(r"^HTTP (401|403)\b")
 OFFSET_MODE = "substack_offset"
-SITEMAP_MODE = "substack_sitemap"   # the archive API refused: the publication's sitemap (issue 0130 B1)
+SITEMAP_MODE = "substack_sitemap"   # the archive API refused: the publication's sitemap
 # Which of these urls are already stored (blocking; run in a thread): PostsRepository.stored_urls.
 StoredUrls = Any
 
 
 class ArchiveRefused(ValueError):
-    """The archive API answered something other than a page of posts (issue 0130 B1: HTTP 400 on offset=0)."""
+    """The archive API answered something other than a page of posts."""
 
 
 def _refused(exc: BaseException) -> bool:
@@ -107,9 +80,7 @@ def _refused(exc: BaseException) -> bool:
             and not (isinstance(exc, HttpError) and exc.limiting))
 
 
-# Substack's own hosts (v10.13.10): the platform, never a publication. substack.com/@<handle> is a person's
-# profile (the feed finder turns it into their publications), open.substack.com/pub/<name>/... the app's link
-# to one; their /feed is no publication's feed.
+# Substack's own hosts: the platform (profiles, the app's links), never a publication; their /feed is none.
 PLATFORM_HOSTS = frozenset({"substack.com", "www.substack.com", "open.substack.com"})
 
 
@@ -124,17 +95,15 @@ def is_substack_host(host: str) -> bool:
     return host.endswith(".substack.com") and not is_platform_host(host)
 
 
-# A Substack publication on its own domain (issue 0167): read as a plain feed, its paid posts were stored as teasers
-# saying "its page held nothing longer". What a feed or a page of one carries, never a publication's name:
+# What a feed or page of a Substack publication on its own domain carries (never a publication's name):
 _GENERATOR_RE = re.compile(r"(?is)<(?:\w+:)?generator\b[^>]*>\s*substack\b|<meta\b[^>]*\bname\s*=\s*[\"']generator[\"'][^>]*"
                            r"\bcontent\s*=\s*[\"']substack")
 SUBSTACK_ASSETS = "substackcdn.com"     # its images and scripts, on every publication's domain
 
 
 def feed_signal(text: Optional[str]) -> Optional[str]:
-    """Why a feed or a page is a Substack publication's, by itself: "generator" (the feed's or the page's generator
-    names Substack); "assets" (it carries substackcdn.com, which a page quoting one image of it may too: the API's
-    answer confirms it, `recognise`); None."""
+    """Why a feed or a page is a Substack publication's, by itself: "generator" (its generator names Substack),
+    "assets" (it carries substackcdn.com: `recognise` confirms by the API), or None."""
     if not text:
         return None
     if _GENERATOR_RE.search(text):
@@ -150,12 +119,9 @@ def api_answers(data: Any) -> bool:
 
 
 async def recognise(http: KindHttp, address: str, text: Optional[str] = None) -> Optional[str]:
-    """Why a website source at `address` (its feed or page; `text` its body when already read) is a Substack
-    publication on its own domain: "generator", or "assets+api" (substackcdn.com, and its /api/v1/archive answers
-    as Substack's), or "api" (an address whose body can't be read: its API answers); None. The API is asked only
-    on that evidence: a site with no sign of Substack costs no request more. A publication at
-    <name>.substack.com is matched by its host already (SubstackKind.matches) and Substack's own host is none.
-    Raises nothing: a request that fails is no signal."""
+    """Why a website source at `address` (`text`: its body when already read) is a Substack publication on its own
+    domain: "generator", "assets+api", "api" (unreadable body, its API answers), or None. The API is asked only on
+    such evidence, so other sites cost no extra request. Raises nothing."""
     host = host_of(address)
     if not host or is_substack_host(host) or is_platform_host(host):
         return None
@@ -181,8 +147,7 @@ async def recognise(http: KindHttp, address: str, text: Optional[str] = None) ->
 
 
 def publication_base(source: Source) -> str:
-    """The publication's origin. Raises ValueError for Substack's own host: reading it would read the
-    platform (its /feed is a 404), never a publication (v10.13.10)."""
+    """The publication's origin. Raises ValueError for Substack's own host (no publication lives there)."""
     parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
     if is_platform_host(parsed.hostname or ""):
         raise ValueError(f"{parsed.netloc} is Substack itself, not a publication: add the publication's address")
@@ -234,11 +199,8 @@ def _publication_hosts(publication: Dict[str, Any]) -> FrozenSet[str]:
 def paid_publication_hosts(data: Any) -> Optional[Subscriptions]:
     """The publications you pay for, from SUBSCRIPTIONS_URL's answer; None when unreadable.
 
-    Assumed (not verified against Substack, so read defensively): a dict whose "subscriptions"
-    is a list of entries, each with a paid state (membership_state "subscribed"/"founding"/...,
-    or a true paid flag) and its publication either embedded ("publication": {subdomain,
-    custom_domain}) or by "publication_id" into a top-level "publications" list. An entry
-    without a paid state, or whose publication can't be found, is not paid.
+    The shape is assumed, not verified, so it is read defensively: "subscriptions" entries with a paid state and a
+    publication embedded or by "publication_id" into "publications". Anything not found is not paid.
     """
     if not isinstance(data, dict) or not isinstance(data.get("subscriptions"), list):
         return None
@@ -261,8 +223,8 @@ def paid_publication_hosts(data: Any) -> Optional[Subscriptions]:
 
 class SubstackKind(BaseKind):
     name = "substack"
-    chronological = True   # newest first: an archive back to a date stops past it (issue 0130 C)
-    reads_posts = True            # read_post: one post from the API (the repair, and issue 0084 B's linked pages)
+    chronological = True   # newest first: an archive back to a date stops past it
+    reads_posts = True            # read_post: one post from the API (the repair, linked pages)
     available_basis = "unknown"   # /api/v1/archive pages carry no total
     profile = SUBSTACK_PROFILE
 
@@ -291,8 +253,7 @@ class SubstackKind(BaseKind):
         return None if self._sid else MISSING_NOTICE
 
     def reading_notice(self, source: Source) -> Optional[str]:
-        """The health row's note for a publication read without the cookie (its newest paid post
-        was stored as a teaser, `paid_preview` of the schedule view), or None."""
+        """The health row's note for a publication read without the cookie (`paid_preview`), or None."""
         return PREVIEW_NOTICE if self._sid and source.get("paid_preview") else None
 
     async def _subscriptions(self, *, fresh: bool = False) -> Union[Subscriptions, str, None]:
@@ -330,7 +291,7 @@ class SubstackKind(BaseKind):
     def matches(self, source: Source) -> bool:
         host = host_of(str(source.get("handle_or_url") or ""))
         if is_platform_host(host):
-            return False   # Substack itself (a profile, the app's links): no publication to read (v10.13.10)
+            return False   # Substack itself (a profile, the app's links): no publication to read
         if (source.get("settings") or {}).get("substack") is True:
             return True
         return is_substack_host(host)
@@ -363,7 +324,7 @@ class SubstackKind(BaseKind):
         return await self._full_posts(source, base, items, self.profile.page_delay_s, access)
 
     async def inspect(self, source: Source) -> Inspection:
-        """The archive API's first page; when the API refuses it, the publication's sitemap (issue 0130 B1)."""
+        """The archive API's first page; when the API refuses it, the publication's sitemap."""
         access = await self._access(source)
         raw: Dict[str, Any] = {"paid_cookie": access in (FULL, UNKNOWN)}
         base = publication_base(source)
@@ -381,7 +342,7 @@ class SubstackKind(BaseKind):
 
     async def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: RateLimit):
         """By the archive API's offsets; from the publication's sitemap once the API refuses a page (or a
-        checkpoint says it did), issue 0130 B1."""
+        checkpoint says it did)."""
         base = publication_base(source)
         access = await self._access(source)
         collected, pages_fetched = resume_counts(checkpoint)
@@ -441,7 +402,7 @@ class SubstackKind(BaseKind):
         index = int(checkpoint.get("next_index") or 0)
         slugs = await self._sitemap_slugs(base)
         if not slugs and checkpoint.get("refused"):
-            # No sitemap to stand in: the API's refusal is the archive's error, never a silent 0.
+            # no sitemap to stand in: the API's refusal is the archive's error, never a silent 0
             raise ArchiveRefused(f"The archive API refused ({checkpoint['refused']}) and the publication's sitemap "
                                  "lists no post")
         while collected < target and index < len(slugs):
@@ -470,12 +431,9 @@ class SubstackKind(BaseKind):
             })
 
     async def check_session(self, source: Optional[Source] = None) -> tuple[bool, str]:
-        """The connection test: is the cookie set and signed in, and what does it read in full?
-
-        substack.com's subscriptions API says whether the cookie is signed in and how many
-        publications you pay for ("Signed in · full text on 1 publication you pay for"). With a
-        source you pay for, the newest only_paid post of its archive is read too: a teaser or a
-        401/403 is "expired". The message never contains the cookie.
+        """The connection test: is the cookie signed in, and how many publications does it read in full? With a
+        source you pay for, its newest only_paid post is read too (a teaser or 401/403 is "expired"). The message
+        never contains the cookie.
         """
         sid = self._sid
         if not sid:
@@ -520,11 +478,9 @@ class SubstackKind(BaseKind):
         return {"Cookie": f"substack.sid={sid}"} if sid else {}
 
     def _cookie_goes_to(self, url: str) -> bool:
-        """Issue 0187: the cookie goes only to Substack's own hosts (substack.com, <name>.substack.com) and to a
-        custom domain Substack's own subscriptions answer names as a publication you pay for; never to a site
-        that only looks like Substack (a feed's generator line anyone can write; settings.substack). Such a
-        publication is read as one you don't pay for: its paid posts stored as their teaser. The redirects a
-        request follows keep the cookie only on its own host (KindHttp)."""
+        """Security: the cookie goes only to Substack's own hosts and to a custom domain the subscriptions answer
+        names as paid; never to a site that only looks like Substack (anyone can write a generator line). Redirects
+        keep the cookie only on its own host (KindHttp)."""
         host = (urllib.parse.urlsplit(url).hostname or "").lower().rstrip(".")
         if host == "substack.com" or host.endswith(".substack.com"):
             return True
@@ -543,7 +499,7 @@ class SubstackKind(BaseKind):
         return json.loads(body)
 
     async def _archive_page(self, base: str, offset: int, limit: int, access: str) -> List[Dict[str, Any]]:
-        # No offset on the first page: the API answered offset=0 with HTTP 400 (issue 0130 B1).
+        # no offset on the first page: the API answered offset=0 with HTTP 400 (0130)
         query = urllib.parse.urlencode({"sort": "new", **({"offset": offset} if offset else {}), "limit": limit})
         data = await self._get_json(f"{base}/api/v1/archive?{query}", cookie=access in (FULL, UNKNOWN))
         if not isinstance(data, list):
@@ -586,7 +542,7 @@ class SubstackKind(BaseKind):
             if isinstance(detail, dict):
                 posts.append(self._to_post(source, base, {**item, **detail}, access))
             elif item.get("_sitemap"):
-                continue   # a sitemap address the posts API can't answer: no post (issue 0130 B1)
+                continue   # a sitemap address the posts API can't answer: no post
             elif "_rss" in item:
                 posts.append(self._from_rss(source, item["_rss"]))
             else:

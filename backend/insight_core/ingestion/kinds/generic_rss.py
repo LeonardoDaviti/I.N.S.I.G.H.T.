@@ -1,19 +1,13 @@
-"""generic_rss: any RSS/Atom feed (the fallback kind). A new post whose feed gave only a
-summary is expanded from its article page (ingestion/full_text.py), and a stored teaser whose
-page read failed is read again on a later fetch (issue 0062). A live fetch asks for the feed
-conditionally (issue 0044): an unchanged feed answers 304 and is no new posts.
+"""generic_rss: any RSS/Atom feed (the fallback kind).
 
-The archive (issues 0108, 0143): the feed, then the smart archiver's ladder (ingestion/archive_ladder.py): the
-site's platform, and each strategy that finds more than the feed holds (the feed's paging, the platform's API, the
-sitemap, the listing pages, the Web Archive's index when the source opts in), in order. A post found by its address
-is read from its page (page watch's reader: its body, title and date; not a post without a date or og:type
-article), one per archive page so the host gate spaces them; a feed or API page's posts as the feed's. Resumable by
-its checkpoint (its mode the strategy's, its "ladder" the rest). Nothing stored is removed.
-
-v10.13.9: the archive reads the source's own site (archive_ladder.source_site: the feed's host or its channel link,
-never the host its items link); a sitemap of another site is refused and a checkpoint on another site stops
-(`stopped: foreign_site`), an archive that found a post in under 5% of 1,000 pages stops (`low_yield`), and an
-address crawl waits at least MIN_PAGE_DELAY_S between pages."""
+A live fetch asks conditionally (304: no new posts); a teaser post is expanded from its article page
+(ingestion/full_text.py) and a stored teaser whose page read failed is read again later. The archive reads the
+feed, then each strategy of archive_ladder that finds more (feed paging, platform API, sitemap, listing pages,
+opt-in Web Archive), resumable by its checkpoint; address-found posts are read one page each with page watch's
+reader. It keeps to the source's own site (archive_ladder.source_site: `foreign_site`): every address strategy's
+page is asked archive_ladder.own_site before it is read (_sitemap_post), and a listing reads the shape of the feed's
+items on that site, so a page another site's (a link blog's links) is a linked page, never the source's post. It
+stops on `low_yield`, and waits MIN_PAGE_DELAY_S between crawled pages. Nothing stored is removed."""
 from __future__ import annotations
 
 import asyncio
@@ -51,9 +45,9 @@ from insight_core.utils.url_normalization import normalize_url
 logger = logging.getLogger("insight.ingestion.generic_rss")
 
 GENERIC_RSS_PROFILE = PolitenessProfile(concurrency_pool="host-lock")
-# The archive's checkpoint past the feed: an index into the site's sitemap posts (issue 0108).
+# The archive's checkpoint past the feed: an index into the site's sitemap posts.
 SITEMAP_MODE = "sitemap"
-# The ladder's other strategies' checkpoints (issue 0143).
+# The ladder's other strategies' checkpoints.
 FEED_PAGES_MODE = "feed_pages"
 API_MODE = "api"
 LISTING_MODE = "listing"
@@ -67,8 +61,8 @@ UNBOUNDED = 10 ** 9
 
 
 class LearnedLadder:
-    """The learned ladder's store (system_settings archive_learned, issue 0143): get() -> {platform: {strategy:
-    posts}}, add(platform, strategy, posts). Blocking; the kind calls it in a thread."""
+    """The learned ladder's store (system_settings archive_learned): get() -> {platform: {strategy: posts}},
+    add(platform, strategy, posts). Blocking; the kind calls it in a thread."""
 
     def __init__(self, db_url: str) -> None:
         self.db_url = db_url
@@ -94,17 +88,16 @@ class LearnedLadder:
 
 # Which of these urls are already stored (blocking; run in a thread).
 StoredUrls = Callable[[Sequence[str]], set]
-# A source's stored teasers due another read of their page (blocking; run in a thread):
-# PostsRepository.teasers_to_read_again.
+# A source's stored teasers due another page read (blocking; run in a thread): PostsRepository.teasers_to_read_again.
 TeasersDue = Callable[..., List[Dict[str, Any]]]
 
 
 class GenericRssKind(BaseKind):
     name = "generic_rss"
     available_basis = "feed_window"
-    chronological = True   # its archive goes newest first: back to a date stops past it (issues 0130 C, 0143)
+    chronological = True   # its archive goes newest first: back to a date stops past it
     conditional = True
-    reads_posts = True   # read_post: one page of its site, as the site reader reads it (issue 0084 B)
+    reads_posts = True   # read_post: one page of its site, as the site reader reads it
     profile = GENERIC_RSS_PROFILE
 
     def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None,
@@ -112,8 +105,7 @@ class GenericRssKind(BaseKind):
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
                  learned: Optional[Any] = None, min_page_delay: float = archive_ladder.MIN_PAGE_DELAY_S) -> None:
         self.http = http
-        # v10.13.9: a sitemap / listing / Web Archive crawl's least gap between two pages, less the source's own
-        # page delay (the archive loop waits that); tests pass 0
+        # an address crawl's least gap between two pages, beyond the source's own page delay; tests pass 0
         self.min_page_delay = min_page_delay
         self.stored_urls = stored_urls
         self.teasers_due = teasers_due
@@ -126,8 +118,8 @@ class GenericRssKind(BaseKind):
 
     async def fetch_latest(self, source: Source, limit: int, *,
                            memory: Optional[AddressMemory] = None) -> List[Dict[str, Any]]:
-        """With memory (the runner's), the feed is asked conditionally: unchanged (304) is no new
-        posts. Either way, the source's teasers due another read come after (issue 0062)."""
+        """With memory, the feed is asked conditionally: unchanged (304) is no new posts. Either way the source's
+        teasers due another read come after."""
         url = str(source["handle_or_url"])
         posts: List[Dict[str, Any]] = []
         failure: Optional[str] = None
@@ -138,13 +130,13 @@ class GenericRssKind(BaseKind):
             answer = await memory.get(self.http, url)
             feed_text = None if answer.not_modified else answer.text
         if feed_text is not None:
-            # A feed with items none of which were read is an error, not "empty" (issue 0135); items
-            # that would be stored as fewer posts than they are, a failure saying so (issue 0137 A1).
+            # a feed with items none of which were read is an error, not "empty"; items that would be stored as
+            # fewer posts than they are, a failure saying so
             parsed = parsing.parse_feed_posts(feed_text, url)
-            # An item the parser could not read is skipped and said (issue 0254), the rest stored.
+            # an item the parser could not read is skipped and said, the rest stored
             checked = checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {},
                                     broken=parsed.broken)
-            failure, warning = checked.failure, checked.warning   # a few items sharing an address: a warning (0242)
+            failure, warning = checked.failure, checked.warning   # a few items sharing an address: a warning
             posts = await self._maybe_expand(source, parsed[:limit])
         result = FetchedPosts(await self._read_again(source, posts))
         result.failure = failure
@@ -153,12 +145,12 @@ class GenericRssKind(BaseKind):
             from insight_core.ingestion.kinds import substack   # substack's module reads feeds through parsing too
 
             if substack.feed_signal(feed_text) == "generator" and not substack.is_platform_host(host_of(url)):
-                result.recognised = {"substack": True}   # issue 0167: a Substack publication on its own domain
+                result.recognised = {"substack": True}   # a Substack publication on its own domain
             if not str((source.get("settings") or {}).get("display_name") or "").strip():
-                result.title = parsing.feed_channel_title(feed_text)   # issue 0178: an unnamed source's own name
+                result.title = parsing.feed_channel_title(feed_text)   # an unnamed source's own name
         return result
 
-    # ------------------------------------------------------------------ the archive (issues 0108, 0143)
+    # ------------------------------------------------------------------ the archive
 
     async def _ladder(self, source: Source, feed: List[Dict[str, Any]], feed_text: str,
                       headers: Optional[Dict[str, str]] = None) -> "archive_ladder.LadderResult":
@@ -180,8 +172,8 @@ class GenericRssKind(BaseKind):
         return kept[1] if kept and time.monotonic() - kept[0] < PLAN_TTL_S else None
 
     async def inspect(self, source: Source) -> Inspection:
-        """The feed's posts and the ladder's look at the rest of the site (issue 0143): the platform, each
-        strategy's outcome and the site's size (`smart`); the sitemap's older posts as before (issue 0108)."""
+        """The feed's posts and the ladder's look at the rest of the site: the platform, each strategy's outcome
+        and the site's size (`smart`); the sitemap's older posts."""
         url = str(source["handle_or_url"])
         feed_text, headers = await self.http.get_text(url)
         posts = parsing.parse_feed_posts(feed_text, url)
@@ -210,10 +202,10 @@ class GenericRssKind(BaseKind):
         return await read_page_post(self.http, source, url, adapter=self.name)
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool:
-        """An archive stopped in a strategy of the ladder (issue 0143), or in the sitemap's posts (issue 0108),
-        continues there; one whose strategy ended continues with the next one it found more in."""
+        """An archive stopped in a ladder strategy, or in the sitemap's posts, continues there; one whose strategy
+        ended continues with the next one it found more in."""
         if not isinstance(checkpoint, dict) or checkpoint.get("stopped"):
-            return False   # v10.13.9: an archive stopped for a reason (foreign_site, low_yield) starts afresh
+            return False   # an archive stopped for a reason (foreign_site, low_yield) starts afresh
         ladder = checkpoint.get("ladder") if isinstance(checkpoint.get("ladder"), dict) else None
         if ladder is not None and ladder.get("order"):
             return checkpoint.get("mode") in LADDER_MODES
@@ -222,25 +214,22 @@ class GenericRssKind(BaseKind):
         return checkpoint.get("mode") in LADDER_MODES and not checkpoint.get("end")
 
     async def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: Any):
-        """The feed's posts (one page), then each strategy of the ladder that found more (issue 0143), in its
-        order: the feed's next pages, the platform's API, the sitemap's older posts and the listing's (one
-        page each, issue 0108), the Web Archive's (opt-in). Each skips what was seen or is stored, and the
-        ladder stops once the seen addresses reach the site's estimate. Resumable from the checkpoint. A feed
-        whose site holds nothing more is one page with no checkpoint, as a single fetch."""
+        """The feed's posts (one page), then each ladder strategy that found more, in its order. Each skips what
+        was seen or is stored; the ladder stops once the seen addresses reach the site's estimate. Resumable from
+        the checkpoint; a site holding nothing more is one page with no checkpoint."""
         url = str(source["handle_or_url"])
         hint: Optional[list] = None   # the sitemap's posts the plan read (the first strategy's, when it is the sitemap)
         if self.checkpoint_resumable(checkpoint):
             assert checkpoint is not None
             held: set = set()
             if self._foreign(source, checkpoint):
-                # v10.13.9: a checkpoint on another site than the source's own (an older archive took its site from
-                # the first item's link: a link blog crawled a newspaper) is not resumed. What it stored is kept.
+                # a checkpoint on another site than the source's own is not resumed; what it stored is kept
                 logger.warning("Archive of %s: its checkpoint is on another site (%s); stopped", url,
                                checkpoint.get("site") or checkpoint.get("listing"))
                 yield ArchivePage([], {**checkpoint, "end": True, "stopped": archive_ladder.FOREIGN_SITE})
                 return
             if not isinstance(checkpoint.get("ladder"), dict):
-                # An archive in the sitemap's posts from before the ladder (issue 0108): the sitemap alone.
+                # an archive in the sitemap's posts without a ladder: the sitemap alone
                 listed = (await self._sitemap_posts([], site=checkpoint.get("site"), prefix=checkpoint.get("prefix")))[2]
                 async for page in self._sitemap_pages(source, checkpoint, listed, held, target, rate):
                     yield page
@@ -261,7 +250,7 @@ class GenericRssKind(BaseKind):
             first = found[0]
             starts = {name: plan.probes[name].state for name in found}
             ladder = {"platform": plan.platform.platform, "order": found[1:], "estimate": plan.estimate,
-                      # v10.13.9: the source's own site the ladder read (never an item's host): a resume keeps to it
+                      # the source's own site the ladder read: a resume keeps to it
                       "site": archive_ladder.source_site(url, feed_text, [p["url"] for p in feed
                                                                            if isinstance(p.get("url"), str)]),
                       "items": [p["url"] for p in feed if isinstance(p.get("url"), str)][:LADDER_ITEMS],
@@ -303,12 +292,19 @@ class GenericRssKind(BaseKind):
             hint = None
 
     @staticmethod
-    def _foreign(source: Source, checkpoint: dict) -> bool:
-        """v10.13.9: whether a checkpoint reads another site than the source's own: its sitemap's site or its listing
-        on neither the feed's site nor the site its ladder recorded (a ladder from before v10.13.9 recorded none)."""
+    def _own(source: Source, checkpoint: Optional[dict]) -> Tuple[str, str]:
+        """(the source's own site an archive keeps to, its feed): the site its ladder recorded, else the feed's
+        (older ladders recorded none). Every address strategy asks archive_ladder.own_site of these two."""
         feed = str(source.get("handle_or_url") or "")
+        ladder = (checkpoint or {}).get("ladder") if isinstance((checkpoint or {}).get("ladder"), dict) else {}
+        return str(ladder.get("site") or feed), feed
+
+    @classmethod
+    def _foreign(cls, source: Source, checkpoint: dict) -> bool:
+        """Whether a checkpoint reads another site than the source's own: its sitemap's site or its listing on
+        neither the feed's site nor the site its ladder recorded (older ladders recorded none)."""
+        site, feed = cls._own(source, checkpoint)
         ladder = checkpoint.get("ladder") if isinstance(checkpoint.get("ladder"), dict) else {}
-        site = str(ladder.get("site") or feed)
         starts = ladder.get("starts") if isinstance(ladder.get("starts"), dict) else {}
         named = [checkpoint.get("site") if checkpoint.get("mode") == SITEMAP_MODE else None,
                  checkpoint.get("listing") if checkpoint.get("mode") == LISTING_MODE else None]
@@ -326,8 +322,7 @@ class GenericRssKind(BaseKind):
         return ArchivePage([], {**checkpoint, "end": True, "stopped": archive_ladder.LOW_YIELD})
 
     async def _polite(self, rate: Any) -> None:
-        """v10.13.9: the least gap between two pages of an address crawl, beyond what the source's own page delay
-        already waits (the archive loop's gate waits that)."""
+        """The least gap between two pages of an address crawl, beyond what the source's own page delay waits."""
         gap = self.min_page_delay - float(getattr(rate, "page_delay_s", 0) or 0)
         if gap > 0:
             await self.http.sleep(gap)
@@ -381,7 +376,7 @@ class GenericRssKind(BaseKind):
 
     async def _sitemap_pages(self, source: Source, checkpoint: dict, listed: Optional[list], held: set, target: int,
                              rate: Any = None):
-        """The sitemap's posts one page each from next_index (issue 0108); a stored one is not read again."""
+        """The sitemap's posts one page each from next_index; a stored one is not read again."""
         site, prefix = str(checkpoint.get("site") or ""), str(checkpoint.get("prefix") or "/")
         if listed is None:
             listed = (await self._sitemap_posts([], site=site or None, prefix=prefix if site else None))[2]
@@ -402,7 +397,7 @@ class GenericRssKind(BaseKind):
             held.add(key)
             if pages_fetched > start_pages:
                 await self._polite(rate)
-            post = await self._sitemap_post(source, loc, lastmod)
+            post = await self._sitemap_post(source, loc, lastmod, site=self._own(source, checkpoint)[0])
             if not isinstance(post, dict):
                 skipped[SKIP_UNREADABLE if post == UNREADABLE else SKIP_NO_POST] += 1
                 post = None
@@ -414,10 +409,9 @@ class GenericRssKind(BaseKind):
             yield ArchivePage([post] if post else [], page_checkpoint)
 
     async def _addressed(self, source: Source, checkpoint: dict, urls: List[Any], held: set, rate: Any = None):
-        """Pages read one each from an address list (listing, Web Archive): the checkpoint's next_index on. An
-        address off the source's own site is never read (v10.13.9)."""
-        feed = str(source.get("handle_or_url") or "")
-        site = str((checkpoint.get("ladder") or {}).get("site") or feed)
+        """Pages read one each from an address list (listing, Web Archive) from the checkpoint's next_index. An
+        address off the source's own site is never read."""
+        site, feed = self._own(source, checkpoint)
         collected, pages_fetched = resume_counts(checkpoint)
         start_pages = pages_fetched
         skipped = skipped_counts(checkpoint)
@@ -439,7 +433,7 @@ class GenericRssKind(BaseKind):
                 continue
             if pages_fetched > start_pages:
                 await self._polite(rate)
-            post = await self._sitemap_post(source, loc, None, archived=stamp)
+            post = await self._sitemap_post(source, loc, None, archived=stamp, site=site)
             if not isinstance(post, dict):
                 skipped[SKIP_UNREADABLE if post == UNREADABLE else SKIP_NO_POST] += 1
                 post = None
@@ -563,7 +557,11 @@ class GenericRssKind(BaseKind):
         """The blog's listing pages, one archive page each (their post links kept in the checkpoint, read by the
         shape the feed's items have), following rel=next or /page/N/; then each listed post one page each."""
         ladder = checkpoint.get("ladder") or {}
-        shape = archive_ladder.post_shape(ladder.get("items") or [])
+        # the shape of the feed's items on the source's own site (as the ladder's probe reads it): a link blog's
+        # items link other sites, and a listing's links there are linked pages, never the source's posts
+        site, feed = self._own(source, checkpoint)
+        shape = archive_ladder.post_shape([item for item in ladder.get("items") or []
+                                           if archive_ladder.own_site(item, site, feed)])
         urls: List[str] = list(checkpoint.get("urls") or [])
         walked = {normalize_url(url) for url in urls}
         listing, number = checkpoint.get("listing"), int(checkpoint.get("listing_page") or 1)
@@ -600,8 +598,8 @@ class GenericRssKind(BaseKind):
             yield page
 
     async def _web_archive_pages(self, source: Source, checkpoint: dict, held: set, rate: Any = None):
-        """The Web Archive's address index for the posts' section (opt-in, issue 0143): its list read once (one
-        archive page), then each address read from the live site, or its archived copy when the live one is gone."""
+        """The Web Archive's address index for the posts' section (opt-in): its list read once, then each address
+        read from the live site, or its archived copy when the live one is gone."""
         urls = checkpoint.get("urls")
         if urls is None:
             ladder = checkpoint.get("ladder") or {}
@@ -633,11 +631,9 @@ class GenericRssKind(BaseKind):
     async def _sitemap_read(self, posts: Sequence[Dict[str, Any]], *, site: Optional[str] = None, http: Any = None
                             ) -> Tuple[str, str, List[Tuple[str, Optional[datetime]]], int, Optional[str]]:
         """(the site, the feed's section, the sitemap's posts under it, how many entries the sitemap has, why it was
-        refused): the source's own site (archive_ladder.source_site, v10.13.9: never the host its items link) and the
-        path its items there share ("/posts/" for /posts/2021/03/a and /posts/2020/12/b; "/" for /a/ and /b/, or when
-        no item is on the site: a link blog), and the sitemap's addresses there, newest lastmod first, once each
-        (issue 0108). No entries: no sitemap could be read. A sitemap that lists only another site's pages is
-        refused (foreign_site)."""
+        refused): the source's own site (archive_ladder.source_site), the path its items there share (_section) and
+        the sitemap's addresses there, newest lastmod first. No entries: no sitemap could be read. A sitemap of only
+        another site's pages is refused (foreign_site)."""
         from insight_core.ingestion.kinds.page_watch import ARCHIVE_SITEMAPS, sitemap_entries   # page_watch imports this module
 
         if not site:
@@ -658,7 +654,7 @@ class GenericRssKind(BaseKind):
     async def _sitemap_posts(self, posts: Sequence[Dict[str, Any]], *, site: Optional[str] = None,
                              prefix: Optional[str] = None) -> Tuple[str, str, List[Tuple[str, Optional[datetime]]]]:
         """(the site, the feed's section, the sitemap's posts under it), as _sitemap_read; no posts when the
-        sitemap lists no more of them than the feed holds, or cannot be read (issue 0108)."""
+        sitemap lists no more of them than the feed holds, or cannot be read."""
         from insight_core.ingestion.kinds.page_watch import ARCHIVE_SITEMAPS, sitemap_entries   # page_watch imports this module
 
         links = [p["url"] for p in posts if isinstance(p.get("url"), str) and p["url"].startswith("http")]
@@ -679,13 +675,17 @@ class GenericRssKind(BaseKind):
 
 
     async def _sitemap_post(self, source: Source, url: str, lastmod: Optional[datetime], *,
-                            archived: Optional[str] = None) -> Any:
-        """One older post from the sitemap (or a listing, or the Web Archive's index), read from its page as
-        page watch reads one; None when the page is no post, UNREADABLE when it cannot be read (a host limiting
-        us stops the archive: it resumes). `archived`: the Web Archive's capture of it, read when the live page
-        is gone (404 / 410)."""
-        from insight_core.ingestion.kinds.page_watch import article_post, page_date
+                            archived: Optional[str] = None, site: Optional[str] = None) -> Any:
+        """One older post from an address list, read from its page as page watch reads one; None when the page is
+        no post, UNREADABLE when it cannot be read (a host limiting us stops the archive: it resumes). `archived`:
+        the Web Archive's capture, read when the live page is gone (404 / 410). A page off the source's own site
+        (`site`, its ladder's, else the feed's: archive_ladder.own_site) is never its post and is not read: an
+        address strategy stores only the source's own pages; what it links elsewhere is a linked page."""
+        from insight_core.ingestion.kinds.page_watch import article_post, not_post, page_date
 
+        feed = str(source.get("handle_or_url") or "")
+        if not archive_ladder.own_site(url, site or feed, feed):
+            return None
         try:
             page, _ = await self.http.get_text(url)
         except HttpError as exc:
@@ -704,25 +704,21 @@ class GenericRssKind(BaseKind):
         except ValueError as exc:
             logger.info("Archive: %s could not be read (%s)", url, exc)
             return UNREADABLE
-        # v10.13.5: an archived page that states no date in its markup is dated by its address (/2008/Jul/7/)
-        # before the sitemap's lastmod (a site's lastmod is often its last rebuild, not the post's day)
+        # no date in its markup: its address's day before the sitemap's lastmod (often the last rebuild)
         date = page_date(page, url)
         if date is None and parsing.meta_content(page, "og:type").lower() != "article":
             return None
-        # v10.13.9: no date of its own: its address's month (/2003/07/: the 1st) before the sitemap's lastmod, else
-        # undated (article_post keeps None): the saver sorts it before the source's oldest post, never at today's top
+        # then its address's month, else undated: the saver sorts it before the source's oldest post, never on top
         post = article_post(page, str(source["handle_or_url"]), url, date or address_hint(url) or lastmod,
                             adapter=self.name)
-        if post is not None:
-            post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
+        if post is None or not_post(page, url, post):
+            return None
+        post[BACKLOG_KEY] = True   # from the sitemap: never "new to you"
         return post
 
     async def _maybe_expand(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Read the article page of each new teaser post, one page at a time.
-
-        A stored post is never re-read here: it was expanded when it was new, it is due another
-        read (_read_again), or it is the repair script's job. When the lookup fails nothing is
-        read, rather than every page. A read that failed is counted (full_text.with_page_try).
+        """Read the article page of each new teaser post, one page at a time. A stored post is never re-read here
+        (_read_again does); when the lookup fails nothing is read. A failed read is counted (full_text.with_page_try).
         """
         if not full_text.full_page_enabled(source):
             return posts
@@ -743,10 +739,8 @@ class GenericRssKind(BaseKind):
         return [expanded.get(post.get("url"), post) for post in posts]
 
     async def _read(self, post: Dict[str, Any], site: str) -> Dict[str, Any]:
-        """The post read from its page, or its summary kept, with the read's outcome (issue 0140): why
-        the page was not taken (nothing longer, not the same article, a script needed, the error). A
-        failed request (an HttpError: an HTTP error, a timeout, a dropped connection) is counted as a
-        try, and so is a page with nothing longer for a post with no body at all (issue 0108)."""
+        """The post read from its page, or its summary kept, with the read's outcome (why the page was not taken).
+        A failed request (HttpError) is counted as a try, and so is nothing longer for a post with no body at all."""
         now = self.clock()
         try:
             read = await full_text.read_page(self.http, post["url"], full_text.body_text(post),
@@ -763,11 +757,9 @@ class GenericRssKind(BaseKind):
         return full_text.with_outcome(full_text.with_full_text(post, *read.article), read.outcome, now)
 
     async def _read_again(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """The source's stored teasers whose page read failed, read again (issue 0062): a slice
-        at a time, after the feed's own pages and PAGE_DELAY_S apart. Each comes back as a post
-        the saver writes in place, with this try counted: its full text, or its stored teaser
-        (still failed, or done when the page holds nothing longer). A host that is limiting us
-        (a 429, a timeout) ends the slice after that try: the rest wait for the next fetch."""
+        """The source's stored teasers whose page read failed, read again: a slice at a time, PAGE_DELAY_S apart.
+        Each comes back as a post the saver writes in place, this try counted. A host limiting us (429, timeout)
+        ends the slice; the rest wait for the next fetch."""
         if self.teasers_due is None or not full_text.full_page_enabled(source) or not source.get("id"):
             return posts
         try:
@@ -798,7 +790,7 @@ class GenericRssKind(BaseKind):
                                str(exc)[:200])
                 read = full_text.PageRead(full_text.error_outcome(exc))
             article = read.article
-            # Nothing longer ends it, unless the post has no body at all (issue 0108).
+            # nothing longer ends it, unless the post has no body at all
             counted = full_text.with_outcome(full_text.with_page_try(
                 stored, now, failed=article is None and full_text.empty_read_failed(stored)), read.outcome, now)
             read_again[stored["url"]] = full_text.with_full_text(counted, *article) if article else counted
@@ -810,7 +802,7 @@ class GenericRssKind(BaseKind):
 
 
 def _low_yield(checkpoint: Optional[dict]) -> bool:
-    """v10.13.9: an archive that read LOW_YIELD_PAGES pages and found a post in under LOW_YIELD_SHARE of them."""
+    """An archive that read LOW_YIELD_PAGES pages and found a post in under LOW_YIELD_SHARE of them."""
     if not isinstance(checkpoint, dict):
         return False
     pages = int(checkpoint.get("pages_fetched") or 0)
@@ -825,14 +817,17 @@ def _public(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def _under_section(entries: Sequence[Tuple[str, Optional[str]]], site: str, prefix: str
                    ) -> List[Tuple[str, Optional[datetime]]]:
-    """The sitemap's addresses on the site under the feed's section, newest lastmod first, once each."""
+    """The sitemap's addresses on the site under the feed's section, newest lastmod first, once each; never a
+    listing of other posts (page_watch.listing_address)."""
+    from insight_core.ingestion.kinds.page_watch import listing_address   # page_watch imports this module
+
     publication = publication_of(host_of(site))
     found: Dict[str, Tuple[str, Optional[datetime]]] = {}
     for loc, lastmod in entries:
         path = urllib.parse.urlparse(loc).path or "/"
         key = normalize_url(loc)
         if (key and publication_of(host_of(loc)) == publication and path.startswith(prefix)
-                and path.rstrip("/") + "/" != prefix):
+                and path.rstrip("/") + "/" != prefix and not listing_address(loc, prefix)):
             found.setdefault(key, (loc, parsing.parse_datetime_value(lastmod)))
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     return sorted(found.values(), key=lambda entry: entry[1] or epoch, reverse=True)
@@ -844,9 +839,8 @@ def _addresses(posts_or_urls: Sequence[Any]) -> set:
 
 
 def feed_section(links: Sequence[str]) -> str:
-    """The path a feed's items share, their own last segment and a date's folders after it aside
-    (issue 0108): "/posts/" for /posts/2021/03/a and /posts/2020/12/b (or /posts/2020/10/a alone),
-    "/" for /a/ and /b/."""
+    """The path a feed's items share, their own last segment and date folders aside: "/posts/" for
+    /posts/2021/03/a and /posts/2020/12/b, "/" for /a/ and /b/."""
     folders = [parsing.path_segments(link)[:-1] for link in links]
     shared: List[str] = []
     for parts in zip(*folders):

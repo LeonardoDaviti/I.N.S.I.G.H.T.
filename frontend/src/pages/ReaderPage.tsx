@@ -27,11 +27,9 @@ import { useMarkxState } from '../hooks/useMarkxOn';
 import { isTopicTrack, useTrackCounts } from '../hooks/useTrackCounts';
 
 /**
- * How many posts arrived since the feed was loaded, from the scope's unread count.
- * The baseline follows the count down (reads elsewhere) and is shifted by every
- * change we applied to that scope's cached count ourselves, so only real arrivals
- * raise the pill. Kept in state and adjusted with the "derive from the previous
- * render" pattern, so rendering stays pure.
+ * How many posts arrived since the feed was loaded, from the scope's unread count. The baseline follows the
+ * count down and is shifted by every change we applied to the cached count ourselves, so only real arrivals
+ * raise the pill. Derived from the previous render, so rendering stays pure.
  */
 function useNewPosts(current: number | null, resetKey: string, scope: string) {
   const [state, setState] = useState<{ key: string; baseline: number | null }>({ key: resetKey, baseline: current });
@@ -52,16 +50,14 @@ function useNewPosts(current: number | null, resetKey: string, scope: string) {
   return { count, onUnreadDelta, reset };
 }
 
-// News and Classics (issue 0051): their own chunks, loaded the first time they are shown (the reader's JS budget).
+// News and Classics: their own chunks, loaded the first time they are shown (the reader's JS budget).
 const NewsList = lazy(() => import('../components/reader/NewsList'));
 const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
-// A voice's channels as tabs (issue 0132 A): its own chunk, loaded on a voice's or a channel's page only.
+const SinceLooked = lazy(() => import('../components/reader/SinceLooked'));
 const ScopeVoiceHeader = lazy(() => import('../components/voices/ScopeVoiceHeader'));
-// A track as a topic (issue 0145, Mark X): its own chunk, loaded on View Topic only.
 const TrackTopic = lazy(() => import('../components/tracks/TrackTopic'));
 
-// What a reader opens next, loaded ahead once per page load (issue 0061): the post page
-// with its text renderer first, then News and Classics.
+// What a reader opens next, loaded ahead once per page load: the post page first, then News and Classics.
 const LOAD_AHEAD = [() => import('./PostDetailPage'), () => import('../components/reader/NewsList'), () => import('../components/reader/ClassicsList')];
 let loadedAhead = false;
 
@@ -69,18 +65,14 @@ function isReaderView(value: string | null): value is ReaderView {
   return value === 'stream' || value === 'by_source' || value === 'news' || value === 'classics' || value === 'topic';
 }
 
-/** What Later costs (issue 0022): "Later · 6 posts · 52 min"; null when Later is empty. */
+/** What Later costs: "Later · 6 posts · 52 min"; null when Later is empty. */
 function laterSummary(counts: UnreadCounts | undefined): string | null {
   const later = counts?.later;
   if (!later?.count) return null;
   return ['Later', plural(later.count, 'post'), later.minutes ? `${formatCount(later.minutes)} min` : null].filter(Boolean).join(' · ');
 }
 
-/**
- * The dev-only `?data=` fixture, imported on demand: in a production build
- * `import.meta.env.DEV` is false, so the import (and the fixture data) is dropped.
- * `pending` while the module loads, so the live feed is not fetched meanwhile.
- */
+/** Dev-only `?data=` fixtures, imported on demand (dropped from a production build); `pending` while loading. */
 const loadFeedFixtures = import.meta.env.DEV ? () => import('../components/reader/fixtures') : null;
 
 function useDevFeedFixture(name: FeedFixtureName | null): { fixture: FeedFixture | null; pending: boolean } {
@@ -100,10 +92,8 @@ function useDevFeedFixture(name: FeedFixtureName | null): { fixture: FeedFixture
 }
 
 /**
- * The reader-first home (spec §F.3): `/` and `/read/:scopeKind/:scopeId?`. It
- * opens on the unread main feed. The rail picks the scope, the toolbar the filter,
- * view and the post flow (all in the URL except the flow, which persists locally). It
- * owns the live region, the shortcut help and the "N new posts" pill.
+ * The reader home: `/` and `/read/:scopeKind/:scopeId?`, opening on the unread main feed. Scope, filter and view
+ * are in the URL (the post flow persists locally). Owns the live region, the shortcut help and the new-posts pill.
  */
 export default function ReaderPage() {
   const { scopeKind, scopeId } = useParams();
@@ -118,23 +108,19 @@ function Reader({ scope }: { scope: string }) {
   const queryClient = useQueryClient();
   const rawFilter = params.get('filter');
   const filter: FeedFilter = isFeedFilter(rawFilter) ? rawFilter : 'unread';
-  // One source has nothing to group by source; its News and Classics are its stories and the
-  // classics it cites (issue 0077), as on the Main feed or a track (0051).
+  // One source has nothing to group by source; its News and Classics are its stories and the classics it cites.
   const oneSource = scope.startsWith('source:');
   const rawView = params.get('view');
   const oneTrack = scope.startsWith('folder:');
   const markxState = useMarkxState();
   const markxOn = markxState === true;
-  // The view the URL names (null: none, or one this scope has not).
   const urlView: ReaderView | null = isReaderView(rawView) && !(oneSource && rawView === 'by_source')
     && !(rawView === 'topic' && !oneTrack) ? rawView : null;
-  // A track that is a topic (0145, Mark X on) opens on Topic: its items and Discover are there (its Stream lists only its
-  // items, v10.12.1). Stream is one click away (`?view=stream`). Anything else opens on Stream.
+  // A topic track (Mark X on) opens on Topic; Stream is one click away (`?view=stream`). Anything else opens on Stream.
   const topics = useTrackCounts(oneTrack);
   const topicTrack = oneTrack && markxOn && isTopicTrack(topics.data, scope.slice('folder:'.length));
   const defaultView: ReaderView = topicTrack ? 'topic' : 'stream';
-  // A topic track's Stream, By source and Show lists hold only the posts in the track (v10.12.1); the toolbar's switch
-  // (`?all_sources=1`) lists every post of its sources, as a plain folder does. The server decides the same way.
+  // A topic track's lists hold only its posts; `?all_sources=1` lists every post of its sources. The server agrees.
   const allSources = topicTrack && params.get('all_sources') === '1';
   const trackCount = topicTrack ? topics.data?.by_track[scope.slice('folder:'.length)] : undefined;
   // Not known yet (Mark X being asked, or the topics loading): the feed waits rather than flash Stream first.
@@ -142,8 +128,8 @@ function Reader({ scope }: { scope: string }) {
   const readerView: ReaderView = urlView ?? defaultView;
   const ranked = readerView === 'news' || readerView === 'classics' || readerView === 'topic';
   const view: FeedView = readerView === 'by_source' ? 'by_source' : 'stream';
-  // Issue 0238: News's Unread view (`?news=unread`): its rows with an unread post. News opens on every row.
   const newsUnread = readerView === 'news' && params.get('news') === 'unread';
+  const newsSince = readerView === 'news' && params.get('news') === 'since';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
   const { fixture, pending: fixturePending } = useDevFeedFixture(isFeedFixtureName(dataName) ? dataName : null);
   const [navOpen, setNavOpen] = useState(false);
@@ -151,14 +137,12 @@ function Reader({ scope }: { scope: string }) {
 
   const counts = useUnreadCounts(fixture);
   const { folders, sourceNames, health } = useReaderDirectory();
-  // The live feed only: fixtures have no health rows to read it from.
   const activity = fixture ? null : ingestionActivity(health.data?.rows);
   const stopped = activity?.stopped ?? false;
   const [voiceName, setVoiceName] = useState<string | null>(null);
   const title = scope.startsWith('voice:') ? (voiceName ?? 'Voice') : scopeLabel(scope, folders.data, sourceNames);
   // A topic track's own items counted (the server's, refreshed with the unread counts), unless every post is listed.
   const scopeCount = trackCount && !allSources ? trackCount.unread : scopeUnreadCount(counts.data, scope);
-  // One source that watches its pages for changes offers its Updates (issue 0039).
   const updates = oneSource && Boolean(health.data?.rows.find((row) => `source:${row.source_id}` === scope)?.watch_changes);
 
   const currentKey = useMemo(() => feedKey(scope, filter, view, fixture?.name, allSources), [allSources, filter, fixture?.name, scope, view]);
@@ -172,7 +156,6 @@ function Reader({ scope }: { scope: string }) {
     document.title = `${title} · INSIGHT`;
   }, [title]);
 
-  // Load ahead (issue 0061): once the feed is on screen and nothing is fetching, when the browser is idle.
   useEffect(() => {
     if (loadedAhead) return undefined;
     const cache = queryClient.getQueryCache();
@@ -201,10 +184,8 @@ function Reader({ scope }: { scope: string }) {
 
   const railSearch = useMemo(() => {
     const keep = new URLSearchParams();
-    // Later and Kept are the Main feed's lists, not a way to read a track or source; History
-    // is a way to look back in each (issue 0052), so it stays as All does.
+    // Later and Kept are the Main feed's lists, not a way to read a track or source; History stays as All does.
     if (!ranked && (filter === 'all' || filter === 'history')) keep.set('filter', filter);
-    // The view the URL names, not a default: a topic track's Topic does not follow to the next scope.
     if (urlView && urlView !== 'stream') keep.set('view', urlView);
     if (dataName) keep.set('data', dataName);
     const text = keep.toString();
@@ -217,9 +198,7 @@ function Reader({ scope }: { scope: string }) {
     window.scrollTo({ top: 0 });
   }, [currentKey, newPosts, queryClient, scopeCount]);
 
-  // ---- empty state, per filter and scope ----
-  // Memoised with the handlers below: FeedList is memo()ised, so a counts refetch
-  // or a read patch re-renders the toolbar and the rail, not every row.
+  // Memoised: FeedList is memo()ised, so a counts refetch re-renders the toolbar and the rail, not every row.
   const showAll = useCallback(() => setParam('filter', 'all'), [setParam]);
   const empty = useMemo((): { title: string; description?: string; action?: EmptyStateAction } => {
     if (filter === 'unread' && stopped) {
@@ -244,7 +223,6 @@ function Reader({ scope }: { scope: string }) {
     if (scope === 'all') {
       return { title: 'No posts yet', description: 'Add a source to start reading. Ingestion collects its posts.', action: { label: 'Add a source', href: '/settings/sources' } };
     }
-    // Fetching is an ingestion job, not part of reading: point at Sources, quietly.
     return {
       title: 'No posts here yet',
       description: 'Posts appear once ingestion collects them.',
@@ -256,9 +234,7 @@ function Reader({ scope }: { scope: string }) {
   const later = laterSummary(counts.data);
   let subtitle = scopeCount !== null && filter !== 'starred' && filter !== 'later' && filter !== 'updated' && filter !== 'history' ? `${formatCount(scopeCount)} unread` : null;
   if (filter === 'later') subtitle = scope === 'all' ? later : null;
-  // News and Classics are not the unread feed: no count, no Later line, no pill.
   if (ranked) subtitle = null;
-  // On the Main feed, one quiet line leads to Later while it holds anything.
   const laterLine = scope === 'all' && filter !== 'later' && !ranked && later ? later : null;
 
   return (
@@ -286,9 +262,9 @@ function Reader({ scope }: { scope: string }) {
             oneSource={oneSource}
             topic={oneTrack && (markxOn || readerView === 'topic')}
             allSources={topicTrack ? { on: allSources, onChange: (on) => setParam('all_sources', on ? '1' : null) } : null}
-            newsShow={{ value: newsUnread ? 'unread' : 'all', onChange: (value) => setParam('news', value === 'unread' ? 'unread' : null) }}
+            newsShow={{ value: newsSince ? 'since' : newsUnread ? 'unread' : 'all', onChange: (value) => setParam('news', value === 'all' ? null : value) }}
             pill={ranked ? null : <NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
-            // Scoped to what is on screen: this scope, and Later, Kept or History when that is the list shown (issue 0139).
+            // Scoped to what is on screen: this scope, and Later, Kept or History when that is the list shown.
             onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' || filter === 'history' ? filter : 'all' }))}
           />
           <div className="w-full max-w-5xl px-3 pb-32 pt-3 sm:px-6 lg:px-8">
@@ -319,7 +295,7 @@ function Reader({ scope }: { scope: string }) {
               ) : null}
               {viewPending ? <LoadingState label="Loading" rows={6} /> : readerView === 'news' ? (
                 <Suspense fallback={<LoadingState label="Loading News" rows={6} />}>
-                  <NewsList scope={scope} unread={newsUnread} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />
+                  {newsSince ? <SinceLooked /> : <NewsList scope={scope} unread={newsUnread} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />}
                 </Suspense>
               ) : readerView === 'topic' ? (
                 <Suspense fallback={<LoadingState label="Loading the topic" rows={6} />}>

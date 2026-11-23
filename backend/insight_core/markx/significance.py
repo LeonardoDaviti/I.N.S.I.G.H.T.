@@ -1,31 +1,11 @@
-"""How significant a News row's event is (issue 0208, Stealth v10.19): one question a row, asked of the worker.
+"""How significant a News row's event is: one question a row, asked of the worker (issue 0208).
 
-News was ordered by loudness: a row's score is its voices and reports, so a big lab's minor launch covered by twenty
-sources outranks a new method two expert sources take apart. This module owns the other half of the order: what kind
-of event a row is and how big its effect is on the work of people in its field, whatever its coverage.
-
-**The question** (kind `significance`, guide significance-v1, one row a question): the row's headline (`news.headlines`),
-then what INSIGHT already measured about it (the existing signals first):
-  - its kind of happening (`event_types.of_stories`, the event-type seam over its posts' readings);
-  - its main subjects and their kind (`news_sections._entities`: the current entities of its posts);
-  - its coverage: posts, sources and long posts (LONG_POST+ characters of their own), counted in buckets
-    (`bucket`) so that a row gaining one more repeat does not make a new question;
-  - the kinds of pages its posts link (a paper, code, a demo, a package, a model hub page: entity_originals'
-    address kinds, no list of sites here);
-then its members, up to MEMBERS, from its main story's posts (`core_of`: a stray post another story brought into the
-row never speaks for it): the EARLIEST first posts, then the longest of the others (one a source first: a
-breakdown is long), each with its platform, source, date, length, title and the start of its text (the longest one
-LONG_CHARS, the others TEXT_CHARS). `question` is pure (the measurement builds the same text from the server's page).
-
-**When** (`plan`, the decision run's stage after News, in the jobs process, never a lease): a row of News' window is
-asked once, and again only when its posts changed since its last ask (`mx_news_significance_asks.members`) and its last
-ask is REASK_GAP old: a row growing all day is asked a few times, not once a post. At most PLAN_MAX questions a run,
-the newest rows first. A row asked and still waiting is not asked again.
-
-**The answer** (`answers`): each row's newest answered ask (its task's first valid call), even when the row changed
-since (it stands until the new one is answered). `score` turns it into one number in [0, 1]: the effect first (1..5),
-then whether it can be used now, its adoption signals, an expert breakdown and its scope (SCORE_*: measured on the blind
-labels, plan/issues/0208).
+The other half of News' order besides loudness: what kind of event a row is and how big its effect is on the work of
+people in its field, whatever its coverage. `question` (pure) shows the row's headline, what INSIGHT already measured
+(event type, main subjects, bucketed coverage, the kinds of pages linked) and up to MEMBERS of its main story's posts.
+`plan` (the decision run's stage after News, never a lease) asks a row once, and again only when its posts changed and
+its last ask is REASK_GAP old; a guide switch asks nothing again by itself. `answers` reads each row's newest answered
+ask (it stands until a newer one is answered); `score` makes it one number in [0, 1] (measured: plan/issues/0208).
 """
 from __future__ import annotations
 
@@ -34,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-KIND, GUIDE = "significance", "significance-v2"   # 0208: v2 also names the breakdowns (v1 rows kept)
+KIND, GUIDE = "significance", "significance-v2"   # a new ask's guide is schemas.guide_of (v3 behind the switch)
 MEMBERS = 6                 # members shown, at most
 EARLIEST = 2                # the first posts always shown (who broke it)
 TEXT_CHARS = 500            # a member's text shown
@@ -46,7 +26,7 @@ REASK_GAP = timedelta(hours=6)    # a changed row is asked again at most this of
 PLAN_MAX = 120                    # questions a run, at most (the newest rows first)
 PRIORITY = 0
 
-# The score (0208, `score`): the effect first, then the rest. Measured on the blind labels (plan/issues/0208).
+# the score: the effect first, then the rest (measured: plan/issues/0208)
 SCORE_USABLE = {"now": 0.10, "soon": 0.05, "no": 0.0}
 SCORE_LIBRARY = 0.10               # it landed inside a widely used library or tool
 SCORE_OPEN = 0.05                  # open code, open weights, or a paper with its code
@@ -82,9 +62,8 @@ def own_chars(m: Member) -> int:
 
 def chosen(members: Sequence[Member], core: Optional[Iterable[str]] = None) -> List[Member]:
     """The members a question shows, earliest first: the EARLIEST first posts, then the longest of the others, one a
-    source before a second of the same source, up to MEMBERS. With `core` (the row's main story's posts, `core_of`),
-    from those: a stray long post another story brought into the row never speaks for it (the measure's wrong row: a
-    launch judged by the scandal its row had swallowed)."""
+    source before a second of the same source, up to MEMBERS. With `core` (the row's main story's posts), from those:
+    a stray long post another story brought into the row never speaks for it."""
     if core is not None:
         inside = [m for m in members if m.id in set(core)]
         if len(inside) >= 2:
@@ -313,8 +292,8 @@ def answers(cur: Any, row_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def breakdown_posts(answer: Dict[str, Any], shown: Optional[Sequence[str]]) -> List[str]:
-    """0208: the posts an answer names as expert breakdowns (its `breakdowns`: numbers of the posts the question
-    showed), in its order; none under significance-v1, or for an ask that kept no order."""
+    """The posts an answer names as expert breakdowns (numbers of the posts the question showed), in its order; none
+    under significance-v1, or for an ask that kept no order."""
     shown = list(shown or [])
     out: List[str] = []
     for n in answer.get("breakdowns") or []:

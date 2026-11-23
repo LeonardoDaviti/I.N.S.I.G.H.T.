@@ -1,7 +1,6 @@
-"""0128 (Stealth v10.4, slice C): how Mark X stories are built. The story's event type from its members' read-v3
-readings, leaks inside a story and leak stories linked "came true" to their release, the original by code shown first,
-published order (a saved page by its own date), on the News page and the story view. Computed from rows Mark X keeps;
-nothing is stored. Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""How Mark X stories are built (0128): the story's event type from its members' readings, leaks inside a story and
+leak stories linked "came true" to their release, the original first, published order, on the News page and the
+story view. Computed from rows Mark X keeps; nothing stored. Synthetic data; DB tests on a _test database."""
 from __future__ import annotations
 
 import unittest
@@ -84,7 +83,7 @@ class CameTrue(unittest.TestCase):
         self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(8)}, connected=self.LR)[0]["joins"], False)
 
     def test_no_link_without_a_judged_connection_too_late_or_before_the_leak(self):
-        # 0203: only a judged connection links (the shared-subject link, measured 0 of 5, is gone)
+        # only a judged connection links (0203)
         self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(96)}), [])
         self.assertEqual(B.came_true({"L": self.leak(0), "R": self.release(31 * 24)}, connected=self.LR), [])
         self.assertEqual(B.came_true({"L": self.leak(100), "R": self.release(50)}, connected=self.LR), [])
@@ -178,7 +177,7 @@ class Stored(_Api):
         got = B.build(self.cur, [leak, rel])
         self.assertEqual(got[leak]["event_type"], "leak_rumour")
         self.assertEqual(got[rel]["event_type"], "model_release")
-        # a shared subject alone links nothing (only a judged connection links: 0128 measured the subject 0 of 5)
+        # a shared subject alone links nothing: only a judged connection links
         self.assertEqual((got[leak]["came_true"], got[rel]["leaked_before"]), ([], []))
         repo.open_connection(self.cur, a_kind="story", a=leak, b_kind="story", b=rel, relation="development",
                              run_id=self.run, p=0.8, rule="test")

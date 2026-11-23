@@ -1,7 +1,5 @@
-"""A thing's timeline (issue 0165), with invented names (the components rule, A, was dropped in v10.18, 0203): a rename is
-proposed by shared evidence and only the owner's answer merges it (B), the entity page's timeline (C) and the post
-page's "before" from it (D); each with what it must not do (a version bump, an org's word, the owner's answers, no
-evidence)."""
+"""A thing's timeline (0165), invented names: a rename proposed by shared evidence and merged only by the owner's
+answer, the entity page's timeline and the post page's "before", each with what it must not do."""
 from __future__ import annotations
 
 import json
@@ -236,7 +234,7 @@ class Timeline(_Db):
         self.assertIn(("release", rel), rows)
         self.assertIn(("release", launch), rows)
         months = [i for i in tl["items"] if i["kind"] == "outside"]
-        self.assertEqual(months, [])                       # 0250: posts that only name it are no outside events
+        self.assertEqual(months, [])                       # posts that only name it are no outside events (0250)
         self.assertEqual([i["at"] for i in tl["items"]], sorted(i["at"] for i in tl["items"]))
         self.assertEqual(tl["shown"], sum(1 for i in tl["items"] if i["top"]))
         for k, o in enumerate(outs[:2]):                   # about it, they are (each in its month)
@@ -257,7 +255,7 @@ class Timeline(_Db):
         self.assertEqual(first["named_since"], T0 - 400 * D)
         self.assertEqual([i["post"]["id"] for i in tl["items"] if i["kind"] == "first_outside"], [linker])
         months = [i for i in tl["items"] if i["kind"] == "outside"]
-        self.assertEqual(months, [])                       # 0250: only naming it, no outside event either
+        self.assertEqual(months, [])                       # only naming it, no outside event either (0250)
 
     def test_the_eight_most_important_are_shown_first(self):
         self.thing()
@@ -274,9 +272,8 @@ class Timeline(_Db):
                                                      "main": {"object": obj, "actors": [], "headline_en": headline}})
 
     def test_the_first_outside_mention_is_about_the_thing(self):
-        """0234 (#5): a post about another thing (a method shown on another maker's model) that the extractor marks as
-        about this one, or one where it is only an actor, is never its first outside mention, the switch by_reading
-        off; the first post whose reading's main event is the thing is."""
+        """A post about another thing that the extractor marks as about this one, or one where it is only an actor, is
+        never its first outside mention (by_reading off); the first post whose main event is the thing is (0234)."""
         birth = self.post_at(0, T0 - 200 * D, "Introducing Acme Kite", url="https://dev.acme.example/blog/k1")
         self.mentions(birth, ("Acme Kite", "software", "subject", "Acme", soft()))
         method = self.post_at(2, T0 - 150 * D, "A pruning method for Zentra 5")
@@ -291,10 +288,38 @@ class Timeline(_Db):
         tl = entity_views.entity_page(self.cur, self.entity_of(birth), now=T0 + 2 * D)["timeline"]
         self.assertEqual([i["post"]["id"] for i in tl["items"] if i["kind"] == "first_outside"], [review])
 
+    def test_a_release_is_the_makers_release_reading(self):
+        """A release is a maker post whose reading is a release, never its guide or research post; a round-up is never
+        the birth; another's post read as a release by its own maker is no release of this thing and stays outside."""
+        maker = lambda path: f"https://dev.acme.example/{path}/{uuid.uuid4().hex[:6]}"
+        digest = self.post_at(2, T0 - 300 * D, "Everything this week")
+        self.mentions(digest, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(digest, "roundup", "the week", "Ten things happened", event_type="digest")
+        launch = self.post_at(0, T0 - 200 * D, "Introducing Acme Kite", url=maker("news"))
+        self.mentions(launch, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(launch, "report", "Acme Kite", "Acme releases Acme Kite", event_type="product_release",
+                     origin="maker")
+        guide = self.post_at(0, T0 - 150 * D, "How teams use Acme Kite", url=maker("blog"))
+        self.mentions(guide, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(guide, "report", "Acme Kite", "Teams use Acme Kite", event_type="tutorial_explainer",
+                     origin="maker")
+        quant = self.post_at(3, T0 - 100 * D, "1-bit Acme Kite is out")
+        self.mentions(quant, ("Acme Kite", "software", "subject", "Acme", soft()))
+        self.reading(quant, "report", "1-bit Acme Kite quant", "A lab releases a 1-bit Acme Kite",
+                     event_type="model_release", origin="maker")
+        self.stage()
+        tl = entity_views.entity_page(self.cur, self.entity_of(launch), now=T0 + 2 * D)["timeline"]
+        kinds = {}
+        for i in tl["items"]:
+            kinds.setdefault(i["kind"], []).append(i["post"]["id"] if i.get("post") else None)
+        self.assertEqual(kinds.get("birth"), [launch])
+        self.assertEqual(kinds.get("release", []), [])     # the launch is the birth (also a release)
+        self.assertEqual([i.get("also") for i in tl["items"] if i["kind"] == "birth"], [["release"]])
+        self.assertEqual(kinds.get("first_outside"), [quant])
+
     def test_a_round_up_or_a_post_about_another_thing_only_names_it(self):
-        """0220: the extractor marks the thing subject of a digest naming everything, or of a post about another
-        thing; by the post's reading, neither is its birth, first outside mention or a month's lead (the switch
-        `by_reading`, off: the measured line gained nothing; on here)."""
+        """A digest naming everything, or a post about another thing, is by its reading neither the thing's birth,
+        first outside mention nor a month's lead (`by_reading`, on here) (0220)."""
         from insight_core.markx import stops as ST
         on = {"stops": True, "stop_types": False, "analysis": False, "by_reading": True}
         with mock.patch.object(ST, "config", side_effect=lambda: dict(on)):
@@ -319,8 +344,8 @@ class Timeline(_Db):
         self.assertFalse(any(i["top"] for i in tl["items"] if (i.get("post") or {}).get("id") in (digest, other)))
 
     def test_a_name_whose_posts_span_years_is_asked_whether_it_is_one_thing(self):
-        """0220 (a): one name, several things breaks a line (an archive post about another thing of the name); its
-        types and makers agree, so only the span asks the collision question, its sample across the years."""
+        """One name, several things breaks a line; its types and makers agree, so only the span asks the collision
+        question, its sample across the years (0220)."""
         old = self.post_at(3, T0 - 4000 * D, "Lumen predicts the election")
         self.mentions(old, ("Lumen", "product", "subject"))
         for k in range(4):
@@ -357,8 +382,8 @@ class Timeline(_Db):
         self.assertTrue(TL.about_by_reading("report", {}, "Zentra 5", set()))         # nothing to tell by: kept
 
     def test_the_entity_pages_version_line(self):
-        """0220, 0234: the family's versions on one line, the page's own version marked, each at its maker's first post
-        about it; a version its maker only teased (a leak) is off, however many post about it."""
+        """The family's versions on one line, the page's own version marked, each at its maker's first post about it; a
+        version its maker only teased is off (0220, 0234)."""
         ids = {}
         for k, (name, version) in enumerate([("Orbit 2", "2"), ("Orbit 2.5", "2.5"), ("Orbit 3", "3")]):
             for n in range(4):
@@ -452,9 +477,8 @@ class StopRules(unittest.TestCase):
 
 @base.requires_test_db
 class OneModelsLine(_Db):
-    """0165's second case, invented names: a lab launches "Orbit 2 Small" (story A: launch and benchmarks), an arena
-    ranks it, a week later its weights open (story B), a practitioner's breakdown joins story B; another model's
-    launch names it once (story C). The line: A -> B as stops in order, the breakdown as analysis on B, C only named."""
+    """0165's second case: a launch (story A), its weights a week later (story B) with a breakdown, another launch that
+    names it once (story C). The line: A -> B as stops, the breakdown as analysis on B, C only named."""
 
     def setUp(self):
         super().setUp()
@@ -559,8 +583,7 @@ class OneModelsLine(_Db):
         self.assertFalse([i for i in tl["items"] if i["kind"] == "analysis"])
 
     def test_the_post_pages_before_shows_the_stops_before_it(self):
-        """D, the second case: the breakdown's page shows the launch stop before it (not the weights story it is in);
-        unasked stories are not stops there (nothing asked on a page)."""
+        """The breakdown's page shows the launch stop before it; unasked stories are not stops there."""
         from insight_core.markx import stops as ST
         x = self.line()
         self.assertFalse([i for g in TL.before_post(self.cur, x["breakdown"]) for i in g["items"] if i["kind"] == "story"])
@@ -573,6 +596,27 @@ class OneModelsLine(_Db):
         self.switches["stop_types"] = False
         got = TL.before_post(self.cur, x["breakdown"])
         self.assertEqual([i["stop"] for g in got for i in g["items"] if i["kind"] == "story"], [None])
+
+    def test_a_story_read_after_the_pass_that_saw_it_join_is_asked(self):
+        """A story whose members' readings came since the last pass is planned even with no new member; its pairs
+        already asked are not asked again."""
+        from insight_core.markx import stops as ST
+        x = self.line()
+        late = [self.post_at(3, T0 + 9 * D, "Orbit 2 Small, hands on"),
+                self.post_at(4, T0 + 9 * D + H, "Orbit 2 Small tried")]
+        d = self.story("Orbit 2 Small, tried", *late)
+        first = ST.plan(self.cur, now=T0 + 12 * D)
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'stop' AND a = %s", (d,))
+        self.assertEqual(self.cur.fetchone()[0], 0)                                # no roles yet: nothing asked
+        self.model(*((p, "subject") for p in late))
+        self.stage()
+        self.cur.execute("UPDATE mx_mention_sets SET at = %s WHERE post_id = ANY(%s::uuid[])", (T0 + 12 * D + H, late))
+        out = ST.plan(self.cur, now=T0 + 13 * D)
+        self.cur.execute("SELECT a::text, b::text FROM mx_tasks WHERE kind = 'stop' AND a = %s", (d,))
+        self.assertEqual(self.cur.fetchall(), [(d, self.book().root(x["thing"]))])
+        self.assertEqual(out["asked"], 1, first)                                    # a and b, asked before: not again
+        self.cur.execute("UPDATE mx_mention_sets SET at = %s WHERE post_id = ANY(%s::uuid[])", (T0 + 13 * D + H, late))
+        self.assertEqual(ST.plan(self.cur, now=T0 + 14 * D)["asked"], 0)            # read again, asked once
 
     def test_an_answer_saying_not_about_it_makes_a_named_story(self):
         x = self.line()
@@ -597,7 +641,7 @@ def ver(id_, name, key, *, posts=5, about=2, maker=None, first=None, variant=Non
 
 
 class VersionLineRules(unittest.TestCase):
-    """0220, 0234, no database: a family's versions on lines (invented names), and what keeps a version off them."""
+    """No database: a family's versions on lines (invented names), and what keeps a version off them (0220, 0234)."""
 
     def line(self, vs, family="Orbit", maker=None):
         return TL.version_lines(vs, family_name=family, family_maker=maker, same_maker=lambda a, b: a == b)
@@ -709,8 +753,8 @@ class VersionLineRules(unittest.TestCase):
 
 @base.requires_test_db
 class ThingLinks(_Db):
-    """0220: the relations a post states between two of its things, as entity edges with their posts (graph section
-    4), shown on both pages; the ones switched off never written; `released` only with the thing's own maker."""
+    """The relations a post states between two of its things, as entity edges with their posts, shown on both pages;
+    switched-off ones never written; `released` only with the thing's own maker (0220)."""
 
     def state(self, pid, relations):
         self.cur.execute("UPDATE mx_calls SET answer = %s::jsonb WHERE task_id IN (SELECT id FROM mx_tasks WHERE a = %s)",
@@ -731,8 +775,7 @@ class ThingLinks(_Db):
                          (at, pid))
 
     def test_stated_relations_become_edges_with_their_posts(self):
-        # the switches this test pins (owner 2026-11-20 turned every relation on in entity_bands.json): partnered_with
-        # off, so a switched-off relation is never written
+        # this test pins partnered_with off, so a switched-off relation is never written
         bands = json.loads(json.dumps(I.bands()))
         bands["relations"]["on"]["partnered_with"] = False
         patcher = mock.patch.object(I, "bands", return_value=bands)
@@ -780,9 +823,8 @@ class ThingLinks(_Db):
         self.assertIsNotNone(closed[0][6])
 
     def test_the_scope_finds_a_read_again_post_by_the_edges_it_is_evidence_of(self):
-        """0244: the relation scope reads the stated edges' evidence posts once (a hashed IN), not an EXISTS a
-        mention row: a post read again since that states nothing now is in scope exactly when a current stated edge
-        cites it; one no edge cites is not."""
+        """The relation scope reads the stated edges' evidence posts once: a post read again that states nothing now is
+        in scope exactly when a current stated edge cites it (0244)."""
         from insight_core.markx import graph
         tune = self.post_at(0, T0 - 10 * D, "Sabi 2: a fine-tune of Orbit 3")
         self.mentions(tune, ("Sabi 2", "model", "subject", "Kestrel"), ("Orbit 3", "model", "mention", "Vantor"))
@@ -802,8 +844,8 @@ class ThingLinks(_Db):
 
     @mock.patch.object(I, "families_on", lambda: {"maker": True, "stem": True, "namesakes": True})
     def test_a_relation_never_crosses_two_makers_namesakes(self):
-        """0230: "Orbit" the exchange (an org in its post) is linked to Vantor's model Orbit by its name: the post's
-        "Orbit released Orbit dollar" is not the model's (its maker is Vantor, the post's Orbit its own maker)."""
+        """"Orbit" the exchange is linked to Vantor's model Orbit by its name, but "Orbit released Orbit dollar" is not
+        the model's release (0230)."""
         model = self.post_at(0, T0 - 10 * D, "Vantor ships Orbit")
         self.mentions(model, ("Orbit", "model", "subject", "Vantor"), ("Vantor", "org", "actor"))
         self.state(model, [{"a": "Vantor", "rel": "released", "b": "Orbit"}])
@@ -820,7 +862,7 @@ class ThingLinks(_Db):
 
 
 class DerivedRelations(unittest.TestCase):
-    """0224 (no database): the relations ent-v5's own fields say (graph.derived), no relation asked."""
+    """No database: the relations ent-v5's own fields say (graph.derived), no relation asked (0224)."""
 
     @staticmethod
     def m(name, type_, role, maker=None, span=None):
@@ -854,7 +896,7 @@ class DerivedRelations(unittest.TestCase):
         self.assertEqual(graph.derived(ms, on=("based_on",)), [(0, "based_on", 1)])
         self.assertEqual(graph.derived(ms), [(0, "based_on", 1)])                # Orbit 3 is not the subject
         apart = [dict(ms[0], call="w1"), dict(ms[1], call="w2")]
-        self.assertEqual(graph.derived(apart, on=("based_on",)), [])            # 0234: never across two windows
+        self.assertEqual(graph.derived(apart, on=("based_on",)), [])            # never across two windows (0234)
 
     def test_the_based_on_question_and_its_verdict(self):
         from insight_core.markx import graph
@@ -872,8 +914,8 @@ class DerivedRelations(unittest.TestCase):
 
 @base.requires_test_db
 class DerivedLinks(_Db):
-    """0224: graph section 4 reads the relations ent-v5's fields say from the post's current ent-v5 mentions, in the one
-    path (`stated`): switched off, nothing; on, the edges with their posts."""
+    """Graph section 4 reads the relations ent-v5's fields say from the post's current mentions (`stated`): off,
+    nothing; on, the edges with their posts (0224)."""
 
     def v5_mentions(self, pid, *ents):
         task_id, _ = tasks.entities_task(self.cur, pid)
@@ -887,7 +929,7 @@ class DerivedLinks(_Db):
         from insight_core.markx import graph
         bands = json.loads(json.dumps(I.bands()))
         bands["relations"]["derived"] = {r: True for r in derived}
-        bands["relations"]["derive"] = {"ask": True, "runs": 1}   # 0234: one answer settles a pair here
+        bands["relations"]["derive"] = {"ask": True, "runs": 1}   # one answer settles a pair here
         run = repo.start_run(self.cur, code_version="test", config={})
         with mock.patch.object(I, "bands", return_value=bands):
             return graph.stage(self.cur, now=now, run_id=run, budget=None)
@@ -912,11 +954,11 @@ class DerivedLinks(_Db):
         self.assertEqual(set(self.edges()), {(vantor, orbit, "released")})     # switched on: the backfill reads them
         self.assertEqual(self.edges()[(vantor, orbit, "released")]["posts"], [launch])
         self.graph(derived=("released", "based_on"), now=T0 + 4 * D)
-        self.assertEqual(set(self.edges()), {(vantor, orbit, "released")})     # 0234: based_on waits for its check
+        self.assertEqual(set(self.edges()), {(vantor, orbit, "released")})     # based_on waits for its check
         self.check_based_on(tune, sabi, orbit, vantor)
 
     def check_based_on(self, tune, sabi, orbit, vantor):
-        """0234: the (subject, predecessor) pair asked once (kind derive); `replaces` makes no edge, `derived` does."""
+        """The (subject, predecessor) pair asked once (kind derive); `replaces` makes no edge, `derived` does (0234)."""
         from insight_core.markx import graph
         bands = json.loads(json.dumps(I.bands()))
         bands["relations"]["derive"] = {"ask": True, "runs": 1}

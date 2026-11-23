@@ -1,8 +1,5 @@
-"""Follow a site where your sources' links point (issue 0060). No network: FakeHttp.
-
-claude.com's case (2026-10-31): following it from Discover started at the home page and offered
-/resources/ (274 articles, guides and webinars too); 95% of the claude.com articles your sources
-linked are under /blog/, which redirects to /resources/articles/.
+"""Follow a site where your sources' links point (0060): the section most linked articles are under is offered, not
+the home page's broadest listing. No network: FakeHttp.
 """
 from __future__ import annotations
 
@@ -108,8 +105,8 @@ class StartWhereTheLinksPoint(FindFeedWithLinks):
         self.assertEqual(body["feeds"], [{"url": f"{SITE}/blog/feed", "title": "Lab blog", "holds": 8}])
 
     def test_the_home_pages_feeds_stand_beside_the_sections(self):
-        # scmp.com (2026-10-31): /tech/ holds 63% of the links, and its tech feed 31 of 41; the
-        # home page's feed of everything holds 37. Both are shown, the one holding the most first.
+        # one section holds most of the links and its feed most of them; the home page's feed of everything holds
+        # fewer. Both are shown, the one holding the most first.
         tech = [f"{SITE}/tech/{slug(n)}" for n in range(6)]
         world = [f"{SITE}/news/world/{slug(n)}" for n in range(3)]
         responses = {f"{SITE}/tech": page('<link rel="alternate" type="application/rss+xml" href="/rss/36/feed">'),
@@ -121,7 +118,7 @@ class StartWhereTheLinksPoint(FindFeedWithLinks):
         self.assertEqual([(f["title"], f["holds"]) for f in body["feeds"]], [("Everything", 9), ("Tech", 6)])
 
     def test_a_section_that_gives_nothing_falls_back_to_the_home_page(self):
-        # /blog cannot be read and names nothing; the home page's news page is offered, as before.
+        # /blog cannot be read and names nothing: the home page's news page is offered
         responses = {f"{SITE}/": page(body='<a href="/news">News</a>'), **section("/news", 3)}
         body, _ = self.ask(responses, SITE, linked("/blog", 5))
         self.assertEqual((body["status"], body["start"], body["homepage"]), ("none", None, True))
@@ -137,7 +134,7 @@ class StartWhereTheLinksPoint(FindFeedWithLinks):
         self.assertEqual(http.requests.count(f"{SITE}/"), 1, "the home page is read once")
 
     def test_a_section_that_lands_on_the_home_page_is_no_section(self):
-        # /share sends you home: the home page's own pages are offered, as before.
+        # /share sends you home: the home page's own pages are offered
         responses = {f"{SITE}/": page(body='<a href="/news">News</a>'), f"{SITE}/share": page(body='<a href="/news">News</a>'),
                      **section("/news", 3)}
         body, _ = self.ask(responses, SITE, linked("/share", 5), redirects={f"{SITE}/share": f"{SITE}/"})
@@ -202,8 +199,8 @@ class RankByCoverage(FindFeedWithLinks):
 
 
 class AnArticleWithNoFeed(FindFeedWithLinks):
-    """v10.13.5: a company's article (/blog/<slug>) on a site with no feed at all; its home page names
-    /blog and /news in plain HTML; /blog lists the articles. The article offers its own section to follow."""
+    """A company's article (/blog/<slug>) on a site with no feed, its home page naming /blog and /news in plain HTML:
+    the article offers its own section to follow."""
 
     def site(self) -> dict:
         responses = {f"{SITE}/": page(body='<a href="/blog">Blog</a><a href="/news">News</a>'),

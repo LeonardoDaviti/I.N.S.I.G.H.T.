@@ -15,19 +15,18 @@ const SearchPage = lazy(() => import('./pages/SearchPage'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const SavePage = lazy(() => import('./pages/SavePage'));
-// Dev-only (v10.17, issue 0190): the blog and the Design Studio are never in the production bundle. Vite makes
-// `import.meta.env.DEV` false in `vite build`, so these imports are dead code there and their chunks are not built
-// (scripts/bundle-check.mjs fails if one is); `npm run dev` serves them as before.
+// Dev only: the blog and the Design Studio are never in the production bundle (`import.meta.env.DEV` is false
+// in `vite build`, so their chunks are not built; scripts/bundle-check.mjs fails if one is).
 const BlogPage = import.meta.env.DEV ? lazy(() => import('./pages/BlogPage')) : null;
 const DesignStudio = import.meta.env.DEV ? lazy(() => import('./design/DesignStudio')) : null;
 const DesignFrame = import.meta.env.DEV ? lazy(() => import('./design/frame/FrameApp')) : null;
-// Mark X Shadow's page (issue 0086 E): its own chunk, so the feed and the post route don't grow for it.
+// Mark X's page: its own chunk, so the feed and the post route don't grow for it.
 const MarkXPage = lazy(() => import('./pages/MarkXPage'));
-const MarkXEntityPage = lazy(() => import('./pages/MarkXEntityPage'));   // 0119 A3
-const MarkXStoryPage = lazy(() => import('./pages/MarkXStoryPage'));     // 0119 B6
-const MarkXSourcesPage = lazy(() => import('./components/markx/sources/MarkXSourcesPage'));   // 0132 B
-const MarkXSourcePage = lazy(() => import('./components/markx/sources/MarkXSourcePage'));     // 0132 B
-const ResearchPage = lazy(() => import('./pages/ResearchPage'));   // 0162
+const MarkXEntityPage = lazy(() => import('./pages/MarkXEntityPage'));
+const MarkXStoryPage = lazy(() => import('./pages/MarkXStoryPage'));
+const MarkXSourcesPage = lazy(() => import('./components/markx/sources/MarkXSourcesPage'));
+const MarkXSourcePage = lazy(() => import('./components/markx/sources/MarkXSourcePage'));
+const ResearchPage = lazy(() => import('./pages/ResearchPage'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 export function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -35,7 +34,6 @@ export function RouteErrorBoundary({ children }: { children: ReactNode }) {
   return <AppErrorBoundary resetKey={location.pathname}>{children}</AppErrorBoundary>;
 }
 
-/** While a route's code loads: a quiet skeleton in the page column, not a blank screen. */
 function RouteFallback() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pt-10 sm:px-6">
@@ -50,16 +48,13 @@ function MarkXRoute({ page }: { page?: 'entity' | 'story' | 'sources' | 'source'
   if (on === undefined) return <RouteFallback />;
   if (!on) return <Navigate to="/" replace />;
   if (page === 'story') return <MarkXStoryPage />;
-  if (page === 'sources') return <MarkXSourcesPage />;   // 0132 B
+  if (page === 'sources') return <MarkXSourcesPage />;
   if (page === 'source') return <MarkXSourcePage />;
   if (page === 'research') return <ResearchPage />;
   return page === 'entity' ? <MarkXEntityPage /> : <MarkXPage />;
 }
 
-/**
- * The old ingestion page moved to the ingestion tab under sources
- * (reading-finish R3), carrying the tab and query.
- */
+/** The old ingestion page moved to the ingestion tab under sources, carrying the tab and query. */
 function IngestionRedirect() {
   const { tab } = useParams();
   const location = useLocation();
@@ -69,10 +64,7 @@ function IngestionRedirect() {
 /** The reader params a track link may carry; the old page's `?days=` window has no reader equivalent. */
 const TRACK_KEPT_PARAMS = ['filter', 'view'] as const;
 
-/**
- * The retired track page (Design Studio D5): `/tracks/:id` is the reader scoped
- * to that folder, replacing the history entry so Back doesn't bounce.
- */
+/** The retired track page: `/tracks/:id` is the reader scoped to that folder, replacing the history entry. */
 function TrackRedirect() {
   const { trackId = '' } = useParams();
   const location = useLocation();
@@ -87,14 +79,9 @@ function TrackRedirect() {
 }
 
 /**
- * Routes (design docs system/information-architecture.md). `/` is the reader feed: the Mark VIII hub is gone and
- * `/hub` redirects home. Every route renders inside the AppShell top bar.
- * The app is feed / sources / post. `/tracks/:id` redirects to the reader
- * scoped to the track (Design Studio D5). The retired analysis paths (briefings,
- * stories, inbox, experts, the tracks list; issue 0005) land on the feed, replacing
- * the history entry. `/search` searches every post (issue 0040). `/save` saves any page (the bookmarklet's and ⌘K's, issue 0031). `/markx` is Mark X Shadow's page, while it is on (issue 0086 E). In dev only (`npm run dev`;
- * absent from the production bundle, 0190): `/blog`, the engineering blog, and `/design/*`, the Design Studio, reached
- * from ⌘K only.
+ * Routes, each inside the AppShell top bar. `/` is the reader feed; retired paths (`/hub`, `/tracks/:id`, the
+ * analysis pages) redirect, replacing the history entry. `/markx` only while Mark X is on. Dev only: `/blog` and
+ * `/design/*` (reached from ⌘K).
  */
 export function AppRoutes() {
   return (
@@ -131,9 +118,8 @@ export function AppRoutes() {
 }
 
 function App() {
-  // The Design Studio's chromeless frame (`/design/frame/:page/:state`, D4): its
-  // own router, providers and fixture fetch, so it replaces the app, not a route in it.
-  // The prefix is inlined (design/frame/frameUrl.ts FRAME_PREFIX) to keep the reader's JS lean (D8).
+  // The Design Studio's chromeless frame (`/design/frame/:page/:state`): its own router, providers and fixture
+  // fetch, so it replaces the app. The prefix is inlined (frameUrl.ts FRAME_PREFIX) to keep the reader's JS lean.
   if (DesignFrame && window.location.pathname.startsWith('/design/frame/')) {
     return <Suspense fallback={null}><DesignFrame /></Suspense>;
   }

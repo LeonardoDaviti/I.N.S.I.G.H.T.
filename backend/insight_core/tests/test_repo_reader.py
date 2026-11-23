@@ -1,9 +1,5 @@
-"""ReaderRepository: the feed keyset query, read state, bounded mark-through, unread counts.
-
-Rollback pattern (spec §5 conventions): one transaction per test, rolled back in
-tearDown, so it is safe on any database. Every assertion is scoped to the test's own
-scratch rows - live posts must never leak into a count.
-"""
+"""ReaderRepository: the feed keyset query, read state, bounded mark-through, unread counts. One transaction per test,
+rolled back, so it is safe on any database; every assertion is scoped to the test's own scratch rows."""
 from __future__ import annotations
 
 import json
@@ -65,7 +61,7 @@ class ReaderRepositoryTests(unittest.TestCase):
              content, json.dumps(metadata or {}), json.dumps(media_urls or [])),
         )
         post_id = str(self.cur.fetchone()[0])
-        PostPartsRepository.write(self.cur, [post_id])   # as a save parses it (issue 0076)
+        PostPartsRepository.write(self.cur, [post_id])   # as a save parses it
         return post_id
 
     def _posts(self, source_id: str, n: int, *, start: datetime | None = None) -> list[str]:
@@ -206,7 +202,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual([i["id"] for i in items], [c])
         self.assertIsNotNone(items[0]["starred_at"])
 
-    # ---- Later (issue 0022) ------------------------------------------------------
+    # ---- Later ---------------------------------------------------------------------
 
     def _later(self, post: str, at: datetime) -> None:
         self.repo.set_later(self.cur, [post], True, at=at)
@@ -290,7 +286,7 @@ class ReaderRepositoryTests(unittest.TestCase):
 
         self.assertEqual([i["id"] for i in items], [recent])
 
-    # ---- History (issue 0052) ------------------------------------------------------
+    # ---- History -------------------------------------------------------------------
 
     def _open(self, post: str, at: datetime, kind: str = "opened") -> None:
         self.cur.execute(
@@ -580,7 +576,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertIn("total", counts)
 
     def test_unread_counts_give_each_sources_newest_unread_post(self):
-        # Issue 0088: the rail orders sources by it; a read post, however new, is not its newest unread.
+        # the rail orders sources by it; a read post, however new, is not its newest unread
         source = self._source()
         older = self._post(source, self.now - timedelta(hours=5))
         self._post(source, self.now - timedelta(hours=2))

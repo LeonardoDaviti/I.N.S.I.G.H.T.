@@ -1,19 +1,9 @@
-"""Channel profiles (issue 0132 C2): one fetch of each source's profile or about page, monthly, through the normal
-fetch path (KindHttp, the host gates and their floors, a limiting host waited out). services/profiles_service.py
-picks which sources are due and keeps every answer (migration 0086); this file says where a source's profile is
-and reads what it holds.
+"""Channel profiles: where a source's profile or about page is (`ask_for`, by kind, never by site) and what it holds.
 
-Where a profile is (`ask_for`), by the source's kind, never by a list of sites:
-- **X through Nitter** (nitter_rss): the account's page on the same Nitter, `<origin>/<user>`;
-- **YouTube** (youtube_channel): the channel's about page, `youtube.com/channel/<id>/about` (or `/@<handle>/about`);
-- **Telegram through the bridge** (telegram_rss): the bridge's feed, whose channel description is the channel's;
-- **Telegram through MTProto** (telegram_mtproto): the channel's full info (about, subscribers), no web page;
-- **a website** (every other feed kind): its home page.
-Reddit, Hacker News and Saved have no profile of their own (their voice is each post's author).
-
-What a profile holds (`Profile`): the name it shows, the bio, the website field, the accounts and addresses it
-links (the bio's and the website's, a site's header and footer links to platform accounts and its `rel=me`), and the
-subscriber or follower count when the page shows one. Parsers are pure functions over the page's text.
+Nitter account page, YouTube about page, the Telegram bridge's feed, MTProto full info, else a website's home page;
+Reddit, Hacker News and Saved have none. A `Profile` is the name, bio, website, linked accounts and addresses, and
+follower count; the parsers are pure. services/profiles_service.py picks the due sources and fetches through KindHttp
+and the host gates.
 """
 from __future__ import annotations
 
@@ -178,9 +168,8 @@ def _redirect_target(url: str) -> str:
 
 
 def parse_youtube(page: str, url: str) -> Profile:
-    """A YouTube channel's about page: its og: title and description, the subscriber count its data writes
-    ("1.2M subscribers"), the channel's links (channelExternalLinkViewModel's, youtube.com/redirect's q=) and the
-    description's own addresses."""
+    """A YouTube channel's about page: og: title and description, the subscriber count, the channel's links
+    (channelExternalLinkViewModel's, youtube.com/redirect's q=) and the description's addresses."""
     name = _meta(page, "og:title")
     desc = None
     m = re.search(r'"aboutChannelViewModel":\{"description":"((?:[^"\\]|\\.)*)"', page)
@@ -236,9 +225,8 @@ def parse_telegram_full(full: Any, url: str) -> Profile:
 
 
 def parse_site(page: str, url: str) -> Profile:
-    """A website's home page: og:site_name (else <title>), the meta description, and the platform accounts it
-    links (`rel=me`, its header and footer icons: x.com/<user>, t.me/<channel>, youtube.com/@<handle>, ...). Its
-    links to other sites are not kept: a home page links everything it writes about."""
+    """A website's home page: og:site_name (else <title>), the meta description, and the platform accounts it links
+    (`rel=me`, header and footer). Other links are not kept: a home page links everything it writes about."""
     from insight_core.utils.voice_rules import address_key
 
     title = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)

@@ -1,23 +1,12 @@
-"""The tools a track's practitioners use or build (issue 0207, Stealth v10.18).
+"""The tools a track's practitioners use or build: which tools a topic track's posts are about, counted by distinct
+voices and recency. Read by the track page's "Tools in use" panel (`panel`) and the track's `tool` finder (finders.py,
+`finder_ids`).
 
-One decision, owned here: which tools and products a topic track's posts are about, counted by the distinct voices
-(practitioners) that discuss them and how recently. Two readers: the track page's "Tools in use" panel (`panel`) and
-the track's `tool` finder (finders.py: a passive post naming one of these tools is put up for judging, `finder_ids`).
-
-**What counts** (`rows`): the entities of the track's judged-in posts (Haiku's in, or the owner's ✓; never a post the
-owner marked ✗ nor a switched-off source's) whose kind is a tool: the current identity facts' kind (0184,
-entity_facts.read, when on) else the entity's type, one of TOOL_KINDS; never a generic word (facts `generic`) nor a
-name the book marked not an entity. Each tool: its posts, its voices (Mark X's voice rule: a post counts as its
-followed author's, else its feed's, `tasks.Post.voice`), its newest post, its posts in RECENT_DAYS, its posts in the
-track itself (not only Discover), and how specific it is to the track (`share`: its posts among the track's judged-in
-posts over every post naming it, SPECIFIC at least: a platform, a language or an OS that every kind of post names is
-no track's tool).
-
-**The panel** (`panel`): tools with MIN_VOICES+ voices, the subject (or the actor, or compared) of one of the posts at
-least (STRONG_ROLES: not only named in passing), most voices first, then the newest; each linked to its entity
-page. **The finder** (`finder_ids`): the same tools when FINDER_MIN_VOICES+ voices in the track discuss them; the most
-FINDER_MAX by voices.
-
+What counts (`rows`): the entities of the track's posts placed in it (never a Discover suggestion, an owner's ✗ or a
+switched-off source's) whose kind is a tool (entity_facts' kind, else the entity's type, in TOOL_KINDS), never a
+generic word or a non-entity. Each tool: its posts, voices (Mark X's voice rule), newest post, recent posts, and how
+specific it is to the track (`share` at least SPECIFIC: a platform every post names is no track's tool). The panel:
+MIN_VOICES+ voices and a STRONG_ROLES post at least; the finder: FINDER_MIN_VOICES+ voices, the top FINDER_MAX.
 Read only.
 """
 from __future__ import annotations
@@ -35,33 +24,44 @@ RECENT_DAYS = 30
 PANEL_MAX = 24
 FINDER_MIN_VOICES = 2
 FINDER_MAX = 60
-# 0207: the panel is Shadow (shown, labelled) until a blind-labelled sample passes 97% with a Wilson lower bound of 0.90
+# the panel is Shadow (shown, labelled) until a blind-labelled sample passes its bar (0207)
 MEASURED = {"what": "tools right for the track", "right": 23, "of": 27, "lower": 0.675}
 POSTS_READ = 40         # the newest posts of a tool read for its voices
 
 
 def judged_in(items: Sequence[Dict[str, Any]]) -> List[str]:
-    """The track's posts a tool can come from: placed in the track, joined or in Discover (Haiku's in, or the owner's
-    ✓); not out, not off."""
-    return [it["post_id"] for it in items if it.get("place") in ("track", "joined", "discover")]
+    """The track's posts a tool can come from: placed in the track or joined (the owner's ✓, an active source's in, a
+    join); not out, not off, never Discover's (a suggestion not decided yet)."""
+    return [it["post_id"] for it in items if it.get("place") in ("track", "joined")]
 
 
-def rows(cur: Cursor, posts: Sequence[str], in_track: Sequence[str] = (), *, now: Optional[datetime] = None
-         ) -> List[Dict[str, Any]]:
-    """Every tool the posts name: [{id, name, kind, what, posts, voices, last_at, recent, in_track}], most voices
-    first."""
+def rows(cur: Cursor, posts: Sequence[str], in_track: Sequence[str] = (), *, now: Optional[datetime] = None,
+         min_posts: int = 1) -> List[Dict[str, Any]]:
+    """Every tool the posts name (`min_posts` of them at least): [{id, name, kind, what, posts, voices, last_at, recent,
+    in_track}], most voices first. The tool kinds and the post minimum are the query's own conditions (so it never
+    returns every name's posts)."""
     from insight_core.markx import entity_facts, pairing, tasks
     now = now or datetime.now(timezone.utc)
     if not posts:
         return []
-    cur.execute(f"""SELECT m.entity_id::text, COALESCE(e.shown_name, e.name), COALESCE(e.shown_type, e.type),
+    etype = "COALESCE(e.shown_type, e.type)"
+    if entity_facts.on():   # a current fact's kind is the entity's kind, a generic one is no tool (as below)
+        facts_join = "LEFT JOIN mx_entity_facts f ON f.entity_id = e.id AND f.superseded_at IS NULL"
+        tool = (f"COALESCE(NULLIF(f.kind, ''), {etype}) = ANY(%(kinds)s) AND f.generic IS NOT TRUE")
+    else:
+        facts_join, tool = "", f"{etype} = ANY(%(kinds)s)"
+    cur.execute(f"""SELECT m.entity_id::text, COALESCE(e.shown_name, e.name), {etype},
                            array_agg(DISTINCT m.post_id::text), max({pairing.ordinary_date('p')}),
-                           count(DISTINCT m.post_id) FILTER (WHERE {pairing.ordinary_date('p')} >= %s),
-                           count(DISTINCT m.post_id) FILTER (WHERE m.role = ANY(%s))
-                      FROM mx_mentions_now m JOIN mx_entities e ON e.id = m.entity_id JOIN posts p ON p.id = m.post_id
-                     WHERE m.post_id = ANY(%s::uuid[]) AND m.entity_id IS NOT NULL AND e.status <> 'not_entity'
-                     GROUP BY m.entity_id, COALESCE(e.shown_name, e.name), COALESCE(e.shown_type, e.type)""",
-                (now - timedelta(days=RECENT_DAYS), list(STRONG_ROLES), list(posts)))
+                           count(DISTINCT m.post_id) FILTER (WHERE {pairing.ordinary_date('p')} >= %(recent)s),
+                           count(DISTINCT m.post_id) FILTER (WHERE m.role = ANY(%(strong)s))
+                      FROM mx_mentions_now m JOIN mx_entities e ON e.id = m.entity_id {facts_join}
+                      JOIN posts p ON p.id = m.post_id
+                     WHERE m.post_id = ANY(%(posts)s::uuid[]) AND m.entity_id IS NOT NULL AND e.status <> 'not_entity'
+                       AND {tool}
+                     GROUP BY m.entity_id, COALESCE(e.shown_name, e.name), {etype}
+                    HAVING count(DISTINCT m.post_id) >= %(min)s""",
+                {"recent": now - timedelta(days=RECENT_DAYS), "strong": list(STRONG_ROLES), "posts": list(posts),
+                 "kinds": list(TOOL_KINDS), "min": min_posts})
     got = cur.fetchall()
     # how specific each is to the track: its posts here over all its posts (a platform or a language every post names
     # is not this track's tool)
@@ -99,7 +99,7 @@ def panel(cur: Cursor, items: Sequence[Dict[str, Any]], *, now: Optional[datetim
     """The page's "Tools in use": tools with MIN_VOICES+ voices, at most PANEL_MAX, each {id, name, kind, what, posts,
     voices, last_at (ISO), recent, in_track}."""
     got = rows(cur, judged_in(items), [it["post_id"] for it in items if it.get("place") in ("track", "joined")],
-               now=now)
+               now=now, min_posts=MIN_VOICES)   # a tool's voices are never more than its posts
     out = []
     for c in got:
         if c["voices"] < MIN_VOICES or not c["strong"]:
@@ -112,5 +112,5 @@ def panel(cur: Cursor, items: Sequence[Dict[str, Any]], *, now: Optional[datetim
 
 def finder_ids(cur: Cursor, items: Sequence[Dict[str, Any]], *, now: Optional[datetime] = None) -> List[str]:
     """The tool finder's entities: tools FINDER_MIN_VOICES+ voices of the track discuss, at most FINDER_MAX."""
-    got = rows(cur, judged_in(items), now=now)
+    got = rows(cur, judged_in(items), now=now, min_posts=FINDER_MIN_VOICES)
     return [c["id"] for c in got if c["voices"] >= FINDER_MIN_VOICES][:FINDER_MAX]

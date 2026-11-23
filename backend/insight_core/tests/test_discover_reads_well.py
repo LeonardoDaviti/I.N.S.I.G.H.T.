@@ -1,7 +1,6 @@
-"""Discover that reads well (issue 0080): owners on the platforms the data finds, references and paper
-sources set apart, a site you follow never suggested (and an aggregator follows no site), no voice for
-Saved or a source's link to its own page, sources counted as followed, the measured order, one page at
-a time, and no title made from an address.
+"""Discover that reads well (0080): owners on the platforms the data finds, references and paper sources set apart, a
+site you follow never suggested (an aggregator follows no site), no voice for Saved or a source's link to its own
+page, sources counted as followed, the measured order, one page at a time, no title made from an address.
 """
 from __future__ import annotations
 
@@ -185,8 +184,8 @@ class DiscoverReadsWellTests(unittest.TestCase):
         self.assertIn(f"help.tool-{self.mark}.example", [r["key"] for r in got["references"]])
 
     def test_a_rebuild_step_that_counts_nothing_keeps_discover_valid(self):
-        """Issue 0080 speed: each rebuild step (keys, threads, names) wrote a new run time that Discover's
-        kept counts and its list were keyed by, so every open during a rebuild counted everything again."""
+        """A rebuild step (keys, threads, names) must not move the key of Discover's kept counts and list, or every open
+        during a rebuild counts everything again (0080)."""
         from datetime import datetime, timedelta, timezone
 
         from insight_core.db.repo_discover import DiscoverRepository
@@ -223,9 +222,8 @@ class DiscoverReadsWellTests(unittest.TestCase):
         self.assertNotEqual(stamp(), before, "a batch: Discover counts again")
 
     def test_a_fresh_process_reads_the_kept_list(self):
-        """Issue 0080 cold open: a process's first open made the whole list again, ~16k pages of posts and
-        links (13.6 s on the lab with a cold cache and a busy disk). The list is kept in the database by its
-        inputs and code, so a fresh process reads it; inputs that move or other code make it again."""
+        """The list is kept in the database by its inputs and code, so a fresh process's first open reads it; inputs
+        that move or other code make it again (0080)."""
         import json
         from unittest import mock
 
@@ -280,8 +278,8 @@ class DiscoverReadsWellTests(unittest.TestCase):
         self.assertIn(f"job-{self.mark}.example", [s["key"] for s in got["suggestions"]])
 
     def _story_run(self):
-        """What a story run does to Discover for posts stored since the last (issue 0080 cold open): the list kept
-        for the old ones is made again. (These tests store posts without running the job.)"""
+        """A story run's posts stored since the last make the list kept for the old ones again (the tests store posts
+        without running the job)."""
         from insight_core.db.repo_discover import LIST_KEY
         self.cur.execute("DELETE FROM system_settings WHERE key = %s", (LIST_KEY,))
 

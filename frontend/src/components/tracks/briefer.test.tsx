@@ -1,8 +1,6 @@
-// 0245 (frontend v10.28): the general track briefer's views over three invented tracks of three different kinds
-// (garden tools, board games, bread baking): the quick look, the weekly issue, the tables, the schema editor and the
-// rail's count, and none of it while the backend's switch is off. Synthetic data only; no word of these tracks is in
-// the code.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+// The general track briefer's views (0245) over three invented tracks of different kinds: quick look, weekly issue,
+// tables, schema editor and the rail's count, and none of it while the backend's switch is off.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -10,7 +8,7 @@ import TrackTopic from './TrackTopic';
 import TrackSheet from './TrackSheet';
 import ReaderNavRail from '../reader/ReaderNavRail';
 import {
-  chipParams, citeMarks, dayWord, filterChips, mondayOf, nextSort, railThings, sinceLine, sortThings, toggleChip,
+  chipParams, citeMarks, dayWord, filterChips, mondayOf, nextSort, sinceLine, sortThings, toggleChip,
   weekLine,
 } from './briefWords';
 import {
@@ -125,11 +123,6 @@ describe('the briefer words', () => {
     expect(weekLine('2026-11-16', '2026-11-22')).toBe('week of 16-22 Nov');
     expect(weekLine('2026-09-28', '2026-10-04')).toBe('week of 28 Sep-4 Oct');
     expect(mondayOf(NOW)).toBe('2026-11-16T00:00:00.000Z');
-    expect(railThings(0)).toBeNull();
-    expect(railThings(undefined)).toBeNull();
-    expect(railThings(1)).toBe('1 new thing');
-    expect(railThings(3)).toBe('3 new things');
-    expect(railThings(12)).toBe('9+ new things');
   });
 
   it('builds filter chips from each type, for three kinds of track', () => {
@@ -165,6 +158,9 @@ describe('the briefer words', () => {
 // ---- the track page -----------------------------------------------------------------------------------------------
 
 describe('the quick look on a track page', () => {
+  // today is NOW, three days after the look (a real clock would make LOOKED a date, not a weekday, after a week)
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW); });
+  afterEach(() => { vi.useRealTimers(); });
   it('shows nothing of the briefer while the switch is off', async () => {
     vi.spyOn(tracksApi, 'page').mockResolvedValue(PAGE);
     vi.spyOn(tracksApi, 'look').mockResolvedValue({ before: { track: LOOKED, subtopics: {} }, now: { track: LOOKED, subtopics: {} } });
@@ -193,17 +189,26 @@ describe('the quick look on a track page', () => {
     const tools = within(panel).getByRole('region', { name: 'Tool (2)' });
     expect(within(tools).getByText('New: tool (2)')).toBeInTheDocument();
     expect(tools.querySelector('[data-thing="t1"]')).toHaveTextContent('Hori knife · 30 USD · 0.3 kg · hand · reviews.example.com');
-    expect(within(tools).getByRole('link', { name: 'Open the post about Hori knife' })).toHaveAttribute('href', 'https://example.org/p-t1');
+    expect(within(tools).getByRole('link', { name: 'Open the post about Hori knife' })).toHaveAttribute('href', '/posts/p-t1');   // in INSIGHT: a bridge's address may not open on the reader's device
     expect(within(panel).getByRole('region', { name: 'Also in the track' })).toHaveTextContent('What do you all use for weeding?');
-    // the posts follow, as today
     const order = [...document.querySelectorAll('[aria-label="Since you looked"], [aria-label="Tools"]')].map((e) => e.getAttribute('aria-label'));
     expect(order).toEqual(['Since you looked', 'Tools']);
-    // see all › opens the kind's table
     const table = vi.spyOn(briefApi, 'things').mockResolvedValue({ on: true, track: { id: 'garden', name: 'x' }, kind: 'tool',
       kinds: ['tool', 'practice_or_claim'], fields: GARDEN.fields, filters: {}, count: 3, things: TOOLS });
     await userEvent.click(within(tools).getByRole('button', { name: 'see all ›' }));
     await waitFor(() => expect(table).toHaveBeenCalledWith('garden', 'tool'));
     expect(await screen.findByRole('region', { name: 'Tables' })).toBeInTheDocument();
+  });
+
+  it('shows at most five rows a kind (v10.29)', async () => {
+    const practice = thing('pr1', PRACTICE, { what: ['Oil the blade monthly', 'Oil the blade monthly'], result: ['No rust after a year', 'No rust after a year'] });
+    const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((x) => thing(`m${x}`, GARDEN, { name: [`Tool ${x}`, `Tool ${x}`] }));
+    const look: QuickLook = { ...LOOK, points: [], sections: [section(GARDEN, [{ ...TOOLS[0], practices: [practice], sources: 3 }, ...many], 'Tool (8)')] };
+    mockOn(look);
+    renderWithProviders(<TrackTopic folderId="garden" />, { api: makeFakeApi({}) });
+    const panel = await screen.findByRole('region', { name: 'Since you looked' });
+    const tools = within(panel).getByRole('region', { name: 'Tool (8)' });
+    expect(tools.querySelectorAll('[data-thing]')).toHaveLength(5);
   });
 
   it('says nothing new since the look, with the last issue a tap away', async () => {
@@ -320,10 +325,10 @@ describe('the schema editor in the track sheet', () => {
 });
 
 describe('the rail', () => {
-  it('counts new things per track, capped at 9+, silent at 0', async () => {
+  it('shows no "new things" count beside a track (v10.36: it was always 9+)', async () => {
     vi.spyOn(trackCountsApi, 'counts').mockResolvedValue({ by_track: {
-      garden: { unread: 2, discover: 0, count: 2, things: 12 },
-      games: { unread: 0, discover: 0, count: 0, things: 0 },
+      garden: { unread: 2, discover: 0, count: 2 },
+      games: { unread: 0, discover: 0, count: 0 },
       bread: { unread: 1, discover: 0, count: 1 },
     } });
     const api = makeFakeApi({
@@ -335,7 +340,9 @@ describe('the rail', () => {
     renderWithProviders(<ReaderNavRail scope="all" counts={{ total: 3, by_source: {}, by_folder: {} } as never} search=""
       drawerOpen={false} onDrawerOpenChange={() => undefined} />, { api });
     const garden = await screen.findByRole('link', { name: /Invented garden/ });
-    await waitFor(() => expect(garden).toHaveTextContent('9+ new things'));
+    await waitFor(() => expect(garden).toHaveTextContent('2'));
+    expect(garden).not.toHaveTextContent('new thing');
+    expect(garden.querySelector('[data-rail-things]')).toBeNull();
     expect(screen.getByRole('link', { name: /Invented games/ }).querySelector('[data-rail-things]')).toBeNull();
     expect(screen.getByRole('link', { name: /Invented bread/ }).querySelector('[data-rail-things]')).toBeNull();
   });

@@ -1,11 +1,7 @@
 /**
- * The Wall's walk (prototype verdict B): a scripted journey through the real
- * site inside one interactive frame, at real speed, so page transitions and
- * motion can be judged. Each step is done in the frame the way a person does
- * it: a click on the real link, a real key press. The studio sends a step's
- * index by `postMessage`; the frame runs it and answers (see FrameRoot).
- *
- * This module stays small and free of the studio's docs: the frame imports it.
+ * The Wall's walk: a scripted journey through the real site inside one interactive frame, at real speed, each step
+ * done as a person does it (a real click, a real key press). The studio posts a step's index; the frame runs it and
+ * answers (see FrameRoot). Kept small and free of the studio's docs: the frame imports it.
  */
 import type { FrameDriver } from '../frame/driver';
 import { sourceId } from '../fixtures/sites';

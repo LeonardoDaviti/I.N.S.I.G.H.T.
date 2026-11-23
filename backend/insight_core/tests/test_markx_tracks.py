@@ -1,9 +1,7 @@
-"""0145 (Stealth v10.11): tracks as topics. A track without a description stays a folder; the profile and its
-threshold; the prefilter; the `track` and `subtopics` kinds (schema, validation, an empty answer a failed try); the
-routing (active -> the track, passive -> Discover); calibrated ranking; auto-join only at 90% with 20+ labels, and back
-off when it drops; source suggestions at 3+ in 30 days; the per-run
-cap; labels as examples; the description embedded by the worker's embedder. Synthetic data only; the DB tests run on a
-database whose name ends in _test."""
+"""Tracks as topics (0145): a track without a description stays a folder; the profile and its threshold, the
+prefilter, the `track` and `subtopics` kinds, routing (active -> the track, passive -> Discover), calibrated ranking,
+auto-join at 90% with 20+ labels, source suggestions, the per-run cap, labels as examples, the description's vector.
+Synthetic data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import base64
@@ -36,15 +34,28 @@ def b64(v):
     return base64.b64encode(struct.pack(f"<{len(v)}e", *v)).decode("ascii")
 
 
+FROM_TRACK = "<the first words of the question's Belongs:>"   # _Tracks.answer copies them in
+
+
 def verdict(inside=True, conf=0.9, sub="storage and organisers", why="Acme's Widget release: a wall storage system to print, modular, cheap."):
-    return {"id": "x", "in": inside, "confidence": conf, "subtopic": sub if inside else None, "why": why}
+    """A track-v3 answer whose stated fit agrees with `in`."""
+    return {"id": "x", "subject": "the post's subject", "fits": inside, "matches": FROM_TRACK if inside else None,
+            "excluded": None, "in": inside, "confidence": conf, "subtopic": sub if inside else None, "why": why}
+
+
+def with_matches(answer, input):
+    """`answer` with FROM_TRACK replaced by the first words of its question's `Belongs:` (a quote the check accepts)."""
+    if not isinstance(answer, dict) or answer.get("matches") != FROM_TRACK:
+        return answer
+    part = validate.header_part(input, "Belongs: ") or "useful prints"
+    return {**answer, "matches": " ".join(part.split()[:3])}
 
 
 class Pure(unittest.TestCase):
     def test_the_kinds_and_their_guides(self):
-        self.assertEqual((schemas.KINDS["track"].guide, schemas.KINDS["track"].subject), ("track-v2", "post_track"))
+        self.assertEqual((schemas.KINDS["track"].guide, schemas.KINDS["track"].subject), ("track-v3", "post_track"))
         self.assertEqual((schemas.KINDS["subtopics"].guide, schemas.KINDS["subtopics"].subject), ("subtopics-v2", "track"))
-        self.assertIn("in", schemas.guide_body("track-v2"))
+        self.assertIn("fits", schemas.guide_body("track-v3"))
         for k in ("track", "subtopics"):
             self.assertIn(k, tasks.PLANNERS)
 
@@ -136,6 +147,17 @@ class _Tracks(_Api):
                          (self.folder,))
         return {p: (o, v, t) for p, o, v, t in self.cur.fetchall()}
 
+    def answer(self, *rows, **kw):
+        """A verdict() answer's `matches` quotes its own question (with_matches)."""
+        filled = []
+        for t, a in rows:
+            if isinstance(a, dict) and a.get("matches") == FROM_TRACK:
+                self.cur.execute("SELECT input FROM mx_tasks WHERE id = %s", (str(t),))
+                got = self.cur.fetchone()
+                a = with_matches(a, got[0] if got else "")
+            filled.append((t, a))
+        return super().answer(*filled, **kw)
+
     def judge(self, post, answer):
         tid = self.items()[post][2]
         status, body = self.answer((tid, answer))
@@ -175,7 +197,7 @@ class AFolder(_Tracks):
         self.assertEqual((body["track"]["version"], body["track"]["excludes"]), (2, "cloud GPUs"))
         listed = {t["id"]: t for t in call("GET", "/api/markx/tracks")[1]}
         self.assertTrue(listed[self.folder]["topic"])
-        # 0191: an edit that changes no word keeps the version (and its history pass); the text shown follows it
+        # an edit that changes no word keeps the version (and its history pass); the text shown follows it
         self.cur.execute("UPDATE mx_tracks SET history_done_at = now() WHERE folder_id = %s", (self.folder,))
         _, body = call("PUT", f"/api/markx/tracks/{self.folder}", body={"description": "cheap local AI setups.",
                                                                          "excludes": "Cloud GPUs"})
@@ -377,6 +399,61 @@ class Routing(_Tracks):
         self.assertIsNone(body["calibration"]["join_edge"])
         self.assertEqual(sorted(it["post_id"] for it in body["discover"]), sorted(posts[22:]))
 
+    def test_a_passive_in_joins_on_its_blind_check(self):
+        """A passive `in` is checked blind; in at CHECK_JOIN+ joins the track, else it stays in Discover; the owner's
+        label wins and is never checked; an active post never is (0256)."""
+        sure, unsure, no, mine = (self.passive(t) for t in ("sure", "unsure", "no", "mine"))
+        act = self.post(title="active")
+        self.plan()
+        for p in (sure, unsure, no, mine, act):
+            self.judge(p, verdict(conf=0.8))
+        self.label(mine, "in")
+        self.assertEqual(self.plan(), 3, "the three unlabelled passive ins")
+        self.cur.execute("""SELECT i.post_id::text, k.id, k.guide, k.subject_kind FROM mx_track_items i
+                              JOIN mx_tasks k ON k.id = i.check_task_id WHERE i.track_id = %s""", (self.folder,))
+        checks = {p: (t, g, sk) for p, t, g, sk in self.cur.fetchall()}
+        self.assertEqual(set(checks), {sure, unsure, no})
+        self.assertEqual({(g, sk) for _, g, sk in checks.values()}, {(tracks.CHECK_GUIDE, tracks.CHECK_SUBJECT)})
+        self.assertEqual(self.plan(), 0, "asked once")
+        for p, ans in ((sure, verdict(conf=0.9)), (unsure, verdict(conf=0.7)), (no, verdict(False, 0.9))):
+            status, body = self.answer((checks[p][0], ans))
+            self.assertEqual((status, body["valid"]), (200, 1), body)
+        live = lambda: {it["post_id"]: it["place"] for it in tracks.placed(self.cur, tracks.get(self.cur, self.folder))["items"]}
+        self.assertEqual(live()[sure], "discover", "one run is not enough: sure waits for its second run")
+        self.cur.execute("SELECT status FROM mx_tasks WHERE id = %s", (checks[sure][0],))
+        self.assertEqual(self.cur.fetchone()[0], "open", "asked again")
+        self.cur.execute("SELECT status FROM mx_tasks WHERE id = %s", (checks[no][0],))
+        self.assertEqual(self.cur.fetchone()[0], "answered", "a first out settles it")
+        for p, ans in ((sure, verdict(conf=0.88)), (unsure, verdict(conf=0.95))):
+            status, body = self.answer((checks[p][0], ans))
+            self.assertEqual((status, body["valid"]), (200, 1), body)
+        places = live()
+        self.assertEqual(places[sure], "joined", "two runs in at 0.9 and 0.88")
+        self.assertEqual((places[unsure], places[no]), ("discover", "checked_out"),
+                         "0.7 then 0.95: the weakest run is 0.7; v10.41: the check's out leaves Discover")
+        self.cur.execute("SELECT verdict FROM mx_track_items WHERE post_id = %s", (no,))
+        self.assertTrue(self.cur.fetchone()[0], "the judge's verdict is kept as it was")
+        self.label(sure, "out")                                             # the owner's label wins
+        self.assertNotIn(sure, [it["post_id"] for s in self.page()["sections"] for it in s["items"]])
+
+    def test_a_join_from_one_run_is_asked_again(self):
+        """A check settled in on one run (before CHECK_RUNS) leaves the track and is asked again (migration 0169)."""
+        p = self.passive("joined before the runs")
+        self.plan()
+        self.judge(p, verdict(conf=0.8))
+        self.plan()
+        self.cur.execute("SELECT check_task_id FROM mx_track_items WHERE post_id = %s", (p,))
+        tid = self.cur.fetchone()[0]
+        self.answer((tid, verdict(conf=0.95)))
+        self.cur.execute("UPDATE mx_track_items SET check_in = true, check_confidence = 0.95 WHERE post_id = %s", (p,))
+        self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (tid,))   # as an older run left it
+        from pathlib import Path
+        sql = (Path(__file__).resolve().parents[1] / "db" / "migrations" / "0169_reset_one_run_joins.sql").read_text()
+        self.cur.execute(sql)   # the one-time reset (whatever the check queue's room)
+        self.cur.execute("SELECT i.check_in, k.status FROM mx_track_items i JOIN mx_tasks k ON k.id = i.check_task_id "
+                         "WHERE i.post_id = %s", (p,))
+        self.assertEqual(self.cur.fetchone(), (None, "open"))
+
     def test_labels_become_examples(self):
         a = self.passive("A printable cable organiser for a desk")
         b = self.passive("A sale on filament")
@@ -421,9 +498,8 @@ class Routing(_Tracks):
 
 
 class KeptPlaces(_Tracks):
-    """Issue 0195: the page, the suggestions and the sidebar counts read the kept placements (markx/track_kept.py)
-    and answer exactly what placing live answers; a change to a track's inputs makes it read live until placed
-    again."""
+    """The page, suggestions and sidebar counts read the kept placements (markx/track_kept.py) and answer exactly what
+    placing live answers; a change to a track's inputs reads live until placed again (0195)."""
 
     def setUp(self):
         super().setUp()
@@ -445,6 +521,21 @@ class KeptPlaces(_Tracks):
     def kept(self) -> bool:
         from insight_core.markx import track_kept
         return track_kept.calibration(self.cur, self.folder) is not None
+
+    def test_a_title_less_post_shows_its_shown_title_live_and_kept(self):
+        """A post with no stored title shows the title every page shows (post_parts')."""
+        toot = self.post(title="")
+        self.cur.execute("""INSERT INTO post_parts (post_id, title, title_from, lead, parse_stamp, digest)
+                            VALUES (%s, 'Vanadium 158 released', 'first line', '', 'test', 'test')""", (toot,))
+        self.plan()
+        self.judge(toot, verdict())
+
+        def title():
+            return next(it["title"] for sec in self.page()["sections"] for it in sec["items"] if it["post_id"] == toot)
+        self.assertEqual(title(), "Vanadium 158 released")
+        self.keep()
+        self.assertTrue(self.kept())
+        self.assertEqual(title(), "Vanadium 158 released")
 
     def test_kept_answers_are_the_live_ones(self):
         a, b = self.post(title="active in"), self.post(title="active out")
@@ -476,11 +567,130 @@ class KeptPlaces(_Tracks):
         self.keep()
         self.assertEqual(self.keep(), 0, "nothing changed since")
 
+    def test_placing_again_writes_only_the_rows_that_differ(self):
+        """A placement written again writes only changed rows, deletes a post no longer placed, and matches placing
+        live (0270)."""
+        from insight_core.markx import track_feed, track_kept
+        a, b, c = self.post(title="one in"), self.post(title="two out"), self.post(title="three in")
+        self.plan()
+        self.judge(a, verdict())
+        self.judge(b, verdict(False, 0.8))
+        self.judge(c, verdict(conf=0.7))
+        self.keep()
+        t = tracks.get(self.cur, self.folder)
+        live = tracks.placed(self.cur, t, shown=False)["items"]
+
+        def rows():
+            self.cur.execute("""SELECT post_id::text, place, rank, label, verdict, ctid::text FROM mx_track_places
+                                 WHERE track_id = %s ORDER BY post_id""", (self.folder,))
+            return {r[0]: r[1:] for r in self.cur.fetchall()}
+        before = rows()
+        self.assertEqual(sorted(before), sorted(it["post_id"] for it in live))
+        self.assertEqual(track_kept.write_places(self.cur, self.folder, live), {"deleted": 0, "written": 0})
+        self.assertEqual(rows(), before, "nothing written: the same row versions")
+        moved = [dict(it, place="out" if it["post_id"] == c else it["place"]) for it in live if it["post_id"] != b]
+        self.assertEqual(track_kept.write_places(self.cur, self.folder, moved), {"deleted": 1, "written": 1})
+        after = rows()
+        self.assertNotIn(b, after)
+        self.assertEqual(after[c][0], "out")
+        self.assertEqual(after[a], before[a], "an unchanged row is not written")
+        self.assertEqual(track_kept.write_places(self.cur, self.folder, live), {"deleted": 0, "written": 2})
+        self.assertEqual({k: v[:4] for k, v in rows().items()}, {k: v[:4] for k, v in before.items()})
+        self.assertEqual(sorted(track_feed.track_posts(self.cur, self.folder)),
+                         sorted(it["post_id"] for it in live if it["place"] in track_feed.IN_TRACK))
+
+    def test_the_workers_changes_read_the_kept_placement_the_owners_live(self):
+        """A blind check's answers leave the kept placement read until the refresh places the track again once
+        REFRESH_GAP old; the owner's label is read live at once (0264)."""
+        from unittest import mock
+        from insight_core.markx import track_counts, track_kept
+        sure, other = (self.post(title=t, source=self.other) for t in ("sure", "other"))
+        for p in (sure, other):
+            self.vector(p, unit((0, 1), (3, 0.2)))
+        self.plan()
+        for p in (sure, other):
+            self.judge(p, verdict(conf=0.8))
+        self.plan()                                         # the blind checks asked
+        self.cur.execute("SELECT check_task_id FROM mx_track_items WHERE post_id = %s", (sure,))
+        check = self.cur.fetchone()[0]
+        self.assertIsNotNone(check)
+        self.assertEqual(self.keep(), 1)
+        for conf in (0.9, 0.88):                            # two runs in: `sure` joins (placed live)
+            status, body = self.answer((check, verdict(conf=conf)))
+            self.assertEqual((status, body["valid"]), (200, 1), body)
+        self.cur.execute("SELECT count(*) > 0, bool_or(owner) FROM mx_track_changes WHERE track_id = %s", (self.folder,))
+        self.assertEqual(self.cur.fetchone(), (True, False), "the worker's changes logged as the worker's")
+        live = {it["post_id"]: it["place"] for it in tracks.placed(self.cur, tracks.get(self.cur, self.folder))["items"]}
+        self.assertEqual(live[sure], "joined")
+        self.assertTrue(self.kept(), "read kept")
+        with mock.patch.object(tracks, "placed", wraps=tracks.placed) as placed:
+            counts = track_counts.topic_counts(self.cur)[self.folder]
+            body = self.page()
+            tracks.suggestions(self.cur, now=NOW + DAY)
+        self.assertEqual(placed.call_count, 0, "no live placement while only the worker changed the track")
+        self.assertEqual(counts["discover"], 2, "the last kept placement: `sure` still in Discover")
+        self.assertEqual({it["post_id"] for it in body["discover"]}, {sure, other})
+        self.assertEqual(self.keep(), 0, "placed less than REFRESH_GAP ago: not yet")
+        self.assertTrue(track_kept.due(self.cur, gap=0) and not track_kept.due(self.cur))
+        self.cur.execute("UPDATE mx_track_places_state SET placed_at = now() - interval '6 minutes' WHERE track_id = %s",
+                         (self.folder,))
+        self.assertTrue(track_kept.due(self.cur))
+        self.assertEqual(self.keep(), 1, "REFRESH_GAP old: placed again")
+        self.cur.execute("SELECT count(*) FROM mx_track_changes WHERE track_id = %s", (self.folder,))
+        self.assertEqual(self.cur.fetchone()[0], 0, "its change rows taken")
+        self.assertEqual(track_counts.topic_counts(self.cur)[self.folder]["discover"], 1, "`sure` joined")
+        self.label(other, "out")                            # the owner's ✗: read live at once
+        self.assertFalse(self.kept())
+        with mock.patch.object(tracks, "placed", wraps=tracks.placed) as placed:
+            self.assertEqual(track_counts.topic_counts(self.cur)[self.folder]["discover"], 0)
+        self.assertGreater(placed.call_count, 0, "placed live")
+        self.assertTrue(track_kept.due(self.cur), "the owner's change is due at once")
+        self.assertEqual(self.keep(), 1, "placed again whatever REFRESH_GAP says")
+        self.assertTrue(self.kept())
+        self.assertEqual(track_counts.topic_counts(self.cur)[self.folder]["discover"], 0)
+
+    def test_the_kept_page_follows_a_placement_of_the_workers_change(self):
+        """The page's stamp reads when the track was placed: the next open after the refresh shows the new placement;
+        until then the kept bytes are sent (0269)."""
+        from unittest import mock
+        from insight_core.markx import track_kept
+        sure, other = (self.post(title=t, source=self.other) for t in ("sure", "other"))
+        for p in (sure, other):
+            self.vector(p, unit((0, 1), (3, 0.2)))
+        self.plan()
+        for p in (sure, other):
+            self.judge(p, verdict(conf=0.8))
+        self.plan()
+        self.cur.execute("SELECT check_task_id FROM mx_track_items WHERE post_id = %s", (sure,))
+        check = self.cur.fetchone()[0]
+        for conf in (0.9, 0.88):
+            self.answer((check, verdict(conf=conf)))
+        self.assertEqual(self.keep(), 1)
+
+        def places(body):
+            return {**{it["post_id"]: it["place"] for s in body["sections"] for it in s["items"]},
+                    **{it["post_id"]: it["place"] for it in body["discover"]}}
+        self.assertEqual(places(self.page())[sure], "joined")
+        # the check reset as migration 0169 did it (the worker's change, logged by the trigger)
+        self.cur.execute("""UPDATE mx_track_items SET check_in = NULL, check_confidence = NULL, check_why = NULL,
+                                   checked_at = NULL WHERE post_id = %s""", (sure,))
+        with mock.patch.object(tracks, "placed", wraps=tracks.placed) as placed:
+            self.assertEqual(places(self.page())[sure], "joined", "within REFRESH_GAP: the kept page")
+        self.assertEqual(placed.call_count, 0)
+        self.cur.execute("UPDATE mx_track_places_state SET placed_at = now() - interval '6 minutes' WHERE track_id = %s",
+                         (self.folder,))
+        self.assertTrue(track_kept.due(self.cur))
+        self.assertEqual(self.keep(), 1)
+        body = self.page()
+        self.assertEqual(places(body)[sure], "discover", "placed again: the page follows at the next open")
+        self.assertEqual(body["counts"]["discover"],
+                         sum(1 for it in tracks.placed(self.cur, tracks.get(self.cur, self.folder))["items"]
+                             if it["place"] == "discover"))
+
 
 class SwitchedOff(_Tracks):
-    """Issue 0200 (v10.17.1): a passive source the owner switched off feeds no suggestion of a track: its posts are
-    neither in Discover nor joined, it is never a source suggestion, its new posts are not asked, the scout reads none
-    of them; switched on again, all come back. Kept placements follow the switch (migration 0135)."""
+    """A passive source switched off feeds no track suggestion (not in Discover, not joined, not suggested, not asked,
+    not scouted); switched on again, all come back; kept placements follow the switch (0200)."""
 
     def setUp(self):
         super().setUp()
@@ -569,7 +779,7 @@ class SwitchedOff(_Tracks):
         self.assertEqual(set(scout.in_posts(self.cur, self.folder)), {mine, farm}, "the owner's ✓ is the owner's")
 
 
-# The sub-topics (0207: found from the posts, named, digested, the owner's edits): test_track_subtopics_0207.
+# The sub-topics: test_track_subtopics_0207.
 
 
 if __name__ == "__main__":

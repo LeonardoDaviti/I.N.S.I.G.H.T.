@@ -1,15 +1,11 @@
 /**
- * One readable name for a source, everywhere a source is named (Mark IX lead
- * review #3): never a raw feed URL. A real display name wins; a URL-shaped name
- * (with or without its scheme) becomes a derived one:
+ * One readable name for a source, everywhere a source is named: never a raw feed URL. A real display name wins;
+ * a URL-shaped name becomes a derived one:
  *
- *   https://github.com/anthropics/claude-code/commits.atom   -> anthropics/claude-code
  *   https://github.com/anthropics/skills/releases.atom       -> anthropics/skills releases
  *   https://rss.arxiv.org/rss/cs.CL                          -> arXiv cs.CL
- *   http://export.arxiv.org/api/query?search_query=cat:cs.AI -> arXiv cs.AI
  *   https://www.reddit.com/r/LocalLLaMA/.rss                 -> r/LocalLLaMA
  *   https://tg.i-c-a.su/rss/dennis_it?limit=50               -> @dennis_it
- *   https://nitter.local/nn_teacher/rss                        -> @nn_teacher
  *   https://simonwillison.net/atom/everything/               -> simonwillison.net
  *   r/x, "Road to VR"                                        -> unchanged
  */
@@ -19,8 +15,7 @@ const URLISH = /^(https?:\/\/)?(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/\S*)?$
 
 function looksLikeUrl(value: string): boolean {
   if (/^https?:\/\//i.test(value)) return true;
-  // "simonwillison.net/atom/everything", but not "r/x", "cs.CL" or "Tom's Guide - AR":
-  // a dotted host followed by a path.
+  // A dotted host followed by a path ("simonwillison.net/atom/everything"), not "r/x", "cs.CL" or "Tom's Guide - AR".
   return !/\s/.test(value) && URLISH.test(value) && /^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?\//i.test(value);
 }
 
@@ -73,10 +68,7 @@ export function sourceLabelList(names: Array<string | null | undefined>): string
   return names.map((name) => sourceLabel(name)).join(', ');
 }
 
-/**
- * A post's source name on the post page: a YouTube post names its channel (the
- * stored source is the channel id); everything else goes through `sourceLabel`.
- */
+/** A post's source name: a YouTube post names its channel (its stored source is the channel id). */
 export function postSourceName(post: {
   source?: string | null;
   source_display_name?: string | null;

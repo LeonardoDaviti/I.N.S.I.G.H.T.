@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
-  briefApi, PRACTICE_KIND, type ThingFieldDef, type ThingFieldType, type ThingKindDef, type TrackSchemaView,
+  briefApi, OWNER_FIELDS, PRACTICE_KIND, type ThingFieldDef, type ThingFieldType, type ThingKindDef, type TrackSchemaView,
 } from '../../services/tracks';
 import { Button, Input, Select } from '../ui';
 import { errorMessage } from '../../lib/apiError';
@@ -43,12 +43,9 @@ function AddField({ kind, onAdd }: { kind: string; onAdd: (f: ThingFieldDef) => 
   );
 }
 
-/**
- * The track's kinds and fields (0245 "what the reader controls"), in the track sheet: Haiku proposed them from the
- * description; the owner renames, adds or removes a field and saves a new version (PUT .../schema), which reads the
- * track's posts again. The kind code adds to every track (practices and claims) is shown, not edited. Hidden while
- * the briefer is off or before a schema exists.
- */
+/** The track's kinds and fields, in the track sheet: Haiku proposed them; the owner edits fields and saves a new
+ *  version (which reads the track's posts again). The code's own kind is shown, not edited. Hidden while the briefer
+ *  is off or before a schema exists. */
 export default function TrackSchemaEditor({ trackId }: { trackId: string }) {
   const client = useQueryClient();
   const query = useQuery({ queryKey: schemaKey(trackId), queryFn: () => briefApi.schema(trackId), staleTime: 60_000, retry: false });
@@ -93,7 +90,7 @@ export default function TrackSchemaEditor({ trackId }: { trackId: string }) {
               </li>
             ))}
           </ul>
-          {k.fields.length < 8 ? <AddField kind={k.kind} onAdd={(f) => edit(k.kind, [...k.fields, f])} /> : null}
+          {k.fields.length < OWNER_FIELDS ? <AddField kind={k.kind} onAdd={(f) => edit(k.kind, [...k.fields, f])} /> : null}
         </div>
       ))}
       {practice ? (

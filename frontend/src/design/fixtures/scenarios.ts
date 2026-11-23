@@ -1,9 +1,7 @@
 /**
- * The state matrix (Design Studio D4, D5): for each page doc and each state its
- * `meta` block lists, the app URL a frame opens and the fixture routes that
- * answer its API calls. The coverage test fails when a doc lists a state that
- * has no scenario here. A few states beyond the docs' lists (the reader's track
- * and source scopes, keyboard help, a dialog) exist for the Wall.
+ * The state matrix: for each page doc and each state its `meta` block lists, the app URL a frame opens and the
+ * fixture routes that answer its API calls (the coverage test fails on a listed state with no scenario). A few
+ * extra states exist for the Wall.
  */
 import type { FixtureRoute } from '../frame/transport';
 import { pending, serverError } from '../frame/transport';
@@ -62,8 +60,8 @@ function connections(build: (now: Date) => CredentialsResponse) {
 const SET = { set: true, last4: 'a3f9', source: 'db' as const, updated_at: '2026-10-10T08:00:00Z' };
 const tested = (now: Date, ok: boolean, message: string) => ({ ok, message, tested_at: at(now, -10 * MINUTE) });
 
-/** Issue 0139, Mark X on: two entity cards (one long), a Russian post only Mark X's English reading matched, and a
- *  post its own words matched. */
+/** Mark X on: two entity cards (one long), a Russian post only Mark X's English reading matched, and a post its own
+ *  words matched. */
 function markxSearch(now: Date) {
   const [own, ...rest] = normalSite(now).items;
   const russian = {
@@ -104,7 +102,7 @@ const SCENARIOS: FrameScenario[] = [
   },
   { page: 'reader', state: 'search-empty', label: 'No posts match, narrowed: Search everything', url: '/search?q=quantum%20knitting&scope=all&days=7', routes: site(normalSite), documented: true },
   { page: 'reader', state: 'history', label: 'Show history: what you opened, by the day you opened it', url: '/?filter=history', routes: (now) => withSite(now, (s) => {
-    // The read posts, opened over the last few days, some long after they were published.
+    // the read posts, opened over the last few days, some long after they were published
     let k = 0;
     return { ...s, items: s.items.map((item) => (item.read_at ? { ...item, read_at: at(now, -(0.4 + 9 * k++) * HOUR) } : item)) };
   }), documented: true },
@@ -251,22 +249,27 @@ const SCENARIOS: FrameScenario[] = [
     },
   },
   {
-    // Issue 0060, modeled on claude.com (2026-10-31): Follow… from Discover starts where the links point.
+    // Follow… from Discover starts where the links point
     page: 'sources', state: 'follow-where-linked', label: 'Follow… from Discover: every page with the linked articles it holds',
-    url: '/settings/sources?tab=discover', routes: (now) => [...followWhereLinked(now), ...siteRoutes(normalSite(now))], documented: false,
+    url: '/settings/sources?tab=discover', routes: (now) => [...followWhereLinked(now), ...siteRoutes(normalSite(now)), noPeople()], documented: false,
     setup: async (frame) => {
       await frame.click('button', /Follow…/);
       await frame.find('[role="dialog"] input[type="radio"]');
     },
   },
   {
-    // Issue 0065, modeled on the lab copy (2026-10-31): the sources your stories start from first.
+    // the sources your stories start from first
     page: 'sources', state: 'discover-origins', label: 'Discover: where your stories start, and what a source you follow misses',
-    url: '/settings/sources?tab=discover', routes: (now) => [...discoverOrigins(), ...siteRoutes(normalSite(now))], documented: true,
+    url: '/settings/sources?tab=discover', routes: (now) => [...discoverOrigins(), ...siteRoutes(normalSite(now)), noPeople()], documented: true,
   },
 ];
 
-/** Discover on the lab copy (issue 0065): origins first, a section of a site you follow, an archive offer. */
+/** Discover's people and makers: none kept yet in these scenarios. */
+function noPeople(): FixtureRoute {
+  return { path: '/api/discover/people', respond: () => ({ window_days: 30, posts: 0, authors: [], makers: [], built_at: null, refreshing: false }) };
+}
+
+/** Discover: origins first, a section of a site you follow, an archive offer. */
 function discoverOrigins(): FixtureRoute[] {
   const story = (url: string, title: string | null, voices: number) => ({ url, title, voices, stored: false });
   const article = (url: string, title: string | null, linked_by: string[]) => ({ url, title, linked_by });
@@ -316,8 +319,8 @@ function discoverOrigins(): FixtureRoute[] {
   }, mainSourceMissing(), officialNone()];
 }
 
-/** Discover's "main source missing" (issue 0170): a section to follow, with its event and what its test found. */
-/** Issue 0196: Discover's official channels section, in Shadow with nothing found yet. */
+/** Discover's "main source missing": a section to follow, with its event and what its test found. */
+/** Discover's official channels section, in Shadow with nothing found yet. */
 function officialNone(): FixtureRoute {
   return {
     path: '/api/official',
@@ -346,7 +349,7 @@ function mainSourceMissing(rows = true): FixtureRoute {
   };
 }
 
-/** Discover suggesting claude.com, and what Follow… finds there (issue 0060). */
+/** Discover suggesting claude.com, and what Follow… finds there. */
 function followWhereLinked(now: Date): FixtureRoute[] {
   const site = 'https://claude.com';
   const posts = ['Introducing routines in Claude Code', 'Agent view in Claude Code', 'Cowork is now Claude',

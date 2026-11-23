@@ -1,10 +1,5 @@
-"""Mark X Shadow's decisions (issue 0086 E): the prototype's rules on small synthetic stories (rule A, rule B, roundups
-as mentions, the two-event guard, joins at 0.6, merges at 0.85, the second pass, typed connections, the late-post
-table), then the job on a test database: the questions it asks as tasks, the answers it reads, the stories and
-memberships it writes (closed, never deleted), Mark X News and its tags, Mark IX's tables untouched, the switch.
-
-The reproduction on the prototype's recorded answers and v9.12 stories is private (it reads real posts); its numbers
-are in 0086 E's Built section. The DB tests run only on a database whose name ends in _test."""
+"""Mark X decisions (0086 E): the pure rules on small synthetic stories, then the job on a test database (tasks,
+answers, stories and memberships written, closed never deleted, Mark X News, Mark IX's tables untouched)."""
 from __future__ import annotations
 
 import json
@@ -20,7 +15,7 @@ from psycopg import sql
 
 from insight_core.markx import decide as D
 from insight_core.markx import news as N
-from insight_core.markx import repo, schemas, tasks
+from insight_core.markx import repo, schemas, tasks, validate
 from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.test_markx_api import MX_TABLES
 
@@ -34,7 +29,7 @@ def post(pid, source, hours=0.0, kind="telegram", words=LONG):
 
 
 def story(*members, why="time"):
-    """Mark IX's members: the first the root, the others joined by `why` (a time: a guess no link backs)."""
+    """Mark IX's members: the first the root, the others joined by `why`."""
     return [D.Member(m, "report", None if n == 0 else why) for n, m in enumerate(members)]
 
 
@@ -63,8 +58,7 @@ class Rules(unittest.TestCase):
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:c"})   # a quote is not a guess
 
     def test_a_roundup_that_begins_a_story_is_checked_too(self):
-        """0205: two digests citing one outside page were a story of their own, its first digest never asked. A roundup
-        is checked against the story's other reports even when it is the first post; any other first post is not."""
+        """A roundup is checked even when it is the story's first post; any other first post is not (0205)."""
         self.stories["E"] = [D.Member("e", "report"), D.Member("f", "report", "citation")]
         tids = {q.tid for q in self.plan(kinds={"e": "roundup", "f": "roundup"}) if q.story == "E"}
         self.assertEqual(tids, {"check:E:e", "check:E:f"})
@@ -73,8 +67,7 @@ class Rules(unittest.TestCase):
         self.assertNotIn("check:A:a", {q.tid for q in self.plan()})   # a first post that is no roundup: never
 
     def test_a_connection_holds_only_while_the_members_it_was_asked_about_stay(self):
-        """0205: a connection carries the members its question showed; once they left the story it joins (its id
-        now holds other posts), it is no longer found, so it closes and the pair is asked again over the members now."""
+        """A connection holds only while the members its question showed stay in the story (0205)."""
         c = {"a_kind": "story", "a": "S1", "b_kind": "story", "b": "S2", "shown": {"a": ["p1", "p2"], "b": ["q1"]}}
         self.assertTrue(D.holds(c, {"S1": {"p1", "p2", "p3"}, "S2": {"q1"}}))
         self.assertFalse(D.holds(c, {"S1": {"p3", "p4"}, "S2": {"q1"}}), "S1's id now holds other posts")
@@ -91,9 +84,16 @@ class Rules(unittest.TestCase):
         self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
         self.assertEqual({q.tid for q in self.plan(config=D.Config.prototype()) if q.story == "A"}, {"check:A:b"})
 
+    def test_the_tree_root_is_the_origin_not_the_earliest_post(self):
+        """The origin is the member with no parent reason, not the earliest post; the earliest is checked (v10.39)."""
+        self.stories["A"] = [D.Member("a", "report", "none"), D.Member("b", "report"), D.Member("c", "report", "citation")]
+        self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:a", "check:A:c"})
+        self.stories["A"] = [D.Member("a", "report", "citation"), D.Member("b", "report", "citation"),
+                             D.Member("c", "report", "citation")]   # a page origin: no root post, the earliest as before
+        self.assertEqual({q.tid for q in self.plan() if q.story == "A"}, {"check:A:b", "check:A:c"})
+
     def test_a_check_never_shows_an_empty_story(self):
-        """0112 bug 2: the checked post as the story's only report showed Haiku "Headline: (empty)" and no member.
-        Then it shows the story's other members, any role; with none at all, nothing is asked."""
+        """A check shows the story's other members, any role, never an empty story (0112)."""
         self.stories["A"] = [D.Member("a", "share"), D.Member("b", "report", "citation"), D.Member("c", "share", "citation")]
         qs = {q.tid: q for q in self.plan() if q.story == "A"}
         self.assertEqual(qs["check:A:b"].side, ("a", "c"))     # b is the only report: the others, any role
@@ -103,8 +103,7 @@ class Rules(unittest.TestCase):
                 self.assertTrue(q.side, q.tid)
 
     def test_a_near_copy_is_never_checked(self):
-        """0112 bug 3: a member that is a near-copy of another member (`copies`, by story) is never a check question,
-        so no check removes or demotes it; it stays a member."""
+        """A near-copy of another member is never a check question (0112)."""
         qs = {q.tid for q in D.plan_pass1(self.posts, self.stories, {}, (), (), D.Config(), copies={"A": {"a", "b"}})}
         self.assertNotIn("check:A:b", qs)
         self.assertIn("check:A:c", qs)
@@ -137,8 +136,7 @@ class Rules(unittest.TestCase):
         self.assertNotIn("f", out.about["E"])
 
     def test_a_check_never_removes_a_member_joined_by_a_link_to_the_storys_page(self):
-        """0121 Decided 1: Mark IX joined it by a citation (it links its parent or the origin page), a quote or the
-        same address. A check can demote it to a mention at most, never remove it. A time join can go."""
+        """A member joined by a citation, quote or address is demoted at most; a time join can go (0121)."""
         q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
         for why in ("citation", "quote", "address"):
             self.stories["A"] = story("a", "b", "c", why=why)
@@ -152,7 +150,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(out.log[0]["change"], "remove")                 # the prototype had no such guard
 
     def test_a_check_knows_when_it_would_take_out_a_storys_last_second_voice(self):
-        """0121 Decided 1: a check of a 2-voice story's member whose source is its only one there."""
+        """A check of a 2-voice story's member whose source is its only one there (0121)."""
         self.posts["b2"] = post("b2", "s2", 1.5)
         self.stories = {"A": story("a", "b", "c"), "E": story("e", "f"), "B": story("a", "b", "b2")}
         qs = {q.tid: q for q in self.plan() if q.type == "check"}
@@ -162,7 +160,7 @@ class Rules(unittest.TestCase):
         self.assertFalse(qs["check:B:b2"].last_voice)
 
     def test_taking_out_a_second_voice_counts_only_once_asked_again_and_agreeing(self):
-        """0121 Decided 1: as 0112 Decided 8 for joins. (verdict, ask again) from a check's answers, oldest first."""
+        """(verdict, ask again) from a check's answers, oldest first (0121)."""
         c = D.Config()
         out1, out2 = v("different", 0.05, call="c1"), v("mention", 0.10, call="c2")
         keep = v("same_event", 0.9, call="c2")
@@ -181,6 +179,13 @@ class Rules(unittest.TestCase):
         self.assertNotIn("b", out.about["A"])
         self.assertEqual(out.mentions["A"]["b"]["relation"], "digest_item")
         self.assertEqual(out.log[0]["change"], "demote")
+
+    def test_v1035_a_check_at_the_bar_keeps_the_member(self):
+        """At the bar a member stays whatever the relation; it leaves below the bar only (v10.35)."""
+        q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
+        for rel in ("digest_item", "mention", "different"):
+            out = D.decide(self.posts, self.stories, [(q, D.Verdict.of({"relation": rel, "confidence": 70}))])
+            self.assertIn("b", out.about["A"], rel)
 
     def test_the_two_event_guard_demotes_instead_of_removing(self):
         q = D.Question("check:A:b", "check", story="A", post="b", voices=3)
@@ -205,8 +210,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(set(new[0]["posts"]), {"g", "h", "d"})
 
     def test_a_story_pair_with_no_cosine_is_asked_a_merge(self):
-        """0121 Decided 5: a pair of stories found by a shared document, not by meaning (cosine None), is a merge
-        question; one found by meaning still needs the centroid bar."""
+        """A story pair found by a shared document (cosine None) is a merge question without the bar (0121)."""
         self.stories["F"] = story("g", "h")
         tids = {q.tid for q in self.plan(pairs=[("A", "F", None)]) if q.type == "merge"}
         self.assertIn("merge:A:F", tids)
@@ -236,8 +240,7 @@ class Rules(unittest.TestCase):
         self.assertEqual([(c["relation"], c["a"], c["b"], c["call"]) for c in out.connections], [("development", "A", "E", "c1")])
 
     def test_a_merge_answered_different_is_a_refusal_with_what_it_was_shown(self):
-        """0217: a merge answered "different" (at tau_refuse) keeps the two stories apart: a refusal row, by the stored
-        stories, with the members its question showed; a stale one (its members moved) and one under the bar are not."""
+        """A merge answered "different" writes a refusal row; a stale one or one under the bar does not (0217)."""
         m = D.Question("merge:A:E", "merge", story="A", other="E", side=("a", "b"), side_b=("e",))
         out = D.decide(self.posts, self.stories, [(m, v("different", 0.9, call="c1"))])
         self.assertIn("E", out.about)
@@ -293,11 +296,8 @@ class Rules(unittest.TestCase):
         self.assertEqual([x["change"] for x in out.log], ["remove", "join"])
 
     def test_a_reason_that_says_not_this_story(self):
-        """0112 Decided 8's rule by code: an "about" answer whose own reason says the post is not about the story is
-        never accepted. The class, from v10.0's recorded answers: the reason names another relation for the post
-        (different, a mention, unrelated), says the story's subject is not the post's, or says it is unrelated or
-        absent. A different angle on the same event, a missing detail, or "rather than the release itself" (a
-        reaction) is not that class."""
+        """An "about" answer whose own reason says the post is not about the story is never accepted (0112); a
+        different angle on the same event or a reaction is not that class."""
         said = ["The post is about a ternary model release, not LFM3; the model family is absent from its text.",
                 "The post is a trending entry for another project, not the launch, so it is a different event.",
                 "The post's main subject is a benchmark of the tool, so this is closer to a mention.",
@@ -310,11 +310,11 @@ class Rules(unittest.TestCase):
                 "Commentary on a leaked draft bill, which is unrelated to the unreleased model in the story.",
                 "A short reaction to the product's comeback, with the store's block not mentioned.",
                 "The post reports a release that is a different model from the story's model.",
-                # the v10.0.1 review's two (live): "distinct" and "different ... post"
+                # "distinct" and "different ... post"
                 "A Rust inference engine for the models: a related but distinct event.",
                 "The Telegram piece is a different commentary post, so this relation applies to the Reddit member only.",
                 "The essay is the same debate as the commentary but a different piece.",
-                # 0217: the story's event as one point of a wider post
+                # the story's event as one point of a wider post
                 "Commentary on an election win, with the data center halt as one of several points rather than a report.",
                 "Commentary on the election and the market, with the permit pause as a related theme.",
                 "Commentary on tech stocks and ballot measures, with the compact only in background."]
@@ -334,8 +334,7 @@ class Rules(unittest.TestCase):
             self.assertFalse(D.contradicts(reason), reason)
 
     def test_a_story_changing_answer_counts_only_once_asked_again_and_agreeing(self):
-        """0112 Decided 8: a join, pair or merge that would change a story is asked a second time; it counts only when
-        the second answer agrees (the same relation, at the bar, its reason not against it). (verdict, ask again)."""
+        """A story-changing answer counts only when a second answer agrees (0112). (verdict, ask again)."""
         c = D.Config()
         same, same2 = v("same_event", 0.9, call="c1"), v("same_event", 0.8, call="c2")
         self.assertEqual(D.settle("join", [same], c), (None, True))                      # once: not yet
@@ -388,7 +387,7 @@ class Tags(unittest.TestCase):
 
 
 def checksums(cur, skip_prefix="mx_"):
-    """{table: md5 of its rows} of every table but Mark X's (0079's per-table checksum)."""
+    """{table: md5 of its rows} of every table but Mark X's."""
     cur.execute("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' ORDER BY 1")
     out = {}
     for (table,) in cur.fetchall():
@@ -413,9 +412,73 @@ class Job(unittest.TestCase):
         schemas.load_guides(self.cur)
         self.now = T + 30 * H
 
+    def test_a_question_asked_under_judge_read_v1_is_read_never_asked_again(self):
+        """join and pair ask judge-read-v2; a question already asked under v1 keeps its task and answer (0258)."""
+        from insight_core.markx import incremental
+        old, new = "STORY\nHeadline: old question", "STORY\nHeadline: new question"
+        tid, _ = repo.add_task(self.cur, kind="pair", guide="judge-read-v1", subject_kind="post_post", input=old)
+        ans = {"relation": "same_event", "confidence": 90, "reason": "v1"}
+        call = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True, answer=ans)
+        repo.answer_task(self.cur, tid)
+        ask = D.Ask(self.cur, self.now)
+        self.assertEqual(ask.answer("pair", old), (ans, str(call)))
+        self.assertIsNone(ask.answer("pair", new))
+        self.assertEqual(ask.added["pair"], 1)
+        self.cur.execute("SELECT guide, count(*) FROM mx_tasks WHERE kind = 'pair' GROUP BY guide ORDER BY guide")
+        self.assertEqual(self.cur.fetchall(), [("judge-read-v1", 1), ("judge-read-v2", 1)])
+        state = incremental.State(db="t", key="k")
+        incremental.refresh(self.cur, state)
+        memo_ask = D.Ask(self.cur, self.now, memo=state)
+        self.assertEqual(memo_ask.answer("pair", old), (ans, str(call)))
+        self.assertIsNone(memo_ask.answer("pair", new))
+        self.assertEqual(memo_ask.added["pair"], 0)   # the v2 task already asks it
+
+    def test_an_unquoted_story_changing_answer_is_asked_under_the_current_guide(self):
+        """A story-changing v1 answer is asked again under judge-read-v2 (a new task, the v1 task never reopened);
+        the v1 verdict counts until v2 is answered (v10.34)."""
+        from insight_core.markx import incremental
+        text = "STORY\nHeadline: Cursor added Model 5.2\n\nPOST\nPlatform: x | Source: Lab (X)\nTitle: Model 5.2 found it"
+        tid, _ = repo.add_task(self.cur, kind="pair", guide="judge-read-v1", subject_kind="post_post", input=text)
+        wrong = {"relation": "same_event", "confidence": 90,
+                 "reason": "Post announces Model 5.2 availability in Cursor, matching the story."}
+        c1 = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True, answer=wrong)
+        repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
+                      answer=dict(wrong, confidence=88, reason="Post reports the finding."))
+        repo.answer_task(self.cur, tid)
+        self.assertTrue(validate.unquoted("pair", wrong))
+        self.assertFalse(validate.unquoted("pair", dict(wrong, post_quote="Model 5.2 found it")))
+        self.assertFalse(validate.unquoted("merge", wrong))          # merge's guide quotes nothing
+
+        def ask_it(memo=None):
+            ask = D.Ask(self.cur, self.now, memo=memo)
+            qs = D.Questions.__new__(D.Questions)
+            qs.ask, qs.config = ask, D.Config()
+            q = D.Question("pair:a:p", "pair", post="p", anchor="a")
+            return qs.settled(q, text, a=None, b=None, priority=0), ask
+
+        v, ask = ask_it()
+        self.assertEqual((v.relation, v.p, str(v.call)), ("same_event", 0.88, str(c1)))   # counts meanwhile
+        self.assertEqual((ask.reasked["pair"], ask.again), (1, {}))                       # v1 never reopened
+        self.cur.execute("SELECT guide, status FROM mx_tasks WHERE kind = 'pair' ORDER BY guide")
+        self.assertEqual(self.cur.fetchall(), [("judge-read-v1", "answered"), ("judge-read-v2", "open")])
+        state = incremental.State(db="t", key="k")
+        incremental.refresh(self.cur, state)
+        v, ask = ask_it(state)                                    # the incremental index: the answered task first
+        self.assertEqual((v.relation, str(v.call), ask.reasked["pair"]), ("same_event", str(c1), 0))
+        self.cur.execute("SELECT id FROM mx_tasks WHERE guide = 'judge-read-v2'")
+        v2 = self.cur.fetchone()[0]
+        right = {"relation": "different", "confidence": 95, "post_quote": "Model 5.2 found it",
+                 "reason": "The post is a finding, the story is Cursor availability."}
+        c2 = repo.add_call(self.cur, task_id=v2, executor="claude-code", model="haiku", valid=True, answer=right)
+        repo.answer_task(self.cur, v2)
+        v, ask = ask_it()
+        self.assertEqual((v.relation, str(v.call), ask.reasked["pair"]), ("different", str(c2), 0))
+        state = incremental.State(db="t", key="k")
+        incremental.refresh(self.cur, state)
+        self.assertEqual(str(ask_it(state)[0].call), str(c2))
+
     def test_refusals_open_and_close_never_deleted(self):
-        """0217: a run's refusals become the current ones touching its stories; one no longer found (or found over other
-        members) closes, the row kept; stories the run did not touch keep theirs."""
+        """A run's refusals become current; one no longer found closes; untouched stories keep theirs (0217)."""
         s1, s2, s3, far = (str(uuid.uuid4()) for _ in range(4))
         a, b = sorted([s1, s2])
         row = {"a": a, "b": b, "p": 0.9, "call": None, "tid": "merge:x:y", "reason": "two events",
@@ -432,7 +495,7 @@ class Job(unittest.TestCase):
     def post(self, hours, title, *, platform="telegram"):
         source = insert_scratch_source(self.cur, platform=platform, settings_json=json.dumps({"display_name": "Example"}))
         url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
-        # each post a text of its own: posts of one text are near-copies, never checked (0112 bug 3)
+        # each post a text of its own: posts of one text are near-copies, never checked
         body = title + ". " + " ".join(f"word{k}{url[-6:]}" for k in range(LONG))
         self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
                          "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
@@ -474,7 +537,7 @@ class Job(unittest.TestCase):
         return D.run(self.cur, now=self.now)
 
     def twice(self, kind, answer_of):
-        """A story-changing answer counts once asked again (0112 Decided 8): answer, run (the run asks again), answer."""
+        """A story-changing answer counts once asked again (0112): answer, run, answer."""
         n = self.answer(kind, answer_of)
         self.go()
         return n + self.answer(kind, answer_of)
@@ -502,9 +565,7 @@ class Job(unittest.TestCase):
         self.assertEqual(self.cur.fetchall(), [(True,)])
 
     def test_a_two_voice_storys_second_voice_goes_only_when_asked_twice_and_a_linked_one_stays_a_mention(self):
-        """0121 Decided 1, the v10.0.1 review's W1: a post linking the page its story's other post links (Mark IX's
-        citation) was removed on one "different" 95, and a 2-voice News row went with it. Now the removal of a
-        2-voice story's second voice is asked again before it counts, and a linked member is demoted at most."""
+        """Removing a 2-voice story's second voice is asked again first; a linked member is demoted at most (0121)."""
         a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out")
         c, d = self.post(2, "Beta shipped Gizmo 2"), self.post(3, "Gizmo 2 hands-on")
         self.ix_story(a, b)                                  # b cites a's page
@@ -537,8 +598,7 @@ class Job(unittest.TestCase):
         self.assertEqual(out["news"]["rows"], 1)
 
     def test_a_rows_headline_comes_from_its_main_story_not_its_first_posts(self):
-        """0121 Decided 2, the v10.0.1 review's W3: a row whose first post joined by a name (no Mark X story) showed
-        its lead's title although the story holding most of its voices had Haiku's headline."""
+        """A row whose first post joined by a name takes the headline of the story holding most of its voices (0121)."""
         a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out"), self.post(2, "Widget 4 hands-on")
         sid = repo.add_story(self.cur, first_at=T, run_id=repo.start_run(self.cur, code_version="t", config={}))
         repo.set_story_headline(self.cur, sid, headline="Acme releases Widget 4")
@@ -549,9 +609,7 @@ class Job(unittest.TestCase):
         self.assertEqual(N.headlines(self.cur, [row])[a], {"text": "Acme releases Widget 4", "from": "haiku"})
 
     def test_every_news_row_gets_a_headline_task(self):
-        """0121 Decided 2: a row of posts in no story of 2+ voices (joined by a surging name) was never asked a
-        headline (14 of 19 rows titled by their lead). Now each such row is asked one over its posts, found again by
-        its input when the page reads it."""
+        """A row of posts in no 2+ voice story is asked a headline of its own, found again by its input (0121)."""
         a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 is out")
         row = {"id": a, "posts": [{"post_id": a, "voice": "v0", "story": None},
                                   {"post_id": b, "voice": "v1", "story": None}]}
@@ -584,9 +642,8 @@ class Job(unittest.TestCase):
                          "VALUES (%s, %s, 'test.invalid', 0, NULL)", (pid, url))
 
     def test_two_stories_linking_one_document_within_30_days_are_asked_a_merge(self):
-        """0121 Decided 5 (off by default since the owner's call of 2026-11-06; when on, the v10.0.1 review's W4): a document's later analyses are
-        a merge question with its story, when their members link the same document page (a paper, a filing: the
-        address shapes of 0106 and 0109) within 30 days. A question, never a rule."""
+        """A document's later analyses linking the same document page within 30 days are a merge question, never a rule
+        (0121; off by default)."""
         a, b = self.post(0, "Acme files its prospectus"), self.post(1, "Acme's prospectus is out")
         c, d = self.post(24 * 20, "Reading the prospectus, part 1"), self.post(24 * 20 + 1, "Prospectus notes")
         e, f = self.post(24 * 20 + 2, "Gizmo 2 launches"), self.post(24 * 20 + 3, "Gizmo 2 hands-on")
@@ -608,8 +665,7 @@ class Job(unittest.TestCase):
         self.assertEqual(self.cur.fetchall(), [(a, c)])
 
     def edge_row(self, first_hours):
-        """Mark IX's story (a, b) inside News' window, and e, a post of no story joined to it by a surging name.
-        The window starts at T + 30 h (now - 30 days); e is at `first_hours`."""
+        """Mark IX's story (a, b) inside News' window and e, of no story, joined by a surging name at `first_hours`."""
         self.now = T + 30 * H + timedelta(days=30)
         e = self.post(first_hours, "Gizmo 9 announced")
         a, b = self.post(40, "Gizmo 9 is out"), self.post(41, "Gizmo 9 hands-on")
@@ -619,9 +675,7 @@ class Job(unittest.TestCase):
         return e, a, b
 
     def test_mark_x_news_reads_the_edge_before_the_window_as_mark_ix_does(self):
-        """0124 (the v10.0.2 review's W5): with no answers, Mark X tagged a row NEW that Mark IX had left whole at the
-        edge (0111 Decided 4): its first post, 10 h before the window, is of no story and joins it by a surging
-        name; Mark X read the posts of no story from the window's start only, so its row began inside."""
+        """A row whose first post is before the window and joins by a surging name is not tagged NEW (0124)."""
         from insight_core.markx import incremental
         from insight_core.services.news_service import NewsService
         from insight_core.utils.story_rules import Story, story_times
@@ -658,9 +712,7 @@ class Job(unittest.TestCase):
         self.assertFalse(self.go()["news"]["written"])                # the same rows are not written again
 
     def test_removals_made_under_bugs_2_and_3_are_re_decided_by_the_next_run(self):
-        """0112 Decided 6: v10.0 removed b on a check that showed an empty story (b its story's only report) and d, a
-        copy of a. The next run doesn't trust those answers: b's check is asked again with the story shown, d is never
-        asked; both are members again (a new row, the closed ones kept) and b's new answer decides it."""
+        """Answers to a check that showed an empty story, or about a copy, are not trusted (0112)."""
         a, b, c = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 hands-on"), self.post(2, "Widget 4 price")
         d = self.post(3, "Acme released Widget 4")
         self.cur.execute("UPDATE posts SET content = (SELECT content FROM posts WHERE id = %s) WHERE id = %s", (a, d))
@@ -671,7 +723,7 @@ class Job(unittest.TestCase):
         self.cur.execute("UPDATE story_posts SET role = 'share' WHERE story_id = %s AND post_id <> %s", (story, b))
         first = self.go()
         sid = {s for s, _, _, _ in self.current()}.pop()
-        # v10.0's questions and answers: b against an empty story, d against the story, both "different"
+        # old questions and answers: b against an empty story, d against the story, both "different"
         text = tasks.load_posts(self.cur, [a, b, c, d])
         old = {b: tasks.check_input(text[b], []), d: tasks.check_input(text[d], [text[b]])}
         self.assertIn("Headline: \n", old[b])
@@ -681,7 +733,7 @@ class Job(unittest.TestCase):
             call = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
                                  answer={"id": "x", "relation": "different", "confidence": 90, "reason": "no relation"})
             repo.answer_task(self.cur, tid)
-            repo.close_membership(self.cur, story_id=sid, post_id=pid, at=self.now)   # v10.0's removal
+            repo.close_membership(self.cur, story_id=sid, post_id=pid, at=self.now)   # the old removal
         self.assertEqual({p for _, p, _, _ in self.current()}, {a, c})
         self.cur.execute("SELECT a::text FROM mx_tasks WHERE kind = 'check' AND status = 'open'")
         self.assertEqual({r[0] for r in self.cur.fetchall()}, {b, c})      # d, a copy of a, is never asked
@@ -698,8 +750,7 @@ class Job(unittest.TestCase):
         self.assertEqual(first["tasks_added"].get("check"), 2)
 
     def test_a_pair_counts_only_once_asked_again(self):
-        """0112 Decided 8: the run asks a story-changing answer again (its task open once more, its first call kept);
-        the next answer that agrees makes the story, one that disagrees doesn't."""
+        """A story-changing answer reopens its task; an agreeing next answer makes the story (0112)."""
         a, b = self.post(0, "Acme released Widget 4"), self.post(1, "Widget 4 by Acme is here")
         c, d = self.post(2, "Beta shipped Gizmo 2"), self.post(3, "Gizmo 2 by Beta is out")
         repo.add_candidate(self.cur, kind="post_post", a=a, b=b, source="embedding", score=0.8)
@@ -856,7 +907,7 @@ class Snapshot(unittest.TestCase):
         clear_tables(self.cur, f"{tables}")
         self.addCleanup(clear_tables, self.cur, f"{tables}")
         schemas.load_guides(self.cur)
-        from insight_core.markx import consumers   # 0210: Back in the news is off; these tests use its stage
+        from insight_core.markx import consumers   # Back in the news is off; these tests use its stage
         consumers.set_on(self.cur, "back", True)
         self.addCleanup(consumers.forget)
         self.now = T + 30 * H
@@ -879,7 +930,7 @@ class Snapshot(unittest.TestCase):
     def post(self, hours, title):
         source = insert_scratch_source(self.cur, platform="telegram", settings_json=json.dumps({"display_name": "Example"}))
         url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
-        # each post a text of its own: posts of one text are near-copies, never checked (0112 bug 3)
+        # each post a text of its own: posts of one text are near-copies, never checked
         body = title + ". " + " ".join(f"word{k}{url[-6:]}" for k in range(LONG))
         self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
                          "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
@@ -931,7 +982,7 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(self.cur.fetchone()[0], 1)                # the run committed
 
 
-    # -- v10.15: a concurrent update never loses the run ------------------------------------------------------
+    # -- a concurrent update never loses the run ---------------------------------------------------------------
     def back_row(self):
         """A back row asking whether c brings the story (a, b) back: committed, no task yet."""
         self.cur.execute("""INSERT INTO mx_back (story, members, first_at, last_at, window_at, trig, posts)
@@ -945,8 +996,8 @@ class Snapshot(unittest.TestCase):
         return back.render(sorted((ps[self.a], ps[self.b]), key=lambda p: (p.at, p.id)), [ps[self.c]])
 
     def test_the_cause_a_task_another_transaction_changed_since_the_snapshot_fails_its_insert(self):
-        """What failed the server's run after its back stage: in one REPEATABLE READ snapshot, inserting a task
-        (ON CONFLICT DO NOTHING) that another transaction added or leased since is a serialization failure."""
+        """In one REPEATABLE READ snapshot, inserting a task another transaction added or leased since is a
+        serialization failure."""
         from insight_core.markx import back
         text = self.back_input()
         conn = psycopg.connect(db_url())
@@ -1005,7 +1056,7 @@ class Snapshot(unittest.TestCase):
         self.assertNotIn("deferred", again)                          # the next run does the back stage
 
     def test_a_stage_asked_skipped_is_deferred_and_the_run_kept(self):
-        """0188: jobs.py asks a stage skipped after two runs in a row over the limit in it: deferred, the run kept."""
+        """A stage skipped two runs in a row over its limit is deferred, the run kept (0188)."""
         with D.snapshot(db_url()) as cur:
             out = D.run(cur, now=self.now, skip=["graph", "entities"])
         self.assertIn("skipped this run", out["deferred"]["graph"])

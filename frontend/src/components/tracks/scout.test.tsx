@@ -1,6 +1,5 @@
-// 0148 (the track scout, Mark X): the Topic view's "Sources for this track" (suggested rows in words, Follow as active
-// / passive, Not this one, what could not be read and why, "Find sources for this track"), and Discover's rows under the
-// track's name. Synthetic data only.
+// The track scout (0148): the Topic view's "Sources for this track" and Discover's rows under the track's name.
+// Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

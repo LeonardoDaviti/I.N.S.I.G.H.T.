@@ -1,10 +1,7 @@
-"""Issue 0137 B8 (N13): a full text's reference list is kept as references, not as ordinary links.
-
-- `extract_links`: the links inside a references or bibliography section (a heading so named, or an
-  <ol>/<section>/<div> whose class or id says so) are `kind='reference'`; search-engine links are dropped;
-- on the database: they are stored with kind 'reference' and as boilerplate (no story, News or Discover rule
-  reads them), the signature pass keeps them so, and Connected lists them folded under `references`.
-Invented hosts only.
+"""A full text's reference list is kept as references, not ordinary links (0137 B8). `extract_links` marks the links
+inside a references or bibliography section `kind='reference'` (search-engine links dropped); on the database they
+are stored as boilerplate (no story, News or Discover rule reads them), the signature pass keeps them so, and
+Connected folds them under `references`. Invented hosts only.
 """
 from __future__ import annotations
 

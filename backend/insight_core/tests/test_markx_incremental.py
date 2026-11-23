@@ -1,8 +1,6 @@
-"""Mark X's incremental decision runs (issue 0116), their state kept in Postgres (issue 0169): a run reads again only
-what changed since the last one, in a process of its own, and its result is a full run's: after each incremental run,
-a full run of the same snapshot writes nothing (no membership, connection or News row changes) and its check (the
-incremental reading of that snapshot against the full one) finds no difference. A state gone wrong is caught by that
-check, with its stories. The DB tests run only on a database whose name ends in _test."""
+"""Mark X's incremental decision runs (0116), state kept in Postgres (0169): a run reads again only what changed since
+the last, and its result is a full run's: after each incremental run a full run of the same snapshot writes nothing and
+its check finds no difference. DB tests only on a database whose name ends in _test."""
 from __future__ import annotations
 
 import json
@@ -115,8 +113,8 @@ class Incremental(unittest.TestCase):
         return D.run(self.cur, now=self.now, **kw)
 
     def full_writes_nothing(self):
-        """A full run of this snapshot, in a savepoint undone after (the state with it): it must change nothing the
-        incremental run left, and its check must find no difference."""
+        """A full run of this snapshot in a savepoint undone after: it must change nothing the incremental run left,
+        and its check must find no difference."""
         self.cur.execute("SAVEPOINT full_check")
         try:
             out = self.go(full=True)
@@ -150,9 +148,8 @@ class Incremental(unittest.TestCase):
         self.assertGreater(self.cur.fetchone()[0], 0)                   # the answers changed stories
 
     def test_a_full_reading_holds_no_text_and_reads_a_page_at_a_time(self):
-        """0204: a full reading reads every post's text to make its rules' posts, a page (TEXT_PAGE) at a time, and
-        keeps none of them nor any reading: the questions' renders read what they show. Its decisions are the same
-        whatever the page (the full run of a page of 1 and of 1000 write the same rows)."""
+        """A full reading reads every post's text a page (TEXT_PAGE) at a time and keeps none of them nor any reading;
+        its decisions are the same whatever the page size (0204)."""
         self.scene()
         memo = I.State(db="test", key="k", full=True)
         I.refresh(self.cur, memo)
@@ -173,9 +170,8 @@ class Incremental(unittest.TestCase):
         self.assertTrue(rows[0][0])
 
     def test_a_reading_holds_at_most_text_keep_texts_and_decides_the_same(self):
-        """0227: a reading holds at most TEXT_KEEP texts and readings at once (the least recently used let go, read
-        again when shown again; one render's posts are never let go), on a full run and an incremental one, and decides
-        the same whatever TEXT_KEEP: a full run with 2 kept and with every text kept writes the same rows and tasks."""
+        """A reading holds at most TEXT_KEEP texts and readings at once (least recently used let go; one render's posts
+        never), full or incremental, and decides the same whatever TEXT_KEEP (0227)."""
         self.scene()
         held, asked = [0], [0]
         hold = I._hold
@@ -200,6 +196,30 @@ class Incremental(unittest.TestCase):
             self.cur.execute("ROLLBACK TO SAVEPOINT keep")
         self.assertEqual(rows[0], rows[1])
         self.assertTrue(rows[0][0])
+
+    def test_a_render_that_misses_finds_its_posts_read_ahead(self):
+        """In an incremental run a question showing a post read again misses its kept input; prefetch reads all the
+        posts it shows with the others of its page, so no render reads its posts in a query of its own."""
+        import inspect
+        a, b, c, d, e, f, g, h, k = self.scene()
+        self.go()
+        self.go()
+        self.cur.execute("UPDATE posts SET content = content || ' Updated.' WHERE id = %s", (c,))
+        from insight_core.db.repo_post_parts import PostPartsRepository
+        PostPartsRepository.write(self.cur, [c])
+        by_render = []
+        load = tasks.load_posts
+
+        def counting(cur, ids, **kw):
+            if any(fr.function in ("made", "copies") and fr.filename.endswith("incremental.py")
+                   for fr in inspect.stack()[1:8]):
+                by_render.append(sorted(map(str, ids)))
+            return load(cur, ids, **kw)
+        with unittest.mock.patch.object(tasks, "load_posts", counting):
+            out = self.go()
+        self.assertEqual(out["run"]["kind"], "incremental")
+        self.assertGreater(out["run"]["inputs_rendered"], 0)            # renders missed ...
+        self.assertEqual(by_render, [])                                  # ... and read nothing of their own
 
     def test_the_dirty_set_is_the_tasks_answered_since_and_the_closure_their_stories(self):
         a, b, c, d, e, f, g, h, k = self.scene()
@@ -233,7 +253,7 @@ class Incremental(unittest.TestCase):
         self.assertEqual(out["run"]["texts_read"], 1)                   # its rules' post read again
         self.assertIn("posts", out["run"]["ix_changed"])
         self.assertGreater(out["run"]["inputs_rendered"], 0)            # the questions showing it, rendered again
-        self.assertEqual(out["news"]["made"], "incremental")            # 0177: the changed post seeds News' rows
+        self.assertEqual(out["news"]["made"], "incremental")            # the changed post seeds News' rows (0177)
         self.assertGreater(out["news"]["group"], 0)
         self.full_writes_nothing()
         x = self.post(9, "Widget 4 teardown")                           # a new post, paired with the story's
@@ -244,9 +264,8 @@ class Incremental(unittest.TestCase):
         self.full_writes_nothing()
 
     def test_news_is_made_again_for_the_posts_whose_story_post_changed(self):
-        """0177: a link's resolution moving (a page stored at an address a post links), or a post's text, seeds the
-        rows made again; the source facts a StoryPost reads changing makes News in full. Each time a full run of the
-        snapshot writes nothing more."""
+        """A link's resolution moving, or a post's text, seeds the rows made again; a change to the source facts a
+        StoryPost reads makes News in full. Each time a full run of the snapshot writes nothing more (0177)."""
         a, b, c, d, e, f, g, h, k = self.scene()
         self.go()
         self.cur.execute("""INSERT INTO post_links (post_id, target_url, target_site, position, link_text, boilerplate, kind)
@@ -269,9 +288,8 @@ class Incremental(unittest.TestCase):
         self.full_writes_nothing()
 
     def test_a_deploy_of_news_code_makes_news_full_and_the_reading_stays_incremental(self):
-        """0215: News' rows are kept with the code that made them (news_stamp); other code makes News in full, the
-        reading incremental (was: any of the 16 modules made the whole run full: 92-93 s on the server). A full run of
-        the snapshot then writes nothing more."""
+        """News' rows are kept with the code that made them (news_stamp); other code makes News in full, the reading
+        incremental. A full run of the snapshot then writes nothing more (0215)."""
         self.scene()
         self.go()
         self.assertEqual(self.go()["run"]["kind"], "incremental")
@@ -284,8 +302,8 @@ class Incremental(unittest.TestCase):
         self.assertEqual(self.go()["news"]["made"], "incremental")
 
     def test_the_readings_stamp_leaves_out_what_runs_the_stages(self):
-        """0215: decide.run and decide.snapshot make nothing kept: a change to them moves no stamp; one to any other
-        function of the reading's modules does."""
+        """decide.run and decide.snapshot make nothing kept: a change to them moves no stamp; one to any other function
+        of the reading's modules does (0215)."""
         import importlib
         import tempfile
         with tempfile.TemporaryDirectory() as folder:
@@ -351,10 +369,9 @@ class Incremental(unittest.TestCase):
         self.full_writes_nothing()
 
     def test_a_repost_counts_as_its_author_only_when_a_source_follows_the_author(self):
-        """Mark IX's rule in Mark X's decisions (voice.counted_source): two feeds forwarding one followed channel are
-        that channel's one voice (their story is never checked); forwards of a stranger stay their feeds' two voices;
-        a feed quoting a stranger is one voice. In a full run and in the state an incremental run keeps; a source that
-        starts following an author makes the next run full."""
+        """Mark IX's voice rule in Mark X (voice.counted_source): two feeds forwarding one followed channel are its one
+        voice; forwards of a stranger stay two voices; a feed quoting a stranger is one. Full run and kept state alike;
+        a source that starts following an author makes the next run full."""
         def forward(pid, name, username):
             self.cur.execute("UPDATE posts SET metadata = jsonb_build_object('forwarded_from', jsonb_build_object("
                              "'name', %s::text, 'username', %s::text)) WHERE id = %s", (name, username, pid))
@@ -411,10 +428,9 @@ class Incremental(unittest.TestCase):
         self.full_writes_nothing()
 
     def test_a_seeded_world_over_rounds_of_answers_and_changes(self):
-        """A random world (seeded): 8 sources, 36 posts in 6 topics, Mark IX stories, candidates within and across
-        topics. Each round answers some open questions at random (every kind and relation, confidences across the
-        bars), and some rounds change a text, add a post with its candidates, or add a reading; after each round an
-        incremental run, then a full run of the snapshot that must write nothing and find no difference."""
+        """A seeded random world: each round answers some open questions at random and some change a text, add a post
+        or a reading; after each round an incremental run, then a full run that must write nothing and find no
+        difference."""
         rng = random.Random(169)
         sources = [insert_scratch_source(self.cur, platform=rng.choice(["telegram", "rss"]),
                                          settings_json=json.dumps({"display_name": f"Example {n}"})) for n in range(8)]

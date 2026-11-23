@@ -1,8 +1,6 @@
-"""Mark X entity guards (issue 0164 A-C), with invented names: the owner's `same` never joins a product family to an
-org blindly (A: only the two names join, the automatic link that dragged one in undone; the owner's own earlier merge
-is never undone: the item stays open with a message), a product account is not an org (B: "Zentra Vela" typed an
-org is its family's, "Zentra Labs" stays an org), and the invariant counted each run (C: 0 on a clean book, more on
-the shape seen on the server)."""
+"""Entity guards (0164), with invented names: the owner's `same` never joins a product family to an org blindly (only
+the two names join; the owner's own earlier merge is never undone), a product account is not an org, and the
+family/org invariant counted each run."""
 from __future__ import annotations
 
 import unittest
@@ -25,8 +23,8 @@ def _book(*ents):
 
 
 def _shape():
-    """The server's shape: the maker org (Zentra, Zentra AI), its family Vela (Vela 5 its version, maker Zentra AI)
-    and the family's account "Zentra Vela", typed an org."""
+    """The maker org (Zentra, Zentra AI), its family Vela (Vela 5 its version) and the family's account "Zentra
+    Vela", typed an org."""
     ent = base.Rules.ent
     z, zai = ent(None, "z", "Zentra", "org"), ent(None, "zai", "Zentra AI", "org")
     vela = I.Ent("f", "model", "Vela", "vela", "family", maker="Zentra AI")
@@ -84,8 +82,8 @@ class OwnerAnswers(base._Db):
     linked = F.Fixes.linked
 
     def _server_shape(self):
-        """Linked as on the server: the account "Zentra Vela" (an org) before its family was known, then merged into
-        the maker org by a handle rule; the family Vela and its version."""
+        """The account "Zentra Vela" (an org) linked before its family was known, then merged into the maker org by a
+        handle rule; the family Vela and its version."""
         ps = [self.post(n, T0 + n * H) for n in range(5)]
         self.mentions(ps[0], ("Zentra", "org", "actor"))
         self.mentions(ps[1], ("Zentra AI", "org", "actor"))

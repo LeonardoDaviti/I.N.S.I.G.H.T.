@@ -1,10 +1,7 @@
-"""Stories as trees (issue 0064): each post of a story gets a parent, by evidence in order of
-certainty, never one signal alone: the address's own site, citation (with in-degree, an outside
-page as the origin), copy, then time only as a guarded tiebreaker. One parent per post, no cycles,
-each parent's reason recorded.
-
-The rules are tested as pure functions; the job, the feed, the post page and News on the database
-in one transaction per test, rolled back.
+"""Stories as trees (0064): each post of a story gets a parent by evidence in order of certainty, never one signal
+alone: the address's own site, citation (with in-degree, an outside page as the origin), copy, then time only as a
+guarded tiebreaker. One parent per post, no cycles, each parent's reason recorded. Rules as pure functions; the job,
+feed, post page and News on the database in one rolled-back transaction per test.
 """
 from __future__ import annotations
 
@@ -59,9 +56,8 @@ def depth(story, pid):
 
 
 def terra():
-    """GPT-6.1 Terra on the lab: OpenAI's own post (a date alone) and HN's row of it share the
-    address; data_whispers and Simon link it (the link resolves to HN's row, the first seen);
-    LessWrong links Simon's post."""
+    """A lab's own post (a date alone) and HN's row of it share the address; two others link it (resolving to HN's row,
+    the first seen); a third links one of theirs."""
     return [
         post("openai", "oa", at=DAY, site="openai.com", url=PAGE, title="Introducing GPT-6.1 Terra"),
         post("hn", "hn", hours=6, kind="hn", site="github.com", url=PAGE, title="GPT-6.1 Terra", links=[(PAGE, "hn")]),
@@ -152,8 +148,7 @@ class TreeRulesTests(unittest.TestCase):
         self.assertEqual(parents(story), {"own": (None, None), "a": ("own", "citation"), "b": ("own", "citation")})
 
     def test_the_node_most_voices_are_about_is_the_origin_though_it_links_a_page(self):
-        # Gemini 4 Carbon on the lab: Google's post and its copy link a benchmark page; three
-        # others link Google's post.
+        # the lab's post and its copy link a benchmark page; three others link the lab's post
         bench = "https://bench.test/evaluations/intelligence-index"
         g = "https://google.test/g"
         story = only([post("g", "google", links=[(bench, None)], title="Gemini Carbon our next frontier model"),
@@ -194,7 +189,7 @@ class TreeRulesTests(unittest.TestCase):
         self.assertEqual(parents(story)["day"], ("timed", "none"), "no claim of order")
 
     def test_a_saved_page_orders_nothing(self):
-        # (A Saved page is no voice, issue 0070: a second source makes the story.)
+        # a Saved page is no voice (0070): a second source makes the story
         story = only([post("saved", "sv", kind="saved", hours=-24, text_hash="h"), post("orig", "a", text_hash="h"),
                       post("copy", "c", hours=1, text_hash="h")])
         self.assertEqual(parents(story), {"orig": (None, None), "saved": ("orig", "none"), "copy": ("orig", "copy")})
@@ -293,7 +288,7 @@ class TreeJobTests(unittest.TestCase):
         [row] = [i for i in items if i["id"] in (self.openai, self.hn, self.ds, self.simon)]
         self.assertEqual(row["id"], self.openai, "the origin, though HN's row was seen first")
         story = row["story"]
-        # Issue 0072 D: its date alone counts as the day's first timed post, Hacker News' at 02:00: as early.
+        # its date alone counts as the day's first timed post, Hacker News' at 02:00: as early (0072 D)
         self.assertEqual((story["first"], story["parent_id"], story["parent_reason"], story["origin"]),
                          (self.openai, None, None, None))
         self.assertEqual({p["id"]: (p["parent_id"], p["parent_reason"]) for p in story["posts"]}, {
@@ -303,7 +298,7 @@ class TreeJobTests(unittest.TestCase):
         self.assertEqual((page_story["parent_id"], page_story["parent_reason"]), (self.openai, "citation"))
 
     def test_a_saved_page_is_never_named(self):
-        # Issue 0072: Saved is never a voice (0070 A8), so "covered by" never names it.
+        # Saved is never a voice (0070 A8), so "covered by" never names it
         self._terra()
         saved = insert_source(self.cur, "Saved", handle=scratch_handle(), platform="saved", in_main_digest=True)
         page = self._post(saved, f"https://openai-{self.mark}.test/index/introducing-terra#saved", at=self.now, title="A saved copy")

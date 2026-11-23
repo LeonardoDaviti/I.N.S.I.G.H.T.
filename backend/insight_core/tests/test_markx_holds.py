@@ -1,6 +1,5 @@
-"""Issue 0210, the re-ask guard (markx/holds.py): a kind's tasks planned in a day past the allowance are born held,
-leased after every other task, never while stopped; new posts' tasks are never held; the owner's word and the page's
-view. Against the run's own _test database (the API opens its own transactions). Every post is synthetic."""
+"""The re-ask guard (0210, markx/holds.py): a kind's tasks planned in a day past the allowance are born held, leased
+after every other task, never while stopped; new posts' tasks are never held. On a _test database; synthetic posts."""
 from __future__ import annotations
 
 import sys

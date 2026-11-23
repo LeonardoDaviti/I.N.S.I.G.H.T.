@@ -1,17 +1,14 @@
-"""The credential seam (Mark IX §10.1): where a source kind reads a secret.
+"""The credential seam: where a source kind reads a secret.
 
-The owner adds secrets in Sources → Connections; they are stored encrypted in the
-`credentials` table (db/repo_credentials.py). That store is the only place a secret is
-read from: no API key comes from the environment. A one-off move of an old .env into the
-store is scripts/import_env_secrets.py.
+Secrets are added in Sources → Connections and stored encrypted in `credentials` (db/repo_credentials.py), the only
+place a secret is read from (never the environment).
 
 - CredentialProvider: get(provider, key) -> the plaintext value, or None. Kinds hold one and
   call it at request time, so a value saved in the UI applies without a restart.
 - MappingCredentials: a fixed {(provider, key): value} (tests).
-- StoredCredentials: the database only. Decrypted values are cached
-  for a few seconds per process; the API process invalidates its cache on every write.
-- SecretBox: Fernet over INSIGHT_SECRET_KEY, or a key generated once into
-  /app/secrets/secret.key (a named volume shared by the API and ingestion containers).
+- StoredCredentials: the database only; decrypted values cached a few seconds per process (the API invalidates
+  on every write).
+- SecretBox: Fernet over INSIGHT_SECRET_KEY, or a key generated once into /app/secrets/secret.key (shared volume).
 
 Never logs a value, never puts one in an exception message. Import-light: cryptography and
 psycopg are imported where they are used.
@@ -79,9 +76,8 @@ class SecretBox:
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None, *, create: bool = False) -> "SecretBox":
-        """INSIGHT_SECRET_KEY, else the key file (INSIGHT_SECRET_KEY_PATH, default
-        /app/secrets/secret.key). With create=True a missing file is generated once
-        (O_EXCL, so two containers starting together agree on one key)."""
+        """INSIGHT_SECRET_KEY, else the key file (INSIGHT_SECRET_KEY_PATH). With create=True a missing file is
+        generated once (O_EXCL, so two containers starting together agree on one key)."""
         env = os.environ if env is None else env
         raw = (env.get("INSIGHT_SECRET_KEY") or "").strip()
         if raw:

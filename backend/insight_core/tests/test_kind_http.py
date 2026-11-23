@@ -65,8 +65,7 @@ class _Response(io.BytesIO):
 
 
 class CompressedBodyTests(unittest.TestCase):
-    """Some servers gzip a body nobody asked to compress: swift.org says so in Content-Encoding,
-    dfarq.homeip.net doesn't (its feed starts with gzip's 1f 8b and no header) (2026-10-28)."""
+    """Some servers gzip a body nobody asked to compress, with or without saying so in Content-Encoding."""
 
     FEED = b'<?xml version="1.0"?><rss version="2.0"><channel><title>Swift</title></channel></rss>'
 

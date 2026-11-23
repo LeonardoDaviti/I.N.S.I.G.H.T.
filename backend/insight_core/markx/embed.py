@@ -1,47 +1,12 @@
-"""Mark X Shadow's embeddings (issue 0086 B, the build plan's corrections 6): `embed` tasks, and the vectors' check
-and store.
+"""Mark X's embeddings: `embed` tasks, and the posted vectors' check and store (issue 0086 B).
 
-The embedder runs on the owner's device, not on the server: an `embed` task is leased like every other kind
-(GET /api/markx/work?kinds=embed), the worker (scripts/markx-worker, --embedder) embeds its input with a local
-`llama-server --embedding --pooling cls` (BGE-M3), and posts the vectors to POST /api/markx/embeddings. The server
-never embeds anything in Shadow: it plans the tasks, checks and stores the vectors, and finds the candidates
-(markx/candidates.py) when they arrive.
-
-  - **The text** (`embed_text`, markx embed text v2): markx text v1's title and first 1,500 characters of the text
-    (tasks.load_posts, read from post_parts), the title left out when the text starts with it, web addresses
-    removed and spaces squashed, as the prototype embedded its posts (its step 1; it cut at 1,200 characters,
-    0086 B says 1,500). The task's input is that text, so two posts with the same text are one task: the second
-    post's vector is the first's, copied when the planner meets it again (`plan`).
-  - **A text that says nothing** (v2, 2026-11-12): v1 embedded a post whose title and text were only web addresses
-    or a media placeholder ("[Photo]", "Image") as one constant ("(empty)", "[Photo]", ...), so hundreds of posts
-    shared one vector and every pair of them was an embedding candidate at cosine 1.0. A text says something when
-    it has MIN_WORDS words of two letters or more once its addresses are removed (`says_something`; a bracketed
-    placeholder is no word, a bare site name one). When the title and text don't, v2 describes the post by its
-    links (their first LINKS, a link to a media file none): a linked post stored here by its title, the anchor
-    text, the address's readable slug, and then the sites' names; when even that says nothing, the post gets no
-    vector (and so no embedding candidate), recorded in mx_embed_skips under TEXT_VERSION, never a constant. A post
-    v1 described says the same in v2: only the posts v1 embedded as nothing change.
-  - **The v1 vectors of nothing** (`set_aside`): an `embed` vector stored for a text that says nothing is set
-    aside, its row kept as it is under the model SET_ASIDE (every reader of mx_embeddings reads MODEL only), so the
-    post is planned again under v2 (a vector of what describes it, or a skip). Candidate pairs found from such a
-    vector are kept (never deleted) but not asked: the decision run reads an embedding candidate by its posts'
-    current vectors (`current_candidates`).
-  - **Identical vectors** (`same_vector`): two posts whose vectors are at cosine IDENTICAL or more are never an
-    embedding candidate unless their texts are near-copies that say something (tasks.near_copy): one vector for
-    two different posts is a text that said nothing, not one meaning; a real copy is Mark IX's to join. Measured
-    on the 2026-11-05 server copy: of 6,490 candidates at 1.0, one was a real copy (kept), 6,489 were posts of
-    "[Photo]", "(empty)", "[Video]" and "Image" texts paired with unrelated posts.
-  - **The vector:** 1,024 little-endian float16, base64 (2 KB a post, not ~9 KB of JSON numbers), scaled to
-    length 1 by the worker. The server decodes it, checks its length, its numbers and its norm, and stores it in
-    mx_embeddings (halfvec, so float16 is stored as sent) with text_hash = the task's input hash.
-  - **One build per database:** every vector names its model (`bge-m3`) and the GGUF's sha256. A vector from
-    another build than the one already stored is refused (BuildMismatch, 409), since cosines across builds don't
-    compare. A new build is a new database's vectors, or a deliberate re-embed (not in Shadow).
-  - **Newest first, at most 500 posts a plan** (0086 B): every post, the newest first (priority = its age in
-    days). Embedding costs no Claude usage, so it is not held to the last 30 days (corrections 8 is about Haiku).
-
-An embed task has no mx_calls row: a vector is not a model's answer to audit, and the row it would duplicate is
-the vector itself, which records its model and build.
+The server never embeds: it plans the tasks (`plan`, `plan_names`), the worker embeds each input with BGE-M3 on the
+owner's device and posts the vectors (`store`). The text (`embed_text`, TEXT_VERSION) is the post's title and first
+TEXT_CHARS of text without addresses; a post that says nothing (`says_something`) is described by its links, else
+gets no vector (mx_embed_skips), never a constant; old vectors of such texts are set aside (`set_aside`). Two posts
+of one vector are never an embedding candidate unless their texts are near-copies (`same_vector`). A vector is
+1,024 little-endian float16, base64, of norm 1, stored as halfvec; one embedder build per database (BuildMismatch,
+409). An embed task has no mx_calls row: the vector records its own model and build.
 """
 from __future__ import annotations
 
@@ -60,13 +25,13 @@ from insight_core.markx import pairing, repo, schemas, tasks
 
 KIND = "embed"
 MODEL = "bge-m3"
-TEXT_VERSION = "markx-embed-text-v2"          # v2: a text that says nothing is described by its links, or not embedded
+TEXT_VERSION = "markx-embed-text-v2"          # a text that says nothing is described by its links, or not embedded
 SET_ASIDE = MODEL + ":said-nothing"            # the model a v1 vector of a text that says nothing is kept under
 MIN_WORDS = 2                                  # a text says something with 2 words of 2+ letters (addresses removed)
 LINKS = 3                                      # the links a post that says nothing is described by (a roundup's 3)
 IDENTICAL = 0.9999                             # two vectors this close are one text, not one meaning
 SCAN_CHARS = 400                               # set_aside reads the embed inputs this short (a text of nothing is short)
-TEXT_CHARS = tasks.TEXT_CHARS                  # 1,500 (0086 B)
+TEXT_CHARS = tasks.TEXT_CHARS                  # 1,500
 DIMENSIONS = repo.DIMENSIONS                   # 1,024
 VECTOR_BYTES = 2 * DIMENSIONS                  # float16
 NORM_TOLERANCE = 0.01                          # a float16 copy of a unit vector is within ~0.001 of 1
@@ -170,9 +135,9 @@ def linked_titles(cur: Cursor, posts: Iterable[tasks.Post]) -> Dict[str, str]:
 
 def embed_text(p: tasks.Post, titles: Optional[Dict[str, str]] = None) -> Optional[str]:
     """markx embed text v2: the text an `embed` task asks for (its input), or None when nothing describes the post.
-    The post's own words (v1's text) when they say something; else they and what its first LINKS links say (a
-    stored post's title from `titles`, linked_titles', the anchor text, the address's slug), then the sites' names;
-    None when even that says nothing (no vector, never a constant)."""
+    The post's own words when they say something; else they and what its first LINKS links say (a stored post's
+    title from `titles`, the anchor text, the address's slug), then the sites' names; None when even that says
+    nothing (no vector, never a constant)."""
     own = _own_text(p)
     if says_something(own):
         return own
@@ -217,10 +182,9 @@ _set_aside: set = set()
 
 
 def set_aside(cur: Cursor, model: str = MODEL) -> int:
-    """Set aside the `embed` vectors of texts that say nothing (markx embed text v1's "(empty)", "[Photo]", ...):
-    each row is kept as it is under the model SET_ASIDE, so no reader of `model` vectors sees it and the post is
-    planned again under v2. How many were set aside. Once a process and database (after it commits): a text that
-    says nothing is never asked again, and `store` sets aside a late answer to one asked before."""
+    """Set aside the `embed` vectors of texts that say nothing: each row kept under the model SET_ASIDE, so no reader
+    of `model` vectors sees it and the post is planned again. How many were set aside. Once a process and database
+    (after it commits); `store` sets aside a late answer to one asked before."""
     from insight_core.db import database
     info = cur.connection.info
     where = (info.host, info.port, info.dbname, model)
@@ -253,8 +217,7 @@ def plan(cur: Cursor, *, days: Optional[int] = None, limit: int = PLAN_LIMIT, no
          model: str = MODEL) -> int:
     """Embed tasks for the newest posts with no vector and no embed task of their own (every post when `days` is
     None), newest first (priority: the post's age in days): how many tasks were added. A post whose text another
-    post's task already asks gets that post's vector once it is stored (and goes to the candidates' run), else
-    waits for it."""
+    post's task already asks gets that post's vector once it is stored."""
     from insight_core.markx import jobs
     spec = schemas.KINDS[KIND]
     set_aside(cur, model)
@@ -311,9 +274,8 @@ NAME_KIND = "embed_name"
 
 
 def plan_names(cur: Cursor, *, limit: int = PLAN_LIMIT, **_kw) -> int:
-    """0119 A1: embed_name tasks for the entities (not marked not-an-entity) with no name vector and no task, the
-    newest first: how many were added. The input is the entity's shown name, spaces squashed; a name of no letter or
-    digit is not embedded (every such name would share one vector)."""
+    """embed_name tasks for the entities (not marked not-an-entity) with no name vector and no task, newest first:
+    how many were added. The input is the entity's shown name; a name of no letter or digit is not embedded."""
     cur.execute("""SELECT e.id::text, e.name FROM mx_entities e
                     WHERE e.status <> 'not_entity'
                       AND NOT EXISTS (SELECT 1 FROM mx_entity_vectors v WHERE v.entity_id = e.id)
@@ -356,7 +318,11 @@ def decode(text: Any) -> List[float]:
 
 
 def check_build(cur: Cursor, model: str, model_sha256: str) -> None:
-    """One embedder build per database: BuildMismatch when vectors of another build are stored under `model`."""
+    """One embedder build per database: BuildMismatch when vectors of another build are stored under `model`.
+    The lock is taken only while no vectors are stored (two first uploads of different builds would both see none);
+    after that an upload of another build sees the stored ones, so uploads of this build run unlocked."""
+    if set(repo.embedding_builds(cur, model)) == {model_sha256}:
+        return
     cur.execute("SELECT pg_advisory_xact_lock(%s)", (BUILD_LOCK,))
     others = {sha: n for sha, n in repo.embedding_builds(cur, model).items() if sha != model_sha256}
     if others:
@@ -379,7 +345,7 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
     stored = repeated = 0
     invalid: List[Dict[str, Any]] = []
     posts: List[str] = []
-    names: Dict[str, Tuple[str, str]] = {}   # v10.22: entity -> (its name's text hash, its vector), stored at the end
+    names: Dict[str, Tuple[str, str]] = {}   # entity -> (its name's text hash, its vector), stored at the end
     for item in vectors:
         raw_id = item.get("task_id") if isinstance(item, dict) else None
         try:
@@ -400,20 +366,20 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
         if task["status"] in ("answered", "failed"):
             repeated += 1
             continue
-        if task["subject_kind"] == "track":   # 0145: a track's description, for its prefilter (markx/tracks.py)
+        if task["subject_kind"] == "track":   # a track's description, for its prefilter (markx/tracks.py)
             from insight_core.markx import tracks
             tracks.store_vector(cur, task, v)
             repo.answer_task(cur, task_id)
             stored += 1
             continue
-        if task["subject_kind"] == "track_probe":   # 0147: a track's example post (markx/finders.py)
+        if task["subject_kind"] == "track_probe":   # a track's example post (markx/finders.py)
             from insight_core.markx import finders
             finders.store_vector(cur, task, v)
             repo.answer_task(cur, task_id)
             stored += 1
             continue
-        if task["kind"] == NAME_KIND:      # 0119 A1: a name's vector, for the alias candidates
-            names.setdefault(str(task["a"]), (task["input_hash"], repo.vector_text(v)))   # the first one, as before
+        if task["kind"] == NAME_KIND:      # a name's vector, for the alias candidates
+            names.setdefault(str(task["a"]), (task["input_hash"], repo.vector_text(v)))   # the first one
             repo.answer_task(cur, task_id)
             stored += 1
             continue
@@ -425,7 +391,7 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
             posts.append(str(task["a"]))
         repo.answer_task(cur, task_id)
         stored += 1
-    if names:   # v10.22: the names' vectors in one statement, in the order answered (was one statement a vector)
+    if names:   # the names' vectors in one statement, in the order answered
         cur.execute("""INSERT INTO mx_entity_vectors (entity_id, model, model_sha256, text_hash, v)
                        SELECT x.e, %s, %s, x.h, x.v::halfvec
                          FROM unnest(%s::uuid[], %s::text[], %s::text[]) WITH ORDINALITY AS x(e, h, v, n)
@@ -440,8 +406,7 @@ def store(cur: Cursor, *, model: str, model_sha256: str, vectors: Sequence[Dict[
 def same_vector(cur: Cursor, pairs: Iterable[Tuple[str, str, float]]) -> Set[Tuple[str, str]]:
     """The pairs (a, b, cosine) whose two vectors are one vector (cosine IDENTICAL or more) while their texts are not
     near-copies (tasks.near_copy) that say something: never an embedding candidate (one vector for two different
-    posts is a text that said nothing, not one meaning; two "[Photo]" posts are no copy of each other; a real copy
-    is Mark IX's to join)."""
+    posts is a text that said nothing; a real copy is Mark IX's to join)."""
     one = [(str(a), str(b)) for a, b, c in pairs if c >= IDENTICAL]
     if not one:
         return set()
@@ -456,14 +421,11 @@ PAIRS_TABLE = "pg_temp.mx_current_pairs"
 
 
 def current_pairs(cur: Cursor, rows_sql: str, params: Optional[Dict[str, Any]] = None, model: str = MODEL) -> str:
-    """v10.23 (0218): mx_candidates rows (`rows_sql`, with `params`: k, a, b, source, score; k a row's place, or NULL)
-    as the posts' current vectors have them, in the database: the rows kept, each with `now` (its two current vectors'
-    cosine, not rounded; NULL for a row that is no embedding or lacks a vector), in a temporary table whose name it
-    returns (PAIRS_TABLE). An `embedding` row whose post's vector was set aside and not replaced (a text that said
-    nothing, embed text v1) is dropped, as is one of two posts of one vector (same_vector); a dropped row whose post
-    already has an answered pair or join stays as it was, so no story it made changes silently. The rows themselves are
-    kept (never deleted). Nothing of them is held here: a decision run read its ~450k pairs whole (~400 MB at the
-    server's size) to give them back (`current_candidates` reads this table)."""
+    """mx_candidates rows (`rows_sql`, with `params`: k, a, b, source, score) as the posts' current vectors have
+    them, in a temporary table whose name it returns (PAIRS_TABLE), each with `now` (its current vectors' cosine;
+    NULL for a non-embedding row or a missing vector). An `embedding` row whose vector was set aside and not
+    replaced, or of two posts of one vector, is dropped, unless its post already has an answered pair or join (no
+    story changes silently). The stored rows are never deleted; nothing is held in memory."""
     drop = "" if getattr(getattr(cur, "connection", None), "autocommit", False) else " ON COMMIT DROP"
     cur.execute(f"DROP TABLE IF EXISTS {PAIRS_TABLE}")
     cur.execute(f"""CREATE TEMP TABLE mx_current_pairs{drop} AS

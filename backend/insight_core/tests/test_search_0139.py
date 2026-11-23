@@ -1,10 +1,8 @@
-"""Issue 0139, search that finds: History searched (only opened posts, last open first, paged on it, never folded),
-Mark X's English layer (mx_post_search: written by the worker's answer, matched in English for a Russian post, read
-only while Mark X is on, its headline as the line marked "Mark X", the fill resumable and versioned), the entity
-cards (a name, an alias, a prefix, through a redirect, never a not-entity, off when Mark X is off), and best match
-for 2+ words unless an order is asked.
-
-Rows are committed, so the classes run only against a `_test` database. Every post and source is synthetic."""
+"""Search that finds (0139): History searched (only opened posts, last open first, never folded), Mark X's English
+layer (mx_post_search: matched in English for a Russian post, read only while Mark X is on, the fill resumable and
+versioned), the entity cards (a name, an alias, a prefix, through a redirect, never a not-entity, off with Mark X off),
+and best match for 2+ words unless an order is asked. Rows are committed, so the classes run only against a `_test`
+database; everything is synthetic."""
 from __future__ import annotations
 
 import json

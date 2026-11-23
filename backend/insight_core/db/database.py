@@ -7,15 +7,10 @@
     with db.transaction(url) as cur:                         # one transaction: commit or roll back
         ...
 
-Each process (the API, the ingestion container) keeps one small pool per database URL,
-built on first use. A pooled connection behaves like `with psycopg.connect(url) as conn`:
-it commits on a clean exit and rolls back on an error, then goes back to the pool. Every
-connection runs with a statement timeout.
-
-No code holds a pooled connection across a network fetch: ingestion, archives, Reddit
-comments and the image proxy read or store in one short block, then fetch with the
-connection back in the pool. The run lock and the admin bootstrap need a session of their
-own, so they take a plain `session_connection` instead (no pool, no statement timeout).
+Each process keeps one small pool per database URL, built on first use. A pooled connection commits on a clean
+exit, rolls back on an error, then goes back to the pool; every one runs with a statement timeout. No code holds
+a pooled connection across a network fetch. The run lock and the admin bootstrap take a plain
+`session_connection` (no pool, no statement timeout).
 
 Environment (read when a pool is built):
   INSIGHT_DB_POOL_MIN (1), INSIGHT_DB_POOL_MAX (10)  connections per process
@@ -25,24 +20,16 @@ Environment (read when a pool is built):
   INSIGHT_DB_REQUEST_TIMEOUT_MS (30000)              an API request's statements; 0 turns it off
   INSIGHT_DB_ROLE ("jobs", "api" or unset)           see Roles
 
-The statement timeout is 5 minutes, not less: deleting a big source cascades to every
-post it collected, and that one DELETE can run for minutes.
-
-Roles (issue 0188): a process says what it is in INSIGHT_DB_ROLE, read when a pool is built; the processes it
-spawns inherit it with the environment.
-  - "jobs" (insight-ingestion: the scheduler, its archives and Mark X's job processes; run_scheduler.py sets it):
-    a statement ends just under a job's HARD_LIMIT (JOBS_STATEMENT_TIMEOUT_MS), and a transaction idle for longer
-    than any job lives (JOBS_IDLE_IN_TRANSACTION_MS) is ended by Postgres, its locks freed.
-  - "api" (the API's processes; scripts/api_supervisor.py sets it): the process default stays 5 minutes (its
-    background tasks: archives, fetches, research), an idle transaction ends after API_IDLE_IN_TRANSACTION_MS, and
-    a request's own statements get REQUEST_STATEMENT_TIMEOUT_MS, set by `RequestTimeouts` (main.py's innermost
-    middleware) until the response is sent, so the background tasks Starlette runs after it have the process
-    default. A request that legitimately runs a long statement says so: `with long_statements():` (deleting a
-    source).
-  - unset (scripts, tests, the real-data check): as before.
-Every connection also has client_connection_check_interval (CLIENT_CHECK_MS): a statement whose client died (a job
-process killed at HARD_LIMIT, or by the kernel's OOM killer) is cancelled within seconds, its locks freed, instead
-of running to its end.
+Roles (INSIGHT_DB_ROLE, inherited by spawned processes):
+  - "jobs" (the scheduler and its job processes): a statement ends just under a job's HARD_LIMIT and an idle
+    transaction longer than any job lives is ended by Postgres, its locks freed.
+  - "api": the process default stays 5 minutes (background tasks), an idle transaction ends after
+    API_IDLE_IN_TRANSACTION_MS, and a request's own statements get REQUEST_STATEMENT_TIMEOUT_MS via
+    `RequestTimeouts` until the response is sent; a request that legitimately runs a long statement uses
+    `with long_statements():`.
+  - unset (scripts, tests): the defaults.
+Every connection also has client_connection_check_interval (CLIENT_CHECK_MS): a statement whose client died is
+cancelled within seconds, its locks freed.
 """
 from __future__ import annotations
 
@@ -65,18 +52,18 @@ CONNECT_TIMEOUT_SECONDS = 10
 STATEMENT_TIMEOUT_MS = 300_000   # 5 minutes: the cascading delete of a big source
 LOCKED_WAIT_SECONDS = 1.0        # fill_until_done: a batch found only rows another worker holds
 POOL_MAX = 10
-CLIENT_CHECK_MS = 10_000                 # 0188: a statement whose client is gone is cancelled within this
-JOBS_STATEMENT_TIMEOUT_MS = 840_000      # 0188: just under markx/jobs.HARD_LIMIT (900 s): Postgres ends it first
-JOBS_IDLE_IN_TRANSACTION_MS = 960_000    # 0188: longer than any job lives (HARD_LIMIT + a minute)
-API_IDLE_IN_TRANSACTION_MS = 120_000     # 0188: no API code holds a transaction across a fetch
-REQUEST_STATEMENT_TIMEOUT_MS = 30_000    # 0188: a request's own statements (RequestTimeouts)
+CLIENT_CHECK_MS = 10_000                 # a statement whose client is gone is cancelled within this
+JOBS_STATEMENT_TIMEOUT_MS = 840_000      # just under markx/jobs.HARD_LIMIT (900 s): Postgres ends it first
+JOBS_IDLE_IN_TRANSACTION_MS = 960_000    # longer than any job lives (HARD_LIMIT + a minute)
+API_IDLE_IN_TRANSACTION_MS = 120_000     # no API code holds a transaction across a fetch
+REQUEST_STATEMENT_TIMEOUT_MS = 30_000    # a request's own statements (RequestTimeouts)
 ROLES = {
     "jobs": {"statement_timeout_ms": JOBS_STATEMENT_TIMEOUT_MS, "idle_in_transaction_ms": JOBS_IDLE_IN_TRANSACTION_MS},
     "api": {"statement_timeout_ms": STATEMENT_TIMEOUT_MS, "idle_in_transaction_ms": API_IDLE_IN_TRANSACTION_MS},
 }
 ROLE_ENV = "INSIGHT_DB_ROLE"
 
-# 0188: the statement timeout of the request being served (None: the process default); RequestTimeouts sets it
+# the statement timeout of the request being served (None: the process default); RequestTimeouts sets it
 _request_timeout_ms: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("insight_request_timeout",
                                                                                    default=None)
 _TIMEOUT_ATTR = "_insight_statement_timeout"
@@ -97,8 +84,8 @@ def use_role(name: str) -> None:
 
 @contextmanager
 def long_statements() -> Iterator[None]:
-    """0188: inside a request, statements run with the process default (5 minutes), not the request's 30 s: for a
-    request that legitimately runs a long one (deleting a big source cascades to every post it collected)."""
+    """Inside a request, statements run with the process default (5 minutes), not the request's 30 s: for a
+    request that legitimately runs a long one (deleting a big source)."""
     token = _request_timeout_ms.set(None)
     try:
         yield
@@ -107,9 +94,9 @@ def long_statements() -> Iterator[None]:
 
 
 class RequestTimeouts:
-    """0188: the API's middleware (pure ASGI, added innermost in main.py): an HTTP request's statements get
-    REQUEST_STATEMENT_TIMEOUT_MS (INSIGHT_DB_REQUEST_TIMEOUT_MS; 0 turns it off) until its response's last body is
-    sent; the background tasks Starlette runs after that have the process default."""
+    """The API's middleware (pure ASGI, innermost in main.py): an HTTP request's statements get
+    REQUEST_STATEMENT_TIMEOUT_MS until its response's last body is sent; background tasks after that have the
+    process default."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -166,15 +153,11 @@ class Database:
         self._lock = threading.Lock()
 
     def _connect_kwargs(self) -> dict:
-        # JIT off: INSIGHT's queries are small aggregates the planner overestimates. Measured on the
-        # server's data (the lab, 2026-10-30): compiling cost ~300 ms of the Sources list's 370 ms, and
-        # no endpoint got slower without it.
+        # JIT off: INSIGHT's queries are small aggregates the planner overestimates; compiling cost more than the
+        # queries (measured on the lab).
         check = env_int("INSIGHT_DB_CLIENT_CHECK_MS", CLIENT_CHECK_MS, minimum=0)
-        # 0215: every statement planned for its own parameters. psycopg prepares a statement a connection runs 5 times,
-        # and Postgres then may keep one generic plan for every later run; INSIGHT's optional filters
-        # (`%(ids)s IS NULL OR id = ANY(%(ids)s)`) can't use an index in a plan made for any value: measured on the
-        # scale copy, Discover's address fill 47 ms planned for its URLs, 4,224 ms with the generic plan (a seq scan of
-        # post_links per call), so a long-lived process's story batches got slower the longer it ran.
+        # Every statement planned for its own parameters: a generic plan can't use an index for the optional
+        # filters (`%(ids)s IS NULL OR id = ANY(%(ids)s)`) and turned 47 ms into seconds (0215).
         options = ["-c jit=off", "-c plan_cache_mode=force_custom_plan", f"-c client_connection_check_interval={check}"]
         if self.statement_timeout_ms > 0:
             options.append(f"-c statement_timeout={self.statement_timeout_ms}")
@@ -186,8 +169,7 @@ class Database:
         if not self._opened:
             with self._lock:
                 if not self._opened:
-                    # wait=False: a database that is down fails the first request after
-                    # `timeout`, not the process start.
+                    # wait=False: a database that is down fails the first request, not the process start
                     self._pool.open(wait=False)
                     self._opened = True
 
@@ -200,9 +182,8 @@ class Database:
             yield conn
 
     def _timeout_for(self, conn: psycopg.Connection) -> None:
-        """0188: the connection's statement timeout as the code using it needs: a request's (RequestTimeouts) or the
-        process default. Set, and committed so a roll back of the block keeps it, only when it differs from what the
-        connection has: one round trip when a connection passes between a request and background work."""
+        """The connection's statement timeout as the code using it needs: a request's or the process default.
+        Set (and committed, so a roll back keeps it) only when it differs from what the connection has."""
         want = _request_timeout_ms.get()
         want = self.statement_timeout_ms if want is None else want
         if getattr(conn, _TIMEOUT_ATTR, self.statement_timeout_ms) == want:
@@ -279,10 +260,9 @@ def transaction(url: str):
 
 
 def fill_until_done(url: str, fill: Callable[[Any], int], pending: Callable[[Any], bool]) -> int:
-    """Run `fill(cur)` a transaction a batch until `pending(cur)` finds nothing left; how many it
-    filled. Batches take their rows `FOR UPDATE SKIP LOCKED`, so an empty batch while rows are pending
-    means another worker holds them (the search refill and the link reading, issue 0069): wait a
-    moment and go on, never stop there."""
+    """Run `fill(cur)` a transaction a batch until `pending(cur)` finds nothing left; returns how many it filled.
+    Batches take rows `FOR UPDATE SKIP LOCKED`, so an empty batch while rows are pending means another worker
+    holds them: wait a moment and go on, never stop there."""
     filled = 0
     while True:
         with transaction(url) as cur:

@@ -1,8 +1,6 @@
-"""0148 (Stealth v10.14): the track scout. The weekly trigger and the tap; each finder's candidates (the matches' links,
-the platform shapes with their search feeds, the `scout` task's schema, validation and answer); the test read into the
-scratch area (nothing followed, nothing in the feed) through the add path, with stubbed requests; the health reasons;
-the ranking by precision and the 30% floor; Follow as active / passive through the add path and its provenance; the
-cost guard. Synthetic names only; the DB tests run on a database whose name ends in _test."""
+"""The track scout (0148): the weekly trigger and the tap, each finder's candidates, the `scout` task, the test read
+into the scratch area (nothing followed, nothing in the feed) with stubbed requests, health reasons, ranking by
+precision with the 30% floor, Follow through the add path with provenance, the cost guard. DB tests on _test only."""
 from __future__ import annotations
 
 import asyncio
@@ -39,7 +37,10 @@ def item(k=0, *, chars=600, dated=True, lang="en", transcript=None, at=None):
 
 
 def verdict(inside=True, conf=0.9):
-    return {"id": "x", "in": inside, "confidence": conf, "subtopic": "parts" if inside else None, "why": "A printable part: Acme's Widget."}
+    # the fit stated before `in`, quoting the tracks' `Belongs:` ("... parts ...")
+    return {"id": "x", "subject": "a printable part", "fits": inside, "matches": "parts" if inside else None,
+            "excluded": None, "in": inside, "confidence": conf, "subtopic": "parts" if inside else None,
+            "why": "A printable part: Acme's Widget."}
 
 
 class StubReader:
@@ -276,7 +277,7 @@ class _Scout(_Api):
                              WHERE c.run_id = %s AND i.task_id IS NOT NULL""", (run_id,))
         got = self.cur.fetchall()
         rows = list({t: u for t, u, _ in got}.items())
-        # 0252: a verdict names its post (validate.track_verdict_error): the why cites the question's title
+        # a verdict names its post (validate.track_verdict_error): the why cites the question's title
         titles = {t: next((ln[7:] for ln in (q or "").splitlines() if ln.startswith("Title: ")), "") for t, _, q in got}
         status, body = self.answer(*[(t, dict(verdict(fits(u)), why=f"About {titles[t]}.")) for t, u in rows])
         self.assertEqual(status, 200, body)
@@ -290,7 +291,7 @@ class Triggers(_Scout):
         for k in range(5):
             self.in_post(f"part {k}", at=NOW - k * DAY)
         with self.conn.transaction():
-            # 0235: 5 in in 7 days, not quiet, and still scouted weekly for better sources (was: never)
+            # 5 in in 7 days, not quiet, and still scouted weekly for better sources
             self.assertEqual(scout.due_weekly(self.cur, NOW), [self.folder])
         clear_tables(self.cur, "mx_track_items")
         reader = StubReader()
@@ -305,7 +306,7 @@ class Triggers(_Scout):
             self.assertEqual(scout.due_weekly(self.cur, NOW + 8 * DAY), [self.folder])
 
     def test_a_starving_track_goes_first_and_weekly_runs_follow_each_other(self):
-        # 0235: two described tracks: the healthy one (5 in this week) and a starving one (none)
+        # two described tracks: the healthy one (5 in this week) and a starving one (none)
         for k in range(5):
             self.in_post(f"part {k}", at=NOW - k * DAY)
         self.cur.execute("INSERT INTO folders (name, kind) VALUES (%s, 'track') RETURNING id",
@@ -366,7 +367,7 @@ class Finders(_Scout):
         self.assertEqual(got[0]["finder"], "match")
 
     def test_the_matches_read_the_accounts_posts_mention(self):
-        # 0235: an @mention (post_links kind 'mention', stored as boilerplate) is a link of the account it names
+        # an @mention (post_links kind 'mention', stored as boilerplate) is a link of the account it names
         for k in range(2):
             p = self.in_post(f"part {k}")
             self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, kind, boilerplate) "
@@ -566,9 +567,7 @@ class CostGuard(_Scout):
         self.assertEqual([c["finder"] for c in picked], ["match", "match", "shape", "match"])
 
     def test_two_advances_never_read_one_run_at_once(self):
-        # Both claims on one clock (v10.17): NOW is the module's import time, and the second advance read the wall
-        # clock, so a suite that reached this test over scout.CLAIM (20 min) after importing it found the claim
-        # expired and the advance claimed the run (a failure only under load).
+        # both claims on one clock (NOW), so the claim cannot expire under a slow suite
         self.in_post(links=["https://makers.example/blog/a-printed-hinge"])
         run = self.start()
         with self.conn.transaction():

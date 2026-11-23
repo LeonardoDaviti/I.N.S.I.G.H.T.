@@ -1,43 +1,15 @@
-"""Mark X entity identity repairs (issue 0164): four classes of wrong identity fixed in the data already made, each
-run, idempotent and bounded, within the entities stage's budget. Nothing is deleted: a wrong merge is undone (its
-redirect closes, undone_by 'repair', the why in its evidence), a merge is a redirect like any other (undoable), a
-changed derived field is logged in mx_entity_fixes with its old value. The owner's answers always win: a merge the
-owner made or answered `same` is never undone, a pair the owner kept apart or whose merge the owner undid is never
-merged, an owner's rename (shown_by 'owner') is never replaced.
+"""Entity identity repairs on the data already made (issue 0164): each step idempotent and bounded, run by `repair`
+within the entities stage's budget, each enabled in entity_bands.json `repairs`.
 
-  1. `org_family`: a cluster holding both a product family and an org (or person) (identity.Book.sides: "Vela", the
-     family of "Vela 5", merged into the org Zentra, perhaps through "Zentra Vela") is cut in two by undoing the
-     fewest automatic redirects that separate the sides. A cluster the owner's merge holds together is left as it is
-     (counted: `held`). identity.decide_pair now keeps such merges for the queue (org_family), so they don't return.
-  2. `reparent`: a version whose family is an org-like cluster ("Zentra 5" by Zentra, whose family key "zentra" is the
-     org's alias) gets a family entity of that name under the org (identity.family_under; new mentions get it as they
-     are linked). The old parent is logged (mx_entity_fixes kind 'org_family', field 'parent').
-  3. `families`: two families whose names differ only by their maker's name or one of its brands in front ("Zentra
-     Vela" / "Vela"; a brand: a word in front of BRAND_MIN or more of the maker's family names; a family is a `family`
-     entity or a name a version names as its parent) and share the maker merge (rule 'family_prefix'), with evidence:
-     a version both state (two prefixes alone, "Brand App" / "Maker App", are not enough), or for a family that
-     states no maker, one of its versions already merged with one of the other's. Their versions stating the same
-     version, variant, size and build then merge (rule 'family_version', identity.family_version: the version guard
-     and the chain guard as for every rule). Two makers stating one family name are never joined.
-  4. (dropped in v10.18, 0203) `suffix`, two orgs one once a corporate suffix goes, merged with posts naming one
-     beside the other's things: shipped off, it merged none of 11 candidate pairs on the server copy (none had the
-     posts), and the bare pairs were one org 8 of 11. The alias questions alone decide such pairs.
-  1b. `product_accounts` (0164 B): a name typed an org that is a product account's ("Zentra Vela": its family Vela's
-     maker in front of the family's name; identity.Book.product_of) merges into its family (rule 'product_account'),
-     never left an org; its shown type is the family's. Step 1 has cut it out of the maker's cluster first (Book.sides
-     counts it on the family side).
-  4b. `names` (0250): a bare name whose mentions state several makers splits into one thing a maker
-     (identity.split_names, the family maker rule deepened; entity_bands.json `families.split`), the new mentions of
-     a name split before placed each run; the last step, a step like the others under the stage's budget.
-  5. `shown`: the name and type each cluster is shown under, by evidence (mx_entities.shown_name, shown_type, on the
-     root): the member name the most distinct sources write (then posts), counting no span written as a handle nor
-     a post by the account it names (an account's display name: "Zentra Devs"); a person by the full name holding
-     its one-word name; the type that most (SHOWN_TYPE_SHARE) of its mentions give, or person over org when a
-     person's full name is in it and a third of its mentions say person. The touched clusters each run; every
-     cluster over the full passes, resumed (`after`). 0168 D: a cluster shown under one of its confirmed handles
-     ("ikestrel") is shown by the display name the handle's "Name (@handle)" pairs gave (markx/handles.learned_names).
-
-Config: entity_bands.json `repairs` (each on or off, and their bars).
+Steps: `org_family` (a cluster holding a product family and an org is cut by undoing the fewest automatic redirects),
+`product_accounts` (an org-typed product account merges into its family), `reparent` and `family_home` (a version
+gets its right family), `families` and `merge_versions` (families differing only by their maker's or brand's name
+merge, with evidence, then their matching versions), `generic` (a bare name several makers prefix is no one's),
+`names` (a bare name several makers state splits), `relevel` (a product's SKU is no checkpoint), `reroot` (a cluster
+rooted on a build or a seldom-written name re-roots on its general name), and `shown` (the name and type each cluster
+is shown under, by evidence). Nothing is deleted: an undone merge closes its redirect (undone_by 'repair', the why in
+its evidence), a changed derived field is logged in mx_entity_fixes. The owner's answers always win: an owner's
+merge or `same` is never undone, a pair the owner kept apart is never merged, an owner's rename is never replaced.
 """
 from __future__ import annotations
 
@@ -57,8 +29,10 @@ UNDO_LIMIT = 200          # redirects a run undoes (org_family)
 PRODUCT_LIMIT = 500       # product accounts a run merges into their family (product_accounts)
 REPARENT_LIMIT = 2000     # versions a run gives a family
 FAMILY_LIMIT = 300        # family merges a run (and as many version merges)
+RELEVEL_LIMIT = 2000      # checkpoints a run makes the variants identity.level_of says (relevel)
+REROOT_LIMIT = 200        # clusters a run re-roots on their general name (reroot)
 SHOWN_CHUNK = 2000        # clusters whose shown name one query reads
-SHOWN_SINGLES = 20000     # v10.23 (0218): a sweep's step: SHOWN_CHUNK clusters of several names, or this many of one
+SHOWN_SINGLES = 20000     # a sweep's step: SHOWN_CHUNK clusters of several names, or this many of one
 BRAND_MIN = 3
 SHOWN_TYPE_SHARE = 0.75
 SHOWN_TYPE_MIN = 5
@@ -69,7 +43,8 @@ def config() -> Dict[str, Any]:
     return {"org_family": got.get("org_family", True), "product_accounts": got.get("product_accounts", True),
             "reparent": got.get("reparent", True),
             "families": got.get("families", True), "shown": got.get("shown", True),
-            "family_home": got.get("family_home", True), "names": got.get("names", True)}
+            "family_home": got.get("family_home", True), "names": got.get("names", True),
+            "reroot": got.get("reroot", True), "levels": got.get("levels", True), "generic": got.get("generic", True)}
 
 
 def _owner_same(cur: Any) -> Set[Tuple[str, str]]:
@@ -157,17 +132,15 @@ def _components(members: List[str], edges: Iterable[Tuple[str, str]]) -> Dict[st
 
 
 def undo_org_family(cur: Any, book: I.Book, *, run_id: Any, limit: int = UNDO_LIMIT) -> Dict[str, int]:
-    """Each merge is an edge between the two names it joined: a rule's or Haiku's between the two roots it redirected,
-    the owner's between the two names the owner answered (its queue item; the redirect itself goes root to root). The
-    edges cut are undone; an owner's redirect that crossed the cut only because it went root to root is re-pointed:
-    undone and made again between the owner's two names (by 'owner', its queue item, `repointed_from`), so the owner's
-    answer holds exactly."""
+    """Each merge is an edge between the two names it joined (a rule's or Haiku's between the roots it redirected, the
+    owner's between the names the owner answered). The cut edges are undone; an owner's redirect that crossed the cut
+    only because it went root to root is re-pointed between the owner's two names, so the owner's answer holds."""
     out = Counter({"clusters": 0, "undone": 0, "repointed": 0, "held": 0})
     rows = redirect_rows(cur)
     owner = _owner_same(cur)
     clusters = book.clusters()
-    book.prime_sides(m for ms in clusters.values() for m in ms)   # v10.24 (0221): in one go, not a cluster at a time
-    for root, ms in sorted(clusters.items()):   # v10.22 (0216): a cluster of one has no side to cut
+    book.prime_sides(m for ms in clusters.values() for m in ms)   # in one go, not a cluster at a time
+    for root, ms in sorted(clusters.items()):   # a cluster of one has no side to cut
         if len(ms) < 2 or out["undone"] >= limit:
             continue
         fam, org = book.sides(ms)
@@ -182,6 +155,38 @@ def undo_org_family(cur: Any, book: I.Book, *, run_id: Any, limit: int = UNDO_LI
             continue
         why = {"why": "org_family", "run": str(run_id) if run_id else None,
                "family": sorted(book.ents[x].name for x in fam), "org": sorted(book.ents[x].name for x in org)}
+        undone, repointed = apply_cuts(cur, book, members, edges, cuts, rows, why=why, undone_by="repair",
+                                       run_id=run_id)
+        out["undone"] += len(undone)
+        out["repointed"] += repointed
+    return dict(out)
+
+
+def undo_generic_prefix(cur: Any, book: I.Book, *, run_id: Any, limit: int = UNDO_LIMIT) -> Dict[str, int]:
+    """`generic`: a cluster holding a bare name and two or more makers' names that are it with their maker in front
+    ("Linux" with "SUSE Linux", "Amazon Linux") has its rule:maker_prefix merges undone (an owner's merge is kept,
+    re-pointed as for org_family): the bare name is common to several makers' things. The other merges stay."""
+    out = Counter({"clusters": 0, "undone": 0, "repointed": 0, "held": 0})
+    clusters = [(r, ms) for r, ms in sorted(book.clusters().items()) if len(ms) >= 3]
+    book.prime(ids=[m for _r, ms in clusters for m in ms])   # a book read by need: the names in one go
+    found = [(r, ms, g) for r, ms in clusters if (g := I.generic_bares(book, ms))]
+    if not found:
+        return dict(out)
+    rows = redirect_rows(cur)
+    owner = _owner_same(cur)
+    for root, ms, generic in found:
+        if out["undone"] >= limit:
+            break
+        out["clusters"] += 1
+        members = sorted(ms)
+        edges = cluster_edges(book, members, rows, owner)
+        cuts = [k for k, (_x, _y, mine, f) in enumerate(edges) if not mine and rows[f][2] == "rule:maker_prefix"]
+        if not cuts:
+            out["held"] += 1
+            continue
+        why = {"why": "generic_prefix", "run": str(run_id) if run_id else None,
+               "bare": sorted(book.ents[b].name for b in generic),
+               "makers": sorted({k for ks in generic.values() for k in ks})}
         undone, repointed = apply_cuts(cur, book, members, edges, cuts, rows, why=why, undone_by="repair",
                                        run_id=run_id)
         out["undone"] += len(undone)
@@ -246,25 +251,22 @@ def apply_cuts(cur: Any, book: I.Book, members: List[str], edges: List[Tuple[str
 
 # ---- 1b. a product account made an org ---------------------------------------------------------------------------
 
-PAGE = 2000   # v10.23 (0218): the entities a walk reads ahead for at once
+PAGE = 2000   # the entities a walk reads ahead for at once
 
 
 def _org_names(book: I.Book) -> Iterable[I.Ent]:
-    """v10.23 (0218): the names of two words or more typed an org (as their mentions say), not versions, by id: read
-    row by row, a page at a time (a book read by need is asked the rest of a page in one go: the mention types, then
-    the names their words could be), none held past its page."""
+    """The names of two words or more typed an org (as their mentions say), not versions, by id: read a page at a
+    time (a book read by need is asked the rest of a page in one go), none held past its page."""
     page: List[I.Ent] = []
 
     def ready(page: List[I.Ent]) -> List[I.Ent]:
         types = book.etypes(page)
         got = [e for e in page if types.get(e.id) == "org"]
-        book.prime_names(e.key for e in got)   # v10.24 (0221): and what product_of asks of them, in one go
+        book.prime_names(e.key for e in got)   # and what product_of asks of them, in one go
         return got
     from insight_core.markx import schemas
     org = schemas.stored_types(["org"])
-    # v10.23 (0218): a book read by need narrows its read to the names some mention types an org (or, none counted,
-    # typed an org themselves): the walk read every name of two words (~220k rows of the server-sized copy's 330k,
-    # 5 s of the stage's budget) for the ~37k its test keeps
+    # a book read by need narrows its read to the names some mention types an org (or typed an org themselves)
     for e in book.walk("""position(' ' in e.key) > 0 AND e.status <> 'not_entity' AND e.level <> ALL(%s)
                           AND e.id IN (SELECT t.id FROM pg_temp.mx_run_types t WHERE t.type = ANY(%s)
                                        UNION ALL SELECT x.id FROM mx_entities x WHERE x.type = ANY(%s) AND NOT EXISTS
@@ -280,13 +282,10 @@ def _org_names(book: I.Book) -> Iterable[I.Ent]:
 
 
 def product_accounts(cur: Any, book: I.Book, *, run_id: Any, limit: int = PRODUCT_LIMIT) -> Dict[str, int]:
-    """0164 B on the data already made: an entity typed an org whose name is a product account's (Book.product_of:
-    "Zentra Vela", the family Vela's maker in front of it) merges into its family (rule 'product_account'), when
-    neither cluster holds an org (step 1 cut the automatic links to one; an owner's link is left, `held`) and the
-    owner never kept them apart. Its shown type is the family's (`shown`). Idempotent: once one cluster, skipped."""
+    """An entity typed an org whose name is a product account's (Book.product_of: "Zentra Vela", the family Vela's
+    maker in front) merges into its family (rule 'product_account') when neither cluster holds an org (an owner's link
+    is left, `held`) and the owner never kept them apart. Its shown type is the family's. Idempotent."""
     out = Counter({"accounts": 0, "merged": 0, "held": 0})
-    # v10.23 (0218): the names of two words or more, not versions, read row by row (a book read by need is asked the
-    # rest in one go: their mention types, then the names their words could be)
     for e in _org_names(book):
         if out["merged"] >= limit:
             break
@@ -311,13 +310,12 @@ def product_accounts(cur: Any, book: I.Book, *, run_id: Any, limit: int = PRODUC
 # ---- the invariant -------------------------------------------------------------------------------------------------
 
 def family_org(book: I.Book, cur: Any = None, show: int = 10) -> Dict[str, Any]:
-    """0164 C: the clusters holding both a product family and an org or person (Book.sides): 0 once the repair has
-    run, but for the clusters the owner's own merge holds (`held`, when `cur` is given). Up to `show` listed by
-    name."""
+    """The clusters holding both a product family and an org or person (Book.sides): 0 once the repair has run, but
+    for those the owner's own merge holds (`held`, when `cur` is given). Up to `show` listed by name."""
     mixed = []
     clusters = book.clusters()
-    book.prime_sides(m for ms in clusters.values() for m in ms)   # v10.24 (0221): in one go (none if read already)
-    for root, ms in clusters.items():   # v10.22 (0216): a cluster of one holds no family and org
+    book.prime_sides(m for ms in clusters.values() for m in ms)   # in one go (none if read already)
+    for root, ms in clusters.items():   # a cluster of one holds no family and org
         if len(ms) < 2 or root not in book.ents:
             continue
         fam, org = book.sides(ms)
@@ -347,7 +345,7 @@ def reparent(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = R
     book.prime(ids={e.parent for e in versions})
     parents = {book.root(e.parent) for e in versions}
     book.prime_clusters(parents)
-    book.prime_sides(m for r in parents if r for m in book.cluster(r))   # v10.24 (0221): org_like's, in one go
+    book.prime_sides(m for r in parents if r for m in book.cluster(r))   # org_like's, in one go
     for e in versions:
         r = book.root(e.parent)
         if r not in book.ents:
@@ -381,12 +379,11 @@ def reparent(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = R
     return dict(out)
 
 
-# ---- 2b. a version's family: its stem and its maker's (0230: identity's rule, for the versions made before it) -----
+# ---- 2b. a version's family: its stem and its maker's (identity's rule, for the versions made before it) -------
 
 def family_home(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int = REPARENT_LIMIT) -> Dict[str, int]:
-    """0230: the versions linked before identity's family rule (identity.family_stem, other_maker): one whose parent is
-    a version of a family (a member's name taken as a family's) gets that family (mx_entity_fixes kind 'family_stem');
-    another maker's thing under a family (its stated maker none of the family's) becomes a thing of its own maker,
+    """The versions linked before identity's family rule: one whose parent is a version of a family gets that family
+    (mx_entity_fixes kind 'family_stem'); another maker's thing under a family becomes a thing of its own maker,
     `based_on` the family (kind 'family_maker', the old level and parent kept). An org-like parent is reparent's.
     Idempotent; `limit` changes a run."""
     out = Counter({"stem": 0, "other_maker": 0, "edges": 0})
@@ -442,17 +439,15 @@ def family_home(cur: Any, book: I.Book, w: I.Writer, *, run_id: Any, limit: int 
 # ---- 3. families split by a maker or brand prefix -------------------------------------------------------------
 
 def _versions(book: I.Book) -> List[I.Ent]:
-    """v10.23 (0218): the versions, variants and checkpoints naming a parent, not `not_entity`, in id order (read row
-    by row from a book read by need)."""
+    """The versions, variants and checkpoints naming a parent, not `not_entity`, in id order."""
     return [e for e in book.walk("e.level = ANY(%s) AND e.parent IS NOT NULL AND e.status <> 'not_entity'",
                                  (list(I.VERSION_LEVELS),), by_id=True)
             if e.level in I.VERSION_LEVELS and e.parent and e.status != "not_entity"]
 
 
 def _families(book: I.Book) -> List[I.Ent]:
-    """v10.23 (0218): the families (a `family` entity, or a name a version names as its parent, as the book's version
-    parents say), not `not_entity`, of no org or person type, in the book's order. A book read by need narrows its
-    read to the families and the parents of versions, then and now."""
+    """The families (a `family` entity, or a name a version names as its parent), not `not_entity`, of no org or
+    person type, in the book's order."""
     lv = list(I.VERSION_LEVELS)
     got = [e for e in book.walk("""e.status <> 'not_entity' AND (e.level = 'family'
                                      OR e.id IN (SELECT v.parent FROM mx_entities v
@@ -473,7 +468,7 @@ def _family_roots(book: I.Book) -> Dict[str, List[str]]:
     for e in _families(book):
         roots.add(book.root(e.id))
     book.prime_clusters(roots)
-    book.prime_sides(m for r in roots if r for m in book.cluster(r))   # v10.24 (0221): sides', in one go
+    book.prime_sides(m for r in roots if r for m in book.cluster(r))   # sides', in one go
     out: Dict[str, List[str]] = {}
     for r in roots:
         ms = book.cluster(r)
@@ -618,6 +613,174 @@ def merge_versions(cur: Any, book: I.Book, *, run_id: Any, limit: int = FAMILY_L
     return n
 
 
+# ---- 4d. a product's SKU is no checkpoint -----------------------------------------------------------------------
+
+def relevel(cur: Any, book: I.Book, *, limit: int = RELEVEL_LIMIT) -> int:
+    """A checkpoint of a type no size or build makes one of (a product's, a dataset's, software's "285K") is the
+    variant identity.level_of makes it now (in id order; idempotent). Its fields stay as stated. Runs before
+    `reroot`, which reads a checkpoint as a build."""
+    n = 0
+    for e in book.walk("e.level = %s", ("checkpoint",), by_id=True):
+        if n >= limit:
+            break
+        to = I.level_of(e.type, e.hk, e.pk) if e.level == "checkpoint" else "checkpoint"
+        if to == "checkpoint":
+            continue
+        cur.execute("UPDATE mx_entities SET level = %s WHERE id = %s AND level = 'checkpoint'", (to, e.id))
+        e.level = to
+        n += 1
+    return n
+
+
+# ---- 4c. a cluster rooted on a build ---------------------------------------------------------------------------
+
+def reroot_plan(cur: Any, book: I.Book) -> List[Dict[str, Any]]:
+    """The clusters rooted on a build that hold a general name, each {root, keeper, path (the redirects from the
+    keeper up to the root, keeper first), skip (None, or why not)}. Read only. The keeper is identity.merge's: of the
+    general names, the one heading the most names, then the older; the names on its path up are all builds.
+
+    And (`minority`) a cluster rooted on a name its mentions seldom write ("Kimik 3" once over "Kimi K3"): its keeper
+    is found going down from the root while one name's merges hold more than half the cluster's current mentions,
+    never into a build."""
+    out: List[Dict[str, Any]] = []
+    plans = []
+    clusters = sorted((r, ms) for r, ms in book.clusters().items() if len(ms) > 1)
+    if hasattr(book.types, "want"):   # a book read by need: the counts in one read
+        book.types.want(m for _r, ms in clusters for m in ms)
+    for root, ms in clusters:
+        e = book.ents.get(root)
+        if e is None:
+            continue
+        into: Dict[str, List[str]] = defaultdict(list)
+        for m in ms:
+            if m != root and m in book.redirect:
+                into[book.redirect[m][0]].append(m)
+        said = {m: sum(n for _t, n in (book.types.get(m) or {}).items()) for m in ms}
+
+        def subtree(x: str) -> Tuple[int, int]:
+            n, k, todo, seen = 0, 0, [x], set()
+            while todo:
+                y = todo.pop()
+                if y not in seen:
+                    seen.add(y)
+                    n += 1
+                    k += said.get(y, 0)
+                    todo.extend(into.get(y, ()))
+            return k, n
+
+        if I.is_build(e):
+            general = [m for m in ms if m in book.ents and not I.is_build(book.ents[m])]
+            if not general:
+                continue
+
+            def weight(m: str):
+                f = book.ents[m].first_seen
+                return (*subtree(m), -(f.timestamp() if f else 0), m)
+            keeper, why = max(general, key=weight), "build"
+        else:
+            total, keeper, why = sum(said.values()), root, "minority"
+            while True:   # down while one name's merges hold more than half the mentions
+                nxt = next((c for c in sorted(into.get(keeper, ())) if c in book.ents
+                            and not I.is_build(book.ents[c]) and 2 * subtree(c)[0] > total), None)
+                if nxt is None:
+                    break
+                keeper = nxt
+            if keeper == root:
+                continue
+        k = book.ents[keeper]
+        # a minority root re-roots only on a name of its own (shown) type: an org's page never turns a model's
+        # ("DeepSeek-AI" the org over "DeepSeek" the model: a wrong merge first, left for its own repair)
+        typed = why != "minority" or \
+            I.schemas_type(e.shown_type or e.type) == I.schemas_type(k.shown_type or k.type)
+        path, x = [], keeper
+        while x != root and x in book.redirect:
+            path.append(x)
+            x = book.redirect[x][0]
+        plans.append({"root": root, "keeper": keeper, "path": path, "skip": None if typed else "type", "why": why})
+    if not plans:
+        return out
+    cur.execute("""SELECT from_id::text, id::text, kind FROM mx_entity_redirects
+                    WHERE undone_at IS NULL AND from_id = ANY(%s::uuid[])""",
+                ([f for p in plans for f in p["path"]],))
+    kinds = {f: (rid, kind) for f, rid, kind in cur.fetchall()}
+    cur.execute("SELECT id::text FROM mx_entities WHERE id = ANY(%s::uuid[]) AND shown_by = 'owner'",
+                ([p["root"] for p in plans],))
+    renamed = {r for (r,) in cur.fetchall()}
+    for p in plans:
+        if p["skip"]:
+            pass                           # the type (minority): left as it is
+        elif any(f not in kinds for f in p["path"]):
+            p["skip"] = "stale"            # the book's redirects are not the table's (another writer)
+        elif any(kinds[f][1] == "rename" for f in p["path"]):
+            p["skip"] = "rename"
+        elif p["root"] in renamed:
+            p["skip"] = "owner_shown"
+        p["redirects"] = [kinds[f][0] for f in p["path"] if f in kinds]
+        out.append(p)
+    return out
+
+
+def reroot_builds(cur: Any, book: I.Book, *, run_id: Any, limit: int = REROOT_LIMIT) -> Dict[str, int]:
+    """Each cluster of reroot_plan not skipped re-roots on its keeper: its path's redirects undone and made again by
+    identity.merge with their own by, automatic, call and queue item (evidence: `rerooted_from`). The old root's
+    current facts are written to the new root when it has none."""
+    from insight_core.markx import entity_facts
+    out = Counter({"clusters": 0, "rerooted": 0, "redirects": 0, "facts": 0, "skipped": 0})
+    for p in reroot_plan(cur, book):
+        out["clusters"] += 1
+        if p["skip"] or out["rerooted"] >= limit:
+            out["skipped"] += 1
+            if p["skip"]:
+                out["skip_" + p["skip"]] += 1
+            continue
+        cur.execute("""SELECT id::text, from_id::text, to_id::text, by, automatic, call_id::text, queue_id::text, evidence
+                         FROM mx_entity_redirects WHERE id = ANY(%s::uuid[]) AND undone_at IS NULL""", (p["redirects"],))
+        rows = {r[1]: r for r in cur.fetchall()}
+        if set(rows) != set(p["path"]):
+            out["skipped"] += 1
+            out["skip_stale"] += 1
+            continue
+        why = {"why": "reroot", "run": str(run_id) if run_id else None, "root": p["root"], "keeper": p["keeper"],
+               "because": p["why"]}
+        before = {f: book.redirect[f] for f in p["path"]}
+        cur.execute("SAVEPOINT entity_reroot")
+        made = 0
+        for f in p["path"]:
+            cur.execute("""UPDATE mx_entity_redirects SET undone_at = now(), undone_by = 'repair',
+                                  evidence = COALESCE(evidence, '{}'::jsonb) || jsonb_build_object('undone', %s::jsonb)
+                            WHERE id = %s AND undone_at IS NULL""", (json.dumps(why, default=str), rows[f][0]))
+            book.redirect.pop(f, None)
+        for f in p["path"]:
+            rid, _f, to, by, auto, call, queue, ev = rows[f]
+            made += int(bool(I.merge(cur, book, f, to, by=by, automatic=auto, call_id=call, queue_id=queue,
+                                     run_id=run_id, evidence={**(ev or {}), "rerooted_from": rid, "why": "reroot"})))
+        new = book.root(p["root"])
+        if made != len(p["path"]) or new != book.root(p["keeper"]) or I.is_build(book.ents[new]):
+            cur.execute("ROLLBACK TO SAVEPOINT entity_reroot")   # one thing still, on its old root (a raced write)
+            for f in set(p["path"]) | {p["root"]}:
+                book.redirect.pop(f, None)
+            for f, got in before.items():
+                book.redirect[f] = got
+            out["skipped"] += 1
+            out["skip_failed"] += 1
+            continue
+        cur.execute("RELEASE SAVEPOINT entity_reroot")
+        out["redirects"] += made
+        out["rerooted"] += 1
+        out["rerooted_" + p["why"]] += 1
+        cur.execute("""SELECT entity_id::text, kind, maker_id::text, maker_name, what, context, generic, by, sense_key
+                         FROM mx_entity_facts WHERE entity_id = ANY(%s::uuid[]) AND superseded_at IS NULL""",
+                    ([p["root"], new],))
+        facts = {r[0]: r for r in cur.fetchall()}
+        if p["root"] in facts and new not in facts:
+            _e, kind, maker_id, maker_name, what, context, generic, by, sense_key = facts[p["root"]]
+            if entity_facts.write(cur, new, by=by, kind=kind, maker_id=maker_id, maker_name=maker_name, what=what,
+                                  context=context or (), generic=bool(generic), sense_key=sense_key, run_id=run_id,
+                                  evidence={"rerooted_from": p["root"]}):
+                out["facts"] += 1
+    return dict(out)
+
+
 # ---- 5. the name and type shown ----------------------------------------------------------------------------------
 
 _SPAN_SQUASH = "lower(regexp_replace(m.span, '[^[:alnum:]]+', '', 'g'))"
@@ -649,7 +812,7 @@ def _type(book: I.Book, root: str, members: List[str], ents: Iterable[I.Ent]) ->
     base = I.schemas_type(book.ents[root].type)
     fam, org = book.sides(members)
     if base in I.ORGISH and root in fam:
-        # 0164 B: a product account at the root ("Zentra Vela" typed an org) is shown as its family's type
+        # a product account at the root ("Zentra Vela" typed an org) is shown as its family's type
         fams = [f for f in sorted(fam) if book.family_like(f)] or \
             [f for f in [book.product_of(book.ents[root].key)] if f]
         base = I.product_type(book, fams[0]) if fams else "model"
@@ -658,7 +821,7 @@ def _type(book: I.Book, root: str, members: List[str], ents: Iterable[I.Ent]) ->
         return base
     top, n = max(types.items(), key=lambda kv: (kv[1], str(kv[0])))
     if top in I.ORGISH and fam and not org:
-        return base                      # 0164 B: a family whose org-typed names are its product accounts
+        return base                      # a family whose org-typed names are its product accounts
     if top != base and n >= SHOWN_TYPE_SHARE * total and total >= SHOWN_TYPE_MIN:
         return top
     if base == "org" and types.get("person", 0) * 3 >= total and \
@@ -710,21 +873,20 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
           deadline: Optional[float] = None) -> Dict[str, Any]:
     """The shown name and type of `roots` (None: every cluster, from `after` in id order, in chunks, stopping past
     `deadline` after a chunk; {done, after} says where). Writes only what changed; never an owner's rename."""
-    # an owner's rename, and (0250) a split name's "<name> (<maker>)" (identity.split_names), are never replaced here
+    # an owner's rename, and a split name's "<name> (<maker>)" (identity.split_names), are never replaced here
     cur.execute("SELECT id::text FROM mx_entities WHERE shown_by IN ('owner', 'split')")
     owners = {r[0] for r in cur.fetchall()}
-    # v10.22 (0216): the clusters of two or more names; any other root is a cluster of one, itself (book.members() of
-    # every root made a set for each of the server's 330k entities, ~90 MB, every run)
+    # the clusters of two or more names; any other root is a cluster of one, itself (a set per root cost ~90 MB)
     members = _Clusters(book.clusters())
     if roots is None:   # every root (an entity that is its own root), from `after`
-        todo = [r for r in book.ids(after) if book.root(r) == r]   # v10.23: read in id order, not walked
+        todo = [r for r in book.ids(after) if book.root(r) == r]
     else:
         todo = sorted({book.root(r) for r in roots if r in book.ents})
     out = Counter({"clusters": 0, "names": 0, "types": 0})
     from insight_core.markx import rename
-    early = rename.earlier_members(cur)   # 0165 B: an earlier name (a rename's old side) is never the name shown
+    early = rename.earlier_members(cur)   # an earlier name (a rename's old side) is never the name shown
     from insight_core.markx import handles
-    learned = handles.learned_names(cur, book)   # 0168 D: {root: (display name, its confirmed handles squashed)}
+    learned = handles.learned_names(cur, book)   # {root: (display name, its confirmed handles squashed)}
 
     def now_named(ms: List[str]) -> List[str]:
         if not early:
@@ -749,7 +911,7 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
             name, typ = None, (typ if typ != I.schemas_type(e.type) else None)
         else:
             name, typ = choose(book, r, now_named(sorted(members[r])), spans)
-        lr = learned.get(r)   # 0168 D: a name that is one of its confirmed handles shows the name its pairs gave
+        lr = learned.get(r)   # a name that is one of its confirmed handles shows the name its pairs gave
         if lr and N.squash(N.key(name or e.name)) in lr[1]:
             name = lr[0] if lr[0] != e.name else None
         if (name, typ) != (e.shown_name, e.shown_type):
@@ -769,22 +931,19 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
         for r in page:
             write(r, {})
         if roots is None:
-            book.forget(page)   # v10.23 (0218): a book read by need lets each page go
+            book.forget(page)   # a book read by need lets each page go
 
     def several(chunk: List[str]) -> None:
         """Clusters of several names: their names' spans read in one go."""
-        book.prime_clusters(chunk)   # v10.23 (0218): a book read by need reads the chunk's clusters in one go
+        book.prime_clusters(chunk)
         book.prime_products(m for r in chunk for m in members[r])
         spans = _span_counts(cur, guide, sorted({m for r in chunk for m in members[r]}))
         for r in chunk:
             write(r, spans)
 
-    # v10.23 (0218): one sweep in id order, a step at a time (SHOWN_CHUNK clusters of several names or SHOWN_SINGLES
-    # of one, whichever comes first), stopping past `deadline` after a step; `after` (the step's last root) says where
-    # the next run resumes. The single names were all done at a sweep's start, past the deadline: every run with a
-    # full pass half done starts a sweep once the last is done (330k names read and let go, 18 s past the budget).
-    # v10.24 (0221): a step starts only when the seconds the last one took are left (the first: any time left), so
-    # the sweep never runs past the stage's budget; `steps` says how many it did
+    # one sweep in id order, a step at a time (SHOWN_CHUNK clusters of several names or SHOWN_SINGLES of one), `after`
+    # saying where the next run resumes; a step starts only when the seconds the last one took are left, so the sweep
+    # never runs past the stage's budget
     done, last, steps, took = True, after, 0, 0.0
     lone: List[str] = []
     many: List[str] = []
@@ -810,27 +969,32 @@ def shown(cur: Any, book: I.Book, guide: Any, *, roots: Optional[Iterable[str]],
 
 # ---- the step ---------------------------------------------------------------------------------------------------
 
-STEPS = ("org_family", "product_accounts", "reparent", "families", "family_home", "names")
-GUESS = 1.0   # v10.24 (0221): the seconds a step never measured is expected to take
+STEPS = ("org_family", "generic", "product_accounts", "reparent", "families", "family_home", "names", "levels", "reroot")
+GUESS = 1.0   # the seconds a step never measured is expected to take
 
 
 def repair(cur: Any, book: I.Book, *, run_id: Any, full: bool, deadline: Optional[float] = None,
            last: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Steps 1, 1b, 2 and 3, in order. v10.24 (0221): with what the stage's budget has left after the linking and the
-    full pass. A step starts only when the seconds it took the last time (`last`: the last run's counts, `took`) are
-    left; the steps it can't start are the next run's, which begins at the first of them (`next`) and goes on to the
-    last (`done` once the last ran). Each step is idempotent: run again, it finds what is left to fix."""
+    """The repair steps, in order, with what the stage's budget has left. A step starts only when the seconds it took
+    the last time (`last`) are left; the steps it can't start are the next run's, which begins at the first of them
+    (`next`) and goes on to the last (`done` once the last ran). Each step is idempotent."""
     cfg = config()
     w = I.Writer(cur, book, run_id)
     out: Dict[str, Any] = {}
     t0 = time.monotonic()
     steps = {"org_family": lambda: undo_org_family(cur, book, run_id=run_id),
+             # a bare name several makers' names merged into is no one's (identity.generic_bares)
+             "generic": lambda: undo_generic_prefix(cur, book, run_id=run_id),
              "product_accounts": lambda: product_accounts(cur, book, run_id=run_id),
              "reparent": lambda: reparent(cur, book, w, run_id=run_id),
              "families": lambda: merge_families(cur, book, run_id=run_id),
              "family_home": lambda: family_home(cur, book, w, run_id=run_id),
-             # 0250: a bare name several makers state, one thing a maker (identity.split_names; families.split)
-             "names": lambda: I.split_names(cur, book, w, run_id=run_id, full=full)}
+             # a bare name several makers state, one thing a maker (identity.split_names; families.split)
+             "names": lambda: I.split_names(cur, book, w, run_id=run_id, full=full),
+             # a cluster rooted on a build re-roots on its general name (identity.merge's keeper)
+             "reroot": lambda: reroot_builds(cur, book, run_id=run_id),
+             # a product's SKU ("285K") is no checkpoint (identity.level_of)
+             "levels": lambda: relevel(cur, book)}
     last = last or {}
     took_before = last.get("took") if isinstance(last.get("took"), dict) else {}
     start = STEPS.index(last["next"]) if last.get("next") in STEPS and last.get("done") is False else 0

@@ -1,22 +1,7 @@
-"""0181 (Stealth v10.16 slice K): own round-ups. A round-up's items are units (markx/units.py, mx_units), attached
-to the stored posts they link by Pairing's `attach` relation (mx_attach), the issue's time read by Pairing's post date
-(mx_roundups.issue_at); the digest ranks what round-ups carry by curators.
-
-  - Splitters on fixture HTML: a digest's unclosed list items under headings, malformed nested lists (each topic its
-    own item), a Telegram digest's bulleted lines, a link list, headed sections, the reading's items, an essay whose
-    paragraphs link (no shape), its own table of contents and its source's signature links (no item).
-  - The tag: the reading says so; a digest's shape only from a digest source (most of its posts have it) and only
-    when the reading did not see the post whole.
-  - Attach precision on fixtures: a link to a stored post in the window attaches; an older post, a round-up, the
-    round-up itself, an unstored page never.
-  - The issue's time: the latest attached item's within the reach, in Pairing's post date; every ordinary post's date
-    and every caller's result identical (a seeded world).
-  - NEVER a voice: no module but units.py (and Pairing's post date and attach) reads the units tables (a scan of the
-    code), and the decision run (tasks, memberships, connections, News rows, back and later rows) and the anchors'
-    voices are the same with the units and attach rows as without them.
-  - Migration 0123: the tables, their checks, idempotent.
-
-The DB parts run only on a database whose name ends in _test (they empty the mx_* tables inside their transaction)."""
+"""Own round-ups (0181): a round-up's items are units (markx/units.py, mx_units), attached to the stored posts they
+link (mx_attach), the issue's time read by Pairing's post date. Covers the splitters on fixture HTML, the round-up tag,
+attach precision, the issue's time, that units are never a voice (a code scan and an equivalence on a seeded world),
+the routes and migration 0123. The DB parts run only on a _test database."""
 from __future__ import annotations
 
 import json
@@ -72,8 +57,8 @@ why it is hard to see from inside the work itself.</p>
 SECTIONS = """<h2>Acme raises a round</h2><p>Acme raised money, says <a href="https://example.com/acme-round">the report</a>.</p>
 <h2>Gizmo is sued</h2><p>A lawsuit, <a href="https://example.com/gizmo-suit">filed today</a>.</p>"""
 
-# A newsletter of paragraphs (0181 round 2): a lead story under a heading, numbered bold items whose sentence and
-# related links follow on <br> lines, a bold label, fun extras.
+# A newsletter of paragraphs: a lead story under a heading, numbered bold items whose sentence and related links
+# follow on <br> lines, a bold label, fun extras.
 NEWSLETTER = """<p><em>This is today's edition of </em><a href="https://letter.example/about">The Brief</a>.</p>
 <h3>How a new method keeps agents in check</h3>
 <p>A new approach aims to control models by designing incentives.</p>
@@ -88,8 +73,7 @@ NEWSLETTER = """<p><em>This is today's edition of </em><a href="https://letter.e
 <p>+ Watch <a href="https://zoo.example/cubs">five cubs</a> grow up.<br>+ The <a href="https://photos.example/contest">photo contest</a> winners.</p>"""
 
 # Release notes of paragraphs: each item a paragraph led by its link, a second paragraph with no link, a section
-# heading over led paragraphs, a later paragraph with a link of its own (an item or more of the last: the type
-# question's `continues` says).
+# heading over led paragraphs, a later paragraph with a link of its own.
 RELEASES = """<p>This week's news, gathered from <a href="https://feeds.example/list">release feeds</a>.</p>
 <h2>Releases</h2>
 <p><a href="https://code.example/loom/v1">loom 1.0</a> merges feature branches into one integration branch.</p>
@@ -274,6 +258,18 @@ class Stored(_Db):
         got = units.also_in(self.cur, [a])
         self.assertEqual([(r["post"], r["n"], r["source"]) for r in got], [(rd, 1, "Example Digest")])
 
+    def test_a_tag_that_moves_queues_the_post_for_the_story_job(self):
+        """Mark IX's stories read the tag: a post tagged, or no longer tagged, is regrouped as a saved post is."""
+        rd = self.post(self.digest, T0, html=self.digest_html([f"https://example.com/news/s{k}" for k in range(5)]))
+        self.cur.execute("DELETE FROM story_queue WHERE key = %s", ("post:" + rd,))
+        self.read(rd)
+        self.cur.execute("SELECT count(*) FROM story_queue WHERE key = %s", ("post:" + rd,))
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        self.cur.execute("DELETE FROM story_queue WHERE key = %s", ("post:" + rd,))
+        units.note(self.cur, [rd])                                         # the same inputs: no tag moved
+        self.cur.execute("SELECT count(*) FROM story_queue WHERE key = %s", ("post:" + rd,))
+        self.assertEqual(self.cur.fetchone()[0], 0)
+
     def test_never_a_round_up_nor_the_round_up_itself(self):
         prev = self.post(self.digest, T0 - D, url="https://test.invalid/units/prev",
                          html=self.digest_html([f"https://example.com/news/p{k}" for k in range(5)]))
@@ -373,8 +369,8 @@ class Digest(_Db):
 
 
 class Types(_Db):
-    """0181 round 2: each item is asked its type, a short headline and whether it continues the item before it (kind
-    unit_types, ~20 a question); an own round-up keeps the news types; single-curator items rank below and are capped."""
+    """Each item is asked its type, a short headline and whether it continues the item before it; an own round-up
+    keeps the news types; single-curator items rank below and are capped."""
 
     def answer(self, task_id, units_answer):
         task = repo.get_task(self.cur, task_id)
@@ -538,9 +534,7 @@ READERS = {"markx/units.py", "markx/pairing.py", "markx/event_types.py",   # eve
 
 class NoOtherReader(unittest.TestCase):
     def test_no_module_but_units_and_pairings_basics_reads_the_units_tables(self):
-        """A leak needs a reader: every consumer of voices, News counts and corroboration reads its own tables. Only
-        units.py (the units, attach, the digest, "also in round-ups") and Pairing (its post date's issue time, its
-        attach source) may name these tables; the tests may."""
+        """Only units.py and Pairing may name the units tables (tests may), so no consumer of voices can read them."""
         root = pathlib.Path(units.__file__).resolve().parents[1]
         found = set()
         for path in root.rglob("*"):
@@ -560,13 +554,11 @@ class NoOtherReader(unittest.TestCase):
         self.assertNotIn("mx_roundups", pairing.ORDINARY_DATE)
 
 
-from insight_core.tests.test_markx_pairing import _World   # noqa: E402  (the seeded world of 0166's equivalence)
+from insight_core.tests.test_markx_pairing import _World   # noqa: E402
 
 
 class NeverAVoice(_World):
-    """The seeded world plus three round-ups (read as round-ups) whose items link its posts: the decision run (its
-    tasks, memberships, connections, News rows with their voices and mentions, back and later rows) and the anchors'
-    voices are the same with every unit and attach row as with none of them."""
+    """The decision run and the anchors' voices are the same with every unit and attach row as with none."""
 
     def setUp(self):
         super().setUp()
@@ -661,8 +653,8 @@ class NeverAVoice(_World):
 
 
 class PostDateIdentity(_World):
-    """Every caller of Pairing's post date reads the same date for an ordinary post as before 0181 (the old
-    expression), and the same results, with a round-up's issue time stored or not."""
+    """Pairing's post date for an ordinary post, and every caller's results, are the same with a round-up's issue
+    time stored or not."""
 
     OLD = "COALESCE({p}.surfaced_at, {p}.published_at, {p}.fetched_at)"
 
@@ -704,7 +696,7 @@ from insight_core.tests.test_markx_api import _Api, call   # noqa: E402
 
 
 class Routes(_Api):
-    """The routes read stored rows; none builds a round-up (owner 2026-11-12: never in the API)."""
+    """The routes read stored rows; none builds a round-up."""
 
     def test_issues_settings_and_no_route_builds_a_digest(self):
         status, body = call("GET", "/api/markx/roundups/issues")

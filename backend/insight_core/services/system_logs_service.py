@@ -1,6 +1,4 @@
-"""
-Helpers for exposing recent backend/scheduler log output through the API.
-"""
+"""Recent backend and scheduler log lines, for the API."""
 from __future__ import annotations
 
 import os
@@ -52,11 +50,7 @@ class SystemLogsService:
         if not path.exists():
             return []
 
-        # Read backwards in blocks rather than loading the whole file.
-        # read_text() materialised the entire log as one str - widened to UCS-4 by
-        # any emoji, and this codebase logs plenty - then splitlines() built a
-        # separate str per line. That cost ~4.6x the file size per call, and none
-        # of it was returned to the OS afterwards.
+        # read backwards in blocks: loading the whole file cost several times its size in memory per call
         block = 8192
         data = b""
         with path.open("rb") as fh:

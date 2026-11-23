@@ -1,9 +1,7 @@
-"""What changed in a page's article text between two reads (issue 0039): the text hash a
-watched page is compared by, and the short summary an update shows ("+2 sections, 1,400 words").
-
-Pure functions over the shared reader's output (a post's content and content_html), so ads,
-menus and timestamps outside the article never count. No version is kept: the summary is all
-that is left of the old text once the new one is saved.
+"""What changed in a page's article text between two reads: the text hash a watched page is compared by, and the
+short summary an update shows ("+2 sections, 1,400 words"). Pure functions over the shared reader's output, so ads,
+menus and timestamps outside the article never count. No version is kept: the summary is all that is left of the
+old text once the new one is saved.
 """
 from __future__ import annotations
 

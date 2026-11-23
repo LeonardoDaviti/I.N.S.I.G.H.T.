@@ -3,8 +3,8 @@ or two copies). Every column but updated_at is read, so a version that adds a co
 
     python -m insight_core.checks.table_rows --a <dsn> --b <dsn> [--json out]
 
-compares two databases' derived tables, read-only (e.g. main's and a branch's scratch copies after their
-story jobs: a move that should change nothing must show 0, 0075's merge rule).
+compares two databases' derived tables, read-only (e.g. main's and a branch's scratch copies after their story jobs:
+a move that should change nothing must show 0).
 """
 from __future__ import annotations
 

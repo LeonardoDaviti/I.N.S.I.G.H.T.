@@ -1,7 +1,6 @@
-"""Issue 0233 (0216 item 1): an answered task's input is spent (markx/tasks.py spend) only for the kinds nothing reads
-once answered. The scan below is the guard: every place the code reads mx_tasks.input is listed with the kinds it
-reads and when; a new reader fails it until it is placed (and its kinds kept, if it reads them after the answer).
-The rest runs against the run's own _test database; every post is synthetic."""
+"""An answered task's input is spent (markx/tasks.py spend) only for the kinds nothing reads once answered (0233). The
+scan below is the guard: every place the code reads mx_tasks.input is listed with the kinds it reads and when; a new
+reader fails it until it is placed. The rest runs against a _test database; every post is synthetic."""
 from __future__ import annotations
 
 import re
@@ -34,10 +33,13 @@ READERS = {
     "markx/ent42.py": ("window", ()),
     "markx/source_stats.py": ("after", ("stance",)),
     "markx/track_subtopics.py": ("after", ("subtopics", "subtopic_place")),
-    "markx/track_things.py": ("after", ("track_schema", "track_things")),   # 0245: the version line, the window
+    "markx/track_things.py": ("after", ("track_schema", "track_things")),   # the version line, the window
     "markx/rename.py": ("after", ("rename",)),
     "markx/graph.py": ("after", ("relate", "chain")),
     "markx/identity.py": ("after", ("alias", "alias2", "alias3", "alias4", "collide")),
+    "markx/entity_brief.py": ("after", ("collide",)),
+    "markx/questions.py": ("after", ("question",)),   # posts, sense question read back
+    "markx/track_fields.py": ("after", ("track_schema",)),   # a field suggestion read back
     "checks/invariants.py": ("open", ()),
 }
 REASKED = ("join", "pair", "merge", "check", "perspective", "collide", "relate", "chain", "back")   # opened again

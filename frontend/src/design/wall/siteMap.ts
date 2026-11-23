@@ -1,10 +1,7 @@
 /**
- * The site map the Wall draws (Design Studio, prototype verdict B): every page
- * in use at its normal state, each a frame scenario, and the moves between
- * them labelled by what you do. Links carry the href the app itself builds
- * (navigation.ts, feedContext.ts), so a renamed route breaks the test, not the
- * picture. `col` / `row` place a page on the wall, in navigation order: the
- * feed on the left, what it opens to its right.
+ * The site map the Wall draws: every page at its normal state (a frame scenario) and the moves between them,
+ * labelled by what you do. Links carry the href the app itself builds, so a renamed route breaks the test, not the
+ * picture. `col` / `row` place a page in navigation order: the feed on the left, what it opens to its right.
  */
 import { NAV_ITEMS } from '../../components/layout/navigation';
 import { CONNECTIONS_PATH } from '../../components/connections/connectionStatus';

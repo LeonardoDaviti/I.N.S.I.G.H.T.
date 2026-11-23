@@ -1,15 +1,14 @@
-"""Source health API (spec §F.4, §5.9).
-
-OperationsService.get_source_health over a fake schedule view, a FakeKind registry and a
-FixedClock: every row is what cadence_stats + decide_fetch say, the summary buckets are
-disjoint and add up to the enabled sources, and the sort puts the worst first. Then the
-two routes (a fake OperationsService) and the archive catalog's new fields. No DB, no network.
+"""Source health API: OperationsService.get_source_health over a fake schedule view, a FakeKind registry and a
+FixedClock: every row is what cadence_stats + decide_fetch say, the summary buckets are disjoint and add up to the
+enabled sources, and the sort puts the worst first; then the two routes and the archive catalog's fields. No DB, no
+network.
 """
 from __future__ import annotations
 
 import asyncio
 import sys
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,6 +38,11 @@ from insight_core.tests._kind_fakes import FakeKind
 
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
 H = timedelta(hours=1)
+
+
+def _no_budget_store(*_args, **_kwargs):
+    raise ConnectionError("no database in these tests")
+
 
 YTDLP = PolitenessProfile(concurrency_pool="ytdlp", requires="ytdlp",
                           cadence_floor=timedelta(hours=168), min_posts_per_fetch=15)
@@ -108,6 +112,14 @@ def make_service(view: list[dict] | None = None) -> OperationsService:
     service._load_schedule_view = lambda source_ids=None: [  # type: ignore[method-assign]
         r for r in rows if source_ids is None or r["id"] in source_ids
     ]
+    # host_limits reads the learned budgets from the database; there is none here, so fail it at once instead of
+    # waiting out the pool's timeout: health does not fail for it and host_limits is []
+    real_host_limits = service.host_limits
+
+    def host_limits():
+        with unittest.mock.patch("insight_core.ingestion.ports.DbHostBudgetStore.load_all", _no_budget_store):
+            return real_host_limits()
+    service.host_limits = host_limits  # type: ignore[method-assign]
     return service
 
 
@@ -169,7 +181,7 @@ class SourceHealthTests(unittest.TestCase):
         self.assertTrue(self.rows["erroring"]["dormant"])
 
     def test_dormant_is_what_it_waits(self):
-        # Issue 0088: 11 failures of a 5xx wait 12h: not dormant; 11 of a 404 wait 7 days: dormant.
+        # 11 failures of a 5xx wait 12h: not dormant; 11 of a 404 wait 7 days: dormant (0088)
         from insight_core.services.operations_service import _dormant
         failing = lambda wait: FetchStateRow(source_id="s", consecutive_failures=11, last_error_at=NOW,  # noqa: E731
                                              next_retry_at=NOW + wait)
@@ -202,7 +214,7 @@ class SourceHealthTests(unittest.TestCase):
             }, True, row["source_id"])
 
     def test_a_source_whose_pages_lose_their_images_says_so(self):
-        # Issue 0032: from the newest page reads (metadata.page_read), conservatively.
+        # from the newest page reads (metadata.page_read), conservatively (0032)
         lost = {"page_images": 6, "kept_images": 1, "text_chars": 3000, "short_opening": False}
         fine = {"page_images": 6, "kept_images": 6, "text_chars": 3000, "short_opening": False}
         short = {**fine, "short_opening": True}
@@ -219,9 +231,8 @@ class SourceHealthTests(unittest.TestCase):
 
     def test_summary_counts_add_up_to_the_enabled_sources(self):
         summary = self.result["summary"]
-        # "errors" counts every failing source, the one in backoff too (issue 0137 A1): the buckets less
-        # the backoff counted twice add up to the enabled sources.
-        # stalled (issue 0242): "erroring" failed BACKOFF_DORMANT_AFTER times in a row; a mark, not a status.
+        # "errors" counts every failing source, the one in backoff too: the buckets less the backoff counted twice add
+        # up to the enabled sources; stalled ("erroring" BACKOFF_DORMANT_AFTER times in a row) is a mark, not a status
         self.assertEqual(summary, {"due_now": 3, "deferred": 1, "backoff": 1, "unavailable": 1, "errors": 2, "silent": 0,
                                    "stalled": 1})
         enabled = [r for r in schedule_view() if r["enabled"]]
@@ -265,14 +276,12 @@ class SourceHealthTests(unittest.TestCase):
 
     def test_the_status_set_has_one_source(self):
         from insight_core.services.operations_service import (
-            EMPTY_SOURCE_HEALTH,
             HEALTH_STATUS_ORDER,
             HealthStatus,
             summarize_health,
         )
         self.assertEqual(HEALTH_STATUS_ORDER, tuple(s.value for s in HealthStatus))
-        self.assertEqual(summarize_health([]), EMPTY_SOURCE_HEALTH["summary"])
-        self.assertEqual(set(EMPTY_SOURCE_HEALTH["summary"]),
+        self.assertEqual(set(summarize_health([])),
                          {"due_now", "deferred", "backoff", "unavailable", "errors", "silent", "stalled"},
                          "the wire keys are API contract (spec F.4; issue 0178 added silent, 0242 stalled)")
 
@@ -339,8 +348,7 @@ class FakeOperations:
 
 
 def run(coro):
-    """A route's answer: awaited for an async route, as is for a plain def one (issue 0195: sync routes run in the
-    threadpool, never on the loop)."""
+    """A route's answer: awaited for an async route, as is for a plain def one (sync routes run in the threadpool)."""
     return asyncio.run(coro) if asyncio.iscoroutine(coro) else coro
 
 
@@ -392,7 +400,7 @@ class _FakeSourcesService:
     def get_all_sources_with_settings(self):
         return self.sources
 
-    def list_sources(self):   # the catalog reads the list's settings (issue 0195)
+    def list_sources(self):   # the catalog reads the list's settings
         return self.sources
 
 
@@ -422,8 +430,8 @@ class ArchiveCatalogTests(unittest.TestCase):
         self.assertIsNone(entries["b"]["last_inspected_at"], "never measured")
 
     def test_sources_that_cannot_archive_stay_out_of_the_catalog(self):
-        # Issue 0027: a feed that lists no more than one fetch reads, and a kind this process
-        # cannot fetch, have nothing to archive; a feed listing more than one fetch stays.
+        # a feed that lists no more than one fetch reads, and a kind this process cannot fetch, have nothing to
+        # archive; a feed listing more than one fetch stays (0027)
         kinds = registry()
         kinds.by_name("generic_rss").available_basis = "feed_window"
         service = SourceFetchService("postgresql:///unused", kinds=kinds,

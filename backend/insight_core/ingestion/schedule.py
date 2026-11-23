@@ -1,10 +1,7 @@
 """The fetch schedule: one pure answer to "should this source be fetched now?".
 
-Pure: no DB, no clock, no environment reads except in availability_from_env and the
-backoff constants. Every caller - the ingestion runner and the source health API - builds its CadenceStats with cadence_stats() and asks decide_fetch(),
-so the UI and the runner cannot disagree about when a source is due.
-
-Spec: plan/INSIGHT_mark_ix_plan.md §C.2.
+Pure: no DB, no clock, no environment reads except in availability_from_env. The runner and the source health API
+both build CadenceStats with cadence_stats() and ask decide_fetch(), so they cannot disagree about when a source is due.
 """
 from __future__ import annotations
 
@@ -23,35 +20,28 @@ if TYPE_CHECKING:
     from insight_core.db.repo_fetch_state import FetchStateRow
 
 
-# Backoff ladder: 1h, 2h, 4h, 8h, 16h, 24h, 24h, ... and a 7d cap once a source has failed
-# DORMANT_AFTER times in a row (roughly a week of daily failures). 1h, not Mark VIII's 15m:
-# the scheduler ticks hourly, so any shorter step only rounds up to "next tick".
+# Backoff ladder: 1h, 2h, 4h, ... 24h, and a 7d cap after DORMANT_AFTER failures in a row. 1h because the scheduler
+# ticks hourly.
 BACKOFF_BASE = timedelta(minutes=env_float("INSIGHT_BACKOFF_BASE_MINUTES", 60))
 BACKOFF_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_MAX_HOURS", 24))
 BACKOFF_DORMANT_AFTER = int(env_float("INSIGHT_BACKOFF_DORMANT_AFTER", 10))
 BACKOFF_DORMANT_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_DORMANT_MAX_HOURS", 168))
-# A 5xx or a timeout is the other server's trouble (issue 0088): the same ladder, capped at 12h
-# however many failures in a row, so such a source is never dormant.
+# A 5xx or a timeout is the other server's trouble: the same ladder capped at 12h, never dormant.
 BACKOFF_SERVER_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_SERVER_MAX_HOURS", 12))
 
-# A source is fetched at its own pace (owner 2026-11-11: "if someone needs 6 hours give them 6
-# hours"): a source posting at least daily is fetched every mean gap, never more often than the
-# tick; a slower one keeps the half-gap it had before (at least a day, at most 21 days), so no
-# source is fetched less often than under the old 24h minimum.
+# A source is fetched at its own pace: at least daily posters every mean gap, slower ones every half gap.
 #   interval = clamp(min(mean_gap, max(mean_gap * HALF_GAP_SHARE, HALF_GAP_FROM)), TIER_INTERVAL_MIN, TIER_INTERVAL_MAX)
-# Probation is 6h: a new source's first fetches are what learn its cadence (refresh_cadence runs
-# daily), and a fast source found on probation then waits 6h, not a day, for its first posts.
+# Probation is 6h: a new source's first fetches learn its cadence.
 PROBATION_INTERVAL = timedelta(hours=6)
 TIER_INTERVAL_MIN = timedelta(hours=1)     # the ingestion tick (run_scheduler: 60 minutes)
 TIER_INTERVAL_MAX = timedelta(days=21)
 HALF_GAP_FROM = timedelta(hours=24)        # a source slower than this is fetched every half gap...
-HALF_GAP_SHARE = 0.5                       # ...as before 2026-11-11, never less often
+HALF_GAP_SHARE = 0.5                       # ...never less often
 BACKLOG_GUARD_MIN = timedelta(hours=1)
 # A busy feed is polled before its window (mean_gap x the posts it exposes) is a quarter full.
 BACKLOG_GUARD_SHARE = 4
-# last_success_at is recorded when a fetch ends, ticks are anchored to their start: a source
-# due up to this soon is due now, so a 1h source fetched 5 minutes into a tick is due at the
-# next tick, not the one after.
+# last_success_at is recorded when a fetch ends but ticks are anchored to their start: a source due this soon is
+# due now, so a 1h source is due at the next tick, not the one after.
 DUE_SLACK = timedelta(minutes=10)
 
 # Tier boundaries. refresh_cadence's SQL CASE (db/repo_fetch_state.py and migration 0019)
@@ -69,7 +59,7 @@ class DecisionKind(str, Enum):
     FETCH_DUE = "fetch_due"                  # interval elapsed since last_success_at
     FETCH_RETRY = "fetch_retry"              # in error state and next_retry_at elapsed
     FETCH_FORCED = "fetch_forced"            # request.force
-    FETCH_LINKED = "fetch_linked"            # a story links one of its pages not stored (issue 0114)
+    FETCH_LINKED = "fetch_linked"            # a story links one of its pages not stored
     SKIP_NOT_DUE = "skip_not_due"
     SKIP_BACKOFF = "skip_backoff"
     SKIP_UNAVAILABLE = "skip_unavailable"    # yt-dlp off / no Telegram credentials or session
@@ -102,7 +92,7 @@ class CadenceStats:
     last_outcome: OutcomeStatus | None
     consecutive_failures: int
     next_retry_at: datetime | None
-    # Issue 0114: a story linked one of its pages not stored at this time; due until a fetch succeeds after it.
+    # a story linked one of its pages not stored at this time; due until a fetch succeeds after it
     linked_wanted_at: datetime | None = None
     linked_url: str | None = None
 
@@ -112,11 +102,10 @@ class Availability:
     """What this process can fetch at all. Unavailable is never backoff."""
 
     ytdlp_enabled: bool
-    # Telegram API id + hash and a session stored in Connections (B8). An
-    # unauthorised session is only known once the session opens: the runner reports it.
+    # Telegram API id + hash and a session stored in Connections; an unauthorised session shows only once it opens
     telegram_credentials: bool
     telegram_reason: str | None = None   # why telegram_credentials is False (the skip reason)
-    # Issue 0242: Reddit's registered app (client id, secret, username) stored in Connections; None: all set.
+    # Reddit's registered app (client id, secret, username) stored in Connections; None: all set
     reddit_reason: str | None = None
 
 
@@ -150,7 +139,7 @@ def availability_from_env(
     - telegram_mtproto: an API id (an int), a hash and the session saved by the browser
       sign-in; telegram_reason names what is missing. Credentials come from `credentials`
       (a CredentialProvider), default the Connections store; never from the environment.
-    - reddit_subreddit (issue 0242): the registered app's credentials; reddit_reason says what to add.
+    - reddit_subreddit: the registered app's credentials; reddit_reason says what to add.
     """
     from insight_core.ingestion.kinds.reddit import reddit_credentials
     from insight_core.ingestion.kinds.telegram_session import (
@@ -272,11 +261,8 @@ def fetch_interval(stats: CadenceStats, profile: PolitenessProfile) -> tuple[tim
 
 def backoff_delay(consecutive_failures: int, *, rand: Callable[[], float] = random.random,
                   their_trouble: bool = False) -> timedelta:
-    """min(base * 2^(n-1), cap) * U(0.85, 1.0); the cap rises to 7d for dormant sources, and is
-    12h whatever n when the error was the other server's trouble (a 5xx or a timeout, issue 0088).
-
-    Jitter is applied to the capped delay and only downward, so the cap is a bound an
-    operator can read as one, and a cohort at the cap does not wake in the same second.
+    """min(base * 2^(n-1), cap) * U(0.85, 1.0); the cap is 7d for dormant sources and 12h for the other server's
+    trouble. Jitter is applied to the capped delay and only downward, so the cap is a real bound.
     """
     n = int(consecutive_failures or 0)
     if n <= 0:
@@ -335,7 +321,7 @@ def decide_fetch(
     if reason is not None:
         return decision(DecisionKind.SKIP_UNAVAILABLE, None, f"Unavailable: {reason}")
 
-    # 1b. A kind that never fetches (the Saved pages, issue 0031): nothing is ever due, even forced.
+    # 1b. A kind that never fetches (the Saved pages): nothing is ever due, even forced.
     if not profile.fetches:
         return decision(DecisionKind.SKIP_NOT_DUE, None, "Pages saved by hand; never fetched")
 
@@ -363,9 +349,8 @@ def decide_fetch(
 
     # 5. Due check, counted from the last successful fetch (empty fetches count), DUE_SLACK early.
     due = (stats.last_success_at or _EPOCH) + interval
-    # 4b. A story links one of its pages not stored (issue 0114): due now, until a fetch succeeds after it.
-    # The planner (services/originals_service.py) asks only outside 15 minutes of the last fetch, outside
-    # backoff, and once per interval.
+    # 4b. A story links one of its pages not stored: due now, until a fetch succeeds after it (the planner,
+    # services/originals_service.py, rate-limits the asking).
     if (stats.linked_wanted_at is not None and now < due - DUE_SLACK
             and (stats.last_success_at is None or stats.last_success_at < stats.linked_wanted_at)):
         return decision(DecisionKind.FETCH_LINKED, now, f"A story links its page {stats.linked_url or ''}".rstrip())

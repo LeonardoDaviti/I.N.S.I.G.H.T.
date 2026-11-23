@@ -1,22 +1,13 @@
-"""A post's references (issue 0125): every http(s) link of its text, each address once, with the reason line the
-author gave for it. What the post page's Connected block is read from (db/repo_post_refs.py): Earlier (the stored
-posts a post links), Later (the stored posts that link it) and Outside INSIGHT (the pages it links that are not
-stored). No model: the author's own links, read by rules.
+"""A post's references (`refs_of`): every http(s) link of its text, each address once, with the reason line the
+author gave for it. What the post page's Connected block is read from (db/repo_post_refs.py): Earlier, Later and
+Outside INSIGHT. No model: the author's own links, read by rules.
 
-**The links** are `body_hrefs` (issue 0057, what the reader links), made absolute against the post's address and
-normalized as posts are (0049), the first link to an address kept. The post's own address, a media file, its own
-site: all kept here; the reader leaves out what no row shows (a link to itself), and Outside reads `post_links`
-(extract_links' rules).
-
-**The reason line** is the lab's measured rule (plan/research, links_v1_supp.reason; 0125 "What was measured"),
-ported and nothing added. The first of:
-1. the words the post quotes from the page (post_links.quoted_words: a quoted tweet, a link preview), cut at 300;
-2. the sentence around the link (`anchor`), when it has 6+ words besides the link words and addresses and is not a
-   footnote or reference line (starting with ^, [n] or n.);
-3. Earlier and Later only, the stored post's title (read with the row: the target may be stored later);
-4. the link words, when `titled_link_text` says they name a page;
-5. nothing.
-Outside rows show 1 and 2 only (`shown_reason`): the full rule measured 86% usable there, under its 80% lower bound.
+The links are `body_hrefs` (what the reader links), made absolute and normalized as posts are, the first link to an
+address kept. The reason line is the lab's measured rule (plan/issues/0125), the first of: 1. the words the post
+quotes from the page, cut at 300; 2. the sentence around the link (`anchor`), when it has MIN_REASON_WORDS+ words
+besides the link and is not a footnote line; 3. Earlier and Later only, the stored post's title; 4. the link words,
+when `titled_link_text` says they name a page; 5. nothing. Outside rows show 1 and 2 only (`shown_reason`): the full
+rule measured below its bar there.
 """
 from __future__ import annotations
 
@@ -31,8 +22,6 @@ from insight_core.utils.url_normalization import normalize_url
 
 # The kinds of reason a row's line comes from, in the rule's order.
 QUOTE, SENTENCE, TITLE, LINK_WORDS = "quote", "sentence", "title", "link_words"
-STORED_KINDS = (QUOTE, SENTENCE, LINK_WORDS)   # read from the post; TITLE is the target's, read with the row
-OUTSIDE_KINDS = (QUOTE, SENTENCE)
 
 QUOTE_MAX = 300
 ANCHOR_MAX = 320

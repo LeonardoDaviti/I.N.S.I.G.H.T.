@@ -1,6 +1,5 @@
-"""Issue 0076: a post is read once, when it is saved. The parser's parts say what the read-time rules
-say (titles, bodies as cut points, quotes, footers); a save writes them; a raw change drops them; the
-catch-up parses what has none and writes only what changed."""
+"""A post is read once, when it is saved (0076): the parser's parts say what the read-time rules say; a save writes
+them; a raw change drops them; the catch-up parses what has none and writes only what changed."""
 from __future__ import annotations
 
 import os
@@ -148,8 +147,8 @@ WRITERS = {"db/repo_post_parts.py"}
 
 
 class ImportGuardTests(unittest.TestCase):
-    """Issue 0076: a post is read once, when it is saved. No page parses it again: the services, the
-    repositories and the API import none of the read-time rules (the parser's writer aside)."""
+    """No page parses a post again: the services, repositories and API import none of the read-time rules (the
+    parser's writer aside)."""
 
     def test_pages_do_not_import_the_parsers(self):
         import ast

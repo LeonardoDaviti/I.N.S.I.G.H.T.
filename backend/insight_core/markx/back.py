@@ -1,33 +1,18 @@
-"""Back in the news, in Shadow (issue 0136, building 0092): an old Mark IX story with a fresh development gets a row on
-/markx's News again, with the owner's label buttons. Shadow: mx_* rows only (mx_back, mx_tasks, mx_labels); Mark IX is
-only read, and the row never enters Mark IX's News.
+"""Back in the news: an old Mark IX story with a fresh development gets a row on /markx's News, with label buttons.
 
-  1. **The trigger** (no model; the lab's back_v2 `bk_cands.py`). An old story is a Mark IX story with 2+ sources. It
-     can fire in a 72-hour window starting at least FIRST_DAYS after its first post and LAST_DAYS after its last one,
-     once (the lab's: a story's earliest burst; on the server copy, letting a story fire again 7 days after its last
-     return made 535 candidates of 197 stories in four months, mostly the same perennial stories, V above all;
-     0163: a long-lived story, markx/later.py's, may fire again later.AGAIN after its last window). In that
-     window 2+ distinct sources post, outside the story, about:
-       E  its subject: the ent-v3 subject (current mention set) of 2+ of its posts (of 1 when only one post was read),
-          of a specific type (not org, person or place), by exact name: another version is another name;
-       L  one of its pages: its members' own addresses, pages 2+ members link, Mark IX's origin page; not home pages,
-          profiles or subreddits, nor pages linked in HUB_WEEKS+ distinct weeks;
-       V  its centre: cosine >= COS to the mean of its members' vectors. A V burst is a candidate only when the
-          story has no E or L burst.
-     The window starts at the earliest E or L burst (else the V burst). Its posts are every hit inside it, E and L
-     hits first, then by date, at most MAX_POSTS; its triggers, each that has 2+ sources inside it. Stored once per
-     story and window (mx_back).
-  2. **The judge** (`back`, back-v1 = the lab's frozen back_v3c.md): a verdict per new post. The candidate's verdict
-     is the first of development, retold, related, unrelated any post has (the lab's bk_judge.rel); asked RUNS times,
-     the majority, "unknown" when no two agree. Planned by the decision run, capped at OPEN open or leased.
-  3. **The row** (`page`): each candidate judged development, with the owner's label (development / retold /
-     related / unrelated) and the running precision of those labels.
+Writes mx_* only (mx_back, mx_tasks, mx_labels); Mark IX is only read. Three parts:
+  1. **The trigger** (`stage`, no model): an old story (2+ sources) may fire once, in a WINDOW starting FIRST_DAYS
+     after its first post and LAST_DAYS after its last (a markx/later.py story may fire again), when MIN_SOURCES
+     distinct sources post outside it about E its specific subject (exact name), L one of its pages (no hubs, home
+     pages or profiles), or V its centre (cosine >= COS; only when there is no E or L burst). One row per story and
+     window (mx_back).
+  2. **The judge** (`plan`, `verdict`): a `back` verdict per new post; the candidate's is the first of development,
+     retold, related, unrelated any post has; the majority of RUNS answers ("unknown" when no two agree), unless the
+     first answer SETTLES it.
+  3. **The row** (`page`): each candidate judged development, with the owner's label and their running precision.
 
-Dates are Pairing's post date (`pairing.post_date`, 0166; a round-up's issue time since 0181).
-
-0180 (anchors): the gates above are Pairing's `develops` row, read here. This module's rows are engine 'old'; the
-anchors engine (markx/anchors.py: Mark IX and Mark X stories, a happening's H hits first) writes engine 'anchors'
-rows beside them from `stage` (Shadow), and the page shows the engine anchors.shown names (old by default).
+The gates are Pairing's `develops` row. This module's rows are engine 'old'; markx/anchors.py writes engine 'anchors'
+rows beside them, and the page shows the engine anchors.shown names.
 """
 from __future__ import annotations
 
@@ -45,22 +30,20 @@ from insight_core.utils import voice
 log = logging.getLogger(__name__)
 
 KIND = "back"
-# 0180: the gates are Pairing's `develops` row (one place for back, later and the anchors engine); named here as before.
+# the gates are Pairing's `develops` row (shared with later and the anchors engine)
 DEVELOPS = pairing.policy(pairing.DEVELOPS)
 FIRST_DAYS = DEVELOPS.first_after.days   # the window starts this long after the story's first post or later ...
 LAST_DAYS = DEVELOPS.last_after.days     # ... and this long after its last one
-WINDOW = DEVELOPS.window                 # 72 hours
-MIN_SOURCES = DEVELOPS.min_voices        # 2
-COS = DEVELOPS.cosine                    # 0.70
+WINDOW = DEVELOPS.window
+MIN_SOURCES = DEVELOPS.min_voices
+COS = DEVELOPS.cosine
 HUB_WEEKS = DEVELOPS.hub_weeks           # a page linked in this many distinct ISO weeks is a hub (no L)
 MAX_POSTS = 6
 OLD_SHOWN = 4                 # the question shows the old story's earliest 4 posts ...
 OLD_CHARS = 300               # ... at 300 characters, and each new post at 500 (the lab's render)
 NEW_CHARS = 500
 RUNS = 3
-# 0191: a first answer whose relation settles the candidate alone: never asked a second and third time. On the lab's
-# frozen test set (98 candidates, each run in turn taken as the first) 0 of 294 development decisions changed and 37%
-# of back calls were saved (dev sets: 2 of 198 changed); stopping on `retold` too changed 1 of 294 on test.
+# a first answer with one of these relations settles the candidate alone (measured: plan/issues/0191)
 SETTLES = ("unrelated", "related")
 OPEN = 50                     # decide.Config.back_open
 FIRST_SCAN_DAYS = 30          # the first run reads this far back; each next one, from its last run's clock less WINDOW
@@ -68,13 +51,13 @@ MARGIN = timedelta(hours=1)
 SINCE_KEY = "back_since"
 MODEL = "bge-m3"
 SPECIFIC = DEVELOPS.types               # the subject types that name one thing (E)
-ENGINE = "old"                          # this module's rows in mx_back (0180: the anchors engine writes 'anchors')
+ENGINE = "old"                          # this module's rows in mx_back (the anchors engine writes 'anchors')
 LABELS = ("development", "retold", "related", "unrelated")
 ANSWERS = LABELS + ("undo",)
 UNKNOWN = "unknown"
-_MAP = {"mixed": "development", "late_repeat": "retold", "different": "unrelated"}   # the lab's older words
+_MAP = {"mixed": "development", "late_repeat": "retold", "different": "unrelated"}   # older answer words
 MEASURED = {"precision": 0.87, "lo": 0.68, "hi": 0.96, "n": 23, "words": "measured 87% precise (68–96%), about 1 in 8 wrong"}
-DATE = pairing.POST_DATE       # Pairing's post date (0166)
+DATE = pairing.POST_DATE
 SOCIAL = pairing.SOCIAL
 
 
@@ -84,8 +67,7 @@ def _date(p: str = "p") -> str:
 
 # ---- pages (the lab's norm) -------------------------------------------------------------------------------
 
-# a page's compared form: Pairing's page address (0166). v10.16: kept per address (a pure function of the string; the
-# hubs read every link to the stories' hosts, the same addresses many times over, in back's stage and later's)
+# a page's compared form: Pairing's page address, cached (the hub reads see the same addresses many times)
 norm = functools.lru_cache(maxsize=1 << 17)(pairing.page_address)
 
 
@@ -167,8 +149,7 @@ def sources(members: Iterable[_P]) -> int:
 
 
 def stories(cur: Any, now: datetime) -> Dict[str, Story]:
-    """Mark IX's stories of 2+ sources that may fire by `now` and never did, with their subjects and pages (hubs not
-    yet taken out)."""
+    """Mark IX's stories of 2+ sources that may fire by `now` and never did, filled (`fill`)."""
     cur.execute(f"""SELECT sp.story_id::text, p.id::text, p.source_id::text, {_date()}, p.url, st.origin_url,
                            s.platform = 'saved'
                       FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN posts p ON p.id = sp.post_id
@@ -194,8 +175,8 @@ def stories(cur: Any, now: datetime) -> Dict[str, Story]:
 
 
 def fill(cur: Any, out: Dict[str, Story], page: Any = None) -> None:
-    """Each story's subjects (the specific subjects of 2+ of its read members, of 1 when one was read) and pages (its
-    members' own, pages 2+ members link, its origin; compared by `page`, default norm), hubs not taken out."""
+    """Each story's subjects (specific subjects of 2+ read members, of 1 when one was read) and pages (its members'
+    own, pages 2+ members link, its origin; compared by `page`), hubs not taken out."""
     page = page or norm
     mids = sorted({m.id for s in out.values() for m in s.members})
     subj, read = _subjects(cur, mids)
@@ -270,7 +251,7 @@ def burst(hits: Sequence[Tuple[datetime, str]], src: Dict[str, str]) -> Optional
 
 def candidate(story: Story, hits: Dict[str, Sequence[Tuple[datetime, str]]], src: Dict[str, str]) -> Optional[Dict[str, Any]]:
     """The story's candidate from its hits {H|E|L|V: sorted [(at, post)]}: {window_at, trig, posts, post_trig}, or
-    None. H (0180, the anchors engine only: a post whose happening develops the anchor's) counts as E and L do."""
+    None. H (the anchors engine only: a post whose happening develops the anchor's) counts as E and L do."""
     found = {k: b for k in TRIGS if (b := burst(hits.get(k) or (), src)) is not None}
     if not found:
         return None
@@ -303,9 +284,8 @@ def recent_posts(cur: Any, *, now: datetime, since: datetime) -> Dict[str, _P]:
 def triggers(cur: Any, st: Dict[str, Story], *, now: datetime, since: datetime, page: Any = None,
              recent: Optional[Dict[str, _P]] = None, extra: Optional[Dict[str, Sequence[Tuple[datetime, str]]]] = None
              ) -> List[Dict[str, Any]]:
-    """The candidates of the stories `st` (filled: `fill`) that the posts dated in [since, now] make. `page`: how
-    pages compare (default norm); `recent`: those posts when the caller read them; `extra`: {story: [(at, post)]}
-    H hits a caller found (the anchors engine's happenings: checked by their own gate, not by t0)."""
+    """The candidates of the stories `st` (filled) that the posts dated in [since, now] make. `page`: how pages
+    compare; `recent`: those posts if already read; `extra`: {story: [(at, post)]} H hits the caller found."""
     if not st:
         return []
     if recent is None:
@@ -346,8 +326,7 @@ def triggers(cur: Any, st: Dict[str, Story], *, now: datetime, since: datetime, 
 
 
 def write(cur: Any, found: Sequence[Dict[str, Any]], *, run_id: Any = None, engine: str = ENGINE) -> int:
-    """The new candidates (once per engine, anchor and window): how many were new. A candidate's `anchor_kind`
-    (default ix_story) and `story` (the anchor's id) name its anchor (0180)."""
+    """Store the candidates (once per engine, anchor and window): how many were new."""
     import json
     added = 0
     for c in found:
@@ -380,7 +359,7 @@ def render(members: Sequence[Any], new: Sequence[Any]) -> str:
 
 
 def numbered(input: str) -> int:
-    """How many new posts a back question numbers (validate.back_numbered: 0191, the worker runs the same check)."""
+    """How many new posts a back question numbers (validate.back_numbered; the worker runs the same check)."""
     return validate.back_numbered(input)
 
 
@@ -415,11 +394,9 @@ def plan(cur: Any, *, open_cap: int = OPEN, now: Optional[datetime] = None, **_k
 
 
 def planned(cur: Any, add: Any, link: str, row: str) -> Optional[Tuple[Any, bool]]:
-    """v10.15: a row's task added (`add()`: (task id, new)) and the row pointed at it (`link`), in a savepoint. Inside a
-    decision run (one REPEATABLE READ snapshot) another transaction may have asked the same question or planned the
-    same row since the snapshot (a worker's lease plans back and later too, and leases and answers its tasks): Postgres
-    then fails the insert or the update with a serialization failure, which here leaves the row for the next plan
-    instead of failing the run. None when so."""
+    """A row's task added (`add()`: (task id, new)) and the row pointed at it (`link`), in a savepoint. A worker's
+    lease may plan the same row after the run's REPEATABLE READ snapshot: the serialization failure leaves the row for
+    the next plan instead of failing the run. None when so."""
     from psycopg import errors as psycopg_errors
     try:
         with cur.connection.transaction():
@@ -432,13 +409,13 @@ def planned(cur: Any, add: Any, link: str, row: str) -> Optional[Tuple[Any, bool
 
 
 def settles(answer: Optional[Dict[str, Any]]) -> bool:
-    """0191: a first answer that settles its candidate without a second and third run."""
+    """A first answer that settles its candidate without a second and third run."""
     return relation(answer) in SETTLES
 
 
 def after_answer(cur: Any, task: Dict[str, Any]) -> bool:
     """A back task's valid answer (tasks.record): asked again until it has RUNS valid answers, unless its first answer
-    settles it alone (0191). Whether it reopened."""
+    settles it alone. Whether it reopened."""
     cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at, ctid", (task["id"],))
     got = [r[0] for r in cur.fetchall()]
     if len(got) >= RUNS or (len(got) == 1 and settles(got[0])):
@@ -465,7 +442,7 @@ def relation(answer: Optional[Dict[str, Any]]) -> Optional[str]:
 
 def verdict(answers: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """The first RUNS valid answers' verdict: {relation (the majority's, or unknown when no two agree), runs}; None
-    until RUNS came, except a candidate whose first answer settles it alone (0191, SETTLES: its relation, one run)."""
+    until RUNS came, except a candidate whose first answer settles it alone (SETTLES: its relation, one run)."""
     runs = list(answers)[:RUNS]
     if len(runs) < RUNS:
         if runs and settles(runs[0]):
@@ -489,8 +466,8 @@ def _answers(cur: Any, task_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]
 # ---- the decision run's stage ------------------------------------------------------------------------------
 
 def stage(cur: Any, *, now: datetime, run_id: Any = None, open_cap: int = OPEN) -> Dict[str, Any]:
-    """The decision run's part (in its connections stage): the candidates of the posts since the last run (less
-    WINDOW), then the back questions planned. Its counts."""
+    """The decision run's part: the candidates of the posts since the last run (less WINDOW), then `plan`. Its
+    counts."""
     from insight_core.markx import repo
     t0 = time.monotonic()
     last = repo.get_setting(cur, SINCE_KEY, default=None)
@@ -524,7 +501,7 @@ def _shown_posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     cur.execute(f"""SELECT p.id::text, p.title, p.url, {_date()}, {byline.SOURCE_NAME}, {byline.COLUMNS}
                       FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                      WHERE p.id = ANY(%s::uuid[])""", (ids,))
-    # issue 0185: each line's byline (who wrote it, via whom)
+    # each line's byline (who wrote it, via whom)
     return {i: {"title": t or None, "url": u, "at": at, "source": src, "byline": byline.of_row(src, *by)}
             for i, t, u, at, src, *by in cur.fetchall()}
 
@@ -536,11 +513,9 @@ def _iso(t: Optional[datetime]) -> Optional[str]:
 def page(cur: Any, *, limit: int = 100) -> Dict[str, Any]:
     """/markx's "Back in the news": {on, items [rows judged development, newest window first], counts, precision}.
     Each row {id, story, headline, first_at, window_at, days_later, trig, posts [{id, n, title, source, at, trig,
-    verdict}], old_thing, what_new [the development runs' words], runs, label}: the rows of the engine shown (0180:
-    anchors.shown, old by default; `engine` says which).
-
-    0233: shown only while its feature is on (markx/consumers.py `back`; off since 0210, its bar failed at 68%): off,
-    `on` is false and no row, count or precision is read (the rows stay, kept)."""
+    verdict}], old_thing, what_new [the development runs' words], runs, label}: the rows of the engine
+    anchors.shown names (`engine`). While the feature is off (markx/consumers.py `back`), `on` is false and nothing is
+    read (the rows stay)."""
     from insight_core.markx import anchors, consumers
     if not consumers.states(cur)[KIND]:
         return {"on": False, "items": [], "counts": {}, "precision": None, "measured": MEASURED, "engine": None}

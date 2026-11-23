@@ -1,10 +1,8 @@
-"""0162 (Stealth v10.14): research. Each seed kind; step 1 with every version of an address; the same announcement by a
-unique shared link and by a near-copy; the maker from platform addresses; declared links followed two hops, same
-identity only, never a link inside someone else's post; the same-identity rules and the `identity` task's schema,
-validation and answer; the channels through the finder into the scratch area (nothing followed); the paper index by
-exact ids (a namesake's paper left out); discussion hits exact only; the web search off until configured, a pluggable
-provider; "Watch this" makes a track; the provenance; the cost guard; a run never starts by itself. Every request is
-stubbed. Synthetic names only; the DB tests run on a database whose name ends in _test."""
+"""Research (0162): seed kinds, the same announcement by a shared link or near-copy, the maker from platform
+addresses, declared links followed two hops (same identity only, never inside someone else's post), the `identity`
+task, channels through the finder (nothing followed), the paper index by exact ids, discussion hits, the pluggable web
+search, "Watch this", provenance and the cost guard; a run never starts by itself. Every request is stubbed; the DB
+tests run on a _test database."""
 from __future__ import annotations
 
 import asyncio
@@ -118,7 +116,7 @@ class Pure(unittest.TestCase):
         self.assertIsNotNone(validate.check("identity", {"same": "yes"}, "q")[1])
 
     def test_the_websearch_kind(self):
-        """0171: the worker's web search: its guide (a name alone is not enough, no fetching), schema and checks."""
+        """The worker's web search: its guide (a name alone is not enough, no fetching), schema and checks (0171)."""
         self.assertEqual((schemas.KINDS["websearch"].guide, schemas.KINDS["websearch"].subject),
                          ("websearch-v1", "research_run"))
         body = schemas.guide_body("websearch-v1")
@@ -252,7 +250,7 @@ class Pure(unittest.TestCase):
     def test_web_search_is_the_workers_until_configured_and_pluggable(self):
         with mock.patch.dict("os.environ", {W.WEB_SEARCH_URL_ENV: "", W.WEB_SEARCH_KEY_ENV: ""}):
             with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: ""}):
-                self.assertIsInstance(W.web_search(), W.WorkerSearch)          # 0171: the worker's by default
+                self.assertIsInstance(W.web_search(), W.WorkerSearch)          # the worker's by default
                 self.assertEqual(W.web_search().name, "worker")
             with mock.patch.dict("os.environ", {W.WEB_SEARCH_ENV: "worker"}):
                 self.assertIsInstance(W.web_search(), W.WorkerSearch)
@@ -592,9 +590,8 @@ class Papers(_Research):
 
 
 class WebByWorker(_Research):
-    """0171: the web search asked of the worker (Claude Code's web search tool on the owner's device): one `websearch`
-    task a run, the run waiting until it is answered, its candidates read and judged like any other (a name alone never
-    counts), the run's 5 searches spent when it is asked, the same question one task."""
+    """The web search is one `websearch` task a run, answered by the worker; the run waits for it, its candidates are
+    judged like any other (a name alone never counts), its 5 searches spent when asked (0171)."""
     SEED = "https://huggingface.co/acmeai/widget-1"
     WEB_WORLD = dict(WORLD, **{
         "https://www.reddit.com/user/acmeai_team": page("acmeai_team", "https://acme.example/"),   # links the site

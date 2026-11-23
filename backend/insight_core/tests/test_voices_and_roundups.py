@@ -1,11 +1,7 @@
-"""One voice per publication, and roundups that point at the story (issue 0069, part C).
-
-- A website source's voice is its publication: the host it publishes at, without `www.` (most of
-  its posts' hosts, else its address's). Writers on one platform are voices of their own; two
-  sources at one host are one. Its site still says where it is (Discover's places, sections).
-- Classics: a page's own voices are its publication's and its site's.
-
-The rules as pure functions; the job on the database in one transaction per test, rolled back.
+"""One voice per publication, and roundups that point at the story (0069 C). A website source's voice is its
+publication (the host it publishes at, without `www.`); writers on one platform are voices of their own; two sources
+at one host are one. Classics: a page's own voices are its publication's and its site's. Rules as pure functions; the
+job on the database in one rolled-back transaction per test.
 """
 from __future__ import annotations
 

@@ -122,6 +122,25 @@ class ReadPageTests(unittest.TestCase):
         post, _ = self.read({}, title="")
         self.assertEqual(post["title"], ARTICLE_URL)
 
+    def test_v10_42_a_links_words_are_no_title_the_slug_is(self):
+        # A Save from a post's outside link sends its words: "пишет" ("writes") of "… NYT пишет …".
+        url = f"{SITE}/2026/11/17/upshot/school-phone-bans-study-scores.html"
+        blocked = HttpError("HTTP 403", status=403)
+        for words in ("пишет", "writes", "here", "this"):
+            post, reason = self.read({url: blocked}, url=url, title=words)
+            self.assertEqual((post["title"], reason), ("School phone bans study scores", "HTTP 403"), words)
+        post, _ = self.read({ARTICLE_URL: blocked}, title="link")
+        self.assertEqual(post["title"], ARTICLE_URL, "no slug of 3 words: the address, never the bare word")
+
+    def test_v10_42_what_the_stored_data_titles_it_comes_before_the_given_words(self):
+        service = SavedService("unused", sources=None, source_config_sync=None, kinds=None)
+        asked = []
+        post, _ = run(service.read(FakeHttp({ARTICLE_URL: HttpError("HTTP 403", status=403)}), ARTICLE_URL, "пишет",
+                                   lambda urls: asked.append(urls) or "Phone bans raise test scores"))
+        self.assertEqual((post["title"], asked), ("Phone bans raise test scores", [[ARTICLE_URL]]))
+        post, _ = run(service.read(FakeHttp({ARTICLE_URL: JS_SHELL}), ARTICLE_URL, "пишет", lambda urls: "Not asked"))
+        self.assertEqual(post["title"], "An app", "the page's own title first")
+
 
 @requires_test_db
 class SaveRouteTests(unittest.TestCase):
@@ -291,6 +310,99 @@ class SaveRouteTests(unittest.TestCase):
         self.assertEqual((status, body["status"], body["post_id"]), (200, "already", str(existing)))
         published_at, later_at, _ = self._state(existing)
         self.assertEqual((published_at, later_at), (dated, saved_at))
+
+    # ---- v10.42: an unreadable page saved from another post's link (production 928442eb: "пишет", Habr's time)
+
+    PAGE = f"{SITE}/2026/11/17/upshot/school-phone-bans-study-scores.html"
+
+    LINK_BLOG = "https://linkblog.saved-test.invalid/feed"
+
+    def _feed_source(self, handle=None):
+        """A followed feed: SITE's own, or (`handle`) another site's (a link blog's), removed after the test."""
+        handle = handle or f"{SITE}/feed.xml"
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("SELECT id FROM sources WHERE handle_or_url = %s", (handle,))
+            found = cur.fetchone()
+            if found:
+                return found[0]
+            cur.execute("INSERT INTO sources (platform, handle_or_url, enabled) VALUES ('rss', %s, true) RETURNING id",
+                        (handle,))
+            (made,) = cur.fetchone()
+        self.addCleanup(self._drop_source, made)
+        return made
+
+    @staticmethod
+    def _drop_source(source_id):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM posts WHERE source_id = %s", (source_id,))
+            cur.execute("DELETE FROM sources WHERE id = %s", (source_id,))
+
+    def _linking_post(self, link_text, *, cites=False, title="Исследование: запрет телефонов"):
+        """A followed feed's post linking PAGE with these words (or, `cites`, its citation of PAGE: issue 0167),
+        published after the page, as Habr's was."""
+        source = self._feed_source(self.LINK_BLOG if cites else None)
+        url = f"{self.PAGE}#!/cited-by/{source}" if cites else f"{SITE}/habr/1109934"
+        metadata = {"cites": {"url": self.PAGE, "normalized_url": self.PAGE}} if cites else {}
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, published_at, metadata) "
+                        "VALUES (%s, %s, %s, 'saved.test.invalid', %s, 'Body', %s, %s::jsonb) RETURNING id",
+                        (source, url, url, title, datetime(2026, 11, 19, 13, 32, 56, tzinfo=timezone.utc),
+                         json.dumps(metadata)))
+            (post,) = cur.fetchone()
+            if not cites:
+                cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, link_text) "
+                            "VALUES (%s, %s, 'saved.test.invalid', 0, %s)", (post, self.PAGE, link_text))
+        return post
+
+    def test_v10_42_an_unreadable_page_from_a_link_is_titled_by_its_slug_and_dated_by_its_address(self):
+        self._linking_post("пишет")
+        saved_at = datetime(2026, 11, 23, 12, 34, 23, tzinfo=timezone.utc)
+        self._at(saved_at)
+        status, body = self.save({self.PAGE: HttpError("HTTP 403", status=403)}, url=self.PAGE, title="пишет")
+        self.assertEqual((status, body["status"], body["readable"]), (200, "saved", False), body)
+        ((platform, title, published_at, surfaced_at),) = self._rows(
+            "SELECT s.platform, p.title, p.published_at, p.surfaced_at FROM posts p JOIN sources s ON s.id = p.source_id "
+            "WHERE p.id = %s", body["post_id"])
+        self.assertEqual((platform, title), ("saved", "School phone bans study scores"))
+        self.assertEqual(published_at, datetime(2026, 11, 17, tzinfo=timezone.utc), "the address's day, not the citing post's")
+        self.assertEqual(surfaced_at, saved_at, "it sorts at the save")
+
+    def test_v10_42_a_feeds_citation_of_the_page_titles_it(self):
+        self._linking_post(None, cites=True, title="Phone bans in schools raise test scores, a study finds")
+        _, body = self.save({self.PAGE: HttpError("HTTP 403", status=403)}, url=self.PAGE, title="пишет")
+        self.assertEqual((body["status"], body["title"]), ("saved", "Phone bans in schools raise test scores, a study finds"))
+
+    def test_v10_44_the_repair_does_not_title_a_page_by_its_own_bad_title_and_counts_only_changes(self):
+        """Production 928442eb: the repair matched the saved page's own row (its citation of itself) and wrote
+        "пишет → пишет", counted retitled: 1."""
+        from insight_core.scripts import repair_saved_titles
+        self._linking_post("пишет")
+        _, body = self.save({self.PAGE: HttpError("HTTP 403", status=403)}, url=self.PAGE, title="пишет")
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # the stale state production had
+            cur.execute("UPDATE posts SET title = 'пишет', url_host = 'saved.test.invalid', metadata = metadata || "
+                        "jsonb_build_object('cites', jsonb_build_object('url', %s::text, 'normalized_url', %s::text)) "
+                        "WHERE id = %s", (self.PAGE, self.PAGE, body["post_id"]))
+        with psycopg.connect(db_url()) as conn:
+            got = repair_saved_titles.run(conn, dry_run=False, db_url=db_url())
+        mine = [c for c in got["changes"] if c["post_id"] == body["post_id"]]
+        self.assertEqual([c["title"] for c in mine], [["пишет", "School phone bans study scores"]])
+        ((title,),) = self._rows("SELECT title FROM posts WHERE id = %s", body["post_id"])
+        self.assertEqual(title, "School phone bans study scores")
+        with psycopg.connect(db_url()) as conn:
+            again = repair_saved_titles.run(conn, dry_run=False, db_url=db_url())
+        self.assertFalse([c for c in again["changes"] if c["post_id"] == body["post_id"]], "nothing left to change")
+
+    def test_v10_42_a_page_already_a_feeds_post_keeps_its_source_and_title(self):
+        source = self._feed_source()
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO posts (source_id, url, title, content, published_at) VALUES (%s, %s, %s, '', %s) "
+                        "RETURNING id", (source, self.PAGE, "Phone Bans Lift Scores", datetime(2026, 11, 17, 10, tzinfo=timezone.utc)))
+            (existing,) = cur.fetchone()
+        _, body = self.save({self.PAGE: HttpError("HTTP 403", status=403)}, url=self.PAGE, title="пишет")
+        self.assertEqual((body["status"], body["post_id"], body["title"], body["source_id"]),
+                         ("already", str(existing), "Phone Bans Lift Scores", str(source)))
+        ((title, source_id),) = self._rows("SELECT title, source_id FROM posts WHERE id = %s", existing)
+        self.assertEqual((title, source_id), ("Phone Bans Lift Scores", source))
 
     def test_only_web_addresses(self):
         for url in ("", "file:///etc/passwd", "javascript:alert(1)"):

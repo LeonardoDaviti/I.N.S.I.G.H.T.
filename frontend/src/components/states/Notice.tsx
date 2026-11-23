@@ -3,11 +3,10 @@ import Button from '../ui/Button';
 import { StatusIcon } from '../ui/StatusGlyph';
 import type { Status } from '../ui/styles';
 
-/** The four feedback kinds of spec F.7: status (a run in progress), completion
- *  (a run report), warning (backoff, kind unavailable) and error. */
+/** The four feedback kinds: status (a run in progress), completion (a run report), warning and error. */
 export type NoticeTone = 'status' | 'completion' | 'warning' | 'error';
 
-/** Monochrome: tone is carried by glyph, border style and inversion (design docs system/status.md). */
+/** Monochrome: tone is carried by glyph, border style and inversion. */
 const TONE: Record<NoticeTone, { box: string; glyph: Status; word: string }> = {
   status: { box: 'border-line', glyph: 'running', word: 'Status' },
   completion: { box: 'border-line-strong', glyph: 'ok', word: 'Done' },

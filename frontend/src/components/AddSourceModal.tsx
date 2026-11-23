@@ -32,10 +32,9 @@ interface Template {
   platform?: string;
 }
 
-/** An X account's feed is the bridge's: fetched at the Nitter template's pace, however it was found (v10.15 c4). */
+/** An X account's feed is the bridge's: fetched at the Nitter template's pace, however it was found. */
 const X_FETCH_DELAY = 10;
 
-// Hardcoded templates
 const TEMPLATES: Template[] = [
   {
     id: 'nitter',
@@ -150,8 +149,8 @@ const TEMPLATES: Template[] = [
   },
 ];
 
-/** The address a template always builds, whatever its field (Pipecraft, Gwern…); null when the
- *  field changes it (Nitter, GitHub Trending), so it can be added once per value. */
+/** The address a template always builds, whatever its field (Pipecraft, Gwern…); null when the field changes it
+ *  (Nitter, GitHub Trending), so it can be added once per value. */
 function fixedHandle(template: Template): string | null {
   return template.variableName ? null : template.buildHandle('');
 }
@@ -182,8 +181,7 @@ const TELEGRAM_BRIDGE = 'https://telegram.local';
 const NO_BRIDGE = 'No Telegram bridge is set up on this server (TELEGRAM_RSS_HOSTS in .env). Set one, or '
   + 'connect your Telegram account in Connections and add the channel as @channel.';
 
-/** The Telegram template on the server's bridge (issue 0135): unknown yet (undefined) as written;
- *  none (null) builds no address and says why. */
+/** The Telegram template on the server's bridge: undefined until known; null builds no address and says why. */
 function onBridge(template: Template, bridge: string | null | undefined): Template {
   if (template.id !== 'telegram-rss' || bridge === undefined || bridge === TELEGRAM_BRIDGE) return template;
   if (bridge === null) return { ...template, helperText: NO_BRIDGE, buildHandle: () => '' };
@@ -194,9 +192,8 @@ function onBridge(template: Template, bridge: string | null | undefined): Templa
   };
 }
 
-// The template a platform account is followed by (issue 0109 B2: Follow… on a Discover suggestion). An X account has
-// none (v10.15 c4): the feed finder answers with the server's own Nitter bridge, as for any address, so no bridge host is
-// built here.
+// The template a platform account is followed by (Follow… on a Discover suggestion). An X account has none: the feed
+// finder answers with the server's own Nitter bridge, as for any address.
 const ACCOUNT_TEMPLATES: Partial<Record<AccountPlatform, string>> = { telegram: 'telegram-rss', youtube: 'youtube', reddit: 'reddit' };
 
 /** The template and its value an address starts from, when it names a platform account. */
@@ -208,7 +205,7 @@ function startingTemplate(address: string | undefined): { template: Template; va
 }
 const isXAccount = (address: string) => platformAccount(address)?.platform === 'x';
 
-// Issue 0137: why the finder found no feed, and why a feed found is the site's rather than this page's.
+// why the finder found no feed, and why a feed found is the site's rather than this page's
 const NO_FEED_BECAUSE: Record<string, string> = {
   blocked: 'the site refused INSIGHT (blocked)',
   'rate-limited': 'the site is limiting requests (rate-limited); try again later',
@@ -217,7 +214,7 @@ const NO_FEED_BECAUSE: Record<string, string> = {
   'server error': 'the site answered with a server error',
   'empty feed': 'the feed has no items yet',
   'no bridge': 'no bridge is set up on this server for this platform',
-  // Issue 0185: a bridge IS set up, but its feed gave nothing twice (slow, empty or down).
+  // a bridge IS set up, but its feed gave nothing twice (slow, empty or down)
   'bridge did not answer': 'the bridge on this server did not answer (asked twice); try again in a minute',
 };
 const NOT_THIS_PAGE: Record<string, string> = {
@@ -246,11 +243,10 @@ interface AddSourceModalProps {
     page_watch?: { prefix: string };
     platform?: string;
   }) => void;
-  /** Several sources were added at once (issue 0035): fetch them; close when all were added. */
+  /** Several sources were added at once: fetch them; close when all were added. */
   onAddMany?: (added: AddedSource[], close: boolean) => void;
-  /** An address to start from (Follow… on a suggested source, issue 0050): looked up as if typed; a
-   * platform account's opens its platform's template with the account filled in (issue 0109 B2); an X account is looked up
-   * by the finder like any address (v10.15 c4). */
+  /** An address to start from (Follow… on a suggested source): looked up as if typed; a platform account's opens its
+   *  platform's template with the account filled in. */
   initialAddress?: string;
 }
 
@@ -280,7 +276,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
     return !(fixed && added.has(sameAddress(fixed)));
   });
 
-  // The Telegram bridge the server is set up with (issue 0135), asked when its template is chosen.
+  // the Telegram bridge the server is set up with, asked when its template is chosen
   const [bridge, setBridge] = useState<string | null | undefined>(undefined);
   const wantsBridge = selectedTemplate?.id === 'telegram-rss';
   useEffect(() => {
@@ -291,7 +287,6 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
   }, [wantsBridge, bridge]);
   const shownTemplate = selectedTemplate ? onBridge(selectedTemplate, bridge) : null;
 
-  // Update URL when template variable changes
   useEffect(() => {
     if (selectedTemplate && (templateVariable || selectedTemplate.optionalVariable)) {
       const template = onBridge(selectedTemplate, bridge);
@@ -299,15 +294,14 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
       const sourceValue = template.buildHandle(normalized);
       setHandleOrUrl(sourceValue);
 
-      // Auto-fill display name if user hasn't manually edited it
       if (!displayNameManuallyEdited) {
         setDisplayName(template.buildDisplayName(normalized));
       }
     }
   }, [selectedTemplate, bridge, templateVariable, displayNameManuallyEdited]);
 
-  // A typed address that is not a feed: after a pause (or on leaving the field) the finder
-  // looks for the page's feed, and the field becomes it (issue 0026). Add waits meanwhile.
+  // A typed address that is not a feed: after a pause (or on leaving the field) the finder looks for the page's
+  // feed, and the field becomes it. Add waits meanwhile.
   const address = handleOrUrl.trim();
   const findsFeed = !selectedTemplate;
   const [lookup, setLookup] = useState('');
@@ -323,7 +317,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
     return () => window.clearTimeout(timeout);
   }, [findsFeed, address]);
 
-  // Typing on drops the lookup in flight: its answer would replace what is typed now.
+  // typing on drops the lookup in flight: its answer would replace what is typed now
   useEffect(() => {
     if (!lookup || address !== lookup
       || (finding && (finding.for === lookup || (finding.feeds ?? []).some((feed) => feed.url === lookup)))) return;
@@ -336,10 +330,9 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
         setHandleOrUrl(first.url);
         if (!displayNameManuallyEdited && first.title) setDisplayName(first.title);
       }
-      // An X account comes back as the server's bridge feed (v10.15 c4): read at the bridge's pace.
+      // an X account comes back as the server's bridge feed: read at the bridge's pace
       setFetchDelay(first && isXAccount(lookup) ? X_FETCH_DELAY : undefined);
-      // Your sources linked the site (issue 0060): the page holding the most of those links is
-      // chosen already, with its preview; the others are listed with theirs.
+      // the page holding the most links from your sources is chosen already, with its preview; the others listed
       const best = result.status === 'none' && result.linked ? result.pages?.[0] : undefined;
       if (best) {
         setPagePreview({ success: true, ...best, for: best.url, asked: '' });
@@ -369,15 +362,14 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                 ? `Found the feed for this page: ${shortAddress(foundFeeds[0].url)}${foundFeeds[0].saved_search ? ' (a saved search)' : ''}`
                 : finding?.status === 'feed' && foundFeeds[0]?.saved_search ? 'This feed is a saved search'
                 : null;
-  // No feed: the page itself can be followed, its articles read from its links and the
-  // sitemap (issue 0028). The preview is asked again when the path changes. For a site's home
-  // page, the finder offers the site's own blog or news pages instead (issue 0041).
+  // No feed: the page itself can be followed (its articles read from its links and the sitemap); the preview is
+  // asked again when the path changes. For a site's home page the finder offers its blog or news pages instead.
   const [follow, setFollow] = useState<{ for: string; page: string } | null>(null);
   const [path, setPath] = useState('');
   const [pagePreview, setPagePreview] = useState<(PageWatchPreview & { for: string; asked: string }) | null>(null);
   const noFeed = findsFeed && settled && finding?.status === 'none';
   const offers = noFeed ? finding?.pages ?? [] : [];
-  // Every feed found is the site's, not this page's (issue 0137): the page itself can be followed instead.
+  // every feed found is the site's, not this page's: the page itself can be followed instead
   const watchOffer = findsFeed && settled && finding?.status === 'found' ? finding.watch : undefined;
   const following = (noFeed || !!watchOffer) && follow?.for === address;
   const followed = following && follow ? follow.page : address;
@@ -408,7 +400,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
   };
   const offerLabel = (offer: PageOffer) => `Follow ${siteName(offer.url)}: ${offer.found} article${offer.found === 1 ? '' : 's'}`;
   const otherOffers = offers.filter((offer) => offer.url !== (following ? followed : offers[0]?.url));
-  // Your sources linked the site (issue 0060): every finding says how many of those links it holds.
+  // every finding says how many links from your sources it holds
   const linked = finding?.linked ?? 0;
   const ranked = linked > 0 && offers.length > 0;
 
@@ -419,7 +411,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
           : `Found ${pagePreview?.found} article${pagePreview?.found === 1 ? '' : 's'} under ${pagePreview?.prefix}${pagePreview?.sitemap ? ' (from the sitemap)' : ''}`;
   const canFollow = following && previewed && pageItems.length > 0;
 
-  // "Is this worth it?" (issue 0173): once the finder found a feed, or page watching found the page's articles.
+  // "Is this worth it?": once the finder found a feed, or page watching found the page's articles
   const judgeAddress = alreadyAdded || !findsFeed ? null
     : canFollow ? withScheme(followed)
       : settled && (finding?.status === 'found' || finding?.status === 'feed' || finding?.status === 'direct') ? address
@@ -431,12 +423,11 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);
     setFetchDelay(template.fetchDelay);
-    // Clear previous values
     setTemplateVariable('');
     const builds = !template.variableName || Boolean(template.optionalVariable);
     setHandleOrUrl(builds ? template.buildHandle('') : '');
     setDisplayName(builds ? template.buildDisplayName('') : '');
-    setDisplayNameManuallyEdited(false); // Reset manual edit flag
+    setDisplayNameManuallyEdited(false);
   };
 
   const handleAdd = async () => {
@@ -718,7 +709,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
               <Plus aria-hidden="true" /> Add source
             </Button>
           </DialogFooter>
-          {/* One page rather than a whole site (issue 0031). */}
+          {/* one page rather than a whole site */}
           <div className="border-t border-line pt-3"><BookmarkletHint /></div>
         </form>
       </DialogContent>

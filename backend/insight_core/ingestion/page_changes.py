@@ -1,20 +1,10 @@
-"""Watching stored pages for changes (issue 0039): the cheap checks, cheapest first.
+"""Watching stored pages for changes: the cheap checks, cheapest first.
 
-A source with settings.watch_changes, of a kind that reads each post from its own page
-(kind.watches: page watch, a site adapter that implements page_post), has its stored pages
-re-checked a rotating slice at a time, during its usual fetch and inside the same host slot:
-
-  1. a conditional GET (issue 0044): a 304 is unchanged, no body;
-  2. when the page states when it changed (parsing.page_modified, read last time), only its
-     first HEAD_BYTES: the same date is unchanged;
-  3. otherwise the whole page, read by the kind's own reader (page_post), and the hash of its
-     article text compared (utils.text_changes.text_hash), so ads and timestamps never count.
-
-A page whose text changed comes back as a post (its date left out, so the stored one stays)
-for the saver, which measures the change and brings the post back when it is not tiny
-(repo_posts, utils.text_changes.meaningful). Every check is recorded with when to look again
-(PageWatchStore.checked): pages that changed recently are due sooner (see next_check in
-db/repo_page_watch.py).
+A source with settings.watch_changes on a kind that watches has a rotating slice of its stored pages re-checked in
+its fetch's host slot: a conditional GET (304: unchanged); else, when the page stated its modified date, its first
+HEAD_BYTES; else the whole page through the kind's reader and its article text's hash (so ads and timestamps never
+count). A changed page comes back as a post without its date, for the saver to judge; every check is recorded with
+when to look again (db/repo_page_watch.py next_check).
 """
 from __future__ import annotations
 
@@ -29,7 +19,7 @@ from insight_core.utils.text_changes import text_hash
 
 logger = logging.getLogger("insight.ingestion.page_changes")
 
-HEAD_BYTES = 48_000      # a page's start read for its modified date (gwern.net's head ends near 35 KB)
+HEAD_BYTES = 48_000      # a page's start read for its modified date
 WATCH_SLICE = 50         # pages one fetch re-checks, at most: a 700-page site in about two weeks
 GONE_STATUSES = (404, 410)
 

@@ -69,11 +69,8 @@ function SubtopicRow({ page, sub, others }: { page: TrackPage; sub: TrackSubtopi
   );
 }
 
-/**
- * The track sheet (issue 0145): its name, what belongs and what doesn't (the owner's words), its active sources,
- * the examples so far (the owner's ✓ and ✗) and its sub-topics (rename, split, merge, lock). Saving new words is a
- * new version: the track's posts are judged again and its history read once more.
- */
+/** The track sheet: its name, the owner's words on what belongs, its active sources, the examples (✓ and ✗) and its
+ *  sub-topics. Saving new words is a new version: the track's posts are judged again. */
 export default function TrackSheet({ open, onOpenChange, page }: { open: boolean; onOpenChange: (open: boolean) => void; page: TrackPage }) {
   const api = useApi();
   const client = useQueryClient();

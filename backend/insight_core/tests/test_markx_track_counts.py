@@ -1,6 +1,6 @@
-"""v10.12.1: a topic track's sidebar count (GET /api/markx/tracks/counts): its unread track items plus its Discover
-suggestions not yet labelled; a plain folder has no entry; the path is not read as a track id; read-only. Synthetic
-data only; the DB tests run on a database whose name ends in _test."""
+"""A topic track's sidebar count (GET /api/markx/tracks/counts): its unread track items plus its unlabelled Discover
+suggestions; a plain folder has no entry; the path is not read as a track id; read-only. Synthetic data; a _test
+database."""
 from __future__ import annotations
 
 import uuid
@@ -33,7 +33,7 @@ class TopicCounts(_Tracks):
         d = self.passive("passive in")
         e = self.passive("passive in, labelled out")
         f = self.passive("passive out")
-        self.assertEqual(self.counts()[self.folder], {"unread": 0, "discover": 0, "count": 0, "waiting": 3, "things": 0})   # nothing judged yet: 3 active waiting
+        self.assertEqual(self.counts()[self.folder], {"unread": 0, "discover": 0, "count": 0, "waiting": 3})   # nothing judged yet: 3 active waiting
         self.plan()
         self.judge(a, verdict())
         self.judge(b, verdict())
@@ -44,9 +44,9 @@ class TopicCounts(_Tracks):
         self.label(e, "out")
         self.cur.execute("INSERT INTO post_reader_state (post_id, read_at) VALUES (%s, now())", (b,))
         self.addCleanup(self.cur.execute, "DELETE FROM post_reader_state WHERE post_id = %s", (b,))
-        self.assertEqual(self.counts()[self.folder], {"unread": 1, "discover": 1, "count": 2, "waiting": 0, "things": 0})
+        self.assertEqual(self.counts()[self.folder], {"unread": 1, "discover": 1, "count": 2, "waiting": 0})
         self.label(d, "in")                                                   # labelled in: out of Discover, into the track
-        self.assertEqual(self.counts()[self.folder], {"unread": 2, "discover": 0, "count": 2, "waiting": 0, "things": 0})
+        self.assertEqual(self.counts()[self.folder], {"unread": 2, "discover": 0, "count": 2, "waiting": 0})
 
     def test_the_path_is_not_a_track_id_and_a_track_still_is(self):
         self.describe()
@@ -55,7 +55,7 @@ class TopicCounts(_Tracks):
         self.assertIn(self.folder, self.counts())
 
     def test_the_counts_read_places_as_the_full_items_do(self):
-        """v10.14: the counts read only what a place needs; every item's place and rank are the full read's."""
+        """The counts read only what a place needs; every item's place and rank are the full read's."""
         from insight_core.markx import tracks
         self.describe()
         self.desc_vector(unit((0, 1)))

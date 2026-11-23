@@ -1,16 +1,10 @@
-"""Who a source is, by what its posts are about (issue 0132): shared by the voices (Part A, voices_service) and the
-source analysis page (Part B, its role rule). Pure functions over plain data, and one loader (`load_reads`).
+"""Who a source is, by what its posts are about: shared by the voices (voices_service) and the source analysis page
+(its role rule). Pure functions over plain data, and one loader (`load_reads`).
 
-The role rule's step 3, **official**: the source itself is the subject, actor or venue of at least OFFICIAL_SHARE of
-its read original posts (OFFICIAL_MIN_READ of them at least), matched by its name, its handle, its site's label or
-an acronym of the name a post gives (a government institute's initials as its address writes them). Measured on the
-server copy of 2026-11-05 (the lab's sources_v1): 12 sources official, all right by reading; 2 missed.
-
-Step 4, **focused** (staff or beat): FOCUSED_SHARE of its read posts about one maker that is not itself.
-
-Names are compared by `name_tokens`: the words of a name, a camel-cased handle split, at least 4 letters, no
-generic word (GENERIC: words any name can hold, never a site's or a person's); and the name squashed when 5+ letters.
-No list of known sites anywhere: only what the source and its posts say.
+Official (`official`): the source itself is the subject, actor or venue of OFFICIAL_SHARE of its read original posts
+(OFFICIAL_MIN_READ at least), matched by its name, handle, site label or acronym. Focused (`focus`): FOCUSED_SHARE of
+its read posts about one maker that is not itself. Names are compared by `name_tokens`. No list of known sites
+anywhere: only what the source and its posts say.
 """
 from __future__ import annotations
 
@@ -19,7 +13,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
-OFFICIAL_SHARE = 0.3        # measured (sources_v1): 12 official, all right
+OFFICIAL_SHARE = 0.3        # measured: plan/issues/0132
 OFFICIAL_MIN_READ = 5       # read original posts, at least
 FOCUSED_SHARE = 0.5         # measured: at 0.3 critics landed here too
 SELF_ROLES = ("subject", "actor", "venue")
@@ -184,7 +178,7 @@ def load_reads(cur: Any, own_posts: Optional[Iterable[str]] = None) -> Dict[str,
         source_of[post_id] = source_id
     if not source_of:
         return out
-    # v10.9.1: the current set (each post's newest valid entities answer), never every guide's rows at once
+    # the current set (each post's newest valid entities answer), never every guide's rows at once
     cur.execute("""SELECT DISTINCT post_id::text, name, role, maker, type FROM mx_mentions_now
                    WHERE post_id = ANY(%s::uuid[])""", (sorted(source_of),))
     for post_id, name, role, maker, type_ in cur.fetchall():

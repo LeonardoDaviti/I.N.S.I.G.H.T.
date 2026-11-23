@@ -18,7 +18,7 @@ from insight_core.adapters.zerotomastery_adapter import ZeroToMasteryMonthlyAdap
 from insight_core.ingestion.kinds import KindRegistry, parsing
 from insight_core.tests._kind_fakes import FakeHttp
 
-# Trimmed from https://www.pipecraft.me/api/posts and /api/posts/<section>/<slug> (2026-10-27).
+# Trimmed from https://www.pipecraft.me/api/posts and /api/posts/<section>/<slug>.
 PIPECRAFT_INDEX = {
     "posts": [
         {"slug": "mobile-engineerind-teams", "title": "The foundational elements of scalability in mobile engineering teams",
@@ -45,8 +45,7 @@ PIPECRAFT_INDEX = {
 }
 PIPECRAFT_IMAGE = "https://miro.medium.com/v2/resize:fit:1400/format:webp/1*3KUxMR1t.jpeg"
 
-# Trimmed from https://gwern.net/sitemap.xml, /doc/newest/index, /blog/index and
-# /spaced-repetition (2026-10-28).
+# Trimmed from https://gwern.net/sitemap.xml, /doc/newest/index, /blog/index and /spaced-repetition.
 GWERN_SITEMAP = """<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://gwern.net/spaced-repetition</loc></url>
@@ -121,7 +120,7 @@ def _pipecraft_http():
 
 
 class SourceAdapterTests(unittest.TestCase):
-    """The site adapters are SourceKinds (B3): they take KindHttp, here a FakeHttp."""
+    """The site adapters are SourceKinds: they take KindHttp, here a FakeHttp."""
 
     def setUp(self):
         self.http = FakeHttp()

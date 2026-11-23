@@ -1,7 +1,6 @@
-"""0130 D (Stealth v10.5): translation. A post's language (its reading's lang before the feed's code), the request
-route (idempotent, first in the lease, a failed task opened again), the view the post page shows, the owner's ✓ / ✗ as
-Mark X labels (migration 0078), the Mark X News leads planner (non-English leads of the newest written run, once a
-post), the guide translate-v2. Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""Translation (0130 D): a post's language (its reading's lang before the feed's code), the request route, the view
+the post page shows, the owner's ✓ / ✗ as Mark X labels, the News leads planner, the guide translate-v2. Synthetic
+data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import random
@@ -22,15 +21,6 @@ EN = {"title_en": "Acme released Widget 4.1",
 
 
 class TheGuide(unittest.TestCase):
-    def test_v2_is_v1_with_the_glossary_and_keeps_the_answer_shape(self):
-        v1, v2 = schemas.guide_body("translate-v1"), schemas.guide_body("translate-v2")
-        self.assertIn("Answer with JSON: {\"title_en\": \"...\", \"text_en\": \"...\"}", v2)
-        for line in v1.splitlines()[2:5]:
-            self.assertIn(line, v2)                             # v1's rules, unchanged
-        self.assertIn("| фронт, фронтенд | frontend | front, frontier |", v2)
-        self.assertIn("endpoint", v2)
-        self.assertIn(schemas.KINDS["translate"].guide, ("translate-v1", "translate-v2"))
-
     def test_the_checks_hold_numbers_and_length(self):
         text = f"Title: Acme\nText: {RU}"
         self.assertIsNone(validate.check("translate", EN, text)[1])

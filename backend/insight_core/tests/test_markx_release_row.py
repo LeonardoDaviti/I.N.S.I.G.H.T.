@@ -1,9 +1,7 @@
-"""0236 (Stealth v10.25): one release, one News row. Two Mark X stories a current same_release chain edge joins (0219,
-rule chain_stops) are one row when `chains.one_row` is on: its posts in date order (the leaks first), named by the
-launch (the maker's own story, else the newest story of a news type, never a leak story); a story that only mentions
-the thing has no edge and stays out; joins never chain across two things. A row still untitled whose lead is a leak
-takes the maker's own post's title. Invented names ("Orbit 4 Nova" by Acme); the DB tests run on a database whose
-name ends in _test, each in one transaction rolled back."""
+"""One release, one News row (0236): Mark X stories joined by a current same_release chain edge are one row when
+`chains.one_row` is on, its posts in date order, named by the launch (the maker's own story, else the newest of a news
+type, never a leak story); a story that only mentions the thing stays out; joins never chain across two things.
+Invented names; the DB tests run on a _test database, each rolled back."""
 from __future__ import annotations
 
 import json
@@ -55,6 +53,29 @@ class Rules(unittest.TestCase):
         self.assertEqual(N.launch_order(f), ["bench", "avail"])
         self.assertEqual(N.launch_order({"leak": {"maker": True, "type": "leak_rumour", "at": T}}), [])
 
+    def test_a_result_the_maker_announced_alongside_never_names_the_release(self):
+        # the maker's release, then the same day its result (a newer maker story of a news type) and a day later its
+        # Q&A: the release names the row, however new the others are (0268)
+        f = {"launch": {"maker": True, "type": "model_release", "at": T},
+             "result": {"maker": True, "type": "research_result", "at": T + 1 * H},
+             "qa": {"maker": True, "type": "public_statement", "at": T + 30 * H},
+             "bench": {"maker": False, "type": "research_result", "at": T + 9 * H}}
+        self.assertEqual(N.launch_order(f), ["launch", "qa", "result", "bench"])
+        self.assertEqual(N.launch_order(f, {"result": 9, "launch": 40})[:2], ["launch", "result"])
+        # two maker stories of a release (a preview, then the launch): the one holding most of the row's voices,
+        # then the newest
+        f = {"preview": {"maker": True, "type": "product_release", "at": T},
+             "launch": {"maker": True, "type": "model_release", "at": T + 48 * H}}
+        self.assertEqual(N.launch_order(f), ["launch", "preview"])
+        self.assertEqual(N.launch_order(f, {"preview": 12, "launch": 30}), ["launch", "preview"])
+        self.assertEqual(N.launch_order(f, {"preview": 30, "launch": 12}), ["preview", "launch"])
+
+    def test_story_voices_count_each_voice_once(self):
+        row = {"posts": [{"post_id": "p1", "voice": "a", "story": "s1"}, {"post_id": "p2", "voice": "a", "story": "s1"},
+                         {"post_id": "p3", "voice": "b", "story": "s1"}, {"post_id": "p4", "voice": "c", "story": "s2"},
+                         {"post_id": "p5", "voice": "d", "story": None}]}
+        self.assertEqual(N.story_voices(row), {"s1": 2, "s2": 1})
+
 
 @requires_test_db
 class Row(unittest.TestCase):
@@ -92,8 +113,8 @@ class Row(unittest.TestCase):
                          (later, earlier, relation, G.CHAIN_RULE, json.dumps({"reason": "r", "thing": thing})))
 
     def case(self):
-        """A rumour account's teasers (the leak story, first), the maker's launch hours later with its coverage and a
-        third party's benchmark, and a rival's launch story that names Nova once (no edge: it only mentions it)."""
+        """A rumour account's teasers (the leak story, first), the maker's launch with its coverage and a third party's
+        benchmark, and a rival's launch story that names Nova once (no edge)."""
         leak = [self.post(0, "Orbit 4 Nova leaks: coming today"), self.post(1, "Nova spotted in the app ahead of launch"),
                 self.post(2, "Orbit 4 Nova teaser: benchmarks leaked"), self.post(3, "Nova is coming, says a tipster")]
         launch = [self.post(4, "Acme launches Orbit 4 Nova"), self.post(5, "Orbit 4 Nova is rolling out now"),
@@ -116,28 +137,73 @@ class Row(unittest.TestCase):
         self.assertEqual([p["story"] for p in one["posts"]], [sl] * 4 + [sm] * 3)  # each post names its own story
         other = next(r for r in rows if r["id"] != leak[0])
         self.assertEqual([p["post_id"] for p in other["posts"]], rival)             # the rival's story stays out
-        # off: two rows, as before
+        # off: two rows
         self.switch = dict(OFF)
         self.assertEqual(len(self.rows(stories)), 3)
+
+    def test_a_leak_begun_before_the_window_never_takes_its_launch_out_of_it(self):
+        # the window starts between the leak (hour 0) and the launch (hour 4): the leak story is an earlier window's
+        # row, the launch story this window's
+        stories, (sl, sm, sr), (leak, launch, rival) = self.case()
+        first = {}
+        rows = N.rows_of(self.cur, stories, T + 3.5 * H, window=set(), first=first)
+        self.assertEqual([[p["post_id"] for p in r["posts"]] for r in rows if r["id"] == launch[0]], [launch])
+        self.assertFalse(any(p["post_id"] in leak for r in rows for p in r["posts"]))
+        self.assertEqual(first[sm], T + 4 * H)
+        # the window before the leak: one row
+        self.assertEqual(len(N.rows_of(self.cur, stories, T - 24 * H, window=set())), 2)
 
     def test_the_joined_row_is_named_by_the_launch(self):
         stories, (sl, sm, sr), (leak, launch, rival) = self.case()
         row = next(r for r in self.rows(stories) if r["id"] == leak[0])
-        # the leak story holds the most voices (its main story); built's facts (read-v3 types, the maker by identity) say which is which
+        # the leak story holds the most voices; built's facts (read-v3 types, the maker by identity) say which is which
         facts = {sl: {"maker": False, "post": None, "type": "leak_rumour", "at": T},
                  sm: {"maker": True, "post": launch[0], "type": "model_release", "at": T + 4 * H}}
         with mock.patch.object(N, "_story_facts", return_value=facts):
             self.assertEqual(N.headlines(self.cur, [row])[leak[0]], {"text": "Acme launches Orbit 4 Nova", "from": "haiku"})
         self.assertEqual(N.main_story(row), sl)
-        self.switch = dict(OFF)   # off: no release row; its main story (the leaks) names it, as before
+        self.switch = dict(OFF)   # off: no release row; its main story (the leaks) names it
         with mock.patch.object(N, "_story_facts", return_value=facts):
             self.assertEqual(N.headlines(self.cur, [row])[leak[0]]["text"], "Orbit 4 Nova leaks ahead of launch")
+
+    def test_a_release_row_is_never_named_by_a_result_merged_into_it(self):
+        # the maker's launch story and its same-day result, joined by a same_release edge: the launch's headline
+        # names the row (0268)
+        launch = [self.post(4, "Acme launches Orbit 4 Nova"), self.post(5, "Orbit 4 Nova is rolling out now"),
+                  self.post(6, "Orbit 4 Nova, first look"), self.post(7, "Orbit 4 Nova pricing")]
+        result = [self.post(5.5, "Orbit 4 Nova settles an open question in number theory"),
+                  self.post(8, "Nova's number theory proof, explained")]
+        sm = self.story("Acme launches Orbit 4 Nova")
+        sx = self.story("Acme says Orbit 4 Nova settled an open question in number theory")
+        self.edge(sx, sm)
+        row = next(r for r in self.rows({sm: (launch, set()), sx: (result, set())}) if r["id"] == launch[0])
+        self.assertEqual({p["story"] for p in row["posts"]}, {sm, sx})
+        facts = {sm: {"maker": True, "post": launch[0], "type": "model_release", "at": T + 4 * H},
+                 sx: {"maker": True, "post": result[0], "type": "research_result", "at": T + 5.5 * H}}
+        with mock.patch.object(N, "_story_facts", return_value=facts):
+            self.assertEqual(N.headlines(self.cur, [row])[launch[0]], {"text": "Acme launches Orbit 4 Nova", "from": "haiku"})
 
     def test_an_edge_that_is_not_same_release_joins_nothing(self):
         stories, (sl, sm, sr), (leak, launch, rival) = self.case()
         self.edge(sr, sm, relation="reaction")
         self.cur.execute("UPDATE mx_connections SET valid_to = now() WHERE relation = 'same_release'")
         self.assertEqual(len(self.rows(stories)), 3)
+
+    def test_a_sibling_release_edge_joins_two_things_into_one_row_only_while_siblings_are_on(self):
+        """Sibling things launched together are one same_release edge (evidence `things`); it joins the row only while
+        chains.siblings is on, and a story's own-thing release group is unchanged either way (v10.38)."""
+        stories, (sl, sm, sr), _ = self.case()
+        s2 = self.story("Acme launches Orbit 4 Nova Mini")
+        self.cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, p, rule, evidence)
+                            VALUES ('story', %s, 'story', %s, 'same_release', 1.0, %s, %s::jsonb)""",
+                         (s2, sm, G.CHAIN_RULE, json.dumps({"reason": "r", "thing": "nova",
+                                                            "things": ["nova-mini", "nova"]})))
+        ids = list(stories) + [s2]
+        self.assertEqual(G.release_groups(self.cur, ids), [sorted([sl, sm])])     # off: stored, not folded
+        self.switch = dict(ON, siblings=True)
+        self.assertEqual(G.release_groups(self.cur, ids), [sorted([sl, sm, s2])])
+        self.switch = dict(OFF, siblings=True)
+        self.assertEqual(G.release_groups(self.cur, ids), [])
 
     def test_an_untitled_row_led_by_a_leak_takes_the_makers_post_title(self):
         leak, launch = self.post(0, "Nova leaks: coming today"), self.post(4, "Acme launches Orbit 4 Nova")

@@ -1,6 +1,6 @@
-"""Discover, cleaner (issue 0067): a roundup's link weighs half in the order, never in the bar; a
-language segment is not a section; a tweet mirror's other pages are X's, not a site; the counts are
-kept between story runs, identical to a fresh count.
+"""Discover, cleaner (0067): a roundup's link weighs half in the order, never in the bar; a language segment is not a
+section; a tweet mirror's other pages are X's, not a site; the counts are kept between story runs, identical to a
+fresh count.
 """
 from __future__ import annotations
 
@@ -93,8 +93,8 @@ class DiscoverCleanTests(unittest.TestCase):
         return [f"https://{host}-{self.mark}.example/2026/10/story-{k}" for k in range(n)]
 
     def _roundup(self, voice, *links):
-        """A post listing news: markx/units.py tags it a round-up (v10.17, 0190: its predicate is Discover's; the
-        reading says so). Its links have 3+ anchors as well, as a round-up's do."""
+        """A post listing news: markx/units.py tags it a round-up (0190); its links have 3+ anchors, as a round-up's
+        do."""
         pid = self._post(voice, [*links, *self._pages(f"elsewhere{uuid.uuid4().hex[:6]}", 3)])
         self.cur.execute("""INSERT INTO mx_roundups (post_id, source_id, version, basis, roundup, said, why)
                             VALUES (%s, %s, 'test', 'test', true, true, 'reading')""", (pid, voice[0]))
@@ -131,9 +131,8 @@ class DiscoverCleanTests(unittest.TestCase):
         self.assertEqual(by_key[mixed]["voice_names"][0], f"Voice 3 {self.mark}", "its own post's voice first")
 
     def test_a_round_up_tagged_since_counts_again_only_the_keys_it_links(self):
-        """v10.22: a decision run that tags a post a round-up (or untags one) moved the kept counts' stamp, and the next
-        count was a full one, its platforms found again (26 s on the server, every decision run). Now only the keys
-        its posts link are counted again, and the counts are a full count's."""
+        """A decision run that tags or untags a round-up has only the keys its posts link counted again, and the counts
+        are a full count's."""
         from unittest import mock
         from insight_core.db.repo_discover import DiscoverRepository
         from insight_core.db.repo_stories import SourceFacts
@@ -186,7 +185,7 @@ class DiscoverCleanTests(unittest.TestCase):
         key = f"kept-{self.mark}.example"
         self.assertIn(key, [s["key"] for s in kept["found"]])
         read = StoriesService(db_url()).discover()
-        # Discover's kept list too (issue 0080 cold open), so the open makes it from the counts again
+        # Discover's kept list too (0080), so the open makes it from the counts again
         self.cur.execute("DELETE FROM system_settings WHERE key = ANY(%s)", ([KEPT_KEY, LIST_KEY],))
         self.conn.commit()
         self.assertEqual(json.dumps(StoriesService(db_url()).discover(), sort_keys=True), json.dumps(read, sort_keys=True),

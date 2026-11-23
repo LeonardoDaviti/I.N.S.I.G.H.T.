@@ -1,4 +1,4 @@
-"""Export everything (issue 0079): the zip, its routes, and the restore that brings it back equal."""
+"""Export everything (0079): the zip, its routes, and the restore that brings it back equal."""
 from __future__ import annotations
 
 import contextlib
@@ -93,7 +93,7 @@ class ExportRoundTripTests(unittest.TestCase):
             conn.execute("DELETE FROM system_settings WHERE key = %s", (LAST_EXPORT_KEY,))
 
     def test_the_estimate_counts_live_rows_not_dead_space(self):
-        """Issue 0105: the estimate was the tables' size, dead space included (55% high on the lab)."""
+        """The estimate excludes the tables' dead space (0105)."""
         self._forget_last_export()
         service = ExportService(self.url)
         before = service.info()
@@ -114,7 +114,7 @@ class ExportRoundTripTests(unittest.TestCase):
         self.assertEqual(service.info()["estimate_bytes"], before["estimate_bytes"])
 
     def test_after_a_whole_export_the_estimate_is_its_real_size(self):
-        """Issue 0105: once an export has run, its real size and time, grown with the live rows since."""
+        """Once an export has run, its real size and time, grown with the live rows since (0105)."""
         self._forget_last_export()
         self.addCleanup(self._forget_last_export)
         path = self.export(include_logins=False, keep_last=True)
@@ -143,7 +143,7 @@ class ExportRoundTripTests(unittest.TestCase):
         self.assertEqual(after["estimate_bytes"], estimate_now()[0])
 
     def test_the_progress_reaches_the_other_api_process(self):
-        """0112 Decided 11: two API processes; the export streams from one, its progress is asked of the other."""
+        """Two API processes: the export streams from one, its progress is asked of the other."""
         import tempfile
         shared = tempfile.mkdtemp()
         streaming, other = ExportService(self.url, progress_dir=shared), ExportService(self.url, progress_dir=shared)
@@ -160,8 +160,7 @@ class ExportRoundTripTests(unittest.TestCase):
         self.assertIsNone(other.progress("../etc/passwd"))      # a token names a file only when it is one
 
     def test_one_export_at_a_time_across_processes(self):
-        """Issue 0187: a second export while one streams is ExportBusy before any byte; once the first ends
-        (here stopped), the next one runs."""
+        """A second export while one streams is ExportBusy before any byte; after the first, the next runs (0187)."""
         first = ExportService(self.url).stream(include_logins=False)
         next(first)
         second = ExportService(self.url).stream(include_logins=False)   # the other API process's
@@ -217,7 +216,7 @@ class ExportRoundTripTests(unittest.TestCase):
         self.assertEqual(disabled, 0)
 
     def test_the_restored_database_has_the_same_keys_and_indexes(self):
-        """0253: the keys come off for the load and back after it; the restored schema is the same, every key valid."""
+        """The keys come off for the load and back after it; the restored schema is the same, every key valid (0253)."""
         def schema(url: str):
             with psycopg.connect(url) as conn:
                 keys = conn.execute("SELECT conrelid::regclass::text, conname, contype, pg_get_constraintdef(oid), convalidated, "

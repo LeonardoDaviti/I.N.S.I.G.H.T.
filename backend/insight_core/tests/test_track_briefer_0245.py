@@ -1,23 +1,15 @@
-"""0245 (built 0249, Stealth v10.27): the general track briefer. One briefer for every track: the tests run the same
-code over three invented tracks of different kinds (hardware setups, printable designs, cooking recipes) to show that
-nothing in it is about one track; none of these words is in the code.
-
-  - the kinds, guides, planners and the switch (entity_bands.json tracks.briefs, default off: nothing is planned);
-  - the checks: a value's quote is in the post; a number's or money's digits (and range, unit, currency) are in its own
-    quote, a link inside its own quote, an enum one of its values, text at most 120 characters; a thing whose name did
-    not stand is dropped; every drop kept with its reason; the salvage is idempotent;
-  - the schema: proposed from the description, the general practice kind added by code, versioned, proposed again on
-    a new description, the owner's edit a version of its own (the API);
-  - the things: asked only for posts in the track, every window of a long post, the post's own address never offered;
-    reports joined by a key value (a link, a name), a practice only within its post; by a shared entity; two practices
-    naming one entity asked "same claim?" and joined on `same`;
-  - the brief: digest-v2 cites rows (checked: only its rows, its figures in them), the week's issue kept with code's
-    counts and the posts with no row, the quick look since the reader's look, the tables with typed filters.
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""The general track briefer (0245): one briefer for every track; the tests run the same code over three invented
+tracks of different kinds (hardware setups, printable designs, cooking recipes), none of whose words is in the code.
+Covers the kinds, guides, planners and switch (tracks.briefs, default off); the checks (quotes, digits, links, enums,
+lengths; every drop kept with its reason; salvage idempotent); the schema (proposed, versioned, the owner's edit a
+version); the things (joined by a key value or a shared entity, practices by "same claim?"); and the brief (digest-v2
+cites only its rows, the week's issue kept, the quick look, typed filters). Synthetic data; DB tests on a _test
+database."""
 from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
@@ -80,8 +72,8 @@ class Switch:
 
 class Pure(Switch, unittest.TestCase):
     def test_the_kinds_guides_planners_and_the_switch(self):
-        for kind, guide in (("track_schema", "track-schema-v1"), ("track_things", "track-things-v1"),
-                            ("track_same", "track-same-v1")):
+        for kind, guide in (("track_schema", "track-schema-v1"), ("track_things", "track-things-v3"),
+                            ("track_same", "track-same-v2")):   # v3 (a catalog one row), v2 (every kind)
             self.assertEqual(schemas.KINDS[kind].guide, guide)
             self.assertTrue(schemas.guide_body(guide).startswith("#"))
             self.assertIn(kind, tasks.PLANNERS)
@@ -218,6 +210,48 @@ class Pure(Switch, unittest.TestCase):
                                                                ok["points"][0]]},
                                          "TRACK: T\nSUB-TOPIC: S\n\nPOSTS:\n[1] a, 2026-11-01: x")[1],
                           "digest-v1 (a sub-topic's) keeps its own checks")
+
+    def test_what_the_reader_is_spared(self):
+        """The brief's view keeps every value but shows what tells rows apart."""
+        self.assertEqual(TT.reader_link("https://raw.githubusercontent.com/zq-o/zq-r/main/docs/A.md"),
+                         "https://github.com/zq-o/zq-r/blob/main/docs/A.md")
+        self.assertEqual(TT.reader_link("https://raw.githubusercontent.com/zq-o/zq-r/main"), "https://github.com/zq-o/zq-r")
+        self.assertEqual(TT.reader_link("https://github.com/zq-o/zq-r.git"), "https://github.com/zq-o/zq-r")
+        self.assertEqual(TT.reader_link("https://github.com/zq-o/zq-r/raw/main/x.js"), "https://github.com/zq-o/zq-r/blob/main/x.js")
+        self.assertEqual(TT.reader_link("https://github.com/zq-o/zq-r/tree/main/sub"), "https://github.com/zq-o/zq-r/tree/main/sub")
+        mem = {"name": "memory", "type": "number", "unit": "GB"}
+        self.assertEqual(TT.shown_value(mem, {"number": 22}), "22 GB", "a bare number takes its field's unit")
+        self.assertEqual(TT.shown_value(mem, {"number": 600, "unit": "MB"}), "600 MB")
+        kind = {"kind": "gadget", "fields": [{"name": "name", "type": "text"}, {"name": "engine", "type": "enum",
+                                                                                 "values": ["a", "other"]},
+                                             {"name": "price", "type": "money"}, {"name": "site", "type": "link"}]}
+        val = lambda x: {"value": x, "quote": str(x), "post": "p"}
+        row = lambda i, **f: {"id": i, "kind": "gadget", "fields": {k: val(x) for k, x in f.items()},
+                              "first_at": None, "last_at": None, "found_at": None}
+        self.assertNotIn("engine", TB.thing_view(kind, row("t", name="X", engine="other"), [], {})["fields"],
+                         'a choice of "other" says nothing')
+        pr = lambda i, **f: dict(row(i, **f), kind=TT.PRACTICE_KIND)
+        got = TB.thing_view(TT.PRACTICE, pr("p", what="Q", result="Runs on about 18 GB", evidence="~18GB"), [], {})
+        self.assertNotIn("evidence", got["fields"], "evidence that only repeats its result's figures")
+        got = TB.thing_view(TT.PRACTICE, pr("p", what="Q", result="1.8x faster", evidence="2000 tokens/s"), [], {})
+        self.assertIn("evidence", got["fields"])
+        # quiet columns: 5+ rows, a column filled in under 20% of them, or one choice in over 60%
+        rows = [row(f"t{i}", name=f"N{i}", engine="a", site="https://x.example/" + str(i), **({"price": {"number": 9}} if i == 0 else {}))
+                for i in range(6)]
+        views = [TB.thing_view(kind, r, [], {}) for r in rows]
+        self.assertEqual(TB._quiet(kind["fields"], views), {"engine", "price"})
+        self.assertEqual(TB._quiet(kind["fields"], views[:4]), set(), "a short section shows every column")
+        # practices: inside the thing their post gave, or not shown when they say nothing to try or check
+        kinds = {"gadget": kind, TT.PRACTICE_KIND: TT.PRACTICE}
+        rows = [row("g1", name="G"), pr("p1", what="Feature", result="works"), pr("p2", what="An opinion"),
+                pr("p3", what="Elsewhere", result="2x")]
+        rs = {"g1": [{"post": "A"}], "p1": [{"post": "A"}], "p2": [{"post": "B"}], "p3": [{"post": "C"}]}
+        secs = TB._sections(kinds, rows, rs, {})
+        self.assertEqual([(s["kind"], [t["id"] for t in s["things"]], s["inside"], s["quiet"]) for s in secs],
+                         [("gadget", ["g1"], 0, 0), (TT.PRACTICE_KIND, ["p3"], 1, 1)])
+        self.assertEqual([p["id"] for p in secs[0]["things"][0]["practices"]], ["p1"])
+        pts = TB._point_views({"points": [{"text": "x", "cites": ["p1", "g1", "p3"]}]}, ["g1", "p3"], TB._hosts(secs))
+        self.assertEqual(pts[0]["cites"], [{"thing": "g1", "n": 1}, {"thing": "p3", "n": 2}], "a folded practice cites its thing")
 
     def test_weeks_and_filters(self):
         self.assertEqual(TB.monday(datetime(2026, 11, 22, 23, 0, tzinfo=timezone.utc)), date(2026, 11, 16))
@@ -398,15 +432,45 @@ class Flow(_Briefer):
         claim = {"kind": TT.PRACTICE_KIND, "fields": {"what": v("print cable clips in PETG", "printed in PETG")}}
         self.things(f, a, {"kind": "print", "fields": {"what": v("desk clip for cables", "A desk clip for cables"),
                                                       "files": v(link, link), "material": v("pla", "Printed in PLA")}})
-        self.things(f, b, {"kind": "print", "fields": {"what": v("clip remix", "My remix of the clip"),
+        self.things(f, b, {"kind": "print", "fields": {"what": v("desk clip remix", "My remix of the clip"),
                                                       "files": v(link, link), "material": v("petg", "printed in PETG")}},
                     claim)
         prints = TT.current(self.cur, f, "print")
         self.assertEqual(len(prints), 1, "one link, one thing")
         rs = TT.reports(self.cur, f, [prints[0]["id"]])[prints[0]["id"]]
         self.assertEqual({r["post"] for r in rs}, {a, b})
-        self.assertEqual(prints[0]["fields"]["material"]["value"], "petg", "the newest post's value")
+        # one link and names that agree ("desk clip"); each field the value most posts give, a tie the earliest's
+        self.assertEqual(prints[0]["fields"]["material"]["value"], "pla", "a tie: the earliest post's value")
+        self.assertEqual(prints[0]["fields"]["material"]["post"], a)
         self.assertEqual(len(TT.current(self.cur, f, TT.PRACTICE_KIND)), 1)
+
+    def test_an_explainer_that_links_a_release_joins_its_row(self):
+        """A page listing many items keeps each item's anchor (two releases on one page stay two rows); a post giving
+        one thing is that thing's page, so a later post linking that address joins its row."""
+        self.assertEqual(TT.norm_url("https://Zq.example/releases#2026111800"), "zq.example/releases#2026111800")
+        self.assertEqual(TT.norm_url("https://nitter.local/zq/status/1#m"), "nitter.local/zq/status/1")
+        self.assertEqual(TT.norm_url("https://zq.example/a/#comments"), "zq.example/a")
+        f = self.track("recipes")
+        self.schema(f, "recipes")
+        rel = {}
+        for name, dish in (("stew", "bean stew"), ("soup", "tomato soup")):
+            p = self.in_track(f, f"{dish} notes", f"Release notes: {dish} in 30 minutes.")
+            self.cur.execute("UPDATE posts SET url = %s, normalized_url = %s WHERE id = %s",
+                             (f"https://cook.example/menu#{name}", f"https://cook.example/menu#{name}", p))
+            rel[name] = p
+        self.run_planner("track_things")
+        for name, dish in (("stew", "bean stew"), ("soup", "tomato soup")):
+            self.things(f, rel[name], {"kind": "recipe", "fields": {"dish": v(dish, dish.capitalize())}})
+        why = self.in_track(f, "Why this stew works", "The slow simmer is what makes it: https://cook.example/menu#stew")
+        self.run_planner("track_things")
+        self.things(f, why, {"kind": "recipe", "fields": {
+            "dish": v("slow simmer stew", "The slow simmer"),
+            "source": v("https://cook.example/menu#stew", "https://cook.example/menu#stew")}})
+        things = TT.current(self.cur, f, "recipe")
+        self.assertEqual(len(things), 2, "two items of one page stay two rows; the explainer joins the stew's")
+        rs = TT.reports(self.cur, f)
+        stew = next(t for t in things if any(r["post"] == rel["stew"] for r in rs[t["id"]]))
+        self.assertEqual({r["post"] for r in rs[stew["id"]]}, {rel["stew"], why})
 
     def test_entity_joins_and_same_claim_questions(self):
         f = self.track("setups")
@@ -480,7 +544,7 @@ class Flow(_Briefer):
         self.things(f, c)
         # the brief: the digest planner asks digest-v2 over the week's rows
         self.run_planner("digest")
-        briefs = [r for r in self.open_tasks("digest", "digest-v2") if r[1] == f]
+        briefs = [r for r in self.open_tasks("digest", "digest-v3") if r[1] == f]
         self.assertEqual(len(briefs), 1)
         q = briefs[0][3]
         self.assertIn(f"PERIOD: the week of {last.isoformat()}", q)
@@ -532,21 +596,83 @@ class Flow(_Briefer):
         self.run_planner("track_things")
         self.things(f, e, {"kind": "recipe", "fields": {"dish": v("tomato soup", "Tomato soup"),
                                                        "minutes": v({"number": 25, "unit": "minutes"}, "in 25 minutes")}})
+        old = self.in_track(f, "Old curry", "Red curry in 35 minutes.", at=mid)   # read after the look, posted last week
+        self.run_planner("track_things")
+        self.things(f, old, {"kind": "recipe", "fields": {"dish": v("red curry", "Red curry"),
+                                                         "minutes": v({"number": 35, "unit": "minutes"}, "in 35 minutes")}})
         look = call("GET", f"/api/markx/tracks/{f}/brief", query={"since": "seen"})[1]
         self.assertFalse(look["nothing_new"])
-        self.assertEqual([t["fields"]["dish"]["value"] for s in look["sections"] for t in s["things"]], ["tomato soup"])
+        self.assertEqual([t["fields"]["dish"]["value"] for s in look["sections"] for t in s["things"]], ["tomato soup"],
+                         "v10.29: a thing from an older post, found since the look, is in the tables, not new")
         self.assertEqual(look["points"], [], "last week's points cite none of the new things")
         self.assertEqual(look["weeks"], [TB.monday(now).isoformat(), last.isoformat()], "the issue strip, newest first")
-        # the rail's count (v10.28): things since the look; none for a track not opened in 30 days
-        counts = call("GET", "/api/markx/tracks/counts")[1]["by_track"]
-        self.assertEqual(counts[f]["things"], 1)
-        self.assertEqual(TB.new_count(self.cur, f, now=now + timedelta(days=31)), 0)
-        self.switch(False)
-        self.assertNotIn("things", call("GET", "/api/markx/tracks/counts")[1]["by_track"][f], "off: the shape as before")
-        self.switch(True)
+        # the rail's "N new things" count is gone
+        self.assertNotIn("things", call("GET", "/api/markx/tracks/counts")[1]["by_track"][f])
+        # "Since you looked" reads the track's lines from the quick look; the reader's one look moves the track's
+        from insight_core.markx import track_subtopics as TS
+        seen = datetime.fromisoformat(TS.seen(self.cur, f)["track"])
+        got = TB.since_lines(self.cur, f, seen)
+        self.assertEqual((got["new"], got["lines"][0]["text"].lower()), (1, "tomato soup"), got)
+        self.assertTrue(got["name"].startswith("recipes"))
+        later = datetime.now(timezone.utc) + timedelta(minutes=1)
+        with self.conn.transaction():
+            TS.look_all(self.cur, now=later)
+        self.assertEqual(TS.seen(self.cur, f)["track"], later.isoformat(), "the later of its own look and the reader's")
         self.assertEqual(call("GET", f"/api/markx/tracks/{f}/brief", query={"since": "yesterday"})[0], 400)
         self.assertEqual(call("GET", f"/api/markx/tracks/{f}/brief", query={"week": "soon"})[0], 400)
         self.assertEqual(call("GET", f"/api/markx/tracks/{uuid.uuid4()}/brief", query={"week": last.isoformat()})[0], 404)
+
+    def test_points_about_rows_that_left_the_week_are_not_shown_and_the_week_is_asked_again(self):
+        """A point is shown only when every row it cites is in the issue's sections; a week in progress whose brief's
+        cited rows mostly left is asked again within BRIEF_EVERY (0269)."""
+        f = self.track("recipes")
+        self.schema(f, "recipes")
+        now = datetime.now(timezone.utc)
+        week = TB.monday(now)
+        start = datetime.combine(week, datetime.min.time(), tzinfo=timezone.utc)
+        dishes = [("Pasta", "lemon pasta", 20), ("Stew", "bean stew", 45), ("Soup", "tomato soup", 25),
+                  ("Curry", "red curry", 35)]
+        posts = [self.in_track(f, title, f"{dish.capitalize()} in {mins} minutes.", at=start + (now - start) * (k + 1) / 10)
+                 for k, (title, dish, mins) in enumerate(dishes)]
+        self.run_planner("track_things")
+        for p, (_title, dish, mins) in zip(posts, dishes):
+            self.things(f, p, {"kind": "recipe", "fields": {"dish": v(dish, dish.capitalize()),
+                                                           "minutes": v({"number": mins, "unit": "minutes"},
+                                                                        f"in {mins} minutes")}})
+        self.run_planner("digest")
+        (brief,) = [r for r in self.open_tasks("digest", "digest-v3") if r[1] == f]
+        n = {d: next(int(ln[1:ln.index("]")]) for ln in brief[3].splitlines() if ln.startswith("[") and d in ln)
+             for _t, d, _m in dishes}
+        answer = {"id": "x", "points": [
+            {"text": "A bean stew takes 45 minutes and a soup 25.", "cites": [n["bean stew"], n["tomato soup"]]},
+            {"text": "Lemon pasta is ready in 20 minutes.", "cites": [n["lemon pasta"]]}]}
+        status, body = self.answer((brief[0], answer))
+        self.assertEqual((status, body["valid"]), (200, 1), body)
+        self.assertEqual(len(TB.issue(self.cur, f, week, now=now)["points"]), 2)
+        with self.conn.transaction():
+            self.assertEqual(TB.plan(self.cur, now=now), 0, "answered, the same rows: not asked again")
+        # the stew's and the soup's posts dated again, three weeks back: their rows leave this week
+        self.cur.execute("UPDATE posts SET surfaced_at = %s, published_at = %s WHERE id = ANY(%s::uuid[])",
+                         (start - timedelta(days=20), start - timedelta(days=20), posts[1:3]))
+        issue = TB.issue(self.cur, f, week, now=now)
+        self.assertEqual(sorted(t["fields"]["dish"]["value"] for s in issue["sections"] for t in s["things"]),
+                         ["lemon pasta", "red curry"])
+        self.assertEqual([p["text"] for p in issue["points"]], ["Lemon pasta is ready in 20 minutes."],
+                         "the point citing rows that left the week is not shown")
+        def asks():
+            self.cur.execute("SELECT count(*) FROM mx_track_brief_asks WHERE track_id = %s AND week = %s", (f, week))
+            return self.cur.fetchone()[0]
+        self.cur.execute("UPDATE mx_track_things SET first_at = first_at - interval '20 days' WHERE track_id = %s", (f,))
+        weeks = TB._weeks(self.cur, f, now)
+        with self.conn.transaction(), mock.patch.object(TB, "track_rows", wraps=TB.track_rows) as read:
+            TB.plan(self.cur, now=now + timedelta(minutes=5))
+        self.assertGreater(len(weeks), 1)
+        self.assertEqual(read.call_count, 1, f"v10.42: the track's rows read once for its {len(weeks)} weeks")
+        self.assertEqual(asks(), 2, "2 of the 3 rows its brief cites left the week in progress: asked again within "
+                                    "BRIEF_EVERY")
+        with self.conn.transaction():
+            TB.plan(self.cur, now=now + timedelta(minutes=6))
+        self.assertEqual(asks(), 2, "one waits: not asked twice")
 
 
 if __name__ == "__main__":

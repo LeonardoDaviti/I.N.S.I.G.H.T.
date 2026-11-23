@@ -15,7 +15,7 @@ const answer = (extra: Partial<SuggestedSourcesResponse>): SuggestedSourcesRespo
 
 afterEach(() => { vi.useRealTimers(); });
 
-// v10.15: Discover is served from its last background build.
+// Discover is served from its last background build.
 describe('Discover says when its list was built', () => {
   it("says how long ago, and asks again a minute later while a newer build is made", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

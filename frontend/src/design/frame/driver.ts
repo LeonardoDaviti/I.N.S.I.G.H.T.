@@ -1,8 +1,5 @@
-/**
- * What a scenario may do once its page has rendered, to reach a state no URL
- * can (⌘K open, rows selected): find, click and press, in the frame's document.
- * Each step waits for its element, so it runs after the page's data arrives.
- */
+/** What a scenario may do once its page rendered, to reach a state no URL can (⌘K open, rows selected); each step
+ *  waits for its element, so it runs after the page's data arrives. */
 export interface FrameDriver {
   /** The first element matching `selector` (and `text`, when given), once it exists. */
   find(selector: string, text?: RegExp): Promise<HTMLElement>;

@@ -1,11 +1,6 @@
-"""One factory for the posts and sources tests make (issue 0071).
-
-    story_post(...)                 a StoryPost, what the story, tree and News rules read
-    insert_source(cur, ...)         a scratch source in the database, named
-    insert_post(cur, source, ...)   a post row, and its read links when `links` is given
-
-A test file binds its own defaults (its clock, its marks) in a line or two around these, so a
-change to StoryPost or to the posts table is made here once.
+"""One factory for the posts and sources tests make: story_post (a StoryPost), insert_source (a named scratch source)
+and insert_post (a post row, with its read links when `links` is given), so a change to StoryPost or to the posts
+table is made here once.
 """
 from __future__ import annotations
 
@@ -33,8 +28,7 @@ def story_post(pid: str, source: str, *, at: datetime, hours: float = 0.0, kind:
 def insert_source(cur, name: Optional[str] = None, *, handle: Optional[str] = None, platform: str = "rss",
                   in_main_digest: bool = False, followed_days: Optional[int] = None, enabled: bool = True) -> str:
     """A scratch source (`_db.insert_scratch_source`), with `name` as its display name, `handle` as its address, and
-    added `followed_days` ago. On (`enabled`) by default: a source switched off feeds no suggestion (issue 0200), and
-    these are the sources you follow; no test runs a tick over every source while it holds them."""
+    added `followed_days` ago. On (`enabled`) by default: a source switched off feeds no suggestion."""
     source = insert_scratch_source(cur, platform=platform, in_main_digest=in_main_digest, enabled=enabled)
     cur.execute(
         """UPDATE sources SET
@@ -50,10 +44,9 @@ def insert_source(cur, name: Optional[str] = None, *, handle: Optional[str] = No
 def insert_post(cur, source: str, url: str, *, at: Optional[datetime] = None, title: Optional[str] = None, content: Optional[str] = None,
                 html: Optional[str] = None, content_hash: Optional[str] = None, host: Optional[str] = None,
                 normalized: Optional[str] = None, author: Optional[str] = None, links: Optional[Iterable] = None):
-    """A post row, published `at` (default the database's now()); its id as the database returns
-    it. `normalized` defaults to normalize_url(url), `host` to the address's host. With `links` (targets, or (target, words) pairs, in order) its
-    links are stored as read; without, the story job reads them from `html`. Parsed as a save parses it
-    (post_parts, issue 0076)."""
+    """A post row, published `at` (default now()); returns its id. `normalized` defaults to normalize_url(url), `host`
+    to the address's host. With `links` (targets, or (target, words) pairs, in order) its links are stored as read;
+    without, the story job reads them from `html`. Parsed as a save parses it (post_parts)."""
     cur.execute(
         """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
                               published_at, author, links_scanned_at)

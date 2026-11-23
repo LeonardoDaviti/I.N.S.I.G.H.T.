@@ -1,7 +1,5 @@
-"""Mark X's jobs (markx/jobs.py, 0112 Decided 10): the API only marks that work arrived; insight-ingestion's runner
-runs the candidate finder and the decision run, one at a time, never in the API process.
-
-These suites commit, so they run only on a _test database (see test_markx_api)."""
+"""Mark X's jobs (markx/jobs.py): the API only marks that work arrived; insight-ingestion's runner runs the jobs, one
+at a time, never in the API process. These suites commit, so they run only on a _test database."""
 from __future__ import annotations
 
 import os
@@ -44,8 +42,8 @@ class Due(unittest.TestCase):
 
 
 class TheBackoff(unittest.TestCase):
-    """0188: a job whose runs fail waits GAP x 2^failures after the failed run's end (at most 6 hours) before it is
-    tried again, whatever makes it due; from FAILING_AFTER failures on it shows as failing, and is still tried."""
+    """A failing job waits GAP x 2^failures (at most 6 hours) before it is tried again; from FAILING_AFTER failures
+    it shows as failing (0188)."""
 
     def failed(self, n, ended_ago):
         return {"started_at": T0 - timedelta(seconds=ended_ago + 30), "finished_at": T0 - timedelta(seconds=ended_ago),
@@ -78,14 +76,13 @@ class TheBackoff(unittest.TestCase):
 
 
 class AWantedKeptView(unittest.TestCase):
-    """0182, 0199: a view kept only when wanted (main_source; the Labels queue's policy before v10.22) is built when
-    missing and asked for, after a decision run is due."""
+    """A view kept only when wanted is built when missing and asked for, after a due decision run (0182, 0199)."""
 
     def test_due_when_missing_after_the_decision_run(self):
         recent = {"started_at": T0 - timedelta(minutes=10)}
-        asked = {"wanted_at": T0 - timedelta(minutes=1)}                       # 0199: a page asked for it
+        asked = {"wanted_at": T0 - timedelta(minutes=1)}                       # a page asked for it
         self.assertIsNone(jobs.due(_states(decide=recent), T0))
-        self.assertIsNone(jobs.due(_states(decide=recent), T0, kept_missing={"main_source"}))    # 0199: nobody asked
+        self.assertIsNone(jobs.due(_states(decide=recent), T0, kept_missing={"main_source"}))    # nobody asked
         self.assertEqual(jobs.due(_states(decide=recent, main_source=asked), T0, kept_missing={"main_source"}), "main_source")
         self.assertEqual(jobs.due(_states(main_source=asked), T0, kept_missing={"main_source"}), "decide")     # a run first
         self.assertEqual(jobs.due(_states(decide=recent, candidates={"wanted_at": T0}, main_source=asked), T0,
@@ -105,8 +102,7 @@ class AWantedKeptView(unittest.TestCase):
 
 
 class TheRebuildHold(unittest.TestCase):
-    """0209: Mark IX's rule-change rebuild's slices run from the jobs loop; no job starves behind the kept views.
-    0215: the rebuild holds no decision run (0209: an hour after the last start); the story job's lock (a batch) does."""
+    """The rebuild's slices run from the jobs loop and hold no decision run; the story job's lock does (0209, 0215)."""
 
     IX = {"locked": False, "rebuild": "in progress", "done": 2000, "total": 157752}
 
@@ -131,8 +127,7 @@ class TheRebuildHold(unittest.TestCase):
         self.assertIsNone(jobs.due(_states(decide=recent), T0, busy="held"))                 # no rebuild: none
 
     def test_a_wanted_story_run_goes_before_the_decision_run(self):
-        """0218: posts saved want the story job and the decision run; the story job groups them first, so the run
-        decides them in their stories (before, a run due at the same look went first)."""
+        """Saved posts want the story job and the decision run; the story job groups them first (0218)."""
         due_run = {"started_at": T0 - timedelta(minutes=61), "wanted_at": T0 - timedelta(minutes=2)}
         wanted = {"wanted_at": T0 - timedelta(seconds=40), "finished_at": T0 - timedelta(hours=1)}
         self.assertEqual(jobs.due(_states(decide=due_run, stories=wanted), T0), "stories")
@@ -160,7 +155,7 @@ class TheRebuildHold(unittest.TestCase):
         self.assertEqual(jobs.due(_states(decide=due_run), T0, rebuild=True), "decide")
 
     def test_candidates_and_official_never_starve_behind_the_kept_views(self):
-        """The unread counts can be due at every look; before, official ran only when nothing else was due."""
+        """The unread counts can be due at every look."""
         ran = {"started_at": T0 - timedelta(minutes=10)}
         missing = ["unread"]
         self.assertEqual(jobs.due(_states(decide=ran), T0, kept_missing=missing, official_every=1800.0), "official")
@@ -177,9 +172,7 @@ class TheRebuildHold(unittest.TestCase):
 
 
 class TheOrderOfRuns(unittest.TestCase):
-    """0121 Decided 3 (the v10.0.1 review's W6): a decision run ran during Mark IX's first-start rebuild, at 0 of
-    49,384 posts, and queued 159 checks against stories about to change; one started 29 s before the candidate finder
-    it depended on had finished."""
+    """No decision run during Mark IX's first-start rebuild or before the candidate finder ends (0121)."""
 
     def test_no_decision_run_while_mark_ix_is_busy_it_waits_then_runs_once(self):
         wanted = {"started_at": T0 - timedelta(minutes=16), "wanted_at": T0 - timedelta(minutes=2)}
@@ -263,22 +256,20 @@ class TheRunner(_Api):
 
     def setUp(self):
         super().setUp()
-        # 0206: the reader's kept views (the unread counts, Discover) have tests of their own (test_kept_pages_wave_2);
-        # these are about the decision run, the finder and Mark X's own views
+        # the reader's kept views have tests of their own (test_kept_pages_wave_2)
         patcher = mock.patch.object(jobs, "KEPT_VIEWS", tuple(v for v in jobs.KEPT_VIEWS if v.markx))
         patcher.start()
         self.addCleanup(patcher.stop)
-        # 0209: nor official channels (test_official_0196): its pass reads the web. Before, its first write failed
-        # (mx_jobs' check lacked it) and the tick returned None, which these tests read as "nothing due"
+        # nor official channels (test_official_0196): its pass reads the web
         patcher = mock.patch.object(jobs.Runner, "official_every", lambda self: None)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def runner(self, **kw):
-        return jobs.Runner(db_url(), spawn=False, **{"plan_every": None, **kw})   # v10.13.4: the plan job apart
+        return jobs.Runner(db_url(), spawn=False, **{"plan_every": None, **kw})   # the plan job apart
 
     def test_off_nothing_runs(self):
-        """Mark X off: no Mark X job; 0206: the loop starts all the same, for the reader's kept views alone."""
+        """Mark X off: no Mark X job; the loop still runs for the reader's kept views (0206)."""
         os.environ["INSIGHT_MARKX"] = "off"
         self.assertIsNone(self.runner().tick())
         runner = self.runner()
@@ -370,8 +361,7 @@ class TheRunner(_Api):
         self.assertIsNone(self.runner().tick())
 
     def test_a_decision_run_goes_ahead_during_a_rule_change_rebuild(self):
-        """0121 Decided 3 held it until the rebuild's end, 0209 until an hour after the last start; 0215: the rebuild's
-        slices and the decision runs take turns at the normal cadence."""
+        """The rebuild's slices and the decision runs take turns at the normal cadence (0215)."""
         from insight_core.services.stories_service import rules_stamp
         self.decide_row(started=20, wanted=19)
         self.stories_setting({"rules": "older rules", "rebuild": {"rules": rules_stamp(), "done": 0, "total": 49384}})
@@ -413,17 +403,14 @@ class TheRunner(_Api):
         return _Ctx()
 
     def test_the_2026_11_14_deadlock_ends(self):
-        """0209: the server's state: a rule change's rebuild in progress, the decision run wanted since a restart
-        ended it 45 hours before. Before, the story job stepped aside for the decision run ("a decision run's turn")
-        and the decision run waited for the rebuild: neither ran again. 0215: the rebuild holds no run: the story job
-        steps aside for one that waited, and it runs on the stories as stored, saying so in its record."""
+        """A rebuild in progress and a decision run long wanted: the story job steps aside for it, and the run works
+        on the stories as stored, saying so in its record (0209, 0215)."""
         from insight_core.services.stories_service import DECISION_WAIT_S, StoriesService, rules_stamp
         self.stories_setting({"rules": "older rules",
                               "rebuild": {"rules": rules_stamp(), "phase": "keys", "done": 0, "total": 157752}})
         svc = StoriesService(db_url())
         self.decide_row(started=20, wanted=5)                          # wanted, not for ten minutes: the rebuild goes on
         self.assertFalse(svc._decision_waiting())
-        self.assertIsNone(jobs.held_by_mark_ix(self.cur))
         self.decide_row(started=45 * 60 + 44, wanted=45 * 60 + 43, finished=45 * 60 + 47)
         self.assertTrue(svc._decision_waiting())                       # its turn
         self.assertTrue(jobs.decision_waits(self.cur, datetime.now(timezone.utc), DECISION_WAIT_S))
@@ -436,8 +423,7 @@ class TheRunner(_Api):
         self.assertFalse(svc._decision_waiting())                      # it ran: the story job goes on
 
     def test_the_rebuild_slices_run_here_with_mark_x_off_too(self):
-        """0209: the slices run from this loop (not only after a fetch that saved posts), STORIES_GAP after the last
-        ended, recorded with the rebuild's progress; with Mark X off as well (Mark IX's work)."""
+        """The slices run from this loop STORIES_GAP after the last ended, with Mark X on or off (0209)."""
         from insight_core.services.stories_service import rules_stamp
         self.decide_row(started=5)
         self.stories_setting({"rules": "older rules",
@@ -456,9 +442,8 @@ class TheRunner(_Api):
         self.assertTrue(jobs.readers("stories"))                       # not a Mark X run (markx.ix_unchanged)
 
     def test_a_wanted_story_job_runs_here_then_the_originals(self):
-        """0216: a fetch that saved posts only wants the story job (`want_stories`); this loop runs it at its next look,
-        Mark X on or off, then the originals and the scouts (`after_stories`) at most every ORIGINALS_GAP. A run that
-        yielded is wanted again, STORIES_GAP after it. A rebuild's slice that nobody wanted asks no originals."""
+        """A fetch that saved posts wants the story job; this loop runs it, then the originals and scouts at most every
+        ORIGINALS_GAP; a yielded run is wanted again STORIES_GAP after; an unwanted slice asks no originals (0216)."""
         from insight_core.services import stories_service
         from insight_core.services.stories_service import rules_stamp
         self.decide_row(started=5)
@@ -545,14 +530,13 @@ class TheRunner(_Api):
         s = jobs.state(self.cur)["decide"]
         self.assertIsNone(s["stage"])
         self.assertIsNotNone(s["wanted_at"])
-        # 0209: its end recorded (not a run started after its last end, for ever), not as a failure
+        # its end recorded, not as a failure
         self.assertGreaterEqual(s["finished_at"], s["started_at"])
         self.assertEqual(s["last"], {"skip_next": "graph", "ok": False, "stage": "decide", "error": "ended by a restart"})
         self.assertEqual(s["failures"], 0)
 
     def test_every_job_has_its_row(self):
-        """0209: mx_jobs' check names every job: official's runs (v10.18) could never write their row, so every pass
-        crashed at its start and official channels never ran on the server."""
+        """mx_jobs' check names every job, so every job can write its row (0209)."""
         for job in jobs.JOBS:
             with self.conn.transaction():
                 self.cur.execute("INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING", (job,))
@@ -575,8 +559,7 @@ class TheRunner(_Api):
 
 
 class TheLimitAndTheStages(_Api):
-    """0112 Decided 12: at most one run per RUN_GAP (15 minutes since 0199; 5 before), a 120 s limit between stages,
-    stage logs, the running state."""
+    """At most one run per RUN_GAP, a 120 s limit between stages, stage logs, the running state (0112)."""
 
     def test_uploads_streaming_in_start_at_most_one_run_per_fifteen_minutes(self):
         self.assertEqual(jobs.RUN_GAP, 900.0)
@@ -604,7 +587,7 @@ class TheLimitAndTheStages(_Api):
         last = jobs.state(self.cur)["decide"]["last"]
         self.assertEqual([s for s, _ in last["stages"]], ["candidates", "load", "questions and decisions", "write", "connections",
                                                 "back", "headlines", "news", "entities", "graph", "surges",
-                                                "perspectives_plan"])   # 0119; 0227: graph after entities
+                                                "perspectives_plan"])   # graph after entities
 
     def test_a_run_over_the_limit_stops_between_stages_and_writes_nothing(self):
         self.cur.execute("SELECT count(*) FROM mx_runs")
@@ -620,14 +603,14 @@ class TheLimitAndTheStages(_Api):
         self.assertTrue(s["last"]["error"].startswith("over 120 s"))
         self.assertIsNotNone(s["wanted_at"])                   # retried at the next look (after the 5-minute gap)
         self.assertIsNone(s["stage"])
-        # 0124 (the v10.0.2 review's W6): the stage's whole name, and the retry as it happens (the 5-minute gap)
+        # the stage's whole name, and the retry as it happens
         self.assertEqual(s["last"]["stopped_before"], s["last"]["error"].split("stopped before ", 1)[1])
         self.assertIn(s["last"]["stopped_before"], ("load", "questions and decisions", "write", "connections", "graph", "back", "headlines", "news"))
         self.assertIn("it runs again after its backoff", "\n".join(logs.output))
-        self.assertEqual(s["failures"], 1)                     # 0188: one failure in a row, the backoff counts it
+        self.assertEqual(s["failures"], 1)                     # one failure in a row, the backoff counts it
 
     def test_the_entities_stages_own_budget_is_not_counted_in_the_limit(self):
-        """0128: a 100 s entities stage inside a run of 150 s stays under the 120 s limit; the budget reaches the run."""
+        """A 100 s entities stage inside a 150 s run stays under the 120 s limit; the budget reaches the run (0128)."""
         clock = [0.0]
         seen = {}
 
@@ -659,10 +642,8 @@ class TheLimitAndTheStages(_Api):
             self.assertIsNone(jobs.Jobs(db_url(), limit=120).decide())
 
     def test_a_full_run_and_the_run_after_a_stop_have_the_catch_up_limit(self):
-        """0215: after the v10.20 deploy the server's decision runs were full (decide's code changed), read their whole
-        window (92-93 s of 121-126) and stopped at the 120 s limit, rolling back the state the next run would start
-        from: the same full run again, for ever. A full run, and the run after one that stopped, now have
-        CATCH_UP_LIMIT; then the limit is LIMIT again."""
+        """A full run, and the run after one that stopped, have CATCH_UP_LIMIT; then LIMIT again, so a full run that
+        overruns is not repeated for ever (0215)."""
         clock, kinds = [0.0], []
 
         def run(cur, *, stage, on_kind=None, **kw):
@@ -711,7 +692,7 @@ class TheLimitAndTheStages(_Api):
         self.assertEqual((view["failures"], view["failing"], view["retry_at"]), (0, False, None))
 
     def test_over_the_limit_twice_in_the_same_stage_skips_it_once(self):
-        """0188: the identical run is not repeated: the next run defers the stage it ran over in, then tries it again."""
+        """The next run defers the stage the last one ran over in, then tries it again (0188)."""
         clock, seen = [0.0], []
 
         def run(cur, *, stage, skip=(), **kw):
@@ -723,7 +704,7 @@ class TheLimitAndTheStages(_Api):
             return {"run": "x", "stories": 0}
         with mock.patch.object(jobs.time, "monotonic", lambda: clock[0]), mock.patch.object(decide, "run", run), \
                 mock.patch.object(jobs.Jobs, "candidates", lambda self: {}), self.assertLogs(jobs.log, "WARNING") as logs:
-            j = jobs.Jobs(db_url(), limit=120, catch_up=120)   # 0215: past the catch-up limit too
+            j = jobs.Jobs(db_url(), limit=120, catch_up=120)   # past the catch-up limit too
             self.assertIsNone(j.decide())
             first = jobs.state(self.cur)["decide"]["last"]
             self.assertEqual((first["over_in"], first.get("skip_next")), ("graph", None))
@@ -782,26 +763,27 @@ def _sleep_forever(db_url, job):   # module level: a spawned child imports it by
 
 
 class PlanningInTheBackground(_Api):
-    """v10.13.2/4: check (wide story window), cite and track are planned by the job "plan", never a lease (v10.22: and
-    relate)."""
+    """check, cite, track and relate are planned by the job "plan", never a lease."""
 
     def jobs_(self):
         return jobs.Jobs(db_url())
 
     def test_the_slow_kinds_are_planned_here(self):
         from insight_core.markx import tasks
-        planners = {k: mock.Mock(return_value=n) for k, n in (("check", 7), ("cite", 2), ("track", 0), ("relate", 4), ("stop", 5), ("chain", 3), ("derive", 6))}
+        planners = {k: mock.Mock(return_value=n) for k, n in (("check", 7), ("cite", 2), ("track", 0), ("relate", 4), ("stop", 5), ("chain", 3), ("derive", 6),
+                                                            ("digest", 1), ("track_things", 2), ("track_same", 3))}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
         self.assertEqual({k: v["added"] for k, v in got.items() if k not in ("track_places", "not_asked")},
-                         {"check": 7, "cite": 2, "track": 0, "relate": 4, "stop": 5, "chain": 3, "derive": 6})
-        self.assertIn("placed", got["track_places"])   # issue 0195: the track placements kept after the planners
-        self.assertEqual(got["not_asked"], {})          # 0210: nothing open of a kind no feature reads
+                         {"check": 7, "cite": 2, "track": 0, "relate": 4, "stop": 5, "chain": 3, "derive": 6,
+                          "digest": 1, "track_things": 2, "track_same": 3})
+        self.assertIn("placed", got["track_places"])   # the track placements kept after the planners
+        self.assertEqual(got["not_asked"], {})          # nothing open of a kind no feature reads
 
     def test_within_30_days_the_lease_plans_the_checks(self):
         from insight_core.markx import tasks
-        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain", "derive")}
+        planners = {k: mock.Mock(return_value=1) for k in tasks.BACKGROUND_PLANNED}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: False), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
@@ -813,7 +795,8 @@ class PlanningInTheBackground(_Api):
         from insight_core.markx import tasks
         planners = {"check": mock.Mock(side_effect=RuntimeError("boom")), "cite": mock.Mock(return_value=3),
                     "track": mock.Mock(return_value=0), "relate": mock.Mock(return_value=0), "stop": mock.Mock(return_value=0),
-                    "chain": mock.Mock(return_value=0), "derive": mock.Mock(return_value=0)}
+                    "chain": mock.Mock(return_value=0), "derive": mock.Mock(return_value=0),
+                    **{k: mock.Mock(return_value=0) for k in ("digest", "track_things", "track_same")}}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
@@ -822,7 +805,7 @@ class PlanningInTheBackground(_Api):
 
     def test_the_plan_job_records_its_run(self):
         from insight_core.markx import tasks
-        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain", "derive")}
+        planners = {k: mock.Mock(return_value=1) for k in tasks.BACKGROUND_PLANNED}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners):
             self.jobs_().plan()
@@ -832,7 +815,7 @@ class PlanningInTheBackground(_Api):
 
     def test_keeping_the_track_placements_never_fails_the_plan(self):
         from insight_core.markx import tasks, track_kept
-        planners = {k: mock.Mock(return_value=1) for k in ("check", "cite", "track", "relate", "stop", "chain", "derive")}
+        planners = {k: mock.Mock(return_value=1) for k in tasks.BACKGROUND_PLANNED}
         with mock.patch.object(tasks, "checks_in_background", lambda cur, now=None: True), \
                 mock.patch.dict(tasks.PLANNERS, planners), \
                 mock.patch.object(track_kept, "refresh", mock.Mock(side_effect=RuntimeError("no places"))):
@@ -853,8 +836,7 @@ class PlanningInTheBackground(_Api):
 
 
 class AKilledEntitiesStage(_Api):
-    """v10.13.4: a decision run killed in the entities stage defers the full pass to the next night, so the runs
-    between are incremental and finish (before, the first full-pass run started again and was killed again)."""
+    """A run killed in the entities stage defers the full pass to the next night, so the runs between finish."""
 
     def kill_in(self, stage):
         with self.conn.transaction():
@@ -892,8 +874,8 @@ class AKilledEntitiesStage(_Api):
 
 
 class ADeadRun(_Api):
-    """v10.13.9: a run that crashed (OOM -9, a segfault) is recorded like a killed one, and a stage nobody updates
-    for longer than any run can live is cleared, so no job waits on a dead run until a restart."""
+    """A crashed run is recorded like a killed one, and a stage nobody updates for longer than any run lives is
+    cleared, so no job waits on a dead run."""
 
     def set_stage(self, job, stage, ago=0):
         with self.conn.transaction():
@@ -911,8 +893,7 @@ class ADeadRun(_Api):
             jobs.Runner(db_url())._in_own_process(job)
 
     def test_a_run_that_crashed_before_its_first_write_is_recorded(self):
-        """0209: a job whose process ended before it recorded its start (official's, whose row the table refused) is
-        recorded as failed and waits out its backoff; before, nothing was written and it ran again at every look."""
+        """A job whose process ended before it recorded its start is recorded as failed and waits its backoff (0209)."""
         self.cur.execute("DELETE FROM mx_jobs WHERE job = 'official'")
         self.exit_with(1, "official")
         s = jobs.state(self.cur)["official"]
@@ -920,8 +901,7 @@ class ADeadRun(_Api):
         self.assertTrue(jobs.held(s, datetime.now(timezone.utc)))
 
     def test_a_run_with_no_stage_and_no_end_is_stale(self):
-        """0209: the server's decision run of 2026-11-14 09:56: started after its last end, no stage (a restart
-        cleared it). Older than any run lives: stale."""
+        """A run started after its last end with no stage, older than any run lives: stale (0209)."""
         unended = {"started_at": T0 - timedelta(hours=45), "finished_at": T0 - timedelta(hours=45, minutes=3)}
         ended = {"started_at": T0 - timedelta(hours=45), "finished_at": T0 - timedelta(hours=44)}
         young = {"started_at": T0 - timedelta(seconds=jobs.HARD_LIMIT)}

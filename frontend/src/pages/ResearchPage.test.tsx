@@ -1,6 +1,5 @@
-// 0162 (research, Mark X): the start page (a seed typed or passed as ?seed=), a run's page (In INSIGHT, the same
-// announcement, the maker with "These are …", channels with Follow / Not this one, papers held or not, discussion,
-// what could not be read), Watch this and Run again, and the lines in words. Synthetic data only.
+// Research (Mark X, 0162): the start page, a run's page, Watch this and Run again, and the lines in words.
+// Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -137,5 +136,23 @@ describe('starting research', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Research this' }));
     expect(start).toHaveBeenCalledWith('https://hub.example/acmeai/widget-1');
     expect(await screen.findByRole('heading', { name: /Research: https:\/\/hub.example/ })).toBeInTheDocument();
+  });
+
+  it('from an entity shows its name, never its id, and starts from the id; earlier entity runs read as the kind', async () => {
+    const id = '8b947177-0000-4000-8000-000000000001';
+    vi.spyOn(researchApi, 'runs').mockResolvedValue([
+      { id: 'r0', seed_kind: 'entity', seed: '00f6787b-0000-4000-8000-000000000002', status: 'done', created_at: null }]);
+    vi.spyOn(researchApi, 'page').mockResolvedValue({ ...PAGE, run: { ...PAGE.run, seed_kind: 'entity', seed: id, entity_id: 'e1' } });
+    const start = vi.spyOn(researchApi, 'start').mockResolvedValue({ id: 'r1', seed_kind: 'entity' });
+    renderRun(`/research?seed=${id}&name=Widget%20One`);
+    expect(await screen.findByLabelText('What to research')).toHaveValue('Widget One');
+    const earlier = await screen.findByRole('region', { name: 'Earlier research' });
+    expect(earlier).toHaveTextContent('an entity · done');
+    expect(earlier).not.toHaveTextContent('00f6787b');
+    expect(earlier).not.toHaveTextContent('an entity · an entity');
+    await userEvent.click(screen.getByRole('button', { name: 'Research this' }));
+    expect(start).toHaveBeenCalledWith(id);
+    expect(await screen.findByRole('heading', { name: 'Research: Widget One' })).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('8b947177');
   });
 });

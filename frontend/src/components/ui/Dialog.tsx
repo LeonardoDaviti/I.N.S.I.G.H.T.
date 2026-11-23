@@ -4,12 +4,8 @@ import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { iconButtonClass } from './styles';
 
-/**
- * Modal dialog (Radix): centered, solid raised surface over a scrim. Enters in
- * 200ms (opacity + scale 0.97→1, strong ease-out), exits faster; a plain fade
- * under reduced motion. `instant` drops the animation for surfaces used many
- * times a day (the ⌘K switcher).
- */
+/** Modal dialog (Radix) over a scrim: enters in 200ms (opacity + scale 0.97→1), exits faster, a plain fade under
+ *  reduced motion. `instant` drops the animation for surfaces used many times a day (the ⌘K switcher). */
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogClose = DialogPrimitive.Close;

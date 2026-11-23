@@ -7,17 +7,14 @@ import type { MarkxFoldAnswer, MarkxFoldScore, MarkxLine } from '../../services/
 import { Button } from '../ui';
 import { errorMessage } from '../../lib/apiError';
 
-/** 0127 (Mark X v10.3): duplicates folded. The words of the owner's answers. */
+/** Duplicates folded: the words of the owner's answers. */
 const FOLD_WORDS: Record<Exclude<MarkxFoldAnswer, 'undo'>, string> = {
   same: 'same happening',
   not_same: 'not the same',
 };
 
-/**
- * The buttons on a member's fold (like the entity queue's: applied at once, stored as a label): on a folded post
- * "same happening ✓" / "not the same ✗"; on a member outside the group "fold: same happening"; after an answer,
- * "you: …" and undo. The page is read again, so the post moves in or out of its group.
- */
+/** The buttons on a member's fold (applied at once, stored as a label): "same happening ✓" / "not the same ✗" on a
+ *  folded post, "fold: same happening" outside the group, then "you: …" and undo. The page is read again. */
 export function FoldTap({ line }: { line: MarkxLine }) {
   const api = useApi();
   const client = useQueryClient();
@@ -53,10 +50,8 @@ export function FoldTap({ line }: { line: MarkxLine }) {
   );
 }
 
-/**
- * A row's posts with each group folded: the head shows as before, then one line "↳ N more retell it" opens the
- * posts folded under it (indented). A folded post whose head isn't in the row shows as any other line.
- */
+/** A row's posts with each group folded: the head, then "↳ N more retell it" opens the posts folded under it. A
+ *  folded post whose head isn't in the row shows as any other line. */
 export function FoldedPosts({ lines, render }: { lines: MarkxLine[]; render: (line: MarkxLine, extra: ReactNode) => ReactNode }) {
   const ids = new Set(lines.map((line) => line.id));
   const under = new Map<string, MarkxLine[]>();

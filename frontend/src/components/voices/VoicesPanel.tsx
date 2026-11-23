@@ -15,7 +15,7 @@ import { sourceReadPath, voiceReadPath } from '../../lib/feedContext';
 import { VOICES_KEY } from '../../hooks/useVoice';
 import SuggestedVoices from './SuggestedVoices';
 
-/** "Make a voice" (issue 0132 A): any sources joined by hand, named by the main channel unless you name it. */
+/** "Make a voice": any sources joined by hand, named by the main channel unless you name it. */
 function MakeVoice({ onDone }: { onDone: () => void }) {
   const api = useApi();
   const [open, setOpen] = useState(false);
@@ -116,7 +116,7 @@ function VoiceRow({ voice, onChange }: { voice: Voice; onChange: () => void }) {
   );
 }
 
-/** The Sources page's Voices tab (issue 0132 A): what is suggested, and the voices you made. */
+/** The Sources page's Voices tab: what is suggested, and the voices you made. */
 export default function VoicesPanel({ onFollow }: { onFollow?: (url: string) => void } = {}) {
   const queryClient = useQueryClient();
   const voices = useQuery({ queryKey: [...VOICES_KEY, 'list'], queryFn: () => voicesApi.list() });

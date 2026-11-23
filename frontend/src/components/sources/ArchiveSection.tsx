@@ -22,7 +22,7 @@ const linkedKey = (sourceId: string) => ['archive-linked', sourceId] as const;
 /** Every source's archive state (the ingestion tab's catalog); refreshed when an archive here moves. */
 export const ARCHIVE_CATALOG_KEY = ['archive-catalog'] as const;
 
-/** The default horizon of an archive back to a date (issue 0130 C, the owner's default). */
+/** The default horizon of an archive back to a date (the owner's default). */
 export const DEFAULT_UNTIL = '2025-11-01';
 
 /** The pacing fields, in the order shown: the saved key, the request's name, the smallest value. */
@@ -78,11 +78,11 @@ interface RunView {
   pages?: number;
   /** Why the archive paused (a site limiting us); it resumes from its checkpoint. */
   pausedReason?: string;
-  /** What it waits for (issue 0107: a host's limit); the scheduler continues it. */
+  /** What it waits for (a host's limit); the scheduler continues it. */
   waiting?: ArchiveWaiting | null;
-  /** It read the source's linked, not stored pages (issue 0084 B), not its archive. */
+  /** It read the source's linked, not stored pages, not its archive. */
   linked?: boolean;
-  /** Issue 0130: why it added no more, the date it stopped at, a changed layout. */
+  /** Why it added no more, the date it stopped at, a changed layout. */
   extra?: ArchiveResultExtra;
 }
 
@@ -128,8 +128,8 @@ function fromSummary(job: ArchiveJobSummary): RunView {
   };
 }
 
-/** The archive's own words when they say more than its counts (issue 0130): why it added no more, or the date it
- *  stopped at. Null otherwise. */
+/** The archive's own words when they say more than its counts (why it added no more, or the date it stopped at);
+ *  null otherwise. */
 function resultNote(run: RunView): string | null {
   const unreached = run.extra?.unreached;
   const explains = Boolean(run.extra?.until_reached)
@@ -140,7 +140,7 @@ function resultNote(run: RunView): string | null {
 }
 
 function resultLine(run: RunView): string {
-  // A linked fetch's own words say what it read and what it could not store (issue 0084 B).
+  // a linked fetch's own words say what it read and what it could not store
   if (run.linked && run.message && run.status !== 'running' && !run.waiting) return run.message;
   return archiveResultLine({ posts_fetched: run.fetched, posts_inserted: run.inserted, pages_fetched: run.pages })
     ?? run.message ?? 'Finished';
@@ -184,13 +184,9 @@ function Progress({ run, now, onStop, stopping }: { run: RunView; now: Date; onS
 }
 
 /**
- * The source sheet's archive: what is stored, what the source has (worded by what
- * the source can tell, and when it was measured), the plan (where the archive
- * continues from and how much is older), then run or resume with progress and the
- * last result. An archive fetches everything older than what is stored. A source
- * that cannot archive is one quiet line.
- * With `pacing` (the ingestion tab's backfill) it also sets the page delay, batch
- * size and batch cooldown the plan and the run use.
+ * The source sheet's archive: what is stored, what the source has, the plan (where it continues from and how much
+ * is older), then run or resume with progress and the last result; a source that cannot archive is one quiet line.
+ * With `pacing` (the ingestion tab's backfill) it also sets the page delay, batch size and batch cooldown.
  */
 export default function ArchiveSection({ sourceId, pacing = false }: { sourceId: string; pacing?: boolean }) {
   const api = useApi();
@@ -199,7 +195,7 @@ export default function ArchiveSection({ sourceId, pacing = false }: { sourceId:
     queryKey: [...archiveStatusKey(sourceId)],
     queryFn: () => api.getSourceArchive(sourceId),
   });
-  // Its own request: counting reads every stored post's links (about a second on a large source).
+  // its own request: counting reads every stored post's links (about a second on a large source)
   const linked = useQuery({
     queryKey: [...linkedKey(sourceId)],
     queryFn: () => api.getLinkedPages(sourceId),
@@ -218,7 +214,7 @@ export default function ArchiveSection({ sourceId, pacing = false }: { sourceId:
   }
   const support = supportOf(status.data);
   if (!support.archivable) {
-    // A feed with nothing older to archive can still read the pages its posts link (issue 0084 B).
+    // a feed with nothing older to archive can still read the pages its posts link
     return (
       <div className="space-y-3">
         <p className="text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">No archive: {support.reason}</p>
@@ -269,7 +265,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
   const archive = status.archive ?? {};
   const stored = archive.stored_posts ?? 0;
   const [plan, setPlan] = useState<ArchivePlan | null>(null);
-  // The plan's own count wins once there is one: it is a fresh measurement.
+  // the plan's own count wins once there is one: it is a fresh measurement
   const available = plan ? plan.available_posts : archive.available_posts ?? null;
   const basis = plan?.available_basis ?? support.available_basis;
   const availableText = describeAvailable({ available, basis, stored });
@@ -277,7 +273,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
   const resumeReady = Boolean(archive.resume_ready);
   const [resume, setResume] = useState(resumeReady);
   const [pace, setPace] = useState<PacingText>(() => pacingText(archive.rate_limit));
-  // The sheet sends no pacing at all, so the kind's saved values apply untouched.
+  // the sheet sends no pacing at all, so the kind's saved values apply untouched
   const rateArgs: [ArchivePacing?] = pacing ? [pacingOverrides(pace)] : [];
   const [plannedFor, setPlannedFor] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -285,18 +281,18 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
   const [error, setError] = useState<string | null>(null);
 
   const latest = status.latest_job ?? null;
-  // A waiting archive is followed too: the scheduler continues it on the same job (issue 0107).
+  // a waiting archive is followed too: the scheduler continues it on the same job
   const [jobId, setJobId] = useState<string | null>(
     latest?.status === 'running' || latest?.status === 'waiting' || latest?.status === 'queued' ? latest.id : null);
   const job = useOperationJob(jobId);
   const run: RunView | null = job.data ? fromJob(job.data) : latest ? fromSummary(latest) : null;
   const running = run?.status === 'running';
-  // Back to a date (issue 0130 C): a kind whose pages go newest first; blank: the whole history.
+  // back to a date: a kind whose pages go newest first; blank: the whole history
   const [until, setUntil] = useState(DEFAULT_UNTIL);
   const horizon = support.until ? until.trim() || null : null;
   const now = new Date();
 
-  // When the followed job finishes, the stored count and the checkpoint have moved.
+  // when the followed job finishes, the stored count and the checkpoint have moved
   const finished = Boolean(jobId && job.data && job.data.status !== 'running' && job.data.status !== 'queued');
   useEffect(() => {
     if (finished) onChanged();
@@ -324,8 +320,8 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
     setStarting(true);
     setError(null);
     try {
-      // Back to a date (issue 0130 C) goes through the queue's call; without one, the archive as before. Either way a
-      // Telegram or X archive while another of its kind runs is queued (the job says so).
+      // back to a date goes through the queue's call. Either way a Telegram or X archive while another of its kind
+      // runs is queued (the job says so).
       const { job_id: started } = horizon
         ? await archiveQueueApi.startArchive(sourceId, fromCheckpoint, horizon, ...rateArgs)
         : await api.startSourceArchive(sourceId, fromCheckpoint, ...rateArgs);
@@ -339,7 +335,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
     }
   };
 
-  // v10.13.9: stop the running archive after its current page (whichever process runs it); what it stored stays.
+  // stop the running archive after its current page (whichever process runs it); what it stored stays
   const [stopping, setStopping] = useState(false);
   const stopArchive = async () => {
     setStopping(true);
@@ -367,7 +363,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
       setStarting(false);
     }
   };
-  // A waiting job continues on what it was reading: the archive, or the linked list.
+  // a waiting job continues on what it was reading: the archive, or the linked list
   const continueRun = () => void (run?.linked ? fetchLinked() : start(true));
 
   const label = 'block text-[0.75rem] text-fg-3';
@@ -436,7 +432,7 @@ function ArchiveControls({ sourceId, status, support, pacing, linked, onChanged,
           ) : null}
         </div>
       </dl>
-      {/* A feed the smart archiver measured (issue 0143): its coverage, not "nothing older is reachable". */}
+      {/* a feed the smart archiver measured: its coverage, not "nothing older is reachable" */}
       {archive.coverage ? (
         <ArchiveCoverageLine sourceId={sourceId} coverage={archive.coverage} onChanged={onChanged} />
       ) : availableText.note ? <p className="text-[0.75rem] text-fg-2">{availableText.note}</p> : null}

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { bylineName, bylineText, carried, carriedLine } from './byline.ts';
 
-// Issue 0185: one formatter for who wrote a post, via whom, quoting whom. Synthetic names only.
+// One formatter for who wrote a post, via whom, quoting whom (0185). Synthetic names only.
 const own = { author: null, via: 'Example Feed', quoting: null };
 const repost = { author: '@acme', via: 'Example Feed', quoting: null };
 const forward = { author: 'Acme News', via: 'Example Channel', quoting: null };
@@ -18,6 +18,13 @@ test('bylineText names the writer and the feed that carried it', () => {
   // No byline (an older server): the source name, made readable.
   assert.equal(bylineText(null, 'https://nitter.local/someone/rss'), '@someone');
   assert.equal(bylineText(undefined, 'Example Feed'), 'Example Feed');
+});
+
+test("0265: a maker's page an aggregator carried names the maker, as a source is named", () => {
+  const maker = { author: 'Example Labs News', via: 'Hacker News', quoting: null };
+  assert.equal(bylineText(maker), 'Example Labs News via Hacker News');
+  assert.equal(bylineText({ ...maker, author: 'https://www.labs.example/research' }), 'labs.example via Hacker News');
+  assert.equal(bylineName({ byline: { ...maker, author: 'https://www.labs.example/research' } }), 'labs.example');
 });
 
 test('bylineName is the writer, else the feed (a story line)', () => {

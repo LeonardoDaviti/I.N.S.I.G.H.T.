@@ -1,19 +1,15 @@
-"""The owner's answers to Mark X's entity review queue (issue 0119 A1, A3): applied at once, in the request's own
-transaction, writing mx_entity* rows and mx_labels only (never mx_mentions: a split is a pin the next run applies, and
-every page reads through redirects and pins, so the answer shows at once).
+"""The owner's answers to Mark X's entity review queue: applied at once, in the request's own transaction, writing
+mx_entity* rows and mx_labels only (never mx_mentions: a split is a pin the next run applies, and every page reads
+through redirects and pins, so the answer shows at once).
 
-  - an alias pair: `same` merges (a redirect by the owner; 0164 A: when the two clusters would put a product family
-    and an org together, only the two names join, `owner_same`); `other_version`, `different` and `not_entity` keep the two
-    apart, undoing any merge that joined them; they are never merged by a rule or Haiku again;
-  - a collision: `different` or `other_version` splits it as proposed (each sense but the largest an entity of its
-    own, the mentions the question showed pinned there); `same` keeps one page; `not_entity` marks the entity;
+  - an alias pair: `same` merges (the owner's redirect; when the clusters would put a product family and an org
+    together, only the two names join, `owner_same`); `other_version`, `different` and `not_entity` keep the two apart,
+    undoing any merge that joined them, never merged by a rule or Haiku again;
+  - a collision: `different` or `other_version` splits it as proposed; `same` keeps one page; `not_entity` marks it;
   - an automatic merge from the history: `undo` closes its redirect;
-  - a handle (0168 C): `same` records the handle as the entity's (with the display name and time range its pairs
-    gave); any other answer records a no, never asked again;
-  - a rename (0165 B): `same` redirects the older name's cluster into the newer's (kind 'rename': the older names are
-    shown as earlier names); the other answers keep them apart, undoing any merge that joined them.
-Each answer is also a label: mx_labels item kind `entity`, a and b the two entities, split `test`, the queue item in
-its note.
+  - a handle: `same` records it as the entity's; any other answer records a no, never asked again;
+  - a rename: `same` redirects the older name's cluster into the newer's (kind 'rename'); the others keep them apart.
+Each answer is also a label (mx_labels item kind `entity`, a and b the two entities, the queue item in its note).
 """
 from __future__ import annotations
 
@@ -68,9 +64,9 @@ def separate(cur: Any, book: I.Book, a: str, b: str) -> List[str]:
 
 def split(cur: Any, book: I.Book, item: Dict[str, Any], *, by: str = "owner", call_id: Any = None) -> Dict[str, Any]:
     """Each sense but the largest becomes an entity of its own (senses related as `part` stay together), and the
-    mentions the question showed in it are pinned there. 0184: `by` 'facts' is the identity facts' split
-    (markx/entity_facts.py): its entities provisional, its pins `by` facts with the call and the entity each mention
-    left (`from_entity`); `senses` the answer's sense for each entity made, for its facts."""
+    mentions the question showed in it are pinned there. `by` 'facts' is the identity facts' split (entity_facts.py):
+    its entities provisional, its pins with the call and the entity each mention left (`from_entity`); `senses` the
+    answer's sense for each entity made."""
     from insight_core.markx import schemas
     guide = schemas.KINDS["entities"].guide
     ev = item["evidence"] or {}
@@ -103,9 +99,9 @@ def split(cur: Any, book: I.Book, item: Dict[str, Any], *, by: str = "owner", ca
         made_senses.append(next((s for s in senses if {int(x) for x in s.get("m") or []} & set(g)), {}))
         for x in g:
             for pid, mn in posts_of.get(x, []):
-                from insight_core.markx import repo   # 0133: the pin names the post's current set's guide
+                from insight_core.markx import repo   # the pin names the post's current set's guide
                 guide = repo.current_guide(cur, pid) or schemas.KINDS["entities"].guide
-                # 0184: a facts pin never goes where the owner undid one of this mention (final)
+                # a facts pin never goes where the owner undid one of this mention (final)
                 cur.execute("""INSERT INTO mx_entity_pins (post_id, guide, n, entity_id, queue_id, by, call_id, from_entity)
                                SELECT %s, %s, %s, %s, %s, %s, %s, %s WHERE NOT EXISTS (
                                  SELECT 1 FROM mx_entity_pins WHERE post_id = %s AND guide = %s AND n = %s
@@ -128,7 +124,7 @@ def queue_get(cur: Any, item_id: str) -> Optional[Dict[str, Any]]:
     return None if row is None else dict(zip(keys, row))
 
 
-# ---- 0164 A: the owner's `same` never joins a family to an org blindly ------------------------------------------
+# ---- the owner's `same` never joins a family to an org blindly ------------------------------------------------
 
 def join_plan(book: I.Book, a: str, b: str) -> Dict[str, Any]:
     """What `same` on a and b does to their clusters. {mixes: False}: merging the two roots puts no product family
@@ -168,11 +164,11 @@ def _held_message(book: I.Book, x: str, others: List[str]) -> str:
 
 
 def owner_same(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
-    """The owner's `same` on an alias item (0164 A). When merging the two roots would put a product family and an org
-    in one cluster, only the two names join: each answered name first leaves the members of the other kind its
-    cluster holds (the automatic merges that hold it there undone, undone_by 'owner_answer', the why in their
-    evidence, as the repair's cut), then the two names merge (the owner's redirect). When only the owner's own earlier
-    merge holds it there, or the names are of two kinds, nothing is written: {result: 'needs_choice', message}."""
+    """The owner's `same` on an alias item. When merging the two roots would put a product family and an org in one
+    cluster, only the two names join: each answered name first leaves the members of the other kind its cluster holds
+    (the automatic merges that hold it there undone, undone_by 'owner_answer'), then the two names merge. When only the
+    owner's own earlier merge holds it there, or the names are of two kinds, nothing is written: {result:
+    'needs_choice', message}."""
     from insight_core.markx import entity_repair as R
     a, b, qid = item["a"], item["b"], item["id"]
     plan = join_plan(book, a, b)
@@ -215,9 +211,9 @@ def owner_same(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def owner_rename(cur: Any, book: I.Book, item: Dict[str, Any]) -> Dict[str, Any]:
-    """0165 B: the owner's `same` on a rename item (a = the older name, b = the newer): the older cluster redirects into
-    the newer one (kind 'rename', markx/rename.merge). Like 0164 A's `same`, never a product family joined to an org
-    blindly: when the two clusters would mix them, nothing is written ({result: 'needs_choice', message})."""
+    """The owner's `same` on a rename item (a = the older name, b = the newer): the older cluster redirects into the
+    newer one (kind 'rename', markx/rename.merge); never a product family joined to an org blindly ({result:
+    'needs_choice', message})."""
     from insight_core.markx import rename
     a, b = item["a"], item["b"]
     if join_plan(book, a, b)["mixes"]:
@@ -235,15 +231,15 @@ def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict
     item = queue_get(cur, item_id)
     if item is None:
         raise NotFound(item_id)
-    book = I.lazy_book(cur)   # v10.17 (0186): the item's entities and their clusters, not the whole book
+    book = I.lazy_book(cur)   # the item's entities and their clusters, not the whole book
     a, b = item["a"], item["b"]
     applied: Dict[str, Any] = {"answer": ans}
-    if item["kind"] == "handle":    # 0168 C: `same` = yes, this is their handle; any other answer = no
+    if item["kind"] == "handle":    # `same` = yes, this is their handle; any other answer = no
         from insight_core.markx import handles
         applied.update(handles.answer_item(cur, book, item, ans))
         if ans == "same":
             _confirm(cur, a)
-    elif item["kind"] == "rename":    # 0165 B: `same` = one thing, renamed: the older name becomes the newer's earlier name
+    elif item["kind"] == "rename":    # `same` = one thing, renamed: the older name becomes the newer's earlier name
         if ans == "same":
             got = owner_rename(cur, book, item)
             if got.get("result") == "needs_choice":
@@ -262,7 +258,7 @@ def answer(cur: Any, item_id: str, ans: str, note: Optional[str] = None) -> Dict
             applied.update(got)
             _confirm(cur, a, b)
             if item.get("reason") == "handle_name" and (item.get("evidence") or {}).get("handle"):
-                from insight_core.markx import handles   # 0168 D: the handle is the display name's entity's
+                from insight_core.markx import handles   # the handle is the display name's entity's
                 applied.update(handles.answer_item(cur, book, {**item, "a": b}, "same"))
         else:
             applied["undone"] = separate(cur, book, a, b)
@@ -286,8 +282,8 @@ FLAGGERS = ("claude", "owner")
 
 
 def flag(cur: Any, item_id: str, on: bool = True, note: Optional[str] = None, by: str = "claude") -> Dict[str, Any]:
-    """0222: an open review item flagged for the owner (Claude's review: the owner sees only these by default), or
-    unflagged (`on` False). Nothing else changes: the item is decided as before until it is answered."""
+    """An open review item flagged for the owner (Claude's review: the owner sees only these by default), or unflagged
+    (`on` False). Nothing else changes until it is answered."""
     if by not in FLAGGERS:
         raise ValueError(f"by: one of {', '.join(FLAGGERS)}")
     note = ((note or "").strip() or None) if on else None

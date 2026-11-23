@@ -1,64 +1,42 @@
-"""Originals from entities (issue 0138): pure rules. The database side is markx/entity_addresses.py (A: an entity's
+"""Originals from entities (0138): pure rules. The database side is markx/entity_addresses.py (A: an entity's
 addresses), services/originals_service.py (B: collect its original; C: the title lookup; D2: the sites that supply
 originals) and db/repo_discover.py (D1: the Pages rows).
 
-**A. An entity's address, no request.** For an entity of a type that names one thing (candidates.SPECIFIC_TYPES),
-the links its posts carry that are that thing's page, by these rules in this order:
-  1. `identifier`: the mention's identifier (0133's citation rule: an arXiv id, a DOI), else the one paper the post
-     links when the entity is the post's only document (ent-v4.2 runs no rule, so a post linking one paper about one
-     document names it so). Its page is the paper's abstract page (the post's own link when it is the page, else the
-     host's canonical page).
-  2. `title`: a link whose read title (the page's title, else the link's own words) is the entity's name or an alias
-     by identity's name key (whole, or one part of a "Title | Site" title).
-  3. `repo` (v10.13.5): a platform's page of one thing, <host>/<owner>/<thing> on a code host or a model hub (a
-     dataset's /datasets/<owner>/<thing>), or a package index's page of one package, whose <thing> is the entity's
-     name or an alias whole (the name key run together, no suffix dropped). A bare platform link has no link words,
-     the platform's read title is "<owner>/<thing> · Hub" (never the name alone), and the platform is nobody's maker
-     site, so rules 2 and 4 never took it. Kind by the platform: code, release (a model hub's card) or package;
-     <owner> is kept on the row (`owner`) as a maker candidate, shown, never asserted. Never a longer name holding
-     the entity's, never an owner's page alone (`is_home`), never a platform's own section (/topics/). One entity's
-     rows of one kind under 2+ owners (a fork, a namesake) keep only the stated maker's (`one_owner`).
-  4. `maker`: a model, product or software entity whose maker's name is the site's own word: a page on that site
-     whose title holds the entity's name (word for word). Never a front page or a profile (`is_home`).
-A paper or a release page is the **original**; a code repository and a demo are kept as its links (the post that
-gave the paper by rule 1 gives them, when it links one of each).
+A. An entity's address, no request: for an entity of a type that names one thing, the links its posts carry that
+are that thing's page, by rule (RULE_ORDER): `identifier` (the mention's arXiv id or DOI, else the one paper a post
+links beside its only document), `title` (the link's read title is the entity's name or alias), `repo` (a code host's,
+model hub's or package index's page of one thing named as it; one_owner keeps the stated maker's among forks) and
+`maker` (a page on the maker's own site whose title is about the name). A paper or a release page is the original;
+code and demo pages are its links.
 
-**Cited, not its own (v10.25, 0229).** A match by rule 1 or 2 is evidence that the post CITES a page, not that the page
-IS the entity: an org's report whose posts link a paper the report cites got that paper as its Original; a model whose
-posts link a third party's dashboard titled with its name got the dashboard. Such a page is kept as kind `cited`
-(never an original, an address, a work or a site; the entity's page lists it apart, as what its posts cite):
-  - rule 1's paper is the entity's own only when the mention carries the identifier itself (its ref, or an id in its
-    span or name: it names that paper), or the paper's read title names the entity (`paper_names_it`: rule 2's title
-    keys, or the head before its colon); the one paper a post links beside its only document is otherwise cited, and
-    so are the code and demo links that come with it;
-  - rule 2's release page of a model, product or software is its own only on its own or its maker's site
-    (`own_site`); a document's page titled with its name is the document (a filing, a report) wherever it is.
+Cited, not its own (0229): a match by rule 1 or 2 shows the post cites a page, not that the page is the entity. Such a
+page is kind `cited`, never an original or an address: rule 1's paper is own only when the mention carries its id or
+its title names the entity (`paper_is_its_own`); a model's, product's or software's page is own only on its own or
+its maker's site (`own_site`) or as its own platform page (`platform_page_own`: a voice platform's post is its
+account's; an app conversation is nobody's). A document's page titled with its name is the document wherever it is.
 With no own page the entity shows no Original rather than a page its posts cite.
 
-**B. The trigger.** The entity is the `subject` of posts from 2+ voices in 7 days, or of 1 voice's post that leads a
-News row. Roles `source` and `recommended` never count (0133: evidence, not news).
-
-**C. A lookup by title** (its own switch, off by default): the arXiv API's title search, else Crossref's; a match is
-a result whose title is the entity's name by the name key and with an author of `by` among its authors.
-
-**D2. Sites that supply originals:** a site that was the address of 3+ originals in 30 days, that you don't follow,
-is a Sources suggestion; a paper host never is (0109), a summariser of papers can be.
+B. The trigger: the entity is the `subject` of posts from 2+ voices in 7 days, or of one voice's post that leads a
+News row. C. A lookup by title (off by default): arXiv's title search, else Crossref's, matched by name and author.
+D2. A site that was the address of 3+ originals in 30 days, that you don't follow, is a Sources suggestion; a paper
+host never is.
 """
 from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import quote
 
-from insight_core.utils.addresses import bare, host_of, paper_file, paper_id, paper_page_order, site_of
+from insight_core.utils.addresses import (PLATFORM_SITES, account_key, bare, host_of, paper_file, paper_id,
+                                          paper_page_order, site_of)
 from insight_core.utils.discover_rules import paper_address, place_kind
 from insight_core.utils.post_links import is_home
 from insight_core.utils.url_normalization import normalize_url
 
 PAPER, CODE, DEMO, RELEASE, WORK, PACKAGE = "paper", "code", "demo", "release", "work", "package"
-CITED = "cited"                    # 0229: a page the posts cite, not the entity's own: never an original or an address
+CITED = "cited"                    # a page the posts cite, not the entity's own: never an original or an address
 KINDS = (PAPER, CODE, DEMO, RELEASE, WORK, PACKAGE)
 ORIGINAL_KINDS = (PAPER, RELEASE, WORK)
 IDENTIFIER, TITLE, MAKER, SITE, LOOKUP, REPO = "identifier", "title", "maker", "site", "lookup", "repo"
@@ -88,8 +66,7 @@ DEMO_SUFFIX = (".hf.space",)
 MODEL_HUBS = frozenset({"huggingface.co", "hf.co"})   # the model hub address_kind knows (hf.co: its short host)
 # a package index's page of one package: the section word before its name (npm's may be @scope/<name>)
 PACKAGE_SITES = {"pypi.org": "project", "npmjs.com": "package", "crates.io": "crates"}
-# a code host's or a model hub's own sections where an owner would stand, never an owner (github.com/topics/<x>,
-# huggingface.co/blog/<slug>): a vocabulary of page kinds, not of sites
+# a code host's or a model hub's own sections where an owner would stand: page kinds, not sites
 PLATFORM_SECTIONS = frozenset({
     "about", "apps", "blog", "changelog", "chat", "codespaces", "collections", "contact", "customer-stories",
     "dashboard", "datasets", "docs", "enterprise", "events", "explore", "features", "groups", "help", "issues", "join",
@@ -106,8 +83,7 @@ def _segments(url: str) -> List[str]:
 
 
 def address_kind(url: str) -> str:
-    """What a page of a thing is: a paper (its id, a /paper/ path), a code repository (a code host's
-    owner/repository), a demo (a model hub's space, a space's own host), else a release page."""
+    """paper, code (a code host's owner/repository), demo (a model hub's space) or release."""
     host = host_of(url)
     segs = _segments(url)
     if paper_id(url) or paper_address(url):
@@ -120,8 +96,7 @@ def address_kind(url: str) -> str:
 
 
 def paper_ref(url: str) -> Optional[str]:
-    """One paper whatever page of it an address is: arXiv:<id> on an arXiv host or by the arXiv DOI, doi:<doi>,
-    else <host>:<id>."""
+    """One paper whatever page of it an address is: arXiv:<id>, doi:<doi>, else <host>:<id>."""
     pid = paper_id(url)
     if not pid:
         return None
@@ -136,7 +111,6 @@ def paper_ref(url: str) -> Optional[str]:
 
 
 def ref_page(ref: Optional[str]) -> Optional[str]:
-    """The canonical page of an identifier (0133's refs): an arXiv abstract page, a DOI's resolver page."""
     if not ref:
         return None
     if ref.startswith("arXiv:"):
@@ -147,15 +121,15 @@ def ref_page(ref: Optional[str]) -> Optional[str]:
 
 
 def paper_page(ref: str, links: Iterable[str]) -> Optional[str]:
-    """The page of paper `ref`: the post's own link to its page (not its file) when it has one, else canonical."""
+    """The post's own link to paper `ref`'s page (not its file), else the canonical page."""
     own = sorted((u for u in links if paper_ref(u) == ref and not paper_file(u)), key=paper_page_order)
     return own[0] if own else ref_page(ref)
 
 
 def by_identifier(*, ref: Optional[str], span_ids: Sequence[str], links: Sequence[str], documents: int,
                   is_document: bool) -> Optional[str]:
-    """Rule 1: the paper page of the mention's identifier, else of an id its span or name holds, else (a document
-    that is its post's only document) of the one paper the post links."""
+    """Rule 1: the paper page of the mention's identifier (or an id in its span or name), else, for its post's only
+    document, of the one paper the post links."""
     for r in ([ref] if ref else []) + list(span_ids):
         if r and (r.startswith("arXiv:") or r.startswith("doi:")):
             return paper_page(r, links)
@@ -168,13 +142,11 @@ def by_identifier(*, ref: Optional[str], span_ids: Sequence[str], links: Sequenc
 
 
 def carries_id(ref: Optional[str], span_ids: Sequence[str]) -> bool:
-    """0229: the mention carries an identifier itself (its ref, an id in its span or name): it names that paper."""
     return any(r and (r.startswith("arXiv:") or r.startswith("doi:")) for r in [ref, *span_ids])
 
 
 def paper_names_it(title: Optional[str], names: Iterable[str], key) -> bool:
-    """0229: a paper's read title names the entity: rule 2's title keys, or the head before its colon ("Nimbus:
-    Proving a Hypothesis with Lattices" names Nimbus)."""
+    """A paper's read title names the entity: by title keys, or by the head before its colon ("Nimbus: ...")."""
     names = {n for n in names if len(n) >= NAME_MIN}
     if not title or not names:
         return False
@@ -190,9 +162,8 @@ _AUTHOR_YEAR = re.compile(r"\bet\s+al\b|\bи\s+др\b|\(?(?:19|20)\d{2}[a-z]?\)?
 
 
 def link_names(words: Optional[str], url: str) -> Optional[str]:
-    """0229: what a link's own words name, when they name a thing: None for no words, an address, an identifier
-    ("arXiv:2507.02825"), page-kind labels only (LINK_LABELS) and an author-year citation ("Baker et al., 2025": whose
-    work it is, not which); else the words."""
+    """What a link's own words name; None for no words, an address, an identifier, page-kind labels only
+    (LINK_LABELS) or an author-year citation ("Baker et al., 2025")."""
     w = " ".join((words or "").split())
     if not w or "://" in w or w.startswith("www.") or bare(url).split("/", 1)[0] in w.lower():
         return None
@@ -205,11 +176,8 @@ def link_names(words: Optional[str], url: str) -> Optional[str]:
 
 def paper_is_its_own(*, carried: bool, title: Optional[str], words: Optional[str], url: str, names: Iterable[str],
                      key) -> bool:
-    """0229: rule 1's paper is the entity's own when the mention carries its identifier (`carries_id`), or what
-    names the page names the entity: its read title, else the link's own words (`link_names`), naming it when it is
-    the entity's name by paper_names_it or one's words are a run of the other's. A read title or link words naming
-    another thing make it a paper the post cites. With neither (a bare link, "Paper"), the post's only document and
-    its one paper stay its own (0138's rule 1)."""
+    """Rule 1's paper is the entity's own when the mention carries its id, or its read title (else the link's words)
+    names the entity; words naming another thing make it cited; with neither (a bare link) it stays its own."""
     from insight_core.markx.names import word_contains
     if carried:
         return True
@@ -222,14 +190,11 @@ def paper_is_its_own(*, carried: bool, title: Optional[str], words: Optional[str
 
 
 def own_site(url: str, words: Iterable[str], squash) -> bool:
-    """0229: a page of the thing on its own site, its maker's, or a platform's (a model hub, a code host: its page
-    there, whoever's): a label of the host (blog.example.com: blog, example; an ending of 3 letters or fewer is
-    none), the site's word or its whole registrable
-    address run together (z.example: zexample) is a name or maker key of it run together, one word of one (3+
-    characters, not a number), or a maker's initials (Black Forest Labs: bfl)."""
+    """A page on the thing's own site or its maker's: a host label, the site's word or its registrable address run
+    together matches a name or maker key run together, one of its words (3+ characters), or a maker's initials."""
     host = host_of(url)
     site = site_of(host)
-    if site in MODEL_HUBS or site in CODE_SITES or host.split(".", 1)[0] in _CODE_WORDS:
+    if host.split(".", 1)[0] in _CODE_WORDS:   # a code host's own install (gitlab.<org>.example): the org's
         return True
     labels = [x for x in host.lower().split(".") if x and x != "www"]
     if labels and len(labels[-1]) <= 3:   # a short ending (com, org, dev) is nobody's word; a brand's (google) is
@@ -251,7 +216,7 @@ _CODE_WORDS = frozenset(s.split(".", 1)[0] for s in CODE_SITES)   # a code host'
 
 
 def title_keys(title: Optional[str], key) -> Set[str]:
-    """The name keys a title can stand for: whole, without a leading [id], and each part of "Title | Site"."""
+    title = (title or "").strip().split("\n", 1)[0]   # a post's text stored as its title: its first line only
     if not title:
         return set()
     out: Set[str] = set()
@@ -265,10 +230,7 @@ _PAGE_FILE = re.compile(r"\.(?!html?$|php$|aspx?$)[a-z0-9]{1,5}$", re.I)
 
 
 def not_a_release(url: str) -> bool:
-    """Measured on the server's copy (0138's check 2): a page no thing's release is, whatever its title says: a help or
-    docs page (0109's reference shape), a store's or a catalog's listing of it (an app marketplace, a podcast
-    directory: discover_rules.CATALOG_LABELS in its host or path) and a raw file (a .md, a .json: a repository's
-    file, never its page). A paper keeps its own rules (rule 1)."""
+    """A page no thing's release is: a help or docs page, a store's or catalog's listing, or a raw file (.md, .json)."""
     from insight_core.utils.discover_rules import CATALOG_LABELS, reference_address
     host = host_of(url)
     segs = [s.lower() for s in _segments(url)]
@@ -282,26 +244,42 @@ def by_title(title: Optional[str], names: Iterable[str], key) -> bool:
     return bool(names & title_keys(title, key))
 
 
-def by_maker(url: str, title: Optional[str], *, makers: Iterable[str], names: Iterable[str], squash) -> bool:
-    """Rule 3: a page on the maker's own site (its registrable word is the maker's name run together) whose title
-    holds the entity's name word for word. Never a front page or a profile."""
+def by_maker(url: str, title: Optional[str], *, makers: Iterable[str], names: Iterable[str], squash,
+             known: Optional[Callable[[str], bool]] = None) -> bool:
+    """The maker rule: a page on the maker's own site whose title is about the entity's name (`versioned` pages of a
+    longer name aside; `known`: whether a name key is an entity's, None: every such name counts)."""
     if is_home(url) or not title:
         return False
     word = re.sub(r"[^0-9a-z]+", "", site_of(host_of(url)).split(".", 1)[0].lower())
     if len(word) < NAME_MIN or not any(squash(m) == word for m in makers if m):
         return False
     from insight_core.markx.names import key as name_key, word_contains
-    t = name_key(title)
-    # the name is what the page is about: half its title's words or more ("Introducing Nimbus 4"), never a page that
-    # names it in passing ("How Nimbus helped a lab ...": measured, the maker rule's wrong rows were all so)
-    return any(len(n) >= NAME_MIN and word_contains(n, t) and 2 * len(n.split()) >= len(t.split()) for n in names)
+    t = name_key(title.strip().split("\n", 1)[0])
+    # about the name: half its title's words or more, never in passing (measured), nor a longer versioned name
+    return any(len(n) >= NAME_MIN and word_contains(n, t) and 2 * len(n.split()) >= len(t.split())
+               and not versioned(n, t, known) for n in names)
+
+
+_VERSION = re.compile(r"v?\d[\w.]*$", re.I)
+
+
+def versioned(name: str, title_key: str, known: Optional[Callable[[str], bool]] = None) -> bool:
+    """Every place the name stands in the title, a version follows that makes another entity's name ("claude fable
+    5"); a version no entity is named by keeps the page the entity's. `known` None counts every version."""
+    words, want = title_key.split(), name.split()
+    at = [i for i in range(len(words) - len(want) + 1) if words[i:i + len(want)] == want]
+
+    def longer(i: int) -> bool:
+        j = i + len(want)
+        if j >= len(words) or not _VERSION.match(words[j]):
+            return False
+        return known is None or known(" ".join(want + [words[j]]))
+    return bool(at) and all(longer(i) for i in at)
 
 
 def platform_thing(url: str) -> Optional[Tuple[str, Optional[str], str]]:
-    """(kind, owner, thing) of a platform's page of one thing: a code host's <owner>/<repository> (kind code), a model
-    hub's <owner>/<model> or datasets/<owner>/<dataset> (kind release), a package index's page of one package (kind
-    package: npm's @scope is its owner, the others name none). The platform's own host only (not docs., gist.), and
-    the thing's own page only, not a file or an issue under it; None otherwise."""
+    """(kind, owner, thing) of a platform's page of one thing (a code host's repository, a model hub's model or
+    dataset, a package index's package), on the platform's own host and the thing's own page only; else None."""
     host = host_of(url)
     host = host[4:] if host.startswith("www.") else host
     site = site_of(host)
@@ -327,11 +305,8 @@ def platform_thing(url: str) -> Optional[Tuple[str, Optional[str], str]]:
 
 
 def by_repo(url: str, names: Iterable[str], key, squash) -> Optional[Tuple[str, Optional[str]]]:
-    """Rule `repo`: (kind, owner) when `url` is a platform's page of one thing (platform_thing) whose thing is the
-    entity's name or an alias, whole, by the name key run together (NAME_MIN+ characters); None otherwise, and for any
-    home page. No suffix is dropped: measured on the server's copy (v10.13.5), dropping a build tag (-GGUF, -FP8)
-    took a third party's quantised copy for the model's own page (21 of its 53 extra rows), and dropping a variant
-    (-Instruct, -Base) added one entity in 2,161."""
+    """Rule `repo`: (kind, owner) when `url` is a platform's page of one thing named as the entity, whole (no suffix
+    dropped: a build tag's page is a third party's copy); else None, and for any home page."""
     if is_home(url):
         return None
     got = platform_thing(url)
@@ -343,19 +318,19 @@ def by_repo(url: str, names: Iterable[str], key, squash) -> Optional[Tuple[str, 
 
 
 def owner_agrees(owner: Optional[str], makers: Iterable[str], squash) -> bool:
-    """A platform owner is the entity's stated maker: the maker's name run together is the owner's, whole or less a
-    handle suffix ("acme-ai" is Acme's)."""
+    """A platform owner is the entity's stated maker ("acme-ai" is Acme's)."""
     if not owner:
         return False
     from insight_core.markx.names import handle_forms
     forms = set(handle_forms(owner)) | {squash(owner.casefold())}
-    return any(squash(m) in forms for m in makers if m and len(squash(m)) >= 3)
+    wants = {squash(m) for m in makers if m}
+    # or the handle starts with the maker's name (4+ characters): anthropics, google-deepmind
+    return any(w in forms for w in wants if len(w) >= 3) or \
+        any(f.startswith(w) for f in forms for w in wants if len(w) >= NAME_MIN)
 
 
 def one_owner(rows: Sequence[Tuple[str, str, Optional[str]]], makers: Iterable[str], squash) -> Set[str]:
-    """(kind, url, owner) rows of rule `repo` -> the urls kept: a kind whose rows name 2+ owners (a fork, a namesake,
-    a republisher: measured, 5 of 530 entities) keeps only the rows whose owner is the stated maker, none when no
-    owner is; a kind of one owner keeps its rows."""
+    """The `repo` rows (kind, url, owner) kept: of a kind under 2+ owners (forks, namesakes) only the stated maker's."""
     makers = [m for m in makers if m]
     by_kind: Dict[str, List[Tuple[str, Optional[str]]]] = {}
     for kind, url, owner in rows:
@@ -370,20 +345,127 @@ def one_owner(rows: Sequence[Tuple[str, str, Optional[str]]], makers: Iterable[s
     return keep
 
 
+def conversation(url: str) -> bool:
+    """A conversation with an app (discover_rules.app_address): never an address, never cited (a private chat)."""
+    from insight_core.utils.discover_rules import app_address
+    return app_address(url)
+
+
+_VOICE_SITES = frozenset(s for sites in PLATFORM_SITES.values() for s in sites)
+
+
+def voice_account(url: str) -> Optional[str]:
+    """The account a voice platform's page is under; "" for a page under none (an HN item, a /watch video, a
+    subreddit); None off the voice platforms."""
+    host = host_of(url)
+    site = site_of(host)
+    if site not in _VOICE_SITES or re.sub(r"^(?:www|m|mobile|old|news)\.", "", host) != re.sub(r"^news\.", "", site):
+        return None   # the platform's own other sites (its blog.<platform>) are the site rules'; news.ycombinator.com is HN
+    from insight_core.utils.discover_rules import NOT_ACCOUNT
+    parts = account_key(url).split("/")
+    if len(parts) == 3 and parts[1] == "r":
+        return ""   # a community (a subreddit) is nobody's account: its threads are its members'
+    seg = parts[-1].lstrip("@")
+    return "" if not seg or seg in NOT_ACCOUNT or seg in ("item", "watch", "comments", "v") else seg
+
+
+def platform_page_own(url: str, *, repo: Optional[Tuple[str, Optional[str]]], names: Iterable[str],
+                      makers: Iterable[str], squash) -> Optional[bool]:
+    """Whether a platform's page is the entity's own (None: the site rules decide): a voice platform's post when its
+    account is the entity's or maker's; a code host's, hub's or index's page as rule `repo`'s, or in a repository
+    named as the entity or under its maker. A page in another's repository, or another's project holding its name,
+    is cited."""
+    account = voice_account(url)
+    names, makers = [n for n in names if n], [m for m in makers if m]
+    if account is not None:
+        return bool(account) and owner_agrees(account, names + makers, squash)
+    host = host_of(url)
+    site = site_of(host)
+    if site not in CODE_SITES and site not in MODEL_HUBS and site not in PACKAGE_SITES:
+        return None
+    if repo:
+        return True
+    if (host[4:] if host.startswith("www.") else host) != site:
+        return None   # the platform's own other sites (docs.github.com, gist.github.com): the site rules decide
+    got = repository(url)
+    if not got:
+        return False
+    owner, thing = got
+    from insight_core.markx.names import key as name_key
+    bare_names = {b for n in names for b in (squash(n), squash(" ".join(_unversioned(n.split())))) if len(b) >= 2}
+    t = squash(name_key(thing))
+    if any(named_as(thing, n) for n in names):
+        return True   # named as it, its version or size aside, any owner
+    o = squash(owner.casefold())
+    if (len(o) >= NAME_MIN and any(b.startswith(o) for b in bare_names)):
+        return True   # the owner is the name's family (Qwen/... for "Qwen2.5-Omni")
+    if (t in bare_names or squash(name_key(f"{owner}/{thing}")) in bare_names
+            or (len(t) >= NAME_MIN and any(t in b for b in bare_names)) or owner_agrees(owner, makers + names, squash)):
+        return True
+    # a repository's own page whose name holds the entity's, with no stated maker its owner contradicts
+    return not makers and not lesser(url) and any(len(b) >= NAME_MIN and b in t for b in bare_names)
+
+
+HUB_OWNED = (["datasets"], ["collections"], ["blog"])   # a model hub's sections whose pages are an owner's
+
+
+def repository(url: str) -> Optional[Tuple[str, str]]:
+    """(owner, thing) of the repository a code host's or a model hub's page is in; None for a platform's section."""
+    segs = _segments(url)
+    if site_of(host_of(url)) in MODEL_HUBS and segs[:1] in HUB_OWNED:
+        segs = segs[1:]   # a dataset's page, a collection, a blog post (/blog/<owner>/<slug>) of the owner's
+    if len(segs) < 2 or segs[0].lower() in PLATFORM_SECTIONS:
+        return None
+    return segs[0].lstrip("~@"), segs[1]
+
+
+def platform_owned(url: str) -> bool:
+    host = host_of(url)
+    site = site_of(host)
+    return (site in CODE_SITES or site in MODEL_HUBS) and (host[4:] if host.startswith("www.") else host) == site \
+        and repository(url) is not None
+
+
+def lesser(url: str) -> bool:
+    """A page chosen as an address only when no page of the thing is: a voice platform's post, a page inside a
+    repository."""
+    if voice_account(url) is not None:
+        return True
+    site = site_of(host_of(url))
+    if site not in CODE_SITES and site not in MODEL_HUBS:
+        return False
+    segs = [s.lower() for s in _segments(url)]
+    n = 3 if segs[:1] in HUB_OWNED else 2
+    return len(segs) > n and segs[n] != "releases"
+
+
+def named_as(thing: str, name: str) -> bool:
+    """A repository named as the entity, one trailing version or size word aside on one side; never a build tag."""
+    def forms(x: str) -> Tuple[str, str]:
+        words = [w for w in re.split(r"[^0-9a-z]+", x.casefold()) if w]
+        cut = words[:-1] if len(words) > 1 and re.fullmatch(r"v?\d+[a-z]?|\d+(?:[bmkt]|gb)", words[-1]) else words
+        return "".join(words), "".join(cut)
+    (t, t_cut), (n, n_cut) = forms(thing), forms(name)
+    return len(n) >= NAME_MIN and (t == n or t_cut == n or (len(n_cut) >= NAME_MIN and t == n_cut))
+
+
+def _unversioned(words: List[str]) -> List[str]:
+    while len(words) > 1 and _VERSION.match(words[-1]):
+        words = words[:-1]
+    return words
+
+
 def front_page(url: str) -> bool:
-    """A site's front page: no path, query or fragment (E2; a one-segment profile is not one)."""
     _, _, rest = bare(url).partition("/")
     return rest.strip("/") == ""
 
 
 def site_word(url: str) -> str:
-    """A site's own word, run together: ai-2027.example -> ai2027."""
     return re.sub(r"[^0-9a-z]+", "", site_of(host_of(url)).split(".", 1)[0].lower())
 
 
 def by_site(url: str, title: Optional[str], names: Iterable[str], key, squash) -> Optional[str]:
-    """E2: a document's work site: a front page whose site word is its name run together (rule `site`), or whose
-    read title names it (rule `title`); None otherwise, and for any page that is not a front page."""
+    """A document's work site: a front page named as it by its site word (`site`) or read title (`title`); else None."""
     if not front_page(url):
         return None
     names = {n for n in names if len(n) >= NAME_MIN}
@@ -394,15 +476,13 @@ def by_site(url: str, title: Optional[str], names: Iterable[str], key, squash) -
 
 
 def work_front_allowed(url: str, never: Mapping[str, Set[str]]) -> bool:
-    """E5: never a product's, app's, model's, org's or person's front page: `never` is {site word: the types of the
-    entities named so}; a front page whose site word names one of NEVER_FRONT_TYPES is no work."""
+    """No product's, app's, model's, org's or person's front page is a work (`never`: site word -> named types)."""
     return not (set(never.get(site_word(url), ())) & set(NEVER_FRONT_TYPES))
 
 
 def cited_page(url: str, post_url: Optional[str]) -> bool:
-    """F1: a page a long-read cites as a reference: another site's (not the post's own), not a front page, not a
-    platform's profile, not an archive's copy, an app's shared page or a reference (help, docs) page. A one-segment
-    path elsewhere is an article (news sites' /<slug>: measured on the owner's long-read, 7 of its 27 links)."""
+    """A page a long-read cites as a reference: another site's article, not a front page, a profile, an archive's
+    copy, an app's shared page or a reference page."""
     from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, app_address, archive_address, reference_address
     host = host_of(url)
     if not host or front_page(url) or (is_home(url) and site_of(host) in DISCOVER_PLATFORMS):
@@ -413,18 +493,18 @@ def cited_page(url: str, post_url: Optional[str]) -> bool:
 
 
 def pick(addresses: Iterable[Tuple[str, str, str, Any]]) -> Dict[str, Tuple[str, str, Any]]:
-    """(kind, url, rule, first_at) rows -> {kind: (url, rule, first_at)}: one a kind, by the rules' order, then the
-    first found, then the address."""
+    """{kind: (url, rule, first_at)}: one a kind, a thing's page before a lesser one, then by rule order and time."""
     order = {r: n for n, r in enumerate(RULE_ORDER)}
     out: Dict[str, Tuple[str, str, Any]] = {}
-    addresses = [a for a in addresses if a[0] != CITED]   # 0229: a page its posts cite is no address of it
-    for kind, url, rule, at in sorted(addresses, key=lambda a: (order.get(a[2], 9), a[3] is None, a[3].timestamp() if a[3] else 0.0, a[1])):
+    # a page its posts cite is no address of it, nor a conversation, whatever a row says
+    addresses = [a for a in addresses if a[0] != CITED and not conversation(a[1])]
+    for kind, url, rule, at in sorted(addresses, key=lambda a: (lesser(a[1]), order.get(a[2], 9), a[3] is None,
+                                                                 a[3].timestamp() if a[3] else 0.0, a[1])):
         out.setdefault(kind, (url, rule, at))
     return out
 
 
 def original_of(picked: Mapping[str, Tuple[str, str, Any]]) -> Optional[Tuple[str, str]]:
-    """(kind, url) of the original: the paper page, else the release page; None when it has neither."""
     for kind in ORIGINAL_KINDS:
         if kind in picked:
             return kind, picked[kind][0]
@@ -434,12 +514,10 @@ def original_of(picked: Mapping[str, Tuple[str, str, Any]]) -> Optional[Tuple[st
 # ---- B ---------------------------------------------------------------------------------------------
 
 def triggered(voices: int, lead: bool) -> bool:
-    """B1: the subject of posts from 2+ voices, or of one voice's post that leads a News row."""
     return voices >= TRIGGER_VOICES or (voices >= 1 and lead)
 
 
 def credit_cap(oldest_wait: Optional[timedelta], base: float) -> float:
-    """B5: the credit's cap rises to RAISED_CAP while an entity original has waited on it over 72 hours."""
     return max(base, RAISED_CAP) if oldest_wait is not None and oldest_wait > WAIT_RAISES_CAP else base
 
 
@@ -459,7 +537,6 @@ _ATOM = "{http://www.w3.org/2005/Atom}"
 
 
 def parse_arxiv(xml: str) -> List[Tuple[str, List[str], str]]:
-    """The arXiv API's Atom answer: [(title, authors, abstract page)]."""
     try:
         root = ET.fromstring(xml)
     except ET.ParseError:
@@ -476,7 +553,6 @@ def parse_arxiv(xml: str) -> List[Tuple[str, List[str], str]]:
 
 
 def parse_crossref(data: Any) -> List[Tuple[str, List[str], str]]:
-    """Crossref's works answer: [(title, authors, the DOI's page)]."""
     items = ((data or {}).get("message") or {}).get("items") or [] if isinstance(data, dict) else []
     out = []
     for item in items:
@@ -489,7 +565,6 @@ def parse_crossref(data: Any) -> List[Tuple[str, List[str], str]]:
 
 
 def by_names(by: Optional[str]) -> List[str]:
-    """`by` as written ("A, B and C") as names."""
     return [p.strip() for p in re.split(r",|;|\s+(?:and|и|&)\s+|&", by or "") if p.strip()]
 
 
@@ -501,7 +576,7 @@ def _same_person(a: str, b: str, key) -> bool:
 
 
 def lookup_match(name: str, by: Iterable[str], results: Sequence[Tuple[str, Sequence[str], str]], key) -> Optional[str]:
-    """C's match: a result whose title is the entity's name by the name key and with an author of `by`."""
+    """A result whose title is the entity's name by the name key, with an author of `by`."""
     want = key(name)
     by = [b for b in by if b]
     if len(want) < NAME_MIN or not by:
@@ -516,9 +591,8 @@ def lookup_match(name: str, by: Iterable[str], results: Sequence[Tuple[str, Sequ
 
 def suppliers(rows: Iterable[Tuple[str, str, datetime]], *, now: datetime, followed: Set[str], hidden: Set[str],
               within: timedelta = SUPPLY_WITHIN, least: int = SUPPLY_MIN) -> Dict[str, Dict[str, Any]]:
-    """(Discover's address key of the original's site, the original's address, when) rows -> {key: {n, urls,
-    since}} for the keys that supplied `least`+ distinct originals in `within`, that you don't follow or hid, and
-    that are no paper host (0109: papers stay in stories and Classics)."""
+    """{key: {n, urls, since}} of the sites that supplied `least`+ distinct originals in `within`, not followed or
+    hidden, no paper host. `rows`: (Discover's key of the original's site, its address, when)."""
     by: Dict[str, Dict[str, datetime]] = {}
     for key, url, at in rows:
         if not key or at is None or at < now - within:
@@ -544,7 +618,8 @@ def supplier_reason(n: int) -> str:
 __all__ = [
     "LONGREAD_CHARS", "LONGREAD_KINDS", "LONGREAD_LINKS", "MISSED_WITHIN", "REFERENCES_MAX", "cited_page",
     "BACKFILL_PER_RUN", "CLASSICS_DAILY", "NEVER_FRONT_TYPES", "PAGE_DELAY_S", "SITE", "WORK", "WORK_PAGES_MAX",
-    "by_site", "front_page", "site_word", "work_front_allowed",
+    "by_site", "named_as", "conversation", "front_page", "lesser", "platform_owned", "platform_page_own", "repository", "versioned", "voice_account",
+    "site_word", "work_front_allowed",
     "MODEL_HUBS", "PACKAGE", "PACKAGE_SITES", "PLATFORM_SECTIONS", "REPO", "by_repo", "one_owner", "owner_agrees", "platform_thing",
     "CITED", "LINK_LABELS", "carries_id", "link_names", "own_site", "paper_is_its_own", "paper_names_it",
     "CODE", "DEMO", "IDENTIFIER", "KINDS", "LOOKUP", "MAKER", "MAKER_TYPES", "PAPER", "RELEASE", "TITLE",

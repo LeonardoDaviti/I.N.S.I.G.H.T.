@@ -1,7 +1,6 @@
-"""Discover suggests the sources your stories start from (issue 0065): suggestions ranked by the
-stories that start there, then by links; a section of a site you follow; a followed source whose
-own pages start stories it doesn't hold; a post on a platform as an article of its account, in any
-form; a repost as a voice for the original author.
+"""Discover suggests the sources your stories start from (0065): ranked by the stories that start there, then by
+links; a section of a site you follow; a followed source whose own pages start stories it doesn't hold; a post on a
+platform as an article of its account; a repost as a voice for the original author.
 """
 from __future__ import annotations
 
@@ -67,7 +66,7 @@ class OriginsTests(unittest.TestCase):
         self.assertEqual({k: len(v) for k, v in found.unnamed.items()}, {"youtube.com/watch": 1})
 
     def test_a_site_you_follow_is_never_suggested_its_other_sections_are_missed_by_its_source(self):
-        """Issue 0080 (decision 6): a section of a followed site none of your sources holds is no suggestion."""
+        """A section of a followed site none of your sources holds is no suggestion (0080)."""
         held = {"anthropic.com/research": "s-research"}
         news = [root(f"https://anthropic.com/news/model-{n}") for n in range(14)]
         other = [root("https://anthropic.com/engineering/a-b"), root("https://anthropic.com/claude-guide")]
@@ -208,7 +207,7 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.assertFalse([k for k in self._keys(result) if k.startswith(site)], "not a second source")
 
     def test_a_missing_row_follows_its_sources_archive(self):
-        """Issue 0080: an archive started from Discover shows there, running, then finished."""
+        """An archive started from Discover shows there, running, then finished (0080)."""
         m = self.mark
         site = f"archived-{m}.example"
         feed = self._source(f"Archived {m}", f"https://{site}/feed.xml")
@@ -234,7 +233,7 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.cur.execute("DELETE FROM job_runs WHERE source_id = %s", (feed,))
 
     def test_an_archive_row_counts_the_pages_it_lacks_and_drops_the_stored(self):
-        """Issue 0109 W8: the row counted stories ("41 it doesn't hold") while its archive had stored 36 of the pages."""
+        """The row counts the pages its archive has not stored, not stories (0109 W8)."""
         m = self.mark
         site = f"counted-{m}.example"
         feed = self._source(f"Counted {m}", f"https://{site}/feed.xml")
@@ -285,8 +284,8 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.assertNotIn("stopped", row)
 
     def test_an_archive_row_names_another_hosts_pages_by_their_host(self):
-        """Issue 0111: a page watch reads its own host's section; a missing page on another host of its site is
-        named by that host, never by its path ("/2026" was another host's), and no archive of it reaches it."""
+        """A page watch reads its own host's section; a missing page on another host of its site is named by that host,
+        never by its path, and no archive of it reaches it (0111)."""
         m = self.mark
         site = f"hosts-{m}.example"
         page = self._source(f"Hosts {m}", f"https://www.{site}/news")
@@ -318,7 +317,7 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.assertNotIn(f"x.com/rep{m}", self._keys(result), "its own posts are no repost")
 
     def test_one_linker_and_one_repost_are_not_enough(self):
-        """Modelwright on the lab: one source links the tweet, one reposts it."""
+        """One source links the tweet, one reposts it."""
         m = self.mark
         [(source, host)] = self._voices(1)
         self._post(source, f"https://{host}/p/t", [f"https://x.com/Extra{m}/status/2111872584338018562",

@@ -13,7 +13,6 @@ import { matchesSource, queryWords } from '../../lib/sourceSearch';
 import { formatCount, middleTruncate, plural } from '../../lib/format';
 import { fieldClass, iconButtonClass } from '../ui/styles';
 import { FOCUS_RING } from '../states';
-import { railThings } from '../tracks/briefWords';
 
 const SOURCES_SHOWN = 12;
 
@@ -29,8 +28,8 @@ function Badge({ count, push = true }: { count: number | undefined; push?: boole
   );
 }
 
-function RailLink({ to, current, label, count, icon, note, onNavigate }: {
-  to: string; current: boolean; label: string; count?: number; icon?: ReactNode; note?: string | null; onNavigate?: () => void;
+function RailLink({ to, current, label, count, icon, onNavigate }: {
+  to: string; current: boolean; label: string; count?: number; icon?: ReactNode; onNavigate?: () => void;
 }) {
   return (
     <Link
@@ -42,9 +41,7 @@ function RailLink({ to, current, label, count, icon, note, onNavigate }: {
     >
       {icon}
       <span className="min-w-0 truncate">{middleTruncate(label, 26)}</span>
-      {/* 0245: the things found since the last look (capped 9+, silent at 0, none after 30 days unopened) */}
-      {note ? <span className="ml-auto shrink-0 pl-2 text-[0.6875rem] tabular-nums text-fg-3" data-rail-things="">{note}</span> : null}
-      <Badge count={count} push={!note} />
+      <Badge count={count} push />
     </Link>
   );
 }
@@ -93,9 +90,8 @@ function SourceFilter({ value, onChange }: { value: string; onChange: (value: st
   );
 }
 
-/** Sources that stopped without anyone seeing (issue 0242): one line under the main feed, to the Sources list
- *  narrowed to them; nothing when none (or the health table is not loaded). From the health table the Sources
- *  page and the source names already share (one cached query). */
+/** Sources that stopped without anyone seeing: one line under the main feed, to the Sources list narrowed to them;
+ *  nothing when none or while the health table (shared with the Sources page) is not loaded. */
 function StoppedSources({ onNavigate }: { onNavigate?: () => void }) {
   const health = useSourcesHealth();
   const stopped = health.data?.summary?.stalled ?? 0;
@@ -116,7 +112,7 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
   scope: string; counts: UnreadCounts | undefined; search: string; scopeHref?: (scope: string) => string; onNavigate?: () => void;
 }) {
   const { folders } = useReaderDirectory();
-  // A topic track (0145, Mark X on) counts its unread items and its Discover suggestions, not its sources' posts.
+  // a topic track (Mark X on) counts its unread items and its Discover suggestions, not its sources' posts
   const topics = useTrackCounts();
   const [showAllSources, setShowAllSources] = useState(false);
   const [query, setQuery] = useState('');
@@ -126,8 +122,8 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
   const href = scopeHref ?? ((to: string) => `${scopePath(to)}${search}`);
   const unread = (id: string) => counts?.by_source?.[id] ?? 0;
 
-  // Newest unread post first (as By source orders its groups, issue 0088), then by name. A source the
-  // directory cannot name (deleted) has no row: "Unknown source 12,847" is noise; its posts stay in the main feed.
+  // Newest unread post first (as By source orders its groups), then by name. A source the directory cannot name
+  // (deleted) has no row; its posts stay in the main feed.
   const allSources = useMemo(() => {
     const newest = (id: string) => Date.parse(counts?.newest_unread?.[id] as string) || 0;
     return [...directory.sources].sort((a, b) => newest(b.id) - newest(a.id) || a.label.localeCompare(b.label));
@@ -172,7 +168,6 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
                 current={scope === folderScope}
                 label={folder.name}
                 count={topics.data?.by_track[folder.id]?.count ?? counts?.by_folder?.[folder.id]}
-                note={railThings(topics.data?.by_track[folder.id]?.things)}
                 onNavigate={onNavigate}
               />
             );
@@ -215,14 +210,10 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
 }
 
 /**
- * The reader's persistent nav (spec §F.1 item 8): the main feed, the tracks
- * and the sources with unread posts, each with its unread badge. The wordmark
- * and the app sections live in the top bar only; this rail is just the feeds.
- * The sources section has a filter over every source (not only those with
- * unread), and "Show all" expands the full list inline. At md and up it
- * is a sticky rail; below md the same content is a drawer opened from the
- * toolbar, which slides in from the left and leaves the same way. On the search page
- * each link narrows the search to its scope instead (`scopeHref`, issue 0040).
+ * The reader's persistent nav: the main feed, the tracks and the sources with unread posts, each with its unread
+ * badge. The sources section has a filter over every source and "Show all" expands the full list inline. At md and
+ * up a sticky rail; below md the same content is a drawer from the toolbar. On the search page each link narrows the
+ * search to its scope instead (`scopeHref`).
  */
 export default function ReaderNavRail({ scope, counts, search, scopeHref, drawerOpen, onDrawerOpenChange }: {
   scope: string;
@@ -244,8 +235,7 @@ export default function ReaderNavRail({ scope, counts, search, scopeHref, drawer
           <Dialog.Overlay className="reader-drawer-overlay fixed inset-0 z-50 bg-black/50 md:hidden" />
           <Dialog.Content
             aria-describedby={undefined}
-            // Esc in a non-empty source filter clears it (the field handles that); only
-            // the next Esc closes the drawer.
+            // Esc in a non-empty source filter clears it (the field handles that); only the next Esc closes the drawer
             onEscapeKeyDown={(event) => {
               const target = event.target instanceof HTMLElement ? event.target : document.activeElement;
               if (target instanceof HTMLInputElement && target.matches('[data-rail-filter]') && target.value) event.preventDefault();

@@ -29,10 +29,7 @@ export function ComponentIndex() {
 /** Strip the doc's inline-code ticks for a one-line rule. */
 const plain = (text: string) => text.replace(/`/g, '');
 
-/**
- * /design/components/:name: one `components/ui` primitive in its variants
- * and states, with its source file and its line from the inventory.
- */
+/** /design/components/:name: one primitive in its variants and states, with its source file and inventory line. */
 export function ComponentPage() {
   const { name = '' } = useParams();
   const Specimen = COMPONENT_SPECIMENS.get(name);

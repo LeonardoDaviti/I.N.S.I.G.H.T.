@@ -70,7 +70,7 @@ describe('navigation model', () => {
       expect(`${d.label} ${d.group}`.toLowerCase()).not.toMatch(/briefing|stor(y|ies)|inbox|expert/);
     }
     expect(ids).toEqual(expect.arrayContaining(['feed-main', 'sources', 'ingestion']));
-    // Source health opened the same list as Sources (issue 0027).
+    // source health opened the same list as Sources (0027)
     expect(ids).not.toContain('sources-health');
   });
 
@@ -129,10 +129,10 @@ describe('navigation model', () => {
 
   it('the switcher filter matches label, group and keywords, every word', () => {
     expect(filterDestinations('health').map((d) => d.id)).toEqual(['sources']);
-    // One Starred, in the Show filter; one All, the same filter (issue 0027).
+    // one Starred in the Show filter; one All, the same filter (0027)
     expect(filterDestinations('starred')).toEqual([]);
     expect(filterDestinations('kept')).toEqual([]);
-    // Later is a list you go to: ⌘K reaches it (issue 0022).
+    // Later is a list you go to: ⌘K reaches it (0022)
     expect(filterDestinations('read later').map((d) => d.id)).toEqual(['feed-later']);
     expect(destinations().find((d) => d.id === 'feed-later')).toMatchObject({ label: 'Later', to: '/?filter=later' });
     expect(filterDestinations('unread').map((d) => d.id)).toEqual(['feed-main']);

@@ -1,7 +1,9 @@
-// 0245 (frontend v10.28): the track briefer's words and the pure parts of its views: days, weeks, a thing's name and
-// facts, the cite numbers, the filter chips a kind's typed fields give, and sorting. Nothing here names a track, a
-// kind or a field: every rule is about a type (text, number, money, link, enum).
-import type { BriefPoint, Thing, ThingFieldDef, ThingSection, ThingValue } from '../../services/tracks';
+// The track briefer's words and the pure parts of its views: dates, a thing's name and facts, cite numbers, filter
+// chips and sorting. Nothing here names a track, a kind or a field: every rule is about a type.
+import { PRACTICE_KIND } from '../../services/tracks';
+import type {
+  BriefPoint, FieldSuggestion, Thing, ThingFieldDef, ThingKindDef, ThingSection, ThingValue,
+} from '../../services/tracks';
 
 const DAY = 86_400_000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -47,12 +49,6 @@ export function sinceLine(since: string, n: number, now: Date = new Date()): str
   return `since ${dayWord(since, now)} · ${n} new`;
 }
 
-/** The rail's count: "3 new things", "9+ new things"; null at 0 (silent). */
-export function railThings(n: number | undefined): string | null {
-  if (!n || n < 1) return null;
-  return `${n > 9 ? '9+' : n} new ${n === 1 ? 'thing' : 'things'}`;
-}
-
 /** A kind as a heading when the backend gave none: "print_test" → "Print test". */
 export function kindWord(kind: string): string {
   const s = kind.replace(/_/g, ' ');
@@ -78,7 +74,7 @@ export function thingFacts(thing: Thing, fields: ThingFieldDef[], max = 3): stri
 /** The thing's link fields (an external link a post gave), in schema order. */
 export function thingLinks(thing: Thing, fields: ThingFieldDef[]): Array<{ name: string; url: string }> {
   return fields.filter((f) => f.type === 'link' && typeof thing.fields[f.name]?.value === 'string')
-    .map((f) => ({ name: f.name, url: thing.fields[f.name].value as string }));
+    .map((f) => ({ name: f.name, url: thing.fields[f.name].shown || (thing.fields[f.name].value as string) }));
 }
 
 export function hostOf(url: string): string {
@@ -89,11 +85,8 @@ export function hostOf(url: string): string {
   }
 }
 
-/**
- * The superscripts of a set of points: each cited thing found in the sections gets a number (its row number when the
- * backend gave one, else in the order first cited) and the post it links to (its newest report). A cite whose thing
- * is not on the page is left out.
- */
+/** The superscripts of a set of points: each cited thing in the sections gets a number (its row number, else first
+ *  cited order) and the post it links to (its newest report); a cite whose thing is not on the page is left out. */
 export function citeMarks(points: BriefPoint[], sections: ThingSection[]): Map<string, { n: number; thing: Thing }> {
   const things = new Map(sections.flatMap((s) => s.things.map((t) => [t.id, t] as const)));
   const out = new Map<string, { n: number; thing: Thing }>();
@@ -145,9 +138,9 @@ export function niceNumber(x: number): number {
 const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
 /**
- * The chips a kind's typed fields give over its rows: a number or money field with two or more different values
- * splits at a round middle ("≤ 1,500 USD", "≥ 1,500 USD"; money only in its most common currency); an enum, one chip
- * per value its rows hold; a link, "has <field>". Text fields give none (a question box is later, 0098).
+ * The chips a kind's typed fields give over its rows: a number or money field with two or more values splits at a
+ * round middle ("≤ 1,500 USD"; money only in its most common currency); an enum, one chip per value; a link,
+ * "has <field>". Text fields give none.
  */
 export function filterChips(fields: ThingFieldDef[], things: Thing[]): FilterChipDef[] {
   const out: FilterChipDef[] = [];
@@ -238,3 +231,27 @@ export function fieldKey(typed: string): string {
 
 /** The track's kinds and fields query (the page and the sheet's editor share it). */
 export const schemaKey = (id: string) => ['markx-track-schema', id] as const;
+
+// ---- search inside a table, suggested fields -----------------------------------------------------------------------
+
+/** The table's search params: words across a row (`q`), an entity its posts name, a type of one; empty ones left out. */
+export function searchParams(q: string, entity: string, entityType: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (q.trim()) out.q = q.trim();
+  if (entity) out.entity = entity;
+  if (entityType) out.entity_type = entityType;
+  return out;
+}
+
+/** The owner's kinds with a suggested field added (the owner's schema edit); the kind the code adds is left out. */
+export function withField(kinds: ThingKindDef[], s: FieldSuggestion): ThingKindDef[] {
+  const field: ThingFieldDef = {
+    name: s.name, type: s.type, key: false, ...(s.unit ? { unit: s.unit } : {}), ...(s.values?.length ? { values: s.values } : {}),
+    ...(s.about ? { about: s.about } : {}),
+  };
+  return kinds.filter((k) => k.kind !== PRACTICE_KIND)
+    .map((k) => (k.kind === s.kind && !k.fields.some((f) => f.name === s.name) ? { ...k, fields: [...k.fields, field] } : k));
+}
+
+/** The suggested fields query. */
+export const suggestionsKey = (id: string) => ['markx-track-field-suggestions', id] as const;

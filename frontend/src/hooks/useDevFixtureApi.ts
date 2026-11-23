@@ -4,10 +4,8 @@ import { useApi } from '../services/ApiContext';
 import type { Api } from '../services/api';
 
 /**
- * The dev-only `?data=` seam (spec §F.7, break-ui): when the URL names a fixture
- * set, the page talks to a fixture API instead of the live one. The fixture API
- * inherits every live method and overrides the ones the page reads (and turns its
- * writes into no-ops), so the swap happens at the data boundary, not in markup.
+ * The dev-only `?data=` seam: when the URL names a fixture set, the page talks to a fixture API that inherits
+ * every live method, overrides the ones the page reads and turns writes into no-ops.
  */
 export function useDevFixtureApi(build: (name: string, live: Api) => Partial<Api> | null): { api: Api; fixture: string | null } {
   const live = useApi();

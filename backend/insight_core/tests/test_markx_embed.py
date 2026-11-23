@@ -1,10 +1,7 @@
-"""Mark X Shadow's embeddings (issue 0086 B, the build plan's corrections 6) through the app, against the run's own
-_test database: the embed tasks (the text, newest first, one task a text, a duplicate's vector copied), and
-POST /api/markx/embeddings (base64 float16 checked and stored as sent, one build per database, invalid vectors
-back to open, a second vector changing nothing, the switch). A fake embedder: fixed vectors, never the GGUF.
-
-These suites commit (the API opens its own transactions), so they run only on a database whose name ends in
-_test. Every post and source is synthetic."""
+"""Mark X's embeddings (0086 B) through the app: the embed tasks (newest first, one task a text, a duplicate's vector
+copied) and POST /api/markx/embeddings (float16 checked and stored as sent, one build per database, invalid vectors
+back to open, a second vector changing nothing). A fake embedder; these suites commit, so they run only on a _test
+database."""
 from __future__ import annotations
 
 import base64
@@ -14,8 +11,10 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import psycopg
+
 from insight_core.markx import embed, jobs, repo, schemas, tasks
-from insight_core.tests._db import requires_test_db
+from insight_core.tests._db import db_url, requires_test_db
 from insight_core.tests.test_markx_api import _Api, call
 from insight_core.tests.test_markx_candidates import H, T0, _Cands
 
@@ -70,7 +69,7 @@ class TheText(unittest.TestCase):
                          "Acme released Widget 4.1 today.")
 
     def test_a_post_that_says_nothing_gets_no_text_never_a_constant(self):
-        """embed text v2: v1 embedded these as "(empty)", "[Photo]", "Image", "paper:", one vector for them all."""
+        """Texts that say nothing ("(empty)", "[Photo]", "Image", "paper:") get no shared vector (embed text v2)."""
         for title, text in (("", ""), ("[Photo]", ""), ("Image", ""), ("[Video]", "[Video]"),
                             ("example.com/notes/2501…", "example.com/notes/2501…"),
                             ("paper:", "paper: https://papers.test.invalid/2501.01234"), ("😳", "😳"),
@@ -163,8 +162,7 @@ class Planning(_Embed):
 
 class SaidNothing(_Embed):
     """embed text v2 on the database: a post that says nothing is skipped (recorded, not read again); a v1 vector of
-    a text that said nothing is set aside (kept under SET_ASIDE) and its post planned again; a late answer to a
-    v1 task of nothing is kept aside; the decision run reads embedding candidates by the vectors now."""
+    nothing is set aside (kept under SET_ASIDE) and its post planned again; the decision run reads the vectors now."""
 
     def setUp(self):
         super().setUp()
@@ -252,6 +250,29 @@ class SaidNothing(_Embed):
                          [(a, b, "embedding", 0.8), (c, d, "entity", None), (c, a, "embedding", 0.0),
                           (copy1, copy2, "embedding", 1.0)])
 
+    def test_centroid_cosines_near_computes_only_the_pairs_in_the_window_and_restores_work_mem(self):
+        from insight_core.markx import pairing
+        ps = [self.post(title=f"Post {n}", text=f"Words of post {n} about one thing.") for n in "abcd"]
+        with self.conn.transaction():
+            for pid, v in zip(ps, (unit((0, 1.0)), unit((0, 0.9), (1, 0.1)), unit((0, 0.95), (2, 0.05)),
+                                   unit((0, 1.0), (3, 0.01)))):
+                repo.put_embedding(self.cur, post_id=pid, model="bge-m3", text_hash="h-" + pid, vector=v,
+                                   model_sha256=BUILD)
+        groups = {"g1": [ps[0]], "g2": [ps[1]], "g3": [ps[2]], "g4": [ps[3]]}
+        at = {"g1": T0, "g2": T0 + timedelta(days=3), "g3": T0 + timedelta(days=20), "g4": T0 + timedelta(days=21)}
+        window = timedelta(days=14)
+        self.cur.execute("SHOW work_mem")
+        was = self.cur.fetchone()[0]
+        every = pairing.centroid_cosines(self.cur, groups, 0.5)
+        near = pairing.centroid_cosines(self.cur, groups, 0.5, near=(at, window))
+        self.assertEqual(len(every), 6)                                     # every pair, as before
+        self.assertEqual(sorted(near), [("g1", "g2"), ("g3", "g4")])   # only those 14 days apart at most
+        self.assertEqual({k: round(v, 6) for k, v in near.items()}, {k: round(every[k], 6) for k in near})
+        only = pairing.centroid_cosines(self.cur, groups, 0.5, only=["g4"], near=(at, window))
+        self.assertEqual(sorted(only), [("g3", "g4")])
+        self.cur.execute("SHOW work_mem")
+        self.assertEqual(self.cur.fetchone()[0], was)                       # raised for the statement only
+
     def test_a_name_of_no_letter_is_not_embedded(self):
         with self.conn.transaction():
             self.cur.execute("INSERT INTO mx_entities (name, key, type) VALUES ('—', 'x-dash', 'product'), "
@@ -325,6 +346,43 @@ class Uploads(_Embed):
         status, body = self.upload((b, unit((1, 1.0))), build=OTHER_BUILD)
         self.assertEqual(status, 409)
         self.assertIn(BUILD, body["detail"])
+        self.assertEqual(self.row(b)["status"], "open")
+        self.assertEqual(repo.embedding_builds(self.cur, "bge-m3"), {BUILD: 1})
+
+    def _upload_aside(self, *rows, build=BUILD):
+        """An upload in a thread (the route opens its own connection): the thread and its result."""
+        import threading
+        result = {}
+        thread = threading.Thread(target=lambda: result.update(answer=self.upload(*rows, build=build)), daemon=True)
+        thread.start()
+        return thread, result
+
+    def test_once_the_build_is_stored_an_upload_takes_no_build_lock(self):
+        # so the worker's uploads never queue behind each other
+        a, b = self.embed_task(), self.embed_task()
+        self.upload((a, unit((0, 1.0))))
+        with psycopg.connect(db_url()) as other:
+            other.execute("SELECT pg_advisory_xact_lock(%s)", (embed.BUILD_LOCK,))
+            thread, result = self._upload_aside((b, unit((1, 1.0))))
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive(), "the upload waited on the build lock")
+            other.rollback()
+        self.assertEqual(result["answer"], (200, {"stored": 1, "invalid": [], "repeated": 0}))
+
+    def test_the_first_build_is_still_decided_one_upload_at_a_time(self):
+        # a database of no vector: an uncommitted upload of one build holds the lock; another build's upload waits
+        # for it, then sees its vectors and is refused
+        a, b = self.embed_task(), self.embed_task()
+        with psycopg.connect(db_url()) as first:
+            with first.cursor() as cur:
+                embed.store(cur, model="bge-m3", model_sha256=BUILD,
+                            vectors=[{"task_id": str(a), "vector": embed.encode(unit((0, 1.0)))}])
+            thread, result = self._upload_aside((b, unit((1, 1.0))), build=OTHER_BUILD)
+            thread.join(timeout=1)
+            self.assertTrue(thread.is_alive(), "the other build's upload did not wait for the first")
+            first.commit()
+        thread.join(timeout=10)
+        self.assertEqual(result["answer"][0], 409)
         self.assertEqual(self.row(b)["status"], "open")
         self.assertEqual(repo.embedding_builds(self.cur, "bge-m3"), {BUILD: 1})
 

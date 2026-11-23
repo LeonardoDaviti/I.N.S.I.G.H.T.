@@ -1,14 +1,8 @@
-"""Pairing (issue 0166): the move of the candidate sources and decide's re-gates behind markx/pairing.py changed no
-pair. Each test runs the code as it was (tests/legacy: verbatim copies of main a395c13) and the code as it is on the same
-data and requires the same output:
-  - the candidate job (every source, a subset of posts, the entity source alone, the job's `run`) on a seeded
-    synthetic world: the same mx_candidates rows (kind, a, b, source, score) and the same counts;
-  - decide's planning (plan_pass1, plan_pass2) on seeded random worlds under several configs: the same questions;
-  - the decision run on the synthetic world (questions asked as tasks, answered alike, asked again): the same tasks,
-    memberships and connections;
-and the policy table's rows are the bars the old code wrote down.
-
-Runs the DB parts only on a database whose name ends in _test (it empties the mx_* tables inside its transaction)."""
+"""Pairing (0166): moving the candidate sources and decide's re-gates behind markx/pairing.py changed no pair. Each
+test runs the legacy code (tests/legacy, verbatim copies of main a395c13) and the current code on the same data and
+requires the same output: the candidate job's mx_candidates rows and counts, decide's planning on seeded random worlds
+under several configs, and the decision run's tasks, memberships and connections; the policy table's rows are the
+bars the old code wrote down. DB parts only on a _test database (it empties the mx_* tables in its transaction)."""
 from __future__ import annotations
 
 import hashlib
@@ -28,7 +22,7 @@ from insight_core.markx import candidates as C
 from insight_core.markx import decide as D
 from insight_core.markx import later as later_mod, pairing, repo, schemas, tasks
 from insight_core.utils import voice
-from insight_core.tests.legacy import incremental_a395c13 as incremental   # the legacy decide's memo (0169 moved it to Postgres)
+from insight_core.tests.legacy import incremental_a395c13 as incremental   # the legacy decide's memo
 from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests.legacy import candidates_a395c13 as OLD_C
 from insight_core.tests.legacy import decide_a395c13 as OLD_D
@@ -48,8 +42,8 @@ class Table(unittest.TestCase):
                                                                             OLD_C.SPECIFIC_TYPES))
         old = OLD_D.Config()
         self.assertEqual({k: v for k, v in asdict(D.Config()).items() if k not in ("roundup_first", "connect_settle_below",
-                                                                         "connect_shadow_below", "tau_refuse")},
-                         asdict(old))   # 0205, 0210: new
+                                                                         "connect_shadow_below", "tau_refuse", "reask_unquoted")},
+                         asdict(old))   # new fields
         self.assertEqual((same.min_words, same.document_window), (old.min_words, timedelta(days=old.document_days)))
         self.assertEqual((conn.story_cosine, conn.story_window, conn.min_voices),
                          (old.connect_lo, timedelta(days=old.connect_days), old.connect_voices))
@@ -61,14 +55,14 @@ class Table(unittest.TestCase):
         self.assertEqual(p.window, pairing.POLICIES[pairing.SAME_STORY].window)
 
     def test_the_basics(self):
-        # the voice basics are Voice's (issue 0189: utils/voice.py, Policy.MARKX)
+        # the voice basics are Voice's (utils/voice.py, Policy.MARKX)
         said = [voice.Said(s, k) for s, k in (("s1", "telegram"), ("s1", "rss"), ("s2", "saved"), ("s3", "site"))]
         self.assertEqual(voice.count(said, voice.Policy.MARKX), 2)
         self.assertTrue(voice.independent("s1", "telegram", "s2", "site"))
         self.assertFalse(voice.independent("s1", "telegram", "s1", "site"))
         self.assertFalse(voice.independent("s1", "saved", "s2", "site"))
         self.assertEqual(pairing.ordinary_date("x"), "COALESCE(x.surfaced_at, x.published_at, x.fetched_at)")
-        # 0181: a round-up's issue time first, else that same expression (tests/test_markx_units.py: identical dates)
+        # a round-up's issue time first, else that same expression (tests/test_markx_units.py: identical dates)
         self.assertTrue(pairing.post_date("x").endswith(", COALESCE(x.surfaced_at, x.published_at, x.fetched_at))"))
         self.assertIn("mx_roundups", pairing.post_date("x"))
         self.assertEqual(pairing.page_address("https://www.example.com/a/B/"), "example.com/a/b")
@@ -88,7 +82,7 @@ def _world(rng: random.Random, n: int = 40):
     stories, used = {}, 0
     while used < n * 0.6:
         size = rng.choice([2, 2, 3, 4])
-        ms = ids[used:used + size]
+        ms = sorted(ids[used:used + size], key=lambda m: (posts[m].at, m))   # the root: the earliest
         used += size
         stories[f"S{len(stories)}"] = [D.Member(m, rng.choice(["report", "report", "share"]),
                                                 None if i == 0 else rng.choice(["time", "citation", "thread", "quote"]))
@@ -106,8 +100,9 @@ CONFIGS = (D.Config(), D.Config.prototype(), D.Config(cand_lo=0.7, min_words=15,
 
 
 def _old(config: D.Config) -> OLD_D.Config:
-    new = ("roundup_first", "connect_settle_below", "connect_shadow_below",   # 0205's rule, 0210's connect gate: new
-           "tau_refuse")   # 0217: the refusals' bar (stored only)
+    new = ("roundup_first", "connect_settle_below", "connect_shadow_below",   # new rules
+           "tau_refuse",   # the refusals' bar (stored only)
+           "reask_unquoted")   # unquoted earlier-guide answers asked again
     return OLD_D.Config(**{k: v for k, v in asdict(config).items() if k not in new})
 
 
@@ -123,7 +118,7 @@ class Planning(unittest.TestCase):
                     new = D.plan_pass1(posts, stories, kinds, cands, pairs, replace(config, roundup_first=False),
                                        in_window=in_window)
                     self.assertEqual([asdict(q) for q in new], [asdict(q) for q in old], (seed, config))
-                    # 0205: a roundup that begins a story is checked too; every other question is the same
+                    # a roundup that begins a story is checked too; every other question is the same
                     more = D.plan_pass1(posts, stories, kinds, cands, pairs, replace(config, roundup_first=True),
                                         in_window=in_window)
                     added = [q for q in more if q not in new]
@@ -278,9 +273,8 @@ class Candidates(_World):
 
 
 class DecisionRun(_World):
-    """Two rounds of the decision run: the questions asked as tasks; every task answered the same way by its input
-    (a hash: some about, some not, some confident); then the run again (joins, pairs, merges, the second pass, the
-    connect questions, asked again). The same tasks, memberships and connections."""
+    """Two rounds of the decision run: the questions asked as tasks, every task answered the same way by its input,
+    then the run again. The same tasks, memberships and connections."""
 
     def answer_all(self):
         self.cur.execute("SELECT id, kind, guide, input, a FROM mx_tasks WHERE status = 'open' ORDER BY kind, input")
@@ -327,13 +321,13 @@ class DecisionRun(_World):
             return out
         for config in (D.Config(), D.Config(document_merges=True, connect_lo=0.5, story_days=5)):
             old_cfg = _old(config)
-            config = replace(config, roundup_first=False, connect_settle_below=None)   # 0205, 0210: new; the rest same
+            config = replace(config, roundup_first=False, connect_settle_below=None)   # new gates off
             self.cur.execute("SAVEPOINT pairing_run")
-            # 0203 dropped Later developments: the legacy copy's later stage is a no-op here
+            # the legacy copy's Later developments stage is a no-op here
             with mock.patch.object(later_mod, "stage", lambda *a, **k: {}, create=True):
                 old = rounds(OLD_D, old_cfg)
             self.cur.execute("ROLLBACK TO SAVEPOINT pairing_run")
-            from insight_core.markx import significance   # 0208's stage is new (its own questions): the rest is the same
+            from insight_core.markx import significance   # a new stage of its own
             with mock.patch.object(significance, "plan", lambda *a, **k: {}):
                 new = rounds(D, config)
             self.cur.execute("ROLLBACK TO SAVEPOINT pairing_run")

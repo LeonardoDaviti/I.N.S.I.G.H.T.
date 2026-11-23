@@ -1,9 +1,6 @@
-"""0173 (Stealth v10.15): "Is this worth it?", a candidate source judged by the worker on the owner's tap. The kind, its
-guide, schema and validation (examples are items the question shows); the measured signals (links, stories, the items
-in your stories, rate, reads by code with stubbed pages, repeats, the rewriter marks, followed before); the reader's
-interests; the question; the cache (30 days, asking again re-asks only after new items); nothing written but the
-judgement and its question (no source, no post); the routes. Synthetic names only; the DB tests run on a database whose
-name ends in _test."""
+""""Is this worth it?" (0173): a candidate source judged by the worker on the owner's tap: the kind, its guide and
+validation, the measured signals, the reader's interests, the question, the 30-day cache, nothing written but the
+judgement and its question, the routes. Synthetic names only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import asyncio
@@ -128,7 +125,7 @@ class Pure(unittest.TestCase):
 
 
 class Reads(unittest.TestCase):
-    """How its items read is measured by code (0149 E8), never asked: the feed's text, else its article pages."""
+    """How its items read is measured by code, never asked: the feed's text, else its article pages."""
 
     def read(self, items, pages=None, *, via="feed", platform="site"):
         http = FakeHttp(pages or {}) if pages is not None else None

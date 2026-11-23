@@ -1,7 +1,4 @@
-"""
-Repository for folders and source_folders table operations.
-Handles all SQL queries for folder management.
-"""
+"""SQL for folders (and tracks) and source_folders."""
 from psycopg import Cursor
 from typing import List, Dict, Any, Optional
 from insight_core.logs.core.logger_config import get_component_logger

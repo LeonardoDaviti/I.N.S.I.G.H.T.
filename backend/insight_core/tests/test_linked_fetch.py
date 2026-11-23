@@ -1,13 +1,7 @@
-"""Fetch them (issue 0084 B, decision 2): a source's own pages that stored posts link and no stored post
-is, read one each with the source's own reader, as a job like the archive.
-
-- The kinds' read_post: Substack's API post (a teaser on a publication you don't pay for, as part A
-  says), the site reader for websites (the page's article and its own date, 0070); a platform kind
-  reads no single page.
-- The job: never more than the list; paced by the host gate; a page that is gone (404, 410) or no
-  post is listed, not retried; a host that limits twice waits out its window and the scheduler
-  continues it (0107), on the same job; the archive's own checkpoint is left as it was.
-No network: FakeHttp and fake kinds. Every name is neutral.
+"""Fetch them (0084 B): a source's own pages that stored posts link and no stored post is, read one each with the
+source's own reader, as a job like the archive: never more than the list, paced by the host gate, a gone page or no
+post listed and not retried, a host that limits twice waited out and continued; the archive's checkpoint untouched.
+No network: FakeHttp and fake kinds.
 """
 from __future__ import annotations
 
@@ -62,7 +56,7 @@ class SiteReadPostTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(len(post["content"]), 700)
 
     async def test_a_page_with_no_date_of_its_own_is_not_stored(self):
-        """Its real date or nothing (0070): a page stored at the time it was read would sort as new."""
+        """Its real date or nothing: a page stored at the time it was read would sort as new (0070)."""
         kind = GenericRssKind(FakeHttp({f"{SITE}/undated": article("Undated", None)}))
         self.assertIsNone(await kind.read_post(site_source(), f"{SITE}/undated"))
 
@@ -213,9 +207,7 @@ class FetchLinkedTests(unittest.IsolatedAsyncioTestCase):
 
 class LinkedSummaryInAThreadTests(unittest.TestCase):
     def test_the_estimate_needs_no_event_loop(self):
-        """The route runs linked_summary in a worker thread; with the process's shared gates (no gates passed) the
-        estimate read FetchGates.shared(), which needs a running loop, and the line answered 500 for every source
-        (v10.0.2 review)."""
+        """The route runs linked_summary in a worker thread with the process's shared gates and still answers."""
         import threading
         kind = _ReadingKind({})
         service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]), clock=lambda: WALL)

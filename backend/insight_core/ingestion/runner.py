@@ -1,35 +1,13 @@
-"""IngestionRunner: one algorithm for every fetch run (spec §A.2).
+"""IngestionRunner: one algorithm for every fetch run (scheduler tick, Run cycle, track fetch, fetch-now, CLI).
 
-Orchestration only. Every collaborator is a port injected through the keyword
-constructor, so the scheduler tick, the manual "Run cycle", track fetch, fetch-now and the
-CLI all apply the same policy: the yt-dlp switch, backoff (read and write), politeness
-gates (and the learned pace: a limiting host is waited out and retried once), status
-recording, save isolation and the archive-metadata record.
-
-Steps: run lock (selector all only) -> load sources -> load fetch state -> decide ->
-record decisions -> per source: fetch under the gates, save, record its outcome and its
-archive metadata -> the story job (issue 0050, when posts were saved) -> report. Nothing else
-runs after the last save: a run never measures its sources (issue 0015). Kind sessions (B8, telegram_mtproto) are opened lazily inside the
-gate slot of a kind's first due source and closed in a finally at the end of the run; a
-session that cannot open makes that kind's sources unavailable. A fetch never raises out of
-the runner; a failing store write is logged and the run carries on. A source whose fetch
-failed is shown to the source doctor (issue 0036), outside the save lock: it may look for the
-source's replacement and switch it. One whose fetch worked is shown to it too (issue 0178): a source
-silent far beyond its own rhythm has where it went looked for, never switched.
-
-A kind that fetches conditionally (kind.conditional, issue 0044: generic RSS, page watch) gets
-an AddressMemory holding its source's stored validators; "Fetch now" on one source reads in
-full. What it learned is kept only after a fetch that worked and whose posts were saved, so a
-failed save is fetched in full again. A fetch whose every address answered 304 is a success
-with 0 posts like any other (health green, backoff untouched, the doctor not woken); its event
-says "unchanged".
-
-A source that watches its pages for changes (page_changes.watching, issue 0039) has a slice of
-its stored pages re-checked after its fetch, inside the same host slot (PageWatchStore.due,
-page_changes.check_pages); the pages that changed are saved with the fetch's posts, and the
-checks are recorded after the save (a changed page whose save failed is not, so it is read
-again). A page-based kind's posts (kind.page_based) are saved as "new to you" once the source
-has fetched before: one first seen long after its date sorts at when it was first seen.
+Orchestration only; every collaborator is an injected port. Steps: run lock (selector all only) -> load sources and
+fetch state -> decide -> record decisions -> per source: fetch under the gates, save, record outcome and archive
+metadata -> want the story job when posts were saved -> report. A run never measures its sources. Kind sessions
+open lazily in the gate slot of the kind's first due source and close in a finally; one that cannot open makes that
+kind unavailable. A fetch never raises out of the runner; a failing store write is logged and the run goes on. The
+source doctor sees each failed fetch (outside the save lock) and each worked one. Conditional kinds get an
+AddressMemory ("Fetch now" reads in full) whose validators are kept only once the posts are saved; all-304 is a
+success with 0 posts. Watched pages are re-checked in the same host slot and recorded only after their save.
 """
 from __future__ import annotations
 
@@ -91,12 +69,12 @@ class _Fetched:
     outcome: FetchOutcome
     posts: List[dict]
     error: Optional[BaseException] = None    # what the fetch raised, for the source doctor
-    memory: Optional[AddressMemory] = None   # a conditional kind's validators (issue 0044)
-    checks: List[page_changes.PageCheck] = dataclasses.field(default_factory=list)   # watched pages (0039)
+    memory: Optional[AddressMemory] = None   # a conditional kind's validators
+    checks: List[page_changes.PageCheck] = dataclasses.field(default_factory=list)   # watched pages
     watching: bool = False
-    failure: Optional[EmptyFetch] = None     # its posts saved, the fetch failing: why (issue 0137 A1)
-    recognised: Optional[Dict[str, Any]] = None   # settings the fetch learned (issue 0167: a Substack on its domain)
-    title: Optional[str] = None   # what the feed read calls itself (issue 0178: an unnamed source's name)
+    failure: Optional[EmptyFetch] = None     # its posts saved, the fetch failing: why
+    recognised: Optional[Dict[str, Any]] = None   # settings the fetch learned (a Substack on its domain)
+    title: Optional[str] = None   # what the feed calls itself (an unnamed source's name)
 
 
 class _RunSessions:
@@ -171,9 +149,9 @@ class IngestionRunner:
         self.clock = clock
         self.rand = rand
         self.doctor = doctor    # SourceDoctor (ingestion/source_doctor.py), or None
-        self.watch = watch      # watched pages (issue 0039), or None: nothing is re-checked
-        # The story job (issue 0050) wanted after a run that saved posts, or None. 0216: only wanted (markx/jobs.py
-        # want_stories): the jobs runner runs it, and the originals after it; the run's time is its fetch.
+        self.watch = watch      # watched pages, or None: nothing is re-checked
+        # the story job wanted after a run that saved posts (markx/jobs.py want_stories), or None; the jobs runner
+        # runs it, so the run's time is its fetch
         self.stories = stories
 
     async def run(self, request: FetchRequest, *, progress: ProgressSink = NULL_PROGRESS) -> RunReport:
@@ -193,9 +171,8 @@ class IngestionRunner:
             await self._keep_derived()
 
     async def _keep_derived(self) -> None:
-        """What the API reads kept (issue 0195) brought up to date after the run: the post statistics of the sources
-        whose posts changed (this run's, an archive's, a Save's), Mark X's totals, the topic tracks' placements
-        (ports.DbFetchStateStore.keep_derived). Never raises."""
+        """The API's kept reads brought up to date after the run (ports.DbFetchStateStore.keep_derived): changed
+        sources' post statistics, Mark X's totals, the topic tracks' placements. Never raises."""
         if hasattr(self.state, "keep_derived"):
             await self._safely("keep the derived counts", self.state.keep_derived)
 
@@ -251,7 +228,7 @@ class IngestionRunner:
                                         [s["id"] for s, kind, _ in due if getattr(kind, "conditional", False)])
         sessions = _RunSessions()
         try:
-            # A page-based source that has fetched before: what it finds now is new to you (0039).
+            # a page-based source that has fetched before: what it finds now is new to you
             fetched_before = {source_id for source_id, row in states.items() if row.last_success_at is not None}
             return await self._fetch_and_save(request, progress, started, run_id, sources, due, counts,
                                                  sessions, validators or {}, fetched_before)
@@ -308,9 +285,7 @@ class IngestionRunner:
         ordered = sorted((s for s, _, _ in due),
                          key=lambda s: ((s.get("settings") or {}).get("priority", 999), str(s.get("handle_or_url"))))
         ordered = interleave_by_host(ordered, host_key=lambda s: by_id[s["id"]][1].host_key(s))
-        # Each source is saved as soon as its fetch finishes, so its posts reach the reader
-        # during the run, and its result is merged into the run's one save result. One save
-        # at a time: the database sees one writer, as with the single batch before.
+        # each source is saved as soon as its fetch finishes, one save at a time (the database sees one writer)
         saved = SaveBatchResult()
         failures: List[SourceFailure] = []
         save_lock = asyncio.Lock()
@@ -337,17 +312,15 @@ class IngestionRunner:
                 elif f.posts:
                     error = await self._save(f, saved, surface=surface)
                     if not error and f.failure is not None:
-                        # Its posts are saved; the fetch is failing, with why (issue 0137 A1).
+                        # its posts are saved; the fetch is failing, with why
                         failures.append(SourceFailure(source["id"], _display_name(source), "fetch", str(f.failure)))
                         f.outcome = outcome = dataclasses.replace(outcome, status=OutcomeStatus.ERROR,
                                                                   error=str(f.failure), warning=None)
                         f.error = f.failure
                     if error:
                         failures.append(SourceFailure(source["id"], _display_name(source), "save", error))
-                        # Outcomes are recorded after the save: a source none of whose posts
-                        # reached the database is failing (its failure count grows, it retries
-                        # on backoff), not healthy with its next fetch a whole cadence away.
-                        # The rest of the run (counts, archive metadata) sees the same outcome.
+                        # outcomes are recorded after the save: a source none of whose posts were saved is
+                        # failing (it retries on backoff), not healthy a whole cadence away
                         f.outcome = outcome = dataclasses.replace(outcome, status=OutcomeStatus.ERROR,
                                                                   error=f"save: {error}")
                 rows = await self._safely(
@@ -369,9 +342,9 @@ class IngestionRunner:
                 if outcome.status == OutcomeStatus.HEALTHY:
                     await self.inspections.refresh(source, f.kind, outcome.fetched)
                 if f.recognised and outcome.status.is_success and hasattr(self.inspections, "recognised"):
-                    await self.inspections.recognised(source, f.recognised)   # issue 0167
+                    await self.inspections.recognised(source, f.recognised)
                 if f.title and outcome.status.is_success and hasattr(self.inspections, "named"):
-                    await self.inspections.named(source, f.title)   # issue 0178: an unnamed source's own name
+                    await self.inspections.named(source, f.title)   # an unnamed source's own name
                 done += 1
                 new_count = saved.inserted - inserted_before
                 await self._safely("record progress", progress.event, "source", {
@@ -386,7 +359,7 @@ class IngestionRunner:
             if self.doctor is not None and f.outcome.status == OutcomeStatus.ERROR and rows:
                 await self.doctor.after_failure(source, f.kind, rows[0], f.error, progress)
             elif self.doctor is not None and f.outcome.status.is_success and rows and hasattr(self.doctor, "after_success"):
-                # A source silent far beyond its rhythm (issue 0178): where it went is looked for, never switched.
+                # a source silent far beyond its rhythm: where it went is looked for, never switched
                 await self.doctor.after_success(source, f.kind, rows[0], new_count)
             return f
 
@@ -400,7 +373,7 @@ class IngestionRunner:
         })
 
         if self.stories is not None and (saved.inserted or saved.updated):
-            # Posts were written: their stories are wanted (issue 0050; 0216: one short write). It never raises.
+            # posts were written: their stories are wanted (one short write; never raises)
             await asyncio.to_thread(self.stories)
 
         failed_sources = {f.source_id for f in failures}
@@ -462,9 +435,9 @@ class IngestionRunner:
             else:
                 memory = AddressMemory(stored, now=self.clock(), full=full)
                 got = await kind.fetch_latest(source, decision.post_limit, memory=memory)  # type: ignore[call-arg]
-            # Over half its items skipped (issue 0135, kinds.base.FetchedPosts): said as a warning.
+            # over half its items skipped (kinds.base.FetchedPosts): said as a warning
             warning = getattr(got, "warning", None)
-            # Items stored as fewer posts than they are (issue 0137 A1): saved, and the fetch fails.
+            # items stored as fewer posts than they are: saved, and the fetch fails
             failure = getattr(got, "failure", None)
             recognised = getattr(got, "recognised", None)
             title = getattr(got, "title", None)
@@ -490,7 +463,7 @@ class IngestionRunner:
                     await self.gates.sleep(wait)
                     posts = await fetch_latest()
                 self.gates.host_limiter.succeeded(host)
-                self.gates.budgets.counted(host)   # spends the budget an archive may be measuring (0107)
+                self.gates.budgets.counted(host)   # spends the budget an archive may be measuring
                 if watching:
                     checks = await self._check_pages(source, kind, full)
             outcome = FetchOutcome.from_fetch(source["id"], fetched=len(posts), error=None,
@@ -518,8 +491,8 @@ class IngestionRunner:
         return fetched
 
     async def _check_pages(self, source: Dict[str, Any], kind: SourceKind, full: bool) -> List[page_changes.PageCheck]:
-        """A slice of the source's stored pages through the cheap checks (issue 0039). Never
-        raises: a check that cannot run is no checks, and the fetch stands."""
+        """A slice of the source's stored pages through the cheap checks. Never raises: a check that cannot run is
+        no checks, and the fetch stands."""
         try:
             pages = await asyncio.to_thread(self.watch.due, source["id"], now=self.clock(),  # type: ignore[union-attr]
                                             limit=page_changes.WATCH_SLICE)

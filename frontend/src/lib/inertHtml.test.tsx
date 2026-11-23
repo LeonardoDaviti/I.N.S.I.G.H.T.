@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeEntities, htmlText } from './inertHtml';
 
-// Issue 0187: a post's HTML is the feed's. Reading its text must never run or load anything in it.
+// A post's HTML is the feed's: reading its text must never run or load anything in it (0187).
 const HOSTILE = '<p>Hello <b>world</b></p><img src="x" onerror="window.__xss = 1">'
   + '<script>window.__xss = 2</script><svg onload="window.__xss = 3"></svg>'
   + '<iframe srcdoc="<script>parent.__xss = 4</script>"></iframe>';

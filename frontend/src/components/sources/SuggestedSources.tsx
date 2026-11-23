@@ -9,6 +9,7 @@ import type { MissingOrigins, OriginStory, SuggestedSource, SuggestedSourcesResp
 import { Button, ExternalLink, Tabs, TabsContent, TabsList, TabsTrigger, TextLink } from '../ui';
 import DiscoverPages from './DiscoverPages';
 import MainSourceMissing from './MainSourceMissing';
+import PeopleAndMakers from './PeopleAndMakers';
 import OfficialChannels from './OfficialChannels';
 import SilentSources from './SilentSources';
 import SourceJudge from './SourceJudge';
@@ -22,10 +23,10 @@ import { suggestionReason } from '../../lib/story';
 
 export const SUGGESTED_SOURCES_KEY = ['suggested-sources'] as const;
 type Pages = InfiniteData<SuggestedSourcesResponse, number>;
-/** How long after a "refreshing" answer Discover asks for its list again (v10.15): the background build's usual time. */
+/** How long after a "refreshing" answer Discover asks for its list again: the background build's usual time. */
 const REFRESH_AFTER_MS = 60_000;
 
-/** "Updated 12m ago · updating…": when the list served was built, and whether a newer build is under way (v10.15). */
+/** "Updated 12m ago · updating…": when the list served was built, and whether a newer build is under way. */
 function BuiltLine({ builtAt, refreshing }: { builtAt: string | null; refreshing: boolean }) {
   if (!builtAt && !refreshing) return null;
   const parts = [builtAt ? `Updated ${formatRelativeTime(builtAt)}` : null, refreshing ? 'updating…' : null].filter(Boolean);
@@ -48,8 +49,8 @@ function OriginStories({ stories }: { stories: OriginStory[] }) {
   );
 }
 
-/** A source you follow whose own pages started stories it doesn't hold: its archive may (issue 0015). The row follows
- *  that archive (issue 0080): running or finished, it says so and offers no fresh run. */
+/** A source you follow whose own pages started stories it doesn't hold: its archive may. The row follows that
+ *  archive: running or finished, it says so and offers no fresh run. */
 function Missing({ missing }: { missing: MissingOrigins }) {
   const state = missing.archive?.state;
   const archive = `/settings/sources?tab=ingestion&sub=archive&source=${encodeURIComponent(missing.source_id)}`;
@@ -74,9 +75,8 @@ function Missing({ missing }: { missing: MissingOrigins }) {
   );
 }
 
-/** A followed source's other channels (issue 0109): the X account or old site its own posts link under its name.
- *  Folded, one line each; never suggestions. Each has Follow… as a suggestion has (v10.15 c2): Add source on its address,
- *  where the feed finder decides. */
+/** A followed source's other channels: the X account or old site its own posts link under its name. Folded, one
+ *  line each, never suggestions; Follow… opens Add source on its address, where the feed finder decides. */
 function OtherChannels({ also, onFollow }: { also: NonNullable<SuggestedSourcesResponse['also']>; onFollow: (url: string) => void }) {
   const [open, setOpen] = useState(false);
   return (
@@ -159,7 +159,7 @@ function Suggestion({ suggestion, onFollow, onHide }: {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button size="sm" variant="secondary" onClick={() => onFollow(suggestion.url)}>Follow…</Button>
-          {/* v10.15 b5: the site can't be followed, its own account can (through the finder, like any address). */}
+          {/* the site can't be followed, its own account can (through the finder, like any address) */}
           {account ? (
             <Button size="sm" variant="secondary" title={account.url} onClick={() => onFollow(account.url)}>
               Follow {account.label}…
@@ -171,7 +171,7 @@ function Suggestion({ suggestion, onFollow, onHide }: {
       {open ? (
         <ul id={listId} className="mt-2 flex flex-col gap-1 border-l border-line pl-3">
           {suggestion.articles.map((article) => {
-            // Its own title, else its site and section or a tweet's account (issue 0080): never its address.
+            // its own title, else its site and section or a tweet's account: never its address
             const title = article.title || untitledLine(article.url);
             return (
               <li key={article.url} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
@@ -189,24 +189,22 @@ function Suggestion({ suggestion, onFollow, onHide }: {
 }
 
 /**
- * Sources → discover (issue 0050; the tab was "suggested" until 2026-10-31): the sites and accounts your sources keep linking
- * that you don't follow, the ones your stories start from first (issue 0065), then most of your sources, each saying why with
- * its articles one click away. Above them, the sources you follow whose own pages started stories they don't hold, with their
- * archive one click away. Follow… opens Add source on its address (the feed finder and page watching, as every add);
- * Not interested hides it for good. The first page's suggestions carry their follow test (issue 0080), the rest come 30 at a
- * time behind More; help and docs sites are a quiet line of references, never suggestions.
+ * Sources → discover: the sites and accounts your sources keep linking that you don't follow, the ones your stories
+ * start from first, then most of your sources, each saying why. Above them, followed sources whose own pages
+ * started stories they don't hold. Follow… opens Add source (the feed finder and page watching, as every add);
+ * Not interested hides it for good. Paged 30 at a time; help and docs sites are a quiet line, never suggestions.
  */
 export default function SuggestedSources({ onFollow }: { onFollow: (url: string) => void }) {
   const api = useApi();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState('');
   const [asked, setAsked] = useState('');   // the search the server is asked, once typing pauses
-  const [view, setView] = useState('sources');   // Discover's two tabs (issue 0113): Sources, Pages
+  const [view, setView] = useState('sources');   // Discover's two tabs: Sources, Pages
   useEffect(() => {
     const timer = setTimeout(() => setAsked(filter.trim()), 300);
     return () => clearTimeout(timer);
   }, [filter]);
-  // One page at a time (issue 0080): the first 30, the rest behind More.
+  // one page at a time: the first 30, the rest behind More
   const query = useInfiniteQuery({
     queryKey: [...SUGGESTED_SOURCES_KEY, asked],
     initialPageParam: 0,
@@ -215,7 +213,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
     placeholderData: (previous) => previous,
     staleTime: 60_000,
   });
-  // v10.15: the list is the last background build; while a newer one is made, it is asked again each minute.
+  // the list is the last background build; while a newer one is made, it is asked again each minute
   const served = query.data?.pages[0];
   const refreshing = !!served?.refreshing;
   const builtAt = served?.built_at ?? null;
@@ -256,7 +254,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
     [s.key, ...s.voice_names, ...s.articles.map((a) => `${a.title ?? ''} ${a.url}`), ...stories(s.origin_stories)],
   )) : list);
   const suggestions = shown(all);
-  // Those that can't be followed as a feed: a section of their own, below the followable, above the untested (issue 0109).
+  // those that can't be followed as a feed: their own section, below the followable, above the untested
   const apart = suggestions.filter((s) => s.section === 'unfollowable');
   const start = suggestions.findIndex((s) => s.section === 'unfollowable');
   const head = start < 0 ? suggestions : suggestions.slice(0, start);
@@ -306,6 +304,7 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
           </label>
           {words.length ? null : <OfficialChannels />}
           {words.length ? null : <MainSourceMissing onFollow={onFollow} />}
+          {words.length ? null : <PeopleAndMakers onFollow={onFollow} />}
           {words.length ? null : <SilentSources />}
           {archives.length ? (
             <section aria-label="Sources you follow that miss where your stories start" className="mb-2">

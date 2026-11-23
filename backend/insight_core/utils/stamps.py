@@ -1,21 +1,10 @@
-"""Which rules made a piece of derived data (issue 0071): its stamp, derived from the rules
-themselves, never bumped by hand.
+"""Which rules made a piece of derived data: its stamp, derived from the rules themselves, never bumped by hand.
 
-A stamp is a fingerprint of what the rules make of a fixed sample, kept here: made-up sources,
-posts, addresses and bodies, written to exercise every rule (tests/test_stamps.py checks they still
-do), each tuned value with a case at its edge (in at the value, out just past it). A rule change that changes the output on the sample changes the stamp, so the next start makes
-the data again: the stories regroup in full (StoriesService), Discover's addresses refill
-(discover_rules), the stored bodies are repaired again (PostsService). A change with the same output
-(a rename, a move, a comment) keeps the stamp, and nothing is redone. Search's vectors are stamped
-the same way in SQL (search_vector_version(), migration 0055).
-
-Measured (issue 0071 B1): replaying the two changes that were missed by hand, 0068's site_of (one
-site per github.io writer) and 0068's titles of outside origins, each changes its stamp; splitting
-the rule files (0071 C2) keeps both. A hash of the rules' code catches both too, but changes with
-every refactor, so each would regroup everything.
-
-What the sample doesn't show, its stamp can't see: a new rule adds its case here (adding a case
-changes the stamp, so the data is made again once).
+A stamp is a fingerprint of what the rules make of a fixed sample kept here (made-up sources, posts, addresses and
+bodies, each tuned value with a case at its edge; tests/test_stamps.py checks they still exercise every rule). A rule
+change that changes the output on the sample changes the stamp, so the next start makes the data again (stories
+regroup, Discover's addresses refill, stored bodies are repaired); a rename or a move keeps it. A new rule must add
+its case here: what the sample doesn't show, its stamp can't see.
 """
 from __future__ import annotations
 
@@ -61,10 +50,10 @@ ADDRESSES = (
     "https://youtube.com/@samplechannel/videos",
     "https://github.com/sample-org/sample-repo/releases/tag/v1.2.0",
     "https://medium.com/@writer/a-long-title-about-models-and-data",
-    # 0235: a Bluesky account is bsky.app/profile/<handle>, its post one of its articles
+    # a Bluesky account is bsky.app/profile/<handle>, its post one of its articles
     "https://bsky.app/profile/writer.bsky.social",
     "https://bsky.app/profile/writer.bsky.social/post/3kabc2xyz",
-    # a hosting platform's subdomain is its own site (issue 0068); a co.uk-like ending keeps three labels
+    # a hosting platform's subdomain is its own site; a co.uk-like ending keeps three labels
     "https://writer-one.github.io/2026/03/routing",
     "https://deep.writer-one.github.io/notes/on-sample-data",
     "https://writer.bearblog.dev/notes-on-small-models",
@@ -117,7 +106,7 @@ HOSTS: Tuple[Tuple[str, str, int], ...] = (
     ("s-wx", "writerx.example", 2),
 )
 # (linking source, linked source): which source's posts link another's posts or place, as SourceFacts reads it for
-# the pairs that may be one owner (issue 0111): a writer's notes link the writer's X account
+# the pairs that may be one owner: a writer's notes link the writer's X account
 LINKED: Tuple[Tuple[str, str], ...] = (("s-wx", "s-x1"),)
 
 L1 = "https://launch.example/news/lab-model-seven-released"
@@ -137,14 +126,15 @@ PRESS = "https://press.example/2026/03/press-release-on-models"
 TWEET = "https://x.com/writer_x/status/1900000000000000101"
 GUEST = "https://writer-one.github.io/guest-post-on-indexes"
 SAVED = "https://saved.example/essays/on-careful-measurement"
+SAVED_OLD = "https://saved.example/papers/an-older-paper-on-efficiency"
 PAPER = "https://preprints.example/abs/2603.01234"
 PAPER_PDF = "https://preprints.example/pdf/2603.01234v2"
 MOVED = "https://writer-one.github.io/on-keeping-notes"
-# One page as two newsletters' mail trackers wrote it (issue 0109 B1), and the page they mark
+# One page as two newsletters' mail trackers wrote it, and the page they mark
 TRACKED = ("https://journal.example/issue/417?_hsenc=p2ANqtz-aaa&_hsmi=11",
            "https://journal.example/issue/417?_ga=2.1.2-3&_hsenc=p2ANqtz-bbb")
 JOURNAL = "https://journal.example/issue/417"
-# One article as a gift link and a share link wrote it (issue 0126)
+# One article as a gift link and a share link wrote it
 GIFTED = ("https://paper.example/2026/03/10/the-budget-story?accessToken=eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IngifQ.c2ln",
           "https://paper.example/2026/03/10/the-budget-story?smid=url-share&unlocked_article_code=1.abc")
 TOOL_PREVIEW = (f'<p>Worth a look</p><blockquote cite="{L4}"><cite><b>Tool Site</b></cite></br>'
@@ -173,9 +163,9 @@ def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Option
           html: Optional[str] = None, text: Optional[str] = None, content_hash: Optional[str] = None, chars: int = 0,
           author: Optional[str] = None,
           reposted_by: Sequence[str] = (), updated: bool = False, stored: Optional[datetime] = None,
-          moved_to: Optional[str] = None) -> Dict[str, Any]:
+          moved_to: Optional[str] = None, roundup: bool = False) -> Dict[str, Any]:
     """A post as load_posts returns it, stored an hour after it was posted unless `stored` says when, with
-    its parts as the parser reads them (issue 0076; `html` only on the platforms, as load_posts reads them)."""
+    its parts as the parser reads them (`html` only on the platforms, as load_posts reads them)."""
     from insight_core.utils.post_parser import parse   # the parser's stamp reads this module
     parts = parse(title, text, html, url)
     return {"id": pid, "source_id": source, "t": at, "title": title, "content_hash": content_hash or "h-" + pid,
@@ -184,7 +174,7 @@ def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Option
             "stored_at": stored or at + timedelta(hours=1),
             "shown_title": parts.title, "reply_to": parts.reply_to, "quoted": parts.quoted,
             "quoted_words": parts.quoted_words, "poster": parts.author, "words": parts.words, "opening": parts.opening,
-            "moved_to": moved_to}
+            "moved_to": moved_to, "roundup": roundup}
 
 
 def _stored(url: str) -> str:
@@ -207,7 +197,7 @@ def posts() -> List[Dict[str, Any]]:
     return [
         # An outside page 2+ voices link within 72 hours (link), titled by the link words they agree
         # on; a fourth link 80 hours on is too late; a roundup's first link joins it, and a Reddit post
-        # whose first link joins nothing is a member by its two other links (issue 0070). A name
+        # whose first link joins nothing is a member by its two other links. A name
         # surges in their titles (News), and joins a tweet with no link.
         p("a1", "s-alpha", _at(0), "Lab Model Seven arrives with a longer context", "https://blog.alpha.example/2026/03/lab-model-seven-arrives",
           links=[(L1, None), (L1_CARD, None)], texts={L1: "Lab Model Seven Released Today"}),
@@ -222,6 +212,9 @@ def posts() -> List[Dict[str, Any]]:
           author="writer_x", html="<p>Lab Model Seven is fast</p>"),
         p("o1", "s-beta", _at(8), "This week in models", "https://beta.example/this-week-in-models",
           links=[(L1, None), (L2, None), (L4, None)]),
+        # A post Mark X tags a round-up joins no story by its links, its first one too: it mentions them all.
+        p("o2", "s-gamma", _at(9), "The morning brief", "https://gamma.example/research/the-morning-brief",
+          links=[(L1, None), (L2, None), (L4, None)], roundup=True),
         # Link words a slug confirms
         p("b1", "s-gamma", _at(24), "Sparse routing at scale", "https://gamma.example/research/sparse-routing-notes",
           links=[(L2, None)], texts={L2: "sparse routing at scale"}),
@@ -254,7 +247,7 @@ def posts() -> List[Dict[str, Any]]:
           links=[("https://blog.alpha.example/2026/03/alpha-update", "h1")], author="fan_z", html="<p>update</p>"),
         p("h6", "s-x1", _at(80, 11), "The migration guide is good", "https://x.com/writer_x/status/1900000000000000060",
           links=[(L8, None)], author="writer_x", html="<p>guide</p>"),
-        # A date alone counts as that day's earliest timed post of its story, never 00:00 (issue 0072 D)
+        # A date alone counts as that day's earliest timed post of its story, never 00:00
         p("h7", "s-gamma", datetime(2026, 3, 5, tzinfo=timezone.utc), "Notes on the March update",
           "https://gamma.example/research/notes-on-the-march-update",
           links=[("https://blog.alpha.example/2026/03/alpha-update", "h1")]),
@@ -278,7 +271,7 @@ def posts() -> List[Dict[str, Any]]:
         p("j7", "s-gamma", datetime(2026, 5, 6, 0, 1, tzinfo=timezone.utc), "Digest once more", "https://gamma.example/research/digest",
           content_hash="h-same-text", chars=120),
         # Copies of one bridge post whose title shown is too short to join by: their opening, as the
-        # bridge's title said it, joins them (issue 0076)
+        # bridge's title said it, joins them
         p("j8", "s-tg1", _at(106), "Стрим про инференсВ среду в 18:00 выходим в эфир с автором [...]", "https://t.me/sample_channel/170",
           text="Стрим про инференс\nВ среду в 18:00 выходим в эфир с автором канала. Приходите.",
           html="<p>Стрим про инференс<br>В среду в 18:00 выходим в эфир с автором канала. Приходите.</p>"),
@@ -288,19 +281,19 @@ def posts() -> List[Dict[str, Any]]:
         p("j3", "s-tg1", _at(104), "Short one", "https://t.me/sample_channel/150", content_hash="h-short", chars=119, html="<p>s</p>"),
         p("j4", "s-tg2", _at(104, 30), "Short two", "https://t.me/other_channel/250", content_hash="h-short", chars=119, html="<p>s</p>"),
         # The same title of 5+ words, styled letters as plain (NFKC), within 7 days; not 8 days on. The
-        # first was stored after the second (a late fetch): the story keeps the second's id (issue 0072 A).
+        # first was stored after the second (a late fetch): the story keeps the second's id.
         p("k1", "s-beta", _at(110), "A Field Guide To Small Language Models", "https://beta.example/field-guide",
           stored=_at(114)),
         p("k2", "s-gamma", _at(112), "𝐀 𝐅𝐢𝐞𝐥𝐝 𝐆𝐮𝐢𝐝𝐞 𝐓𝐨 𝐒𝐦𝐚𝐥𝐥 𝐋𝐚𝐧𝐠𝐮𝐚𝐠𝐞 𝐌𝐨𝐝𝐞𝐥𝐬", "https://gamma.example/research/field-guide"),
         p("k3", "s-alpha", _at(112 + 7 * 24), "A Field Guide To Small Language Models", "https://blog.alpha.example/field-guide"),
         p("k4", "s-tg1", _at(112 + 14 * 24, 1), "A Field Guide To Small Language Models", "https://t.me/sample_channel/160",
           html="<p>k4</p>"),
-        # ... its entities decoded and its quotes as they are compared (utils/titles.py, issue 0071)
+        # ... its entities decoded and its quotes as they are compared (utils/titles.py)
         p("k5", "s-tg2", _at(118), "Notes on &quot;Small&quot; Language Models Today", "https://t.me/other_channel/270",
           html="<p>k5</p>"),
         p("k6", "s-gamma", _at(119), "Notes on “Small” Language Models Today", "https://gamma.example/research/notes-on-small"),
         # Another path of a stored page is that page; a writer's guest post on another github.io site
-        # is not at its own site (issue 0068), so Hacker News' post of it hangs from it by time
+        # is not at its own site, so Hacker News' post of it hangs from it by time
         p("m1", "s-gamma", _at(120), "Redesigning the index", "https://gamma.example/research/redesigning-the-index", updated=True),
         p("m2", "s-one", _at(121), "Notes on the index redesign", "https://writer-one.github.io/2026/03/index-notes",
           links=[("https://gamma.example/engineering/redesigning-the-index", None)]),
@@ -310,6 +303,13 @@ def posts() -> List[Dict[str, Any]]:
         p("n1", "s-saved", _at(130), "On Careful Measurement", SAVED),
         p("n2", "s-beta", _at(131), "Why measurement matters", "https://beta.example/why-measure", links=[(SAVED, "n1")]),
         p("n3", "s-tg2", _at(132), "мерить", "https://t.me/other_channel/260", links=[(SAVED, "n1")], html="<p>m</p>"),
+        # ... and one saved two months before the two voices citing it: it stays a member, but is background:
+        # the story starts at its first report, never at the page's own date
+        p("n4", "s-saved", _at(470 - 60 * 24), "An Older Paper On Efficiency", SAVED_OLD),
+        p("n5", "s-beta", _at(470), "A new model, and the paper behind it", "https://beta.example/new-model-paper",
+          links=[(SAVED_OLD, "n4")]),
+        p("n6", "s-tg2", _at(471), "модель и статья", "https://t.me/other_channel/470", links=[(SAVED_OLD, "n4")],
+          html="<p>m</p>"),
         # Two people in one subreddit are one place, two voices; a site linking it too makes the story
         p("r1", "s-red", _at(140), "A paper on long context retrieval", "https://reddit.com/r/samplesub/comments/r1/paper",
           links=[(L9, None)], html=_reddit("sample_user") + _words(56)),
@@ -327,14 +327,19 @@ def posts() -> List[Dict[str, Any]]:
         p("t6", "s-x1", _at(138, 3), "R to @writer_x: part four, a day and a minute later",
           "https://x.com/writer_x/status/1900000000000000104", author="writer_x", html="<p>part four</p>"),
         # A reply quoting its own account's stored tweet continues it, not the tweet right before it
-        # (issue 0103): two subjects, two stories
+        # (two subjects, two stories)
         p("t7", "s-x2", _at(150), "Sparse routing results are in, a short summary", SELF_A, author="author_y",
           html="<p>Sparse routing results are in</p>"),
         p("t8", "s-x2", _at(151), "A new tokenizer release from the tool team", SELF_B, author="author_y",
           html="<p>A new tokenizer release</p>"),
         p("t9", "s-x2", _at(152), "R to @author_y: and the routing numbers hold up", "https://x.com/author_y/status/1900000000000000303",
           links=[(SELF_A, "t7")], author="author_y", html=_self_quote("and the routing numbers hold up", SELF_A)),
-        # A paper's abstract and its PDF are one page (issue 0106): two voices linking either path, one story
+        # a run of replies (a minute apart) an hour after the account's tweet before it is another thread
+        p("t10", "s-x2", _at(153), "R to @author_y: a second thread on the tokenizer, part two",
+          "https://x.com/author_y/status/1900000000000000304", author="author_y", html="<p>tokenizer two</p>"),
+        p("t11", "s-x2", _at(153, 1), "R to @author_y: a second thread on the tokenizer, part three",
+          "https://x.com/author_y/status/1900000000000000305", author="author_y", html="<p>tokenizer three</p>"),
+        # A paper's abstract and its PDF are one page: two voices linking either path, one story
         p("q1", "s-gamma", _at(190), "Notes on a routing preprint", "https://gamma.example/research/routing-preprint",
           links=[(PAPER, None)]),
         p("q2", "s-tg1", _at(191), "Препринт", "https://t.me/sample_channel/320", links=[(PAPER_PDF, None)], html="<p>p</p>"),
@@ -359,32 +364,32 @@ def posts() -> List[Dict[str, Any]]:
         p("z3", "s-alpha", _at(210), "Graph Engine Four ships", "https://blog.alpha.example/2026/03/graph-engine-four"),
         p("z4", "s-beta", _at(211), "Graph Engine Four, reviewed", "https://beta.example/graph-engine-four"),
         p("z5", "s-alpha", _at(212), "Graph Engine Four benchmarks", "https://blog.alpha.example/2026/03/graph-benchmarks"),
-        # A blog that moved (issue 0108): the old site's post is a redirect stub, read where it points;
+        # A blog that moved: the old site's post is a redirect stub, read where it points;
         # it is one page with the post stored there, so the two are one story
         p("m1", "s-one", _at(260), "on keeping notes", MOVED),
         p("m2", "s-new", _at(261), "notes, kept", "https://delta.example/posts/2026/03/notes", moved_to=MOVED),
-        # A mail tracker's query names the page it marks (issue 0109 B1): two voices link one page, each
+        # A mail tracker's query names the page it marks: two voices link one page, each
         # through its own ?_hsenc=, stored as the saver keeps a link (normalize_url), so they are one story
         p("w1", "s-gamma", _at(340), "This week's reading", "https://gamma.example/research/weekly-reading",
           links=[(_stored(TRACKED[0]), None)]),
         p("w2", "s-two", _at(341), "Links for the week", "https://writer-two.github.io/links-for-the-week",
           links=[(_stored(TRACKED[1]), None)]),
-        # A gift link's token and a share mark name no other page (issue 0126): two voices link one article, one by
+        # A gift link's token and a share mark name no other page: two voices link one article, one by
         # a gift link, one by a share link, stored as the saver keeps a link, so they are one story
         p("tok1", "s-gamma", _at(450), "Budget notes", "https://gamma.example/research/budget-notes",
           links=[(_stored(GIFTED[0]), None)]),
         p("tok2", "s-two", _at(451), "On the budget", "https://writer-two.github.io/on-the-budget",
           links=[(_stored(GIFTED[1]), None)]),
-        # A date is no name (issue 0111): a column's two dated issues and a question "at <month> <year>" join nothing
+        # A date is no name: a column's two dated issues and a question "at <month> <year>" join nothing
         p("dt1", "s-gamma", _at(380), "Gamma Column: On Tools (18 Mar 2026)", "https://gamma.example/research/column-on-tools"),
         p("dt2", "s-one", _at(381), "Which small model is best at Mar 2026?", "https://writer-one.github.io/2026/03/which-model"),
         p("dt3", "s-gamma", _at(404), "Gamma Column: On Lists (19 Mar 2026)", "https://gamma.example/research/column-on-lists"),
-        # One owner's two channels are one News voice (issue 0111): a writer's tweet and notes on a new name are no News
+        # One owner's two channels are one News voice: a writer's tweet and notes on a new name are no News
         p("ow1", "s-x1", _at(420), "Kernel Pack Two is out", "https://x.com/writer_x/status/1900000000000000401",
           author="writer_x", html="<p>Kernel Pack Two is out</p>"),
         p("ow2", "s-wx", _at(421), "Kernel Pack Two, the notes", "https://writerx.example/kernel-pack-two"),
         p("ow3", "s-wx", _at(430), "Kernel Pack Two benchmarks", "https://writerx.example/kernel-pack-two-bench"),
-        # A News row grows only by what holds against its story's core (0203): a story's side post saying another
+        # A News row grows only by what holds against its story's core: a story's side post saying another
         # surging name (a digest line on a CEO) never pulls that name's posts into the story's row
         p("ck1", "s-alpha", _at(460), "Quill Six ships today", "https://blog.alpha.example/2026/03/quill-six",
           links=[(L11, None)]),
@@ -398,7 +403,22 @@ def posts() -> List[Dict[str, Any]]:
     ]
 
 
-# ---- stored bodies: the repair of 0068 (parsing._without_hidden_link_labels) ----------------------
+# ---- story dates: a story's start (story_rules.story_start), as Mark X's stored stories are dated ----------
+
+def story_dates() -> List[List[Tuple[str, str, datetime]]]:
+    """Stories as (post id, its source's kind, its date) lists, each tuned value at its edge: a Saved page more than
+    72 hours before the first report never dates its story, one at 72 hours does; a voice's post days early (a leak)
+    always does; a story of Saved pages alone by its first."""
+    return [
+        [("s1", "saved", _at(-60 * 24)), ("r1", "site", _at(0)), ("r2", "x", _at(2))],
+        [("s2", "saved", _at(-72)), ("r3", "site", _at(0)), ("r4", "x", _at(1))],
+        [("s3", "saved", _at(-72, -1)), ("r5", "site", _at(0))],
+        [("l1", "telegram", _at(-96)), ("r6", "site", _at(0))],
+        [("s4", "saved", _at(5)), ("s5", "saved", _at(3))],
+    ]
+
+
+# ---- stored bodies: the repair of parsing._without_hidden_link_labels ----------------------
 
 BODIES = (
     '<p>See <a href="https://a.example/post">the guide<span class="sr-only"> (opens in a new window)</span></a>.</p>',
@@ -409,7 +429,7 @@ BODIES = (
 )
 
 
-# ---- stored posts as the parser reads them: post_parts (utils/post_parser.py, issue 0076) -----------
+# ---- stored posts as the parser reads them: post_parts (utils/post_parser.py) -----------
 
 _CARD = ('<p>Same here <a href="https://nitter.local/writer_x/status/1900000000000000101#m">x.com/writer_x/status…</a></p>'
          '<blockquote><b>Writer X (@writer_x)</b><p>Thread on evaluation methods</p><footer> — <cite>'

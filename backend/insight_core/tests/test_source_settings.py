@@ -1,13 +1,4 @@
-"""
-Tests for source settings functionality.
-
-Tests:
-- Get platform defaults
-- Get source settings (merged with platform defaults)
-- Update source settings
-- Update platform defaults
-- Settings merging logic
-"""
+"""Source settings: platform defaults, a source's settings merged with them, and their updates."""
 import json
 import os
 import unittest
@@ -16,7 +7,6 @@ from insight_core.db.repo_sources import SourcesRepository
 from insight_core.services.sources_service import SourcesService
 from insight_core.tests._db import delete_scratch_sources, insert_scratch_source, requires_test_db, scratch_handle
 
-# Use test database or fallback to dev database
 DATABASE_URL = os.getenv('TEST_DATABASE_URL') or os.getenv('DATABASE_URL')
 
 if not DATABASE_URL:
@@ -24,20 +14,16 @@ if not DATABASE_URL:
 
 
 class TestSourceSettings(unittest.TestCase):
-    """Test source settings CRUD operations."""
     
     def setUp(self):
-        """Initialize repository before each test."""
         if not DATABASE_URL:
             self.skipTest("No DATABASE_URL found, skipping database tests")
 
         self.repo = SourcesRepository(DATABASE_URL)
         self.service = SourcesService(DATABASE_URL)
         
-        # Create a test source
         with psycopg.connect(DATABASE_URL) as conn:
             with conn.cursor() as cur:
-                # Insert test source
                 cur.execute("""
                     INSERT INTO sources (platform, handle_or_url, enabled, settings)
                     VALUES ('rss', 'https://test-settings.example.com/feed', TRUE, '{}')
@@ -47,18 +33,16 @@ class TestSourceSettings(unittest.TestCase):
                 conn.commit()
     
     def tearDown(self):
-        """Clean up after each test."""
         if not getattr(self, "test_source_id", None):
             return
 
         with psycopg.connect(DATABASE_URL) as conn:
             with conn.cursor() as cur:
-                # Delete test source
                 cur.execute("DELETE FROM sources WHERE id = %s", (self.test_source_id,))
                 conn.commit()
     
     def test_get_source_settings_empty(self):
-        """Test getting settings for source with no custom settings (should get hardcoded defaults)."""
+        """A source with no custom settings gets the hardcoded defaults."""
         with psycopg.connect(DATABASE_URL) as conn:
             with conn.cursor() as cur:
                 settings = self.repo.get_source_settings(cur, self.test_source_id)
@@ -68,7 +52,6 @@ class TestSourceSettings(unittest.TestCase):
                 self.assertTrue('fetch_delay_seconds' in settings or 'priority' in settings)
     
     def test_update_source_settings(self):
-        """Test updating source settings."""
         new_settings = {
             "display_name": "Test Feed",
             "fetch_delay_seconds": 10,
@@ -83,7 +66,6 @@ class TestSourceSettings(unittest.TestCase):
                 
                 self.assertTrue(success is True)
                 
-                # Verify settings were updated
                 settings = self.repo.get_source_settings(cur, self.test_source_id)
                 self.assertEqual(settings["display_name"], "Test Feed")
                 self.assertEqual(settings["fetch_delay_seconds"], 10)
@@ -91,8 +73,7 @@ class TestSourceSettings(unittest.TestCase):
                 self.assertEqual(settings["max_posts_per_fetch"], 100)
     
     def test_settings_override_defaults(self):
-        """Test that source settings override hardcoded defaults."""
-        # Set custom priority
+        """A source's settings override the hardcoded defaults."""
         custom_settings = {"priority": 1}
         
         with psycopg.connect(DATABASE_URL) as conn:
@@ -100,20 +81,17 @@ class TestSourceSettings(unittest.TestCase):
                 self.repo.update_source_settings(cur, self.test_source_id, custom_settings)
                 conn.commit()
                 
-                # Get merged settings
                 settings = self.repo.get_source_settings(cur, self.test_source_id)
                 
-                # Custom priority should override default
                 self.assertEqual(settings["priority"], 1)
-                # Other fields should come from platform defaults
                 self.assertIn("fetch_delay_seconds", settings)
     
     def test_service_update_validation(self):
-        """Test that service validates settings before updating."""
+        """The service validates settings before updating: strings converted, unknown fields dropped."""
         settings = {
             "display_name": "Valid Feed",
-            "fetch_delay_seconds": "5",  # String should be converted to int
-            "invalid_field": "should be ignored"  # Invalid field should be filtered
+            "fetch_delay_seconds": "5",
+            "invalid_field": "should be ignored"
         }
         
         result = self.service.update_source_settings(self.test_source_id, settings)
@@ -124,7 +102,7 @@ class TestSourceSettings(unittest.TestCase):
         self.assertNotIn("invalid_field", result["settings"])
     
     def test_a_sent_max_posts_per_fetch_does_not_override_the_kinds_number(self):
-        """Issue 0027: posts per fetch is INSIGHT's per-kind number, not a user setting."""
+        """Posts per fetch is INSIGHT's per-kind number, not a user setting (0027)."""
         result = self.service.update_source_settings(self.test_source_id, {"max_posts_per_fetch": 50})
         self.assertNotIn("max_posts_per_fetch", result["settings"], "not stored")
         with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
@@ -132,19 +110,17 @@ class TestSourceSettings(unittest.TestCase):
                              "the RSS default")
 
     def test_get_all_sources_with_settings(self):
-        """Test getting all sources with their merged settings."""
         sources = self.service.get_all_sources_with_settings()
         
         self.assertIsInstance(sources, list)
-        # Find our test source
         test_source = next((s for s in sources if s["id"] == self.test_source_id), None)
         self.assertIsNotNone(test_source)
         self.assertIn("settings", test_source)
         self.assertIsInstance(test_source["settings"], dict)
 
     def test_the_list_leaves_out_the_archive_history_and_the_database_keeps_it(self):
-        """Issue 0105: GET /api/sources was 1.8 MB, 98.7% each source's archive history, which the list
-        doesn't show. The list leaves it out; the row keeps it, and a source's own settings still read it."""
+        """GET /api/sources leaves out each source's archive history (the list doesn't show it); the row keeps it and
+        a source's own settings still read it (0105)."""
         history = [{"mode": "live", "at": f"2026-11-0{n}T00:00:00+00:00", "stored_posts": n} for n in range(1, 4)]
         with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
             cur.execute("UPDATE sources SET settings = %s::jsonb WHERE id = %s",
@@ -164,9 +140,8 @@ class TestSourceSettings(unittest.TestCase):
             self.assertEqual(cur.fetchone()[0], history)
 
     def test_the_list_leaves_out_the_checkpoints_resume_lists(self):
-        """Issue 0195: the checkpoint's candidate URLs and ladder (48% of GET /api/sources and 66% of the archive
-        catalog on the server) are an archive's resume state; the list keeps the checkpoint's counts, a source's own
-        settings the whole of it."""
+        """The checkpoint's candidate URLs and ladder are an archive's resume state: the list keeps the checkpoint's
+        counts, a source's own settings the whole of it (0195)."""
         checkpoint = {"mode": "listing", "urls": [f"https://x.invalid/{n}" for n in range(50)],
                       "ladder": {"items": ["https://x.invalid/1"]}, "collected_posts": 7, "pages_fetched": 3}
         with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:

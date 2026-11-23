@@ -1,19 +1,10 @@
-"""X Articles (X's long-form posts) read for a tweet the Nitter bridge gives only as a link (v10.13.10).
+"""X Articles (long-form posts) read for a tweet the Nitter bridge gives only as a link.
 
-Nitter shows an X Article as a link alone (x.com/i/article/<id>, or <its host>/i/article/<id>, or a t.co link
-showing one), so the post stored had no text to read, search or understand. A tweet whose own text (its quoted
-tweet aside) holds such a link is read again by its status id:
-
-  1. the article's whole text, from X_ARTICLE_TEXT_URL (default fxtwitter's API: tweet.article.content.blocks,
-     joined into paragraphs, headers and list items kept);
-  2. else its title and first ~200 characters, from X_ARTICLE_PREVIEW_URL (default X's own embed endpoint,
-     cdn.syndication.twimg.com: article.title, article.preview_text), marked a preview the way a teaser is
-     (metadata.page_read_outcome "preview_only": the post page says "Summary only").
-
-Each address is a template ({user}, {id}); set empty, that route is off (both empty: no lookups). A lookup that
-fails, times out (LOOKUP_TIMEOUT_S) or finds no article leaves the post as the bridge gave it (logged): a fetch
-never fails on one. The post keeps its address, date and author; its title becomes the article's (a retweet's
-or reply's "RT by @x: " / "R to @x: " kept). metadata.x_article says which article, read how, and when.
+A tweet whose own text links an X Article is read again by status id: the whole text from X_ARTICLE_TEXT_URL
+(default fxtwitter's API), else title and preview from X_ARTICLE_PREVIEW_URL (X's embed endpoint), stored as a
+teaser ("preview_only"). Each address is a template ({user}, {id}); set empty, that route is off. A failed lookup
+leaves the post as the bridge gave it: a fetch never fails on one. The post keeps address, date and author; its title
+becomes the article's ("RT by"/"R to" kept); metadata.x_article says which article, read how, and when.
 """
 from __future__ import annotations
 
@@ -37,7 +28,7 @@ logger = logging.getLogger("insight.ingestion.x_articles")
 TEXT_URL_ENV = "X_ARTICLE_TEXT_URL"
 PREVIEW_URL_ENV = "X_ARTICLE_PREVIEW_URL"
 DEFAULT_TEXT_URL = "https://api.fxtwitter.com/{user}/status/{id}"
-# The embed endpoint asks for a token; any value is taken (checked 2026-11-11).
+# The embed endpoint asks for a token; any value is taken.
 DEFAULT_PREVIEW_URL = "https://cdn.syndication.twimg.com/tweet-result?id={id}&token=insight"
 # At most this many articles looked up per fetch (an archive: per page of the bridge), LOOKUP_DELAY_S apart,
 # each request given LOOKUP_TIMEOUT_S. Not measured.
@@ -54,7 +45,7 @@ ARTICLE_LINK_RE = re.compile(r"/i/article/\d")
 ARTICLE_ANCHOR_RE = re.compile(r"(?is)<a\b[^>]*>(?:(?!</a>).)*?</a>")
 ARTICLE_URL_RE = re.compile(r"(?i)[^\s<>\"]*/i/article/[^\s<>\"]*")
 QUOTE_START_RE = re.compile(r"(?is)(?:<hr\s*/?>\s*)?<blockquote\b")
-TITLE_PREFIX_RE = re.compile(r"^(?:" + RT_BY_PREFIX + r"|R to @\w+: )+")   # Byline's "RT by @x: " (0189)
+TITLE_PREFIX_RE = re.compile(r"^(?:" + RT_BY_PREFIX + r"|R to @\w+: )+")   # Byline's "RT by @x: "
 HEADERS = {"header-one": "h2", "header-two": "h3", "header-three": "h4"}
 LISTS = {"unordered-list-item": "ul", "ordered-list-item": "ol"}
 
@@ -80,12 +71,6 @@ def is_article_post(post: Mapping[str, Any]) -> bool:
     if not own.strip():
         own = str(post.get("content") or "")
     return bool(ARTICLE_LINK_RE.search(own))
-
-
-def is_stub(post: Mapping[str, Any]) -> bool:
-    """An article post whose own text is the link alone (what the reader got before v10.13.10)."""
-    own, _ = _split(str(post.get("content_html") or ""))
-    return is_article_post(post) and not _intro(own)
 
 
 def _intro(own_html: str) -> str:

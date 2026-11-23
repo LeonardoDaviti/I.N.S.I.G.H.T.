@@ -5,12 +5,10 @@ import { request } from '../lib/request';
 import { UNREAD_COUNTS_KEY } from './useFeed';
 import { useMarkxOn } from './useMarkxOn';
 
-/** A topic track's count (v10.12.1): its unread track items plus its Discover suggestions not yet labelled. `unread` is
- *  also its Stream's count (the Stream lists only its items); `waiting`, its active sources' posts not judged yet. */
+/** A topic track's count: its unread items plus its unlabelled Discover suggestions. `unread` is also its
+ *  Stream's count; `waiting`: its active sources' posts not judged yet. */
 export interface TopicTrackCount {
   unread: number; discover: number; count: number; waiting?: number;
-  /** 0245 (only while the briefer's switch is on): things found since the last look; 0 when not opened for 30 days. */
-  things?: number;
 }
 
 /** Only tracks that are topics are listed; a plain folder keeps its sources' unread count. */
@@ -26,9 +24,8 @@ export const trackCountsApi = {
 const TRACK_PAGE_ROOT = 'markx-track';
 
 /**
- * The topic tracks' counts (issue 0145, v10.12.1), while Mark X is on: which tracks are topics, and the sidebar
- * count for each. Refreshed when the unread counts or a track page are fetched again (a read, a label), so it
- * follows them without being patched by the reader's optimistic count changes.
+ * The topic tracks' counts while Mark X is on. Refreshed when the unread counts or a track page are fetched
+ * again, so they follow without being patched by the reader's optimistic count changes.
  */
 export function useTrackCounts(enabled = true) {
   const markxOn = useMarkxOn();

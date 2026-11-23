@@ -6,11 +6,8 @@ import { useIngestionRun } from '../../hooks/useIngestionRun';
 import { Button } from '../ui';
 import ConfirmDialog from './ConfirmDialog';
 
-/**
- * The manual "Run cycle" (spec §F.3): fetch the sources that are due, exactly as
- * the scheduler's next tick would. "Force all" ignores cadence and backoff (never
- * unavailability) and asks for a confirmation first, because it hits every source.
- */
+/** The manual "Run cycle": fetch the due sources, as the scheduler's next tick would. "Force all" ignores cadence
+ *  and backoff (never unavailability) and asks for a confirmation first. */
 export default function RunCycleButton({
   onReport,
   compact = false,

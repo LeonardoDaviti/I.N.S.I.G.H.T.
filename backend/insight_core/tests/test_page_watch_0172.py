@@ -1,9 +1,7 @@
-"""Page watch, v10.15 Discover fixes (part F): a prefix is never a date (c5), www. and the bare host are one page (c6),
-a form is never a post (c7), the site's name comes off the titles (c8), a listing's numbered page is never an article
-or an offer (c10), and a page the preview reads is the source's post once fetched (item 5).
-
-No network: FakeHttp answers the pages. Invented sites only. The item 5 store test commits rows, so it runs only
-against a `_test` database; it owns every source and post on lab.acmef1015.example.
+"""Page watch Discover fixes (0172 F): a prefix is never a date (c5), www. and the bare host are one page (c6), a
+form is never a post (c7), the site's name comes off the titles (c8), a listing's numbered page is never an article
+or an offer (c10), and a page the preview reads is the source's post once fetched (item 5). No network (FakeHttp);
+invented sites. The item 5 store test commits rows, so only against a `_test` database.
 """
 from __future__ import annotations
 
@@ -255,9 +253,8 @@ LAB = "https://lab.acmef1015.example"
 
 @requires_test_db
 class ACollectedPageIsTheNewSourcesPost(unittest.TestCase):
-    """Item 5: a page INSIGHT collected into Saved (a News story's original, shown only inside its story) is the
-    newest article of a page watch added later. Its first fetch reads it first, before the source holds any post of
-    its shape: the page moves to the source (a row of its feed), at its exact address or another form of it."""
+    """Item 5: a page collected into Saved is the newest article of a page watch added later: its first fetch moves the
+    page to the source (a row of its feed), at its exact address or another form of it."""
 
     def setUp(self):
         import psycopg

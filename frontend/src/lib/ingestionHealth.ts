@@ -1,7 +1,6 @@
 /**
- * Has ingestion stopped? Read from the source health rows the reader already
- * caches: when no enabled source has been attempted for a day, nothing is
- * fetching, and an empty unread feed means "stopped", not "caught up".
+ * Has ingestion stopped? When no enabled source was attempted for a day, an empty unread feed means "stopped",
+ * not "caught up". Read from the cached source health rows.
  */
 export const INGESTION_STOPPED_AFTER_MS = 24 * 60 * 60 * 1000;
 

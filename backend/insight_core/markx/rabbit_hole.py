@@ -1,14 +1,8 @@
-"""The rabbit hole (issue 0138 E3-E4): an entity's world on its page, and Discover's row for one with something left.
+"""The rabbit hole (issue 0138): an entity's world on its page, and Discover's row for one with something left.
 
-For an org, a person or a document with 2+ works (its `published` documents, 0133's edges) or 10+ posts:
-  - **its sites:** the sites of its addresses and of its works' (markx/entity_addresses.py: release pages and work sites'
-    front pages; never a paper host or a code host, which are no one's site), each with what you have of it: followed,
-    stored (its front page is a post), or what Discover's follow test said (a feed: Follow; a page: Watch page; untested:
-    Follow, the feed finder decides). Every add goes through Add source (the feed finder, then page watching);
-  - **its works:** its published documents with their original (a paper, a release page, a work site), stored or not;
-  - **its people:** who it is published by and whom it publishes (people only), and who talks about it (its voices, on
-    the page already).
-Read only; nothing is fetched or followed here.
+For an org, a person or a document with 2+ works or 10+ posts: its sites (each with what you have of it: followed,
+stored, or what Discover's follow test said; every add goes through Add source), its works with their originals, and
+its people. Read only; nothing is fetched or followed here.
 """
 from __future__ import annotations
 
@@ -98,7 +92,7 @@ def _follow_tests(cur: Any) -> Dict[str, Any]:
 
 
 def discover_rows(cur: Any, *, limit: int = 12) -> List[Dict[str, Any]]:
-    """E4: "<entity>: N sites, M not followed, K works not stored" for the entities with 2+ works whose rabbit hole has
+    """Discover's "<entity>: N sites, M not followed, K works not stored" for the entities with 2+ works whose hole has
     something left, the most left first. Only entities some current reading names (`named`, roots)."""
     from insight_core.db.repo_discover import light_facts
     cur.execute("""SELECT a::text, b::text FROM mx_connections WHERE valid_to IS NULL AND relation = 'published'
@@ -107,7 +101,7 @@ def discover_rows(cur: Any, *, limit: int = 12) -> List[Dict[str, Any]]:
     if not edges:
         return []
     from insight_core.markx.entity_views import named_now
-    book = I.lazy_book(cur)   # v10.17 (0186): the edges' entities, not the whole book
+    book = I.lazy_book(cur)   # the edges' entities, not the whole book
     book.prime(ids=[x for e in edges for x in e])
     named = named_now(cur, book)
     if isinstance(named, I._Has):

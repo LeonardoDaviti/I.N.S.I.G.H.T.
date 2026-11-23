@@ -1,10 +1,6 @@
-"""Issue 0130 B and C: archives that work again, and archives back to a date.
-
-No network: every answer is a fixture on an invented host, shaped like what the owner's server met on 2026-11-07
-(plan/research/0130-notes.md, private): a newsletter platform's archive API answering HTTP 400 to offset=0, a
-weekly newsletter's issue pages that no longer carry the payload its reader parsed, a feed answering 404, and
-page-watched sites finishing "success, 0 new". What the real sites answer now is unverified until the owner's
-server runs these archives.
+"""Archives that work again, and archives back to a date (0130 B, C). No network: every answer is a fixture on an
+invented host (an archive API answering 400 to offset=0, issue pages that lost their payload, a feed answering 404,
+page-watched sites finishing "success, 0 new").
 """
 from __future__ import annotations
 
@@ -152,7 +148,7 @@ def _issue_page(number: int, *, payload: bool) -> str:
 
 
 class WeeklyNewsletterReaderTests(unittest.IsolatedAsyncioTestCase):
-    """B2: the reader read 38 pages and found 0 posts: its issue pages lost the payload it parsed."""
+    """B2: issue pages that lost the payload the reader parsed still give their posts."""
 
     def source(self):
         return {"id": "s2", "platform": "rss", "handle_or_url": f"{BATCH}/the-batch/", "settings": {}}

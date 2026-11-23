@@ -1,10 +1,6 @@
 /**
- * A small syntax highlighter for the blog's code excerpts. Monochrome by design
- * (design principle P2): tokens differ by weight and tone, never by hue, so the
- * highlighting follows the dark/light theme like everything else.
- *
- * It knows only the languages the posts quote. Anything it does not recognise
- * stays plain text, which is always a safe rendering.
+ * A small syntax highlighter for the blog's code excerpts. Monochrome: tokens differ by weight and tone, never
+ * hue. Only the languages the posts quote; anything else stays plain text.
  */
 
 export type Lang = 'python' | 'ts' | 'dockerfile' | 'diff' | 'comment' | 'text';
@@ -143,7 +139,7 @@ export function highlight(source: string, lang: Lang): Token[] {
   }
 }
 
-/** The monochrome treatment of each token: weight, tone and slant only (P2, P3). */
+/** The monochrome treatment of each token: weight, tone and slant only. */
 export const TOKEN_CLASS: Record<TokenKind, string> = {
   plain: '',
   keyword: 'font-semibold text-fg',

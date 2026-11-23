@@ -1,38 +1,8 @@
-"""Stalker's first edges (issue 0131): the older posts a post connects to, 30 days back or more, as mx_connections rows
-between two posts (a = the newer, b = the older). Shadow: mx_* tables only; Mark IX is only read.
-
-Three sources, each naming its rule or its call and carrying its evidence (keep everything: an edge is closed with
-valid_to, never deleted):
-
-  1. **Authors' links** (no model; G2: another source's 40/40, the same source's 37/40): a post_refs row (0125) of the
-     newer post, open and not boilerplate, that resolves to a stored post (as Connected resolves it: the post at that
-     exact url, else the first seen at its normalized address, never the post itself) at least GAP_DAYS older.
-     relation `refers_back`; rule `author_link_other` (p 1.0) or `author_link_own` (the same source, p 0.9: the owner's
-     decision 1); evidence {href, address, reason, reason_kind}, the reason line Connected shows. Under GAP_DAYS no
-     edge: the link stays a Connected row. Written incrementally by the decision run's `connections` stage (`stage`:
-     the posts whose refs changed, the links whose target was stored since, the edges whose ref closed or became
-     boilerplate) and by a resumable backfill over the archive (BACKFILL_SECONDS a run, mx_settings BACKFILL_KEY).
-     A link that stops resolving, or becomes boilerplate, closes its edge. A same-source link that is series
-     navigation (post_refs.navigation, 0134: both ends in one series, or "previous part" link words) is relation
-     `next_in_series`, rule `series`, never `refers_back`, and the judge never refines it.
-  2. **The judge** (`relate`, relate-v1 = G2's frozen judge v3, asked RELATE_RUNS times; the majority, "unknown" when
-     no two agree; p = the share of the runs that agree). Candidates: the same ent-v3 subject (one entity after 0119 A
-     identity) on both sides, cosine >= RELATE_COS, the older post RELATE_DAYS back at most (mx_candidates kind
-     'relate', source 'entity'); and every author-link edge, so its type can be refined. A same-subject edge
-     (rule NULL, its call) is "uncertain" (shown marked, with label buttons) until re-measured. On an author-link
-     edge the judge only refines the relation (builds_on, follows_up, same_event); any other answer leaves it
-     `refers_back`, never removes it. Planned capped like connect (`decide.Config.relate_open` open at a time).
-  3. **next_version from entity identity** (no model; the judge's next_version calls were 1 of 4 right as a type):
-     the newer post's subject is the version right after the older post's subject on its family's version line
-     (timeline.version_lines, 0220: a letter starts its own line, another maker's thing, a version named once and a
-     build number are off it; 0234: a product line of its own, a version its maker never announced (or, the maker
-     silent here, fewer than two voices report) is off, the line in release order), the older post GAP_DAYS back or
-     more; the previous stop's earliest NEXT_VERSION_POSTS
-     posts. rule `entity_next_version`,
-     evidence both entity keys. It replaces any judge call of next_version on that pair.
-
-Dates are G2's: published first (Pairing's `published_date`, 0128's published).
-"""
+"""The graph (mx_connections): post-to-post edges (a = the newer, b = the older), the relations posts state
+between entities, and the chains between stories. Post edges come from authors' links, the relate judge on
+same-subject pairs (on a link it only refines the relation) and identity's version lines. Entry points: `stage`
+(decision run), `plan_derive` / `plan_chains` (jobs process), and the readers `before`, `entity_relations`, `chain`,
+`row_chains`, `release_groups`. An edge is closed with valid_to, never deleted."""
 from __future__ import annotations
 
 import bisect
@@ -42,7 +12,7 @@ import re
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urljoin
 
 from psycopg import errors as psycopg_errors
@@ -51,21 +21,17 @@ from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
-GAP_DAYS = 30                 # the older post at least this far back (G2)
-RELATE_DAYS = 180             # same-subject candidates: the older post at most this far back (G2: meaningful within 90)
-RELATE_COS = 0.75             # ... at this cosine or more (G2's source b)
-RELATE_RUNS = 3               # the judge asked three times a pair, the majority
-# 0191: a first answer that settles its pair alone: never asked a second and third time (on the lab's 320 labelled pairs,
-# each run in turn taken as the first, 0 of 960 meaningful decisions changed; 9% of relate calls saved). Stopping on
-# `background` too saved 45% but lost 20 of 279 meaningful edges, so it is not done.
-RELATE_SETTLES = ("unrelated",)
-RELATE_OPEN = 100             # the planner's cap (decide.Config.relate_open)
+GAP_DAYS = 30                 # the older post at least this far back
+RELATE_DAYS = 180             # same-subject candidates: the older post at most this far back
+RELATE_COS = 0.75             # ... at this cosine or more
+RELATE_RUNS = 3
+RELATE_SETTLES = ("unrelated",)   # a first answer that settles its pair alone (measured: 0191)
+RELATE_OPEN = 100             # decide.Config.relate_open
 RULE_OTHER, RULE_OWN, RULE_NEXT = "author_link_other", "author_link_own", "entity_next_version"
-RULE_SERIES, NEXT_IN_SERIES = "series", "next_in_series"   # 0134: a same-source link that is series navigation
+RULE_SERIES, NEXT_IN_SERIES = "series", "next_in_series"   # a same-source link that is series navigation
 LINK_RULES = (RULE_OTHER, RULE_OWN, RULE_SERIES)
 JUDGED_LINK_RULES = (RULE_OTHER, RULE_OWN)   # the judge refines these; a series edge is never asked
-RULES = LINK_RULES + (RULE_NEXT,)
-P_OTHER, P_OWN = 1.0, 0.9     # decision 1: the same source's links are edges at p 0.9
+P_OTHER, P_OWN = 1.0, 0.9     # the same source's links are edges at p 0.9
 MEANINGFUL = ("same_event", "follows_up", "next_version", "builds_on", "refers_back")
 REFINES = ("builds_on", "follows_up", "same_event")   # what the judge may make of an author-link edge
 UNKNOWN = "unknown"
@@ -74,23 +40,22 @@ BACKFILL_SECONDS = 20.0       # the backfill's share of a decision run (the 120 
 BACKFILL_BATCH = 500
 BACKFILL_VERSION = 1          # a bump re-runs the backfill
 BACKFILL_KEY = "graph_backfill"
-SINCE_KEY = "graph_since"     # the last run's clock: what changed since is read again
+SINCE_KEY = "graph_since"
 MARGIN = timedelta(hours=1)   # read again a bit before it (a transaction that committed after the last snapshot)
-PENDING_KEY = "graph_pending"   # v10.25 (0227): the posts a run linked while its graph stage did not run (`defer`)
+PENDING_KEY = "graph_pending"   # `defer`
 BEFORE_SHOWN = 10
-EXCERPT = 1100                # G2's render: 1,100 characters a post
+EXCERPT = 1100                # characters a post the judge sees
 ANCHOR = 300
 DOCS_SHOWN = 4
 MODEL = "bge-m3"
 
 
 def _date(alias: str = "p") -> str:
-    return pairing.published_date(alias)   # G2's dates: 0128's published
+    return pairing.published_date(alias)
 
 
 def _savepoint(cur: Any, fn, *args, **kw):
-    """fn in a savepoint when the cursor's connection is in a transaction (a race with another writer, a unique
-    index, leaves the caller's transaction usable)."""
+    """fn in a savepoint: a race with another writer leaves the caller's transaction usable."""
     try:
         with cur.connection.transaction():
             return fn(*args, **kw)
@@ -101,9 +66,8 @@ def _savepoint(cur: Any, fn, *args, **kw):
 # ---- 1. authors' links -------------------------------------------------------------------------------------
 
 def resolve(cur: Any, refs: Sequence[Tuple[str, str, str]]) -> List[Optional[Tuple[str, str, datetime]]]:
-    """For each (linking post, absolute url, normalized address): the stored post it resolves to, as Connected does
-    (the post at that exact url, else the first seen at the address, never the linking post), as (id, source id,
-    date), or None."""
+    """For each (linking post, absolute url, normalized address): the stored post it resolves to (exact url,
+    else the first seen at the address, never the linking post) as (id, source id, date), or None."""
     if not refs:
         return []
     cur.execute(f"""SELECT k.n, t.id::text, t.source_id::text, {_date('t')}
@@ -147,7 +111,7 @@ def link_edges(cur: Any, post_ids: Iterable[str]) -> Dict[Tuple[str, str], Dict[
         if tat > at - gap or (pid, tid) in out:
             continue
         own = tsrc == src
-        series = own and nav   # 0134: series navigation is next_in_series, never refers_back
+        series = own and nav
         out[(pid, tid)] = {"rule": RULE_SERIES if series else RULE_OWN if own else RULE_OTHER,
                            "relation": NEXT_IN_SERIES if series else "refers_back", "p": P_OWN if own else P_OTHER,
                            "evidence": {"href": href, "address": address, "reason": reason, "reason_kind": kind}}
@@ -156,8 +120,7 @@ def link_edges(cur: Any, post_ids: Iterable[str]) -> Dict[Tuple[str, str], Dict[
 
 def _current(cur: Any, *, rules: Optional[Sequence[str]] = None, a: Optional[Sequence[str]] = None,
              pairs: Optional[Sequence[Tuple[str, str]]] = None, judged: bool = False) -> List[Dict[str, Any]]:
-    """The current post-to-post edges: of `rules` (or, `judged`, the judge's own: rule NULL), touching `a` as the newer
-    post or one of `pairs`."""
+    """The current post-to-post edges of `rules` (or the judge's own: `judged`), touching `a` or `pairs`."""
     where = ["x.valid_to IS NULL", "x.a_kind = 'post'", "x.b_kind = 'post'"]
     params: List[Any] = []
     if judged:
@@ -207,10 +170,9 @@ def _close(cur: Any, rows: Sequence[Dict[str, Any]], *, now: datetime) -> int:
 
 
 def sync_links(cur: Any, post_ids: Iterable[str], *, now: datetime, run_id: Any) -> Counter:
-    """The author-link edges of these newer posts become exactly what their refs make now: new ones open (as
-    `refers_back`, or refined by a settled verdict), the ones no longer made close."""
+    """Make these newer posts' author-link edges exactly what their refs make now (open new, close gone)."""
     ids = sorted({str(p) for p in post_ids})
-    if len(ids) > BACKFILL_BATCH:   # BACKFILL_BATCH posts at a time: the memory stays a batch's
+    if len(ids) > BACKFILL_BATCH:   # a batch at a time: the memory stays a batch's
         counts = Counter()
         for k in range(0, len(ids), BACKFILL_BATCH):
             counts.update(sync_links(cur, ids[k:k + BACKFILL_BATCH], now=now, run_id=run_id))
@@ -232,15 +194,13 @@ def sync_links(cur: Any, post_ids: Iterable[str], *, now: datetime, run_id: Any)
 
 
 def dirty_posts(cur: Any, since: datetime) -> Set[str]:
-    """The newer posts whose author-link edges may have changed since `since`: their refs were read again, a ref of
-    theirs opened or closed, a post stored since is at one of their links' addresses, or an edge's ref closed, became
-    boilerplate or its older post is gone."""
+    """The newer posts whose author-link edges may have changed since `since`."""
     from insight_core.utils.url_normalization import normalize_url
     out: Set[str] = set()
     cur.execute("SELECT id::text FROM posts WHERE refs_scanned_at >= %s", (since,))
     out |= {r[0] for r in cur.fetchall()}
     cur.execute("SELECT DISTINCT post_id::text FROM post_refs WHERE created_at >= %s OR valid_to >= %s "
-                "OR navigation_at >= %s", (since, since, since))   # 0134: a navigation flag changed
+                "OR navigation_at >= %s", (since, since, since))
     out |= {r[0] for r in cur.fetchall()}
     cur.execute("SELECT normalized_url, url FROM posts WHERE created_at >= %s", (since,))
     addresses: Set[str] = set()
@@ -259,8 +219,7 @@ def dirty_posts(cur: Any, since: datetime) -> Set[str]:
 
 
 def stale_links(cur: Any) -> Set[str]:
-    """The newer posts of current author-link edges whose ref row is gone, closed or boilerplate, or whose older post
-    is no post."""
+    """The newer posts of current author-link edges whose ref is gone, closed or boilerplate, or older post gone."""
     cur.execute("""SELECT DISTINCT x.a::text FROM mx_connections x
                      LEFT JOIN post_refs r ON r.post_id = x.a AND md5(r.target_address) = md5(x.evidence->>'address')
                                           AND r.target_address = x.evidence->>'address'
@@ -273,9 +232,8 @@ def stale_links(cur: Any) -> Set[str]:
 
 def backfill(cur: Any, *, now: datetime, run_id: Any, deadline: Optional[float] = None,
              batch: int = BACKFILL_BATCH) -> Dict[str, Any]:
-    """The archive's author-link edges, BACKFILL_BATCH linking posts at a time in id order, until `deadline` (a
-    time.monotonic() value; None: to the end). Resumable: where it got to is kept in mx_settings (BACKFILL_KEY), and
-    a finished backfill does nothing more until BACKFILL_VERSION changes. Its counts so far."""
+    """The archive's author-link edges, a batch at a time, until `deadline` (time.monotonic(); None: to the end).
+    Resumable (mx_settings BACKFILL_KEY); done until BACKFILL_VERSION changes."""
     from insight_core.markx import repo
     state = dict(repo.get_setting(cur, BACKFILL_KEY, default=None) or {})
     if state.get("version") != BACKFILL_VERSION:
@@ -312,18 +270,15 @@ def backfill(cur: Any, *, now: datetime, run_id: Any, deadline: Optional[float] 
             "closed": ran["closed"], "total": {k: state[k] for k in ("posts", "opened", "closed", "seconds")}}
 
 
-# ---- the subjects (ent-v3, one entity after 0119 A identity) ---------------------------------------------------
+# ---- the subjects ------------------------------------------------------------------------------------------------
 
 class Subjects:
-    """The posts' ent-v3 subjects as their root entities (redirects read through), with the posts' dates. v10.23
-    (0218): read by need, for the posts and roots a step asks (`posts`, `want`, `versions`, `post_ids`): every post's
-    subjects were read at once (~400k rows at the server-sized copy's 1.5M mentions: the graph stage's peak, the run's
-    largest after the entity book was read by need)."""
+    """The posts' subjects as root entities with the posts' dates, read by need (all at once was the peak: 0218)."""
 
     def __init__(self, cur: Any) -> None:
         from insight_core.markx import schemas
         self._cur = cur
-        self._guide = schemas.mention_guides()   # 0133: the current set
+        self._guide = schemas.mention_guides()
         cur.execute("SELECT from_id::text, to_id::text FROM mx_entity_redirects WHERE undone_at IS NULL")
         self.redirect = dict(cur.fetchall())
         self._leading: Optional[Dict[str, List[str]]] = None
@@ -419,18 +374,15 @@ class Subjects:
 # ---- 3. next_version from identity ----------------------------------------------------------------------------
 
 def next_version_edges(cur: Any, subjects: Subjects) -> Dict[Tuple[str, str], Dict[str, Any]]:
-    """{(newer, older): the edge}: the newer post's subject is the version right after the older post's subject on its
-    family's version line (timeline.version_lines, 0220: the line the entity page shows); the older post GAP_DAYS back
-    or more, the previous stop's earliest NEXT_VERSION_POSTS posts."""
+    """{(newer, older): edge}: the newer post's subject is the next version after the older's on
+    timeline.version_lines, the older GAP_DAYS back or more (the previous stop's first NEXT_VERSION_POSTS posts)."""
     from insight_core.markx import timeline as TL
-    # v10.23 (0218): the versions first (the roots that can make an edge), then only their posts. 0220: their counts
-    # (posts naming each, about each) by the database, one row a version
     cur.execute("""SELECT id::text, parent::text, version_key, key, name, maker, variant, size, build FROM mx_entities
                     WHERE level = 'version' AND parent IS NOT NULL AND status <> 'not_entity'""")
     fams: Dict[str, List[Tuple[str, str, Any, Optional[str], Optional[str]]]] = defaultdict(list)
     keys: Dict[str, Tuple[str, str]] = {}
     for eid, parent, vkey, key, name, maker, variant, size, build in cur.fetchall():
-        if size or build or subjects.root(eid) != eid or TL.line_key(vkey) is None:   # 0234: a variant's own line
+        if size or build or subjects.root(eid) != eid or TL.line_key(vkey) is None:   # a variant's own line
             continue
         fams[subjects.root(parent)].append((eid, name, vkey, maker, variant))
         keys[eid] = (key, name)
@@ -456,7 +408,7 @@ def next_version_edges(cur: Any, subjects: Subjects) -> Dict[Tuple[str, str], Di
         xs.sort()
     gap = timedelta(days=GAP_DAYS)
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    for (fam, li, si), posts in sorted(group.items()):   # v10.23: one order (a pair two families name: the last)
+    for (fam, li, si), posts in sorted(group.items()):   # one order (a pair two families name: the last)
         if si == 0:
             continue
         before = group.get((fam, li, si - 1)) or []
@@ -470,8 +422,7 @@ def next_version_edges(cur: Any, subjects: Subjects) -> Dict[Tuple[str, str], Di
 
 
 def sync_next_version(cur: Any, subjects: Subjects, *, now: datetime, run_id: Any) -> Counter:
-    """The identity next_version edges become exactly `next_version_edges`; a judge's next_version on such a pair
-    closes (identity replaces it)."""
+    """Make the identity next_version edges `next_version_edges`; a judge's next_version there closes."""
     want = next_version_edges(cur, subjects)
     have = {(e["a"], e["b"]): e for e in _current(cur, rules=[RULE_NEXT])}
     counts: Counter = Counter()
@@ -485,16 +436,9 @@ def sync_next_version(cur: Any, subjects: Subjects, *, now: datetime, run_id: An
     return counts
 
 
-# ---- 4. between entities: the relations a post states (0220) ----------------------------------------------------
-# The entities answer's `relations` ({a, rel, b}, ent-v3 / ent-v4.2), each side read as one of that answer's own
-# mentions (its name or span), then its entity's root. An edge a -> b of the relation, rule `stated`, evidence {posts:
-# the posts stating it, since: the first one's date}, valid_from its first post's date; a post that stops stating it
-# leaves its evidence, an edge with none left closes (kept). Only the relations entity_bands.json `relations` switches
-# on are written: measured blind on frozen sets (plan/issues/0220): based_on 95/95, released 89/90 held out once the
-# thing's own mention states the same maker (`released` as stated alone: 87/90); acquired 25/25 (too few rows for the
-# bar), part_of 63/70, partnered_with 86/106: off.
+# ---- 4. between entities: the relations a post states (only those entity_bands.json switches on: 0220) ----------
 RULE_STATED = "stated"
-RELATIONS_KEY = "graph_relations"      # the backfill's cursor
+RELATIONS_KEY = "graph_relations"
 RELATIONS_VERSION = 1
 RELATIONS_BATCH = 500
 
@@ -507,23 +451,13 @@ def relations_on() -> Set[str]:
 
 
 def corroborated(rel: str, a: str, b_maker: Optional[str]) -> bool:
-    """Whether a stated relation stands on its own post (pure): `released` only when the thing's own mention names the
-    same maker (the relation alone was 87/90: a host, a quantiser or an OEM 'released' another's model)."""
+    """(pure) `released` stands only when the thing's own mention names the same maker."""
     from insight_core.markx import names as N
     return rel != "released" or (bool(b_maker) and N.key(b_maker) == N.key(a))
 
 
-# 0224: ent-v5 (the reading, on) asks no `relations` (0223: asking them in its guide failed, and the guide must not
-# change), but its fields already say two. Read from one post's current ent-v5 mentions (every window), never asked:
-#   released: the reading's subject (a model, product or software) whose own `maker` is the name (or span) of an org
-#             or person the same reading lists as the subject or the actor -> that maker `released` it. Any thing with
-#             its maker anywhere in the reading was 135/193 = 69.9% stated (held out 1): a thing merely named (Codex
-#             used, iOS 12 in passing) with a maker the post never ties to it. As written (the main event's maker
-#             and thing): held out 2 175/180 = 97.2% [93.7-98.8]: on;
-#   based_on: the reading's subject (a model, product or software) `based_on` each `predecessor` of those types
-#             (held out 1: 20/33 = 60.6%: a predecessor is mostly what the subject replaces or is compared with).
-# Each switched on by entity_bands.json `relations.derived` (and the relation itself on); measured blind on frozen
-# held-out sets (plan/issues/0223, section "0224").
+# ent-v5 asks no `relations`; its fields say `released` (subject thing's maker listed as subject or actor) and
+# `based_on` (subject thing <- each predecessor thing), switched by `relations.derived` (measured: 0223, "0224").
 DERIVED_GUIDE = "ent-v5"
 THING_TYPES = ("model", "product", "software")
 MAKER_TYPES = ("org", "person")
@@ -538,8 +472,7 @@ def derived_on() -> Set[str]:
 
 
 def derived(mentions: Sequence[Dict[str, Any]], on: Iterable[str] = ("released", "based_on")) -> List[Tuple[int, str, int]]:
-    """(pure) The relations one post's ent-v5 mentions say by their fields: [(a, relation, b)], indexes into
-    `mentions` ({name, span, type, role, maker}), never a thing to itself, each once."""
+    """(pure) The relations ent-v5 mentions say by their fields: [(a, relation, b)] indexes, each once."""
     from insight_core.markx import names as N
     on = set(on)
     keys: Dict[str, List[int]] = defaultdict(list)
@@ -558,7 +491,7 @@ def derived(mentions: Sequence[Dict[str, Any]], on: Iterable[str] = ("released",
                       and mentions[i].get("role") in MAKER_ROLES), None)
             if a is not None:
                 out.append((a, "released", b))
-    if "based_on" in on:   # 0234: both in one window (`call`, when given): a long post's items are not each other's
+    if "based_on" in on:   # both in one window (`call`): a long post's items are not each other's
         things = [i for i, m in enumerate(mentions) if m.get("type") in THING_TYPES]
         for a in (i for i in things if mentions[i].get("role") == "subject"):
             for b in (j for j in things if mentions[j].get("role") == "predecessor"):
@@ -574,8 +507,8 @@ def derived(mentions: Sequence[Dict[str, Any]], on: Iterable[str] = ("released",
 
 
 def _derived_stated(cur: Any, ids: Sequence[str], root: Any, on: Set[str]) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
-    """`derived` over these posts' current ent-v5 mentions (pins read): {(a root, b root, relation): {post: date}}.
-    0234: a `based_on` pair stands only when its check (kind `derive`) settled `derived`."""
+    """`derived` over these posts' ent-v5 mentions: {(a root, b root, relation): {post: date}};
+    a `based_on` pair only when its derive check settled `derived`."""
     cur.execute(f"""SELECT m.post_id::text, m.name, m.span, m.type, m.role, m.maker, m.entity_id::text, {_date()},
                           (SELECT x.entity_id::text FROM mx_entity_pins x WHERE x.undone_at IS NULL AND x.post_id = m.post_id
                               AND x.guide = m.guide AND x.n = m.n ORDER BY x.created_at DESC LIMIT 1), m.call_id::text
@@ -606,20 +539,13 @@ def _derived_stated(cur: Any, ids: Sequence[str], root: Any, on: Set[str]) -> Di
     return out
 
 
-# ---- 0234: based_on from new posts, checked by a small question of its own ------------------------------------------
-# ent-v5's `predecessor` is a candidate, not a relation (0224: the subject based_on each predecessor was 20/33 right: a
-# predecessor is mostly what the subject replaces or is compared with). Each (subject, predecessor) pair one post's
-# reading names in one window is asked once (kind `derive`, guide derive-v1, a = the subject's root, b = the
-# predecessor's): that window's text and the two names; `derived` (made from it) is the only answer that makes the edge.
-# The jobs process plans it (tasks.BACKGROUND_PLANNED, like the chains); the decision run's graph stage writes the edges
-# (`stated` reads the settled verdicts; `_relation_scope` reads again the posts of the pairs answered since). Measured on
-# a frozen held-out base-cue set (plan/issues/0234).
+# ---- based_on checked by a question of its own: a predecessor is mostly what the subject replaces (0234) ---------
 DERIVE_KIND, DERIVE_GUIDE = "derive", "derive-v1"
 DERIVE_YES = "derived"
-DERIVE_RUNS = 3                        # answers a pair is asked for; an edge needs all of them to say derived
-DERIVE_PLAN_MAX = 200                  # new questions a pass, at most
-DERIVE_MARK = "derive_planned"         # mx_settings: the last pass's clock (the readings since are read)
-DERIVE_CHARS = 3500                    # the window's text a question shows, at most (its head and both names' places)
+DERIVE_RUNS = 3                        # an edge needs all of them to say derived
+DERIVE_PLAN_MAX = 200
+DERIVE_MARK = "derive_planned"
+DERIVE_CHARS = 3500
 DERIVE_AROUND = 600
 
 
@@ -631,8 +557,7 @@ def derive_config() -> Dict[str, Any]:
 
 
 def _excerpt(text: str, spans: Sequence[Optional[str]], limit: int = DERIVE_CHARS, around: int = DERIVE_AROUND) -> str:
-    """The window's text as a question shows it (pure): the whole when short; else its head and the place of each name
-    (`spans`, the first time each is written), cut marks between."""
+    """(pure) The text as a question shows it: whole when short, else its head and each name's first place."""
     text = text or ""
     if len(text) <= limit:
         return text
@@ -655,8 +580,7 @@ def _excerpt(text: str, spans: Sequence[Optional[str]], limit: int = DERIVE_CHAR
 
 
 def derive_question(a: Dict[str, Any], b: Dict[str, Any], window: str) -> str:
-    """One derive item (pure): A and B (each its name, type and how the post writes it) and the POST (the reading's own
-    window: its header lines and its text, cut around both names)."""
+    """(pure) One derive item: A, B and the POST window cut around both names."""
     from insight_core.markx import names as N
     head, _, text = (window or "").partition("\nText: ")
 
@@ -667,8 +591,7 @@ def derive_question(a: Dict[str, Any], b: Dict[str, Any], window: str) -> str:
 
 
 def derive_verdict(answers: Sequence[Tuple[str, Dict[str, Any]]], runs: int = DERIVE_RUNS) -> Optional[Dict[str, Any]]:
-    """A pair's settled verdict from its first `runs` valid answers [(call id, answer)], oldest first: the relation all
-    of them give, "unknown" when they differ; None until `runs` came. Pure."""
+    """(pure) The relation all of the first `runs` answers give, else unknown; None until `runs` came."""
     got = list(answers)[:runs]
     if len(got) < runs:
         return None
@@ -686,8 +609,7 @@ def derive_after_answer(cur: Any, task: Dict[str, Any]) -> bool:
 
 
 def derive_verdicts(cur: Any, pairs: Sequence[Tuple[str, str]], root: Any) -> Dict[Tuple[str, str], Dict[str, Any]]:
-    """{(a root, b root): the settled verdict} of the asked pairs among `pairs` (each side's root now: a merge after the
-    ask keeps the answer); the newest task of a pair decides."""
+    """{(a root, b root): settled verdict} of the asked pairs (roots read now); a pair's newest task decides."""
     want = {(a, b) for a, b in pairs}
     if not want:
         return {}
@@ -719,9 +641,8 @@ def derive_verdicts(cur: Any, pairs: Sequence[Tuple[str, str]], root: Any) -> Di
 
 
 def derive_candidates(cur: Any, *, since: Optional[datetime], limit: int) -> Tuple[List[Dict[str, Any]], Optional[datetime]]:
-    """The (subject, predecessor) pairs of the ent-v5 readings made since `since` (every one when None), oldest call
-    first, at most `limit` calls: [{post, a, b (their mentions: name, span, type, eid), window}] and the newest call's
-    time read (None: every call since was read)."""
+    """The (subject, predecessor) pairs of ent-v5 readings since `since`, at most `limit` calls,
+    and where it stopped (None: all read)."""
     cur.execute(f"""SELECT c.id::text, c.created_at FROM mx_calls c
                      WHERE c.valid AND (%s::timestamptz IS NULL OR c.created_at >= %s) AND EXISTS (
                            SELECT 1 FROM mx_mentions_now m WHERE m.call_id = c.id AND m.guide = %s AND m.role = 'predecessor'
@@ -754,9 +675,7 @@ def derive_candidates(cur: Any, *, since: Optional[datetime], limit: int) -> Tup
 
 
 def plan_derive(cur: Any, *, now: Optional[datetime] = None, limit: int = DERIVE_PLAN_MAX) -> Dict[str, int]:
-    """The jobs process's plan job (tasks.BACKGROUND_PLANNED): the (subject, predecessor) pairs of the readings made
-    since the last pass (mx_settings DERIVE_MARK), each pair of roots asked once (a = the subject, b = the
-    predecessor), at most `limit` new questions a pass; the mark moves to where it stopped. {pairs, asked, again}."""
+    """Jobs-process plan job: ask each new (subject, predecessor) root pair once, at most `limit` a pass."""
     from insight_core.markx import identity as I, repo, tasks
     now = now or datetime.now(timezone.utc)
     out: Dict[str, int] = {"pairs": 0, "asked": 0, "again": 0}
@@ -795,9 +714,7 @@ def plan_derive(cur: Any, *, now: Optional[datetime] = None, limit: int = DERIVE
 
 
 def stated(cur: Any, post_ids: Sequence[str], root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
-    """{(a root, b root, relation): {post: its date}}: what these posts' current entities answers state, each side one
-    of that answer's mentions (pins read), the relations switched on, never an entity to itself; and (0224) what
-    their ent-v5 readings' fields say (`derived`), the derived relations switched on."""
+    """{(a root, b root, relation): {post: date}}: what these posts' answers and ent-v5 fields state (pins read)."""
     ids = sorted(set(post_ids))
     out = _stated_answers(cur, ids, root)
     d_on = derived_on() if ids else set()
@@ -808,7 +725,7 @@ def stated(cur: Any, post_ids: Sequence[str], root: Any) -> Dict[Tuple[str, str,
 
 
 def _stated_answers(cur: Any, ids: Sequence[str], root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
-    """The relations the answers' own `relations` state (ent-v3 / ent-v4.2, 0220)."""
+    """The relations the answers' own `relations` state."""
     from insight_core.markx import names as N, schemas
     on = relations_on()
     if not on or not ids:
@@ -849,8 +766,7 @@ def _stated_answers(cur: Any, ids: Sequence[str], root: Any) -> Dict[Tuple[str, 
 
 def _same_makers(cur: Any, found: Sequence[Tuple[Tuple[str, str, str], str, datetime, Tuple, Tuple]],
                  root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
-    """0230: the relations found, each side's post about the entity's own maker (identity.namesakes: never another
-    maker's thing of the name): {(a root, b root, relation): {post: date}}. A side: (entity, maker, type, name)."""
+    """The found relations whose sides are no other maker's namesake (identity.namesakes)."""
     from insight_core.markx import identity as I
     sides = [(t[k], s[2], s[1], s[3]) for t, _p, _at, a, b in found for k, s in ((0, a), (1, b))]
     bad = I.namesakes(cur, sides, root)
@@ -876,9 +792,8 @@ def _stated_current(cur: Any, post_ids: Optional[Sequence[str]] = None,
 
 
 def sync_relations(cur: Any, post_ids: Iterable[str], root: Any, *, now: datetime, run_id: Any) -> Counter:
-    """These posts' stated relations become exactly what their answers state now: a post joins an edge's evidence
-    (opening it, valid from its date), leaves the evidence of one it no longer states; an edge with no post left
-    closes (kept). RELATIONS_BATCH posts at a time."""
+    """These posts' stated relations become what their answers state now: a post joins or leaves an
+    edge's evidence; an edge with no post left closes."""
     ids = sorted({str(p) for p in post_ids})
     counts: Counter = Counter()
     for k in range(0, len(ids), RELATIONS_BATCH):
@@ -919,7 +834,7 @@ def _evidence(dates: Dict[str, str]) -> str:
 
 
 def _derived_sql(alias: str = "m") -> str:
-    """SQL: the mention row `alias` (mx_mentions_now) may say a derived relation (0224); FALSE when none is on."""
+    """SQL: the mention row `alias` (mx_mentions_now) may say a derived relation; FALSE when none is on."""
     on = derived_on()
     parts = (["{a}.type IN ('model', 'product', 'software') AND {a}.role = 'subject' AND {a}.maker IS NOT NULL"]
              if "released" in on else []) + \
@@ -930,26 +845,32 @@ def _derived_sql(alias: str = "m") -> str:
 
 
 def _relation_scope(cur: Any, since: datetime, counts: Optional[Dict[str, Any]] = None) -> Set[str]:
-    """The posts whose entities answer stating a relation is new since, and the evidence posts of the stated edges
-    whose side is no longer a root (merged since: they open again on the root). `counts` (v10.25, 0226): how many
-    posts each read found and its seconds (the run's `graph.relations.scope`; 0225 #16 is measured there first)."""
+    """The posts whose relations may have changed since (new answers, predecessor checks, pins, merged
+    sides). `counts`: each read's posts and seconds."""
     from insight_core.markx import schemas
     t0 = time.monotonic()
-    # v10.26 (0244): the posts the current stated edges cite, read once and hashed (`IN`, a hashed subplan). Before, an
-    # EXISTS tested each mention row since against every current stated edge (`evidence->'posts' ? post`): mention
-    # rows x edges, 0226's #16. The same posts: `?` on the posts array is true exactly when the post's id is one of
-    # its string elements, which jsonb_array_elements_text lists (evidence posts are always an array of ids).
-    cur.execute(f"""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
-                    WHERE m.guide = ANY(%s) AND c.created_at >= %s
-                      AND ((jsonb_typeof(c.answer->'relations') = 'array' AND c.answer->'relations' <> '[]'::jsonb)
-                           OR {_derived_sql()}
-                           OR m.post_id::text IN (
-                                SELECT jsonb_array_elements_text(x.evidence->'posts') FROM mx_connections x
-                                 WHERE x.valid_to IS NULL AND x.rule = %s AND x.a_kind = 'entity'
-                                   AND jsonb_typeof(x.evidence->'posts') = 'array'))""",
-                (schemas.mention_guides(), since, RULE_STATED))
+    # from the calls since, not every current mention: that scanned all of mx_mentions a run (0270)
+    cur.execute(f"""WITH c AS MATERIALIZED (
+                        SELECT c.id, t.a AS post_id,
+                               (jsonb_typeof(c.answer->'relations') = 'array'
+                                AND c.answer->'relations' <> '[]'::jsonb) AS states
+                          FROM mx_calls c JOIN mx_tasks t ON t.id = c.task_id
+                         WHERE c.created_at >= %(since)s AND t.a IS NOT NULL),
+                    s AS MATERIALIZED (
+                        SELECT m.post_id, bool_or(c.states OR {_derived_sql()}) AS says
+                          FROM c JOIN mx_mentions_now m ON m.post_id = c.post_id AND m.call_id = c.id
+                         WHERE m.guide = ANY(%(guides)s)
+                         GROUP BY m.post_id)
+                    SELECT post_id::text FROM s WHERE says
+                    UNION
+                    SELECT e.post FROM mx_connections x
+                           CROSS JOIN LATERAL jsonb_array_elements_text(x.evidence->'posts') AS e(post)
+                           JOIN s ON NOT s.says AND s.post_id::text = e.post
+                     WHERE x.valid_to IS NULL AND x.rule = %(rule)s AND x.a_kind = 'entity'
+                       AND jsonb_typeof(x.evidence->'posts') = 'array'""",
+                {"guides": schemas.mention_guides(), "since": since, "rule": RULE_STATED})
     out = {r[0] for r in cur.fetchall()}   # a post read again that states nothing now leaves its edges' evidence
-    if "based_on" in derived_on():   # 0234: the posts naming a predecessor whose pair's check was answered since
+    if "based_on" in derived_on():   # a predecessor whose check was answered since
         cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_tasks t
                          JOIN mx_mentions_now m ON m.guide = %s AND m.role = 'predecessor' AND (m.entity_id = t.b
                               OR m.entity_id IN (SELECT r.from_id FROM mx_entity_redirects r
@@ -962,8 +883,6 @@ def _relation_scope(cur: Any, since: datetime, counts: Optional[Dict[str, Any]] 
                       AND EXISTS (SELECT 1 FROM mx_entity_redirects r WHERE r.undone_at IS NULL AND r.from_id IN (x.a, x.b))""",
                 (RULE_STATED,))
     merged = {r[0] for r in cur.fetchall()}
-    # 0250: the posts whose mentions a pin moved since (a split by maker, the owner's split): their relations move with
-    # the mention (each side is read through its pin)
     cur.execute("SELECT DISTINCT post_id::text FROM mx_entity_pins WHERE created_at >= %s OR undone_at >= %s",
                 (since, since))
     merged |= {r[0] for r in cur.fetchall()}
@@ -974,11 +893,10 @@ def _relation_scope(cur: Any, since: datetime, counts: Optional[Dict[str, Any]] 
 
 
 def _relations_backfill(cur: Any, root: Any, *, now: datetime, run_id: Any, deadline: Optional[float]) -> Dict[str, Any]:
-    """Every post whose entities answer states a relation, once (then only what changes), in post id order,
-    RELATIONS_BATCH at a time until the deadline; resumable (mx_settings RELATIONS_KEY)."""
+    """Every relation-stating post once, a batch at a time until the deadline; resumable (RELATIONS_KEY)."""
     from insight_core.markx import repo, schemas
     state = dict(repo.get_setting(cur, RELATIONS_KEY, default=None) or {})
-    on = sorted(relations_on()) + sorted(f"derived:{r}" for r in derived_on())   # 0224: a derived one on: read again
+    on = sorted(relations_on()) + sorted(f"derived:{r}" for r in derived_on())
     if state.get("version") != RELATIONS_VERSION or state.get("on") != on:   # a relation switched on: read again
         state = {"version": RELATIONS_VERSION, "on": on, "after": "", "done": False}
     if state["done"] or not on:
@@ -1005,9 +923,8 @@ def _relations_backfill(cur: Any, root: Any, *, now: datetime, run_id: Any, dead
 
 
 def entity_relations(cur: Any, members: Iterable[str]) -> List[Dict[str, Any]]:
-    """The entity page's relations (0220): its current stated edges of the relations switched on, either side being
-    one of `members` (its cluster): [{relation, direction (out: it -> other; in), other (an id), since, posts}].
-    0230: and identity's based_on of another maker's thing made from a family (rule identity.FAMILY_RULE, no posts)."""
+    """The entity page's relations: current shown edges touching `members`:
+    [{relation, direction (out | in), other, since, posts}]."""
     from insight_core.markx import identity as I
     on = sorted(relations_on())
     ids = sorted(set(members))
@@ -1020,8 +937,7 @@ def entity_relations(cur: Any, members: Iterable[str]) -> List[Dict[str, Any]]:
     mine = set(ids)
     rows = [{"relation": rel, "a": a, "b": b, "posts": (ev or {}).get("posts") or [], "since": (ev or {}).get("since")}
             for a, b, rel, ev in cur.fetchall()]
-    # 0250: a `released` one post states, its maker not the thing's settled maker, is held (a namesake's, or a split
-    # not settled yet): kept, not shown, until a second post states it
+    # a `released` from one post whose maker is not the thing's settled maker is held until a second post states it
     held = I.held_released(cur, rows, None)
     return [{"relation": r["relation"], "direction": "out" if r["a"] in mine else "in",
              "other": r["b"] if r["a"] in mine else r["a"], "since": r["since"], "posts": r["posts"]}
@@ -1031,13 +947,11 @@ def entity_relations(cur: Any, members: Iterable[str]) -> List[Dict[str, Any]]:
 # ---- 2. the judge: candidates, the input, the verdicts -----------------------------------------------------
 
 def discover(cur: Any, subjects: Subjects, scope: Iterable[str]) -> int:
-    """The same-subject candidates (mx_candidates kind 'relate', source 'entity') touching the posts of `scope`, as the
-    newer or the older post: the same subject entity, the older GAP_DAYS to RELATE_DAYS back, cosine >= RELATE_COS.
-    How many are new."""
+    """Add the same-subject relate candidates touching `scope` (GAP_DAYS..RELATE_DAYS, cosine >= RELATE_COS)."""
     from insight_core.markx import repo
     lo, hi = timedelta(days=GAP_DAYS), timedelta(days=RELATE_DAYS)
     pairs: Set[Tuple[str, str]] = set()
-    of, ats = subjects.posts(scope)   # v10.23 (0218): the scope's subjects, then their roots' posts, read by need
+    of, ats = subjects.posts(scope)
     subjects.want({r for rs in of.values() for r in rs})
     for pid in set(scope):
         at = ats.get(pid)
@@ -1064,7 +978,7 @@ def discover(cur: Any, subjects: Subjects, scope: Iterable[str]) -> int:
 
 
 def _side(p: Any, at: Optional[datetime]) -> str:
-    """g2_sample.side: [platform | source] date, the title, the text's first EXCERPT characters (the quote too)."""
+    """[platform | source] date, the title, the text's first EXCERPT characters (the quote too)."""
     txt = " ".join((p.text or "").split())
     if p.quote:
         txt += " [quoted post: " + " ".join(str(p.quote).split())[:400] + "]"
@@ -1075,8 +989,7 @@ def _side(p: Any, at: Optional[datetime]) -> str:
 
 def relate_input(newer: Any, older: Any, *, newer_at: Optional[datetime], older_at: Optional[datetime],
                  anchor: Optional[str], docs: Sequence[str]) -> str:
-    """g2_sample.render: both posts, then the two evidence lines (the newer post's words around its link to the older
-    post; the outside pages both link)."""
+    """The relate question: both posts, then the link and shared-page evidence."""
     lines = ["NEWER POST — " + _side(newer, newer_at), "", "OLDER POST — " + _side(older, older_at), "", "EVIDENCE",
              "- The newer post links to the older post: "
              + (f"yes, around the words \"{anchor}\"" if anchor is not None else "no"),
@@ -1093,7 +1006,7 @@ def linked(input: str) -> bool:
 
 
 def _page(u: str) -> Optional[str]:
-    """The lab's form of an outside page (g2_prep.links): no scheme, www, fragment or query, a page and not a home page."""
+    """An outside page's key: no scheme, www, fragment or query; None for a home page."""
     u = re.sub(r"^https?://(www\.)?", "", (u or "").split("#")[0].strip().lower()).rstrip("/")
     if not re.search(r"(youtube\.com/watch|news\.ycombinator\.com/item)", u):
         u = re.sub(r"\?.*$", "", u)
@@ -1118,8 +1031,7 @@ def _dates(cur: Any, ids: Iterable[str]) -> Dict[str, datetime]:
 
 
 def plan(cur: Any, *, open_cap: int = RELATE_OPEN, now: Optional[datetime] = None, **_kw) -> int:
-    """New relate tasks, newest newer post first, while fewer than `open_cap` wait (open or leased): every current
-    author-link edge and every same-subject candidate with no relate task yet. How many were added."""
+    """New relate tasks, newest first, while fewer than `open_cap` wait: link edges and candidates not yet asked."""
     from insight_core.markx import tasks
     cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'relate' AND status IN ('open', 'leased')")
     room = open_cap - cur.fetchone()[0]
@@ -1156,9 +1068,8 @@ def plan(cur: Any, *, open_cap: int = RELATE_OPEN, now: Optional[datetime] = Non
 
 
 def verdict(answers: Sequence[Tuple[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
-    """The settled verdict of a pair's first RELATE_RUNS valid answers [(call id, answer)], oldest first: the relation
-    two or more agree on (p: their share, call: the first of them), else "unknown"; None until RELATE_RUNS came, except
-    a pair whose first answer settles it alone (0191, RELATE_SETTLES: that relation, p None, one run)."""
+    """A pair's settled verdict from its first RELATE_RUNS answers: the relation two agree on (p their share),
+    else unknown; None until all came, unless the first settles it alone (RELATE_SETTLES)."""
     runs = list(answers)[:RELATE_RUNS]
     if len(runs) < RELATE_RUNS:
         if runs and settles(runs[0][1]):
@@ -1179,8 +1090,7 @@ def verdict(answers: Sequence[Tuple[str, Dict[str, Any]]]) -> Optional[Dict[str,
 
 def verdicts(cur: Any, pairs: Optional[Sequence[Tuple[str, str]]] = None, *,
              since: Optional[datetime] = None) -> Dict[Tuple[str, str], Tuple[Dict[str, Any], str]]:
-    """{(newer, older): (its settled verdict, its question's input)} of the relate tasks of `pairs`, or answered since
-    `since`; a pair with several tasks (its posts' text changed) takes its newest settled one."""
+    """{(newer, older): (settled verdict, input)} of `pairs` or answered since `since`; the newest task wins."""
     where, params = ["t.kind = 'relate'", "t.a IS NOT NULL", "t.b IS NOT NULL"], []
     if pairs is not None:
         if not pairs:
@@ -1209,13 +1119,12 @@ def verdicts(cur: Any, pairs: Optional[Sequence[Tuple[str, str]]] = None, *,
 
 
 def settles(answer: Optional[Dict[str, Any]]) -> bool:
-    """0191: a first answer that settles its pair without a second and third run."""
+    """Whether a first answer settles its pair without a second and third run."""
     return isinstance(answer, dict) and str(answer.get("relation")) in RELATE_SETTLES
 
 
 def after_answer(cur: Any, task: Dict[str, Any]) -> bool:
-    """A relate task's valid answer (tasks.record): asked again until it has RELATE_RUNS valid answers, unless its
-    first answer settles it alone (0191). Whether it was opened again."""
+    """Reopen a relate task until RELATE_RUNS valid answers, unless its first settles it."""
     cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid ORDER BY created_at, ctid", (task["id"],))
     got = [r[0] for r in cur.fetchall()]
     if len(got) >= RELATE_RUNS or (len(got) == 1 and settles(got[0])):
@@ -1226,11 +1135,8 @@ def after_answer(cur: Any, task: Dict[str, Any]) -> bool:
 
 def apply_pairs(cur: Any, pairs: Iterable[Tuple[str, str]], *, now: datetime, run_id: Any,
                 found: Optional[Dict[Tuple[str, str], Tuple[Dict[str, Any], str]]] = None) -> Counter:
-    """The judge's part on these pairs, from their settled verdicts:
-      - an author-link edge's relation is the verdict's when it is builds_on, follows_up or same_event, else
-        refers_back (never removed); the judge's own edges on that pair close;
-      - a same-subject question (no link) whose verdict is meaningful is the pair's judge edge (rule NULL, its call,
-        p the agreeing share, the three reasons), uncertain; next_version only where identity has none."""
+    """The judge's verdicts on these pairs: an author-link edge takes a REFINES relation, else refers_back
+    (never removed); a same-subject pair's meaningful verdict is its uncertain judge edge (rule NULL)."""
     pairs = sorted(set(pairs))
     counts: Counter = Counter()
     if not pairs:
@@ -1283,7 +1189,7 @@ def _since(cur: Any, now: datetime) -> datetime:
 
 
 def _subject_scope(cur: Any, since: datetime) -> Set[str]:
-    """The posts whose ent-v3 subjects are new since (their call), or whose subject entity was merged or unmerged."""
+    """The posts whose subjects are new since (their call), or whose subject entity was merged or unmerged."""
     from insight_core.markx import schemas
     cur.execute("""SELECT DISTINCT m.post_id::text FROM mx_mentions_now m JOIN mx_calls c ON c.id = m.call_id
                     WHERE m.guide = ANY(%s) AND m.role = 'subject' AND c.created_at >= %s""",
@@ -1299,7 +1205,7 @@ RELATE_BACKFILL_KEY = "graph_relate_backfill"
 
 
 def _relate_backfill(cur: Any, subjects: Subjects, *, deadline: Optional[float], chunk: int = 1000) -> Dict[str, Any]:
-    """Every subject post's same-subject candidates once (then only what changes since), CHUNK posts at a time."""
+    """Every subject post's same-subject candidates once (then only what changes), `chunk` posts at a time."""
     from insight_core.markx import repo
     state = dict(repo.get_setting(cur, RELATE_BACKFILL_KEY, default=None) or {})
     if state.get("version") != BACKFILL_VERSION:
@@ -1308,7 +1214,7 @@ def _relate_backfill(cur: Any, subjects: Subjects, *, deadline: Optional[float],
         return {"done": True}
     added, done = 0, False
     while True:
-        part = subjects.post_ids(state["after"], chunk + 1)   # v10.23 (0218): a chunk at a time, in id order
+        part = subjects.post_ids(state["after"], chunk + 1)
         done = len(part) <= chunk
         part = part[:chunk]
         if not part:
@@ -1324,10 +1230,7 @@ def _relate_backfill(cur: Any, subjects: Subjects, *, deadline: Optional[float],
 
 
 def defer(cur: Any, linked: Iterable[str]) -> None:
-    """v10.25 (0227): the posts a run's entities stage linked while its graph stage did not run (deferred by a
-    concurrent update, or skipped): kept for the next graph stage, which reads them with its own (`stage`'s `linked`).
-    Their answers may be older than the next stage's look-back (MARGIN), so without this their edges would wait for a
-    backfill."""
+    """Keep the posts linked while the graph stage did not run, for the next `stage` (older than its look-back)."""
     from insight_core.markx import repo
     ids = {str(p) for p in linked}
     if ids:
@@ -1336,16 +1239,8 @@ def defer(cur: Any, linked: Iterable[str]) -> None:
 
 def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
           budget: Optional[float] = BACKFILL_SECONDS, linked: Iterable[str] = ()) -> Dict[str, Any]:
-    """The decision run's graph, after its entities stage: the author-link edges of what changed since the last run,
-    the backfill's next share (`budget` seconds), the identity next_version edges, the relations posts state between
-    entities (0220), the same-subject candidates, the settled verdicts applied, and the relate questions planned. Its
-    counts.
-
-    v10.25 (0227): `linked` is the posts whose mentions the run's entities stage linked (or linked otherwise), and the
-    ones a run before kept for it (`defer`): their relations and same-subject candidates are read again whatever their
-    answers' age. The scopes by an answer's time (since the last stage, less MARGIN) miss a post whose mentions were
-    linked later than its answer came (a linking backlog, runs more than MARGIN apart); before, the stage also ran
-    before the entities stage, so a new post's edges waited for the next run."""
+    """The decision run's graph stage, after entities: link edges, backfill share (`budget` s), next_version,
+    stated relations, candidates, verdicts applied, relate planned. `linked`: posts read again whatever their age."""
     from insight_core.markx import repo
     t0 = time.monotonic()
     deadline = None if budget is None else t0 + budget
@@ -1354,7 +1249,7 @@ def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
     kept = repo.get_setting(cur, PENDING_KEY, default=None) or []
     linked = {str(p) for p in linked} | set(kept)
     out["linked"] = len(linked)
-    timing: Dict[str, float] = {}   # v10.25 (0226): each step's seconds (the server's stage: 6 s to 514 s a run)
+    timing: Dict[str, float] = {}
     mark = [t0]
 
     def tick(step: str) -> None:
@@ -1374,7 +1269,6 @@ def stage(cur: Any, *, now: datetime, run_id: Any, open_cap: int = RELATE_OPEN,
     subjects = Subjects(cur)
     out["next_version"] = dict(sync_next_version(cur, subjects, now=now, run_id=run_id))
     tick("next_version")
-    # 0220: the relations posts state between entities (what changed since, then the backfill's share)
     scope: Dict[str, Any] = {}
     rels: Dict[str, Any] = dict(sync_relations(cur, _relation_scope(cur, since, scope) | linked, subjects.root, now=now,
                                                run_id=run_id))
@@ -1419,8 +1313,7 @@ _RANK = {RULE_OTHER: 0, RULE_OWN: 1, RULE_SERIES: 1, RULE_NEXT: 2, None: 3}
 
 
 def before(cur: Any, post_id: str, *, shown: int = BEFORE_SHOWN) -> Dict[str, Any]:
-    """The older posts this post connects to, one row each (an author's link first, then identity, then the judge),
-    oldest first: {"items": [{post_id, relation, rule, p, reason, uncertain, at, title, source, label}], "more"}."""
+    """The older posts this post connects to, best rule each, oldest first: {items, more}."""
     from insight_core.markx import news
     rows = _current(cur, a=[post_id])
     best: Dict[str, Dict[str, Any]] = {}
@@ -1443,7 +1336,7 @@ def before(cur: Any, post_id: str, *, shown: int = BEFORE_SHOWN) -> Dict[str, An
     return {"items": items[:shown], "more": max(0, len(items) - shown)}
 
 
-# ---- the owner's right / wrong on an edge (mx_labels item_kind 'connection': a = the newer post, b = the older) --
+# ---- the owner's right / wrong on an edge (mx_labels item_kind 'connection': a = the newer, b = the older) -------
 
 EDGE_ANSWERS = ("right", "wrong", "undo")
 
@@ -1473,31 +1366,34 @@ def label(cur: Any, *, newer: str, older: str, answer: str, note: Optional[str] 
 
 
 # ---- 4. chains between stories (issue 0219) -------------------------------------------------------------------
-# A later story and an earlier one about the same exact thing (both stops on its line, markx/stops.py) get one typed
-# edge: a = the later story, b = the earlier, a_kind = b_kind = 'story', rule CHAIN_RULE (the candidate rule that
-# proposed them) and call_id the judge's call. decide's story connections never read or close them (their rule).
+# Two stops of one thing's line (markx/stops.py) get one typed edge: a = the later story, b = the earlier, rule
+# CHAIN_RULE; decide's story connections never read or close them.
 
-CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v1"
-CHAIN_RULE = "chain_stops"            # both stories are stops of one thing (stored stop answers saying about)
+CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v4"
+CHAIN_RULE = "chain_stops"
 CHAIN_DAYS = 30                       # the later story's first post at most this many days after the earlier's
-CHAIN_PREV = 3                        # a stop is paired with at most this many stops before it (and after it)
-CHAIN_RUNS = 2                        # answers a pair is asked for; an edge needs both to agree (0219 dev: same_release
-                                      # 37/40 on one run, 35/36 when two runs agree)
-CHAIN_PLAN_MAX = 300                  # new questions a pass, at most
-CHAIN_MARK = "chains_planned"         # mx_settings: the last pass's clock (the stops answered since are paired)
-CHAIN_SYNCED = "chains_synced"        # mx_settings: the last sync's clock (the pairs answered since are read again)
-CHAIN_DEPTH = 3                       # links followed from a story, each way
-CHAIN_SHOWN = 12                      # links shown each way, at most
+CHAIN_PREV = 3                        # a stop is paired with at most this many stops before it
+CHAIN_RUNS = 2                        # answers a pair is asked for; an edge needs both to agree (measured: 0219)
+CHAIN_PLAN_MAX = 300
+CHAIN_MARK = "chains_planned"
+CHAIN_SYNCED = "chains_synced"
+CHAIN_DEPTH = 3
+CHAIN_SHOWN = 12
 CHAIN_RELATIONS = ("same_release", "same_event", "follows_up", "development", "reaction", "builds_on", "unrelated")
-CHAIN_LINKS = CHAIN_RELATIONS[:-1]    # what makes an edge (unrelated makes none)
+CHAIN_LINKS = CHAIN_RELATIONS[:-1]    # unrelated makes no edge
+# an earlier guide's verdicts asked again under the current guide (siblings: earlier guides never saw them as one)
+CHAIN_REASK_SIBLINGS = ("unrelated", "builds_on", UNKNOWN)
+CHAIN_REASK = ("same_release", UNKNOWN)
 
 
 def chain_question(thing: Dict[str, Any], earlier: Tuple[Optional[str], Sequence[Any]],
-                   later: Tuple[Optional[str], Sequence[Any]]) -> str:
-    """One chain item: THING, the EARLIER and the LATER story (each its headline, dates and earliest posts, as the stop
-    question shows a story: stops.story_lines), and the days between their first posts. Pure."""
+                   later: Tuple[Optional[str], Sequence[Any]], later_thing: Optional[Dict[str, Any]] = None) -> str:
+    """(pure) One chain item: THING (or each story's own), both stories' lines and the gap in days."""
     from insight_core.markx import stops as ST
-    out = [ST.thing_line(thing), *ST.story_lines(earlier[0], earlier[1], "EARLIER STORY"),
+    heads = [ST.thing_line(thing)] if later_thing is None else \
+        [ST.thing_line(thing).replace("THING:", "THING OF THE EARLIER STORY:", 1),
+         ST.thing_line(later_thing).replace("THING:", "THING OF THE LATER STORY:", 1)]
+    out = [*heads, *ST.story_lines(earlier[0], earlier[1], "EARLIER STORY"),
            *ST.story_lines(later[0], later[1], "LATER STORY")]
     firsts = [min((x.at for x in side[1]), default=None) for side in (earlier, later)]
     if firsts[0] is not None and firsts[1] is not None:
@@ -1508,21 +1404,113 @@ def chain_question(thing: Dict[str, Any], earlier: Tuple[Optional[str], Sequence
 
 
 def chain_config() -> Dict[str, Any]:
-    """entity_bands.json `chains`: `on` (the planner asks and syncs; the story page shows), `shown` (the relations a
-    reader sees; the others are stored, not shown: they failed their bar) and `one_row` (0236: News makes the stories
-    a current same_release edge joins one row: `release_groups`)."""
+    """entity_bands.json `chains`: `on`, `shown` (relations a reader sees), `one_row`, `siblings`."""
     from insight_core.markx import identity as I
     got = I.bands().get("chains") or {}
     return {"on": bool(got.get("on", False)),
             "shown": tuple(r for r in got.get("shown") or () if r in CHAIN_LINKS),
-            "one_row": bool(got.get("one_row", False))}
+            "one_row": bool(got.get("one_row", False)), "siblings": bool(got.get("siblings", False))}
+
+
+def chain_builds(book: Any, roots: Iterable[str]) -> Dict[str, str]:
+    """{build: its version}: the family thing with the same version, variant and size and no build
+    (as entity_views.family_versions nests it). A build's stories are stops of its version's line too."""
+    from insight_core.markx import identity as I, names as N
+    out: Dict[str, str] = {}
+    fams: Dict[str, List[str]] = {}
+
+    def same(e: Any) -> Tuple[Any, str, str]:
+        return (N.vt(e.version), (e.variant or "").strip().lower(), (e.size or "").strip().lower())
+    for r in sorted(set(roots)):
+        e = book.ents.get(r)
+        if e is None or not I.is_build(e) or not e.parent or not (e.version or e.variant):
+            continue
+        fam = book.root(e.parent)
+        if fam not in fams:
+            fams[fam] = [x for x in book.with_parent_in(fam) if book.root(x) == x]
+        want = same(e)
+        # a checkpoint stating no build is a version only to a build that states one, never to another checkpoint
+        got = sorted((book.ents[x].level == "checkpoint", x) for x in fams[fam]
+                     if x != r and x in book.ents and not book.ents[x].build and book.ents[x].status != "not_entity"
+                     and same(book.ents[x]) == want and (e.build or book.ents[x].level != "checkpoint"))
+        if got:
+            out[r] = got[0][1]
+    return out
+
+
+def chain_kin(book: Any, roots: Iterable[str]) -> Dict[str, str]:
+    """{thing: its family (its parent's root)}; an org or a person is no family."""
+    out: Dict[str, str] = {}
+    for r in sorted(set(roots)):
+        e = book.ents.get(r)
+        if e is None or not e.parent:
+            continue
+        fam = book.root(e.parent)
+        if fam and fam != r and fam in book.ents and (book.shown_type(fam) or book.ents[fam].type) not in MAKER_TYPES:
+            out[r] = fam
+    return out
+
+
+def chain_siblings(stops: Dict[str, Sequence[Tuple[datetime, str]]], kin: Dict[str, str],
+                   fresh: Optional[Set[str]] = None, *, days: int = CHAIN_DAYS, prev: int = CHAIN_PREV
+                   ) -> Dict[Tuple[str, str], Tuple[str, str]]:
+    """(pure) {(later, earlier): (things)} of sibling things' stops, in chain_pairs' window; a story
+    that is a stop of both things is no sibling pair; a pair proposed twice goes to the narrower."""
+    size = {t: len(v) for t, v in stops.items()}
+    of = {t: {s for _at, s in v} for t, v in stops.items()}
+    groups: Dict[str, Set[Tuple[datetime, str, str]]] = defaultdict(set)
+    for t, v in stops.items():
+        if t in kin:
+            groups[kin[t]].update((at, s, t) for at, s in v)
+    span = timedelta(days=days)
+    out: Dict[Tuple[str, str], Tuple[str, str]] = {}
+    for fam in sorted(groups):
+        order = sorted(groups[fam])
+        for j, (at_j, s_j, t_j) in enumerate(order):
+            back: List[str] = []
+            for i in range(j - 1, -1, -1):
+                at_i, s_i, t_i = order[i]
+                if at_j - at_i > span:
+                    break
+                if t_i == t_j or s_i == s_j or s_i in of[t_j] or s_j in of[t_i]:
+                    continue
+                if s_i not in back:
+                    if len(back) >= prev:
+                        break
+                    back.append(s_i)
+                key = (s_j, s_i)
+                if fresh is not None and not ({s_j, s_i} & fresh):
+                    continue
+                cand = (t_j, t_i)
+                if key not in out or (size[t_j] + size[t_i], cand) < (size[out[key][0]] + size[out[key][1]], out[key]):
+                    out[key] = cand
+    return out
+
+
+def chain_candidates(cur: Any, book: Any, *, since: Optional[datetime] = None
+                     ) -> Tuple[Dict[Tuple[str, str], Tuple[str, ...]], Dict[str, List[str]], Set[Tuple[str, str]],
+                                Dict[str, datetime]]:
+    """The proposed pairs {(later, earlier): things} (chain_pairs and chain_siblings), {thing: the
+    roots its questions read}, the sibling keys and {story: first post}; `since`: only pairs touching new stops."""
+    stops, fresh = chain_stops(cur, book, since=since)
+    builds = chain_builds(book, stops)
+    lines: Dict[str, List[str]] = {t: [t] for t in stops}
+    for b, v in sorted(builds.items()):
+        stops[v] = sorted(set(stops.get(v, [])) | set(stops[b]))
+        lines.setdefault(v, [v]).append(b)
+    f = fresh if since is not None else None
+    one = chain_pairs(stops, f)
+    sib = chain_siblings({t: v for t, v in stops.items() if t not in builds}, chain_kin(book, stops), f)
+    cands: Dict[Tuple[str, str], Tuple[str, ...]] = {k: (t,) for k, t in one.items()}
+    cands.update(sib)
+    firsts = {s: at for v in stops.values() for at, s in v}
+    return cands, lines, set(sib), firsts
 
 
 def chain_pairs(stops: Dict[str, Sequence[Tuple[datetime, str]]], fresh: Optional[Set[str]] = None,
                 *, days: int = CHAIN_DAYS, prev: int = CHAIN_PREV) -> Dict[Tuple[str, str], str]:
-    """The candidate pairs {(later, earlier): thing} of each thing's stops {thing: [(first post at, story)]}: a stop
-    and each of the `prev` stops before it whose first post is at most `days` earlier. `fresh`: only the pairs with a
-    story in it. A pair two things propose goes to the one with the fewer stops (the narrower thing). Pure."""
+    """(pure) {(later, earlier): thing}: a stop and each of the `prev` stops before it within `days`;
+    a pair two things propose goes to the narrower thing."""
     out: Dict[Tuple[str, str], str] = {}
     size = {t: len(v) for t, v in stops.items()}
     span = timedelta(days=days)
@@ -1541,8 +1529,7 @@ def chain_pairs(stops: Dict[str, Sequence[Tuple[datetime, str]]], fresh: Optiona
 
 
 def chain_verdict(answers: Sequence[Tuple[str, Dict[str, Any]]], runs: int = CHAIN_RUNS) -> Optional[Dict[str, Any]]:
-    """A pair's settled verdict from its first `runs` valid answers [(call id, answer)], oldest first: the relation all
-    of them give (call: the first; reason: its reason), "unknown" when they differ; None until `runs` came."""
+    """(pure) The relation all of the first `runs` answers give, else unknown; None until `runs` came."""
     got = list(answers)[:runs]
     if len(got) < runs:
         return None
@@ -1563,9 +1550,8 @@ def chain_after_answer(cur: Any, task: Dict[str, Any]) -> bool:
 
 def chain_stops(cur: Any, book: Any, *, since: Optional[datetime] = None
                 ) -> Tuple[Dict[str, List[Tuple[datetime, str]]], Set[str]]:
-    """Each thing's stops ({root: [(the story's first current member's date, story)]}: the stored stop answers saying
-    about, under any name of its cluster; stories merged away or with no current member left out), and the stories
-    whose stop answer came since `since` (every one when None)."""
+    """Each thing's stops {root: [(first current member's date, story)]} from the stop answers saying
+    about, and the stories answered since `since`."""
     from insight_core.markx import stops as ST
     rows = ST.answered(cur)
     fresh = {s for s, _e, _ab, at in rows if since is None or at >= since}
@@ -1582,10 +1568,8 @@ def chain_stops(cur: Any, book: Any, *, since: Optional[datetime] = None
 
 
 def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_PLAN_MAX) -> Dict[str, int]:
-    """The jobs process's plan job (tasks.BACKGROUND_PLANNED): the settled answers made edges first (sync_chains), then
-    the candidate pairs touching the stops answered since the last pass (mx_settings CHAIN_MARK), each pair asked once
-    (a = the later story, b = the earlier), at most `limit` a pass, the newest later story first; the mark moves only
-    when every new pair was asked. {pairs, asked, again, opened, closed}."""
+    """Jobs-process plan job: sync_chains, then ask the new candidate pairs (a = later, b = earlier),
+    newest first, at most `limit` a pass."""
     from insight_core.markx import identity as I, repo, stops as ST, tasks
     now = now or datetime.now(timezone.utc)
     out: Dict[str, int] = {"pairs": 0, "asked": 0, "again": 0}
@@ -1595,33 +1579,72 @@ def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_
     out.update(sync_chains(cur, now=now, since=datetime.fromisoformat(synced) - MARGIN if synced else None))
     repo.set_setting(cur, CHAIN_SYNCED, {"at": now.isoformat()})
     mark = repo.get_setting(cur, CHAIN_MARK, default=None) or {}
-    since = datetime.fromisoformat(mark["at"]) - MARGIN if mark.get("at") else None
+    # a new guide reads every pair once
+    since = (datetime.fromisoformat(mark["at"]) - MARGIN if mark.get("at") and mark.get("guide", "chain-v1") == CHAIN_GUIDE
+             else None)
     book = I.lazy_book(cur)
-    stops, fresh = chain_stops(cur, book, since=since)
-    pairs = chain_pairs(stops, fresh)
+    pairs, lines, sib, firsts = chain_candidates(cur, book, since=since)
     out["pairs"] = len(pairs)
     todo: List[Tuple[str, str]] = []
     if pairs:
         keys = sorted(pairs)
-        cur.execute("""SELECT a::text, b::text FROM mx_tasks WHERE kind = %s
-                        AND (a, b) IN (SELECT * FROM unnest(%s::uuid[], %s::uuid[]))""",
-                    (CHAIN_KIND, [k[0] for k in keys], [k[1] for k in keys]))
-        asked = {tuple(r) for r in cur.fetchall()}
-        firsts = {s: at for v in stops.values() for at, s in v}
+        asked = chain_asked(cur, keys, siblings=sib)
         todo = sorted((k for k in keys if k not in asked), key=lambda k: (firsts[k[0]], k), reverse=True)
         out["again"] = len(keys) - len(todo)
     if todo[:limit]:
         shown, roles, heads = ST.stories_shown(cur, book, sorted({s for k in todo[:limit] for s in k}))
         for later, earlier in todo[:limit]:
-            thing = pairs[(later, earlier)]
-            text = chain_question(ST._thing(book, thing),
-                                  (heads.get(earlier), ST.lines_for(shown.get(earlier, []), roles, thing)),
-                                  (heads.get(later), ST.lines_for(shown.get(later, []), roles, thing)))
+            text = chain_text(book, pairs[(later, earlier)], lines, shown, roles, heads, later, earlier)
             _tid, new = tasks.add(cur, CHAIN_KIND, text, a=later, b=earlier, priority=0)
             out["asked"] += bool(new)
     if len(todo) <= limit:
-        repo.set_setting(cur, CHAIN_MARK, {"at": now.isoformat()})
+        repo.set_setting(cur, CHAIN_MARK, {"at": now.isoformat(), "guide": CHAIN_GUIDE})
     return out
+
+
+def chain_text(book: Any, things: Tuple[str, ...], lines: Dict[str, List[str]], shown: Dict[str, Any],
+               roles: Dict[str, Dict[str, str]], heads: Dict[str, Optional[str]], later: str, earlier: str) -> str:
+    """A pair's chain_question from what stops.stories_shown read."""
+    from insight_core.markx import stops as ST
+    t_later, t_earlier = (things[0], things[0]) if len(things) == 1 else things
+
+    def side(s: str, t: str) -> Tuple[Optional[str], List[Any]]:
+        roots = lines.get(t, [t])
+        got = []
+        for at, p, src, title in sorted(shown.get(s, [])):
+            r = roles.get(p) or {}
+            got.append(ST.Line(at, src, title, next((r[x] for x in roots if r.get(x)), None)))
+        return heads.get(s), got
+    return chain_question(ST._thing(book, t_earlier), side(earlier, t_earlier), side(later, t_later),
+                          None if len(things) == 1 else ST._thing(book, t_later))
+
+
+def chain_asked(cur: Any, keys: Sequence[Tuple[str, str]], siblings: Iterable[Tuple[str, str]] = ()
+                ) -> Set[Tuple[str, str]]:
+    """The pairs already asked: under the current guide, or an earlier guide's verdict not in CHAIN_REASK
+    (nor CHAIN_REASK_SIBLINGS for `siblings`)."""
+    if not keys:
+        return set()
+    cur.execute("""SELECT t.a::text, t.b::text, t.guide, t.id::text FROM mx_tasks t WHERE t.kind = %s
+                    AND (t.a, t.b) IN (SELECT * FROM unnest(%s::uuid[], %s::uuid[])) ORDER BY t.created_at, t.id""",
+                (CHAIN_KIND, [k[0] for k in keys], [k[1] for k in keys]))
+    rows = cur.fetchall()
+    current = {(a, b) for a, b, g, _t in rows if g == CHAIN_GUIDE}
+    newest = {(a, b): t for a, b, g, t in rows if g != CHAIN_GUIDE and (a, b) not in current}   # sync's task
+    earlier = {t: k for k, t in newest.items()}
+    calls: Dict[str, List[Tuple[str, Dict[str, Any]]]] = defaultdict(list)
+    if earlier:
+        cur.execute("""SELECT task_id::text, id::text, answer FROM mx_calls WHERE valid AND task_id = ANY(%s::uuid[])
+                        ORDER BY created_at, ctid""", (sorted(earlier),))
+        for tid, cid, ans in cur.fetchall():
+            calls[tid].append((cid, ans or {}))
+    sib = set(siblings)
+    again = set()
+    for t, k in earlier.items():
+        rel = (chain_verdict(calls.get(t) or []) or {}).get("relation")
+        if rel in CHAIN_REASK or (k in sib and rel in CHAIN_REASK_SIBLINGS):
+            again.add(k)
+    return current | ({k for k in earlier.values()} - again)
 
 
 def _chain_current(cur: Any) -> List[Dict[str, Any]]:
@@ -1631,20 +1654,16 @@ def _chain_current(cur: Any) -> List[Dict[str, Any]]:
 
 
 def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[datetime] = None) -> Dict[str, int]:
-    """The chain edges become what the settled answers say of the pairs still proposed: a linking verdict opens its
-    edge (relation, p 1.0: its runs agree; the call; evidence {reason, thing, runs}); an edge whose verdict changed,
-    or whose pair is no longer two stops of one thing (a stop answer now saying not about, a story merged away or
-    emptied), closes (kept, never deleted). `since`: only the pairs with an answer since then are read again (every
-    current edge is still checked against the pairs proposed). Every relation is stored; what is shown is
-    chain_config's."""
+    """The chain edges become what the settled answers say of the pairs still proposed (never deleted).
+    `since`: only pairs answered since are read again."""
     from insight_core.markx import identity as I
-    stops, _ = chain_stops(cur, I.lazy_book(cur))
-    cands = chain_pairs(stops)
+    cands, _lines, _sib, _firsts = chain_candidates(cur, I.lazy_book(cur))
     cur.execute(f"""SELECT DISTINCT ON (t.a, t.b) t.a::text, t.b::text, t.id::text FROM mx_tasks t
                      WHERE t.kind = %(k)s AND t.status = 'answered'
                        {"AND (t.a, t.b) IN (SELECT a, b FROM mx_tasks WHERE kind = %(k)s AND answered_at >= %(since)s)"
                         if since is not None else ""}
-                     ORDER BY t.a, t.b, t.created_at DESC, t.id DESC""", {"k": CHAIN_KIND, "since": since})
+                     ORDER BY t.a, t.b, t.guide = %(g)s DESC, t.created_at DESC, t.id DESC""",
+                {"k": CHAIN_KIND, "since": since, "g": CHAIN_GUIDE})   # the current guide's answered task first
     got = cur.fetchall()
     touched = {(a, b) for a, b, _t in got}
     newest = {(a, b): tid for a, b, tid in got if (a, b) in cands}
@@ -1659,7 +1678,7 @@ def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[
     for key, tid in newest.items():
         v = chain_verdict(calls.get(tid) or [])
         if v and v["relation"] in CHAIN_LINKS:
-            want[key] = dict(v, thing=cands[key])
+            want[key] = dict(v, things=cands[key])
     out = {"opened": 0, "closed": 0}
     kept = set()
     for e in _chain_current(cur):
@@ -1678,18 +1697,17 @@ def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[
                        VALUES ('story', %s, 'story', %s, %s, 1.0, %s, %s, %s, %s::jsonb, %s)
                        ON CONFLICT (a_kind, a, b_kind, b, relation) WHERE valid_to IS NULL DO NOTHING""",
                     (a, b, v["relation"], v["call"], CHAIN_RULE, run_id,
-                     json.dumps({"reason": v["reason"], "thing": v["thing"], "runs": v["runs"]}, ensure_ascii=False), now))
+                     json.dumps({"reason": v["reason"], "thing": v["things"][-1], "runs": v["runs"],
+                                 **({"things": list(v["things"])} if len(v["things"]) > 1 else {})},
+                                ensure_ascii=False), now))
         out["opened"] += cur.rowcount
     return out
 
 
 def chain(cur: Any, story_id: str, *, as_of: Optional[datetime] = None, depth: int = CHAIN_DEPTH,
           shown: int = CHAIN_SHOWN, relations: Optional[Sequence[str]] = None) -> Dict[str, Any]:
-    """A story's chain: what led to it (`before`: the earlier stories its edges reach, then theirs, `depth` links at
-    most) and what followed (`after`), each link {story, headline, first_at, relation, reason, depth, via}, the nearest
-    first, then by date, `shown` a side (`before_more`, `after_more`: the rest); `as_of`: only the edges valid at that
-    moment (what INSIGHT knew then). `relations`: those shown (chain_config's by default). One recursive query a side;
-    nothing is asked."""
+    """A story's chain: earlier (`before`) and later (`after`) stories up to `depth` links, nearest first,
+    `shown` a side; `as_of`: the edges valid then; `relations`: chain_config's shown by default."""
     rels = list(chain_config()["shown"] if relations is None else relations)
     out: Dict[str, Any] = {"before": [], "after": [], "before_more": 0, "after_more": 0,
                            "as_of": as_of.isoformat() if as_of else None}
@@ -1709,7 +1727,7 @@ def chain(cur: Any, story_id: str, *, as_of: Optional[datetime] = None, depth: i
               FROM walk w JOIN mx_stories s ON s.id = w.story
              ORDER BY w.story, w.depth, w.relation""",
                     {"rels": rels, "at": as_of or datetime.now(timezone.utc), "s": story_id,
-                     "depth": depth})
+                     "depth": depth, "sib": siblings_shown()})
         rows = cur.fetchall()
         firsts = _story_firsts(cur, [r[0] for r in rows])
         items = [{"story": s, "via": via, "relation": rel, "reason": reason, "depth": d, "headline": head,
@@ -1721,10 +1739,55 @@ def chain(cur: Any, story_id: str, *, as_of: Optional[datetime] = None, depth: i
     return out
 
 
+ROW_CHAIN_SHOWN = 3
+
+
+def row_chains(cur: Any, rows: Dict[str, Iterable[str]], *, shown: int = ROW_CHAIN_SHOWN) -> Dict[str, Dict[str, Any]]:
+    """Each News row's Earlier and Later outside the row, nearest to its start kept, `shown` a side;
+    {} while chains are off."""
+    cfg = chain_config()
+    rels = list(cfg["shown"])
+    mine = {rid: {str(s) for s in ss if s} for rid, ss in rows.items()}
+    ids = sorted({s for ss in mine.values() for s in ss})
+    if not (cfg["on"] and rels and ids):
+        return {}
+    cur.execute(f"""SELECT x.a::text, x.b::text, x.relation, x.evidence->>'reason' FROM mx_connections x
+                     WHERE {_CHAIN_VALID} AND (x.a = ANY(%(s)s::uuid[]) OR x.b = ANY(%(s)s::uuid[]))""",
+                {"rels": rels, "at": datetime.now(timezone.utc), "s": ids, "sib": bool(cfg.get("siblings"))})
+    edges = cur.fetchall()
+    every = sorted({s for a, b, *_x in edges for s in (a, b)})
+    firsts = _story_firsts(cur, every)
+    heads: Dict[str, Optional[str]] = {}
+    if every:
+        cur.execute("SELECT id::text, headline FROM mx_stories WHERE id = ANY(%s::uuid[]) AND merged_into IS NULL",
+                    (every,))
+        heads = dict(cur.fetchall())
+    out: Dict[str, Dict[str, Any]] = {}
+    for rid, ss in mine.items():
+        start = min((firsts[s] for s in ss if s in firsts), default=None)
+        sides: Dict[str, Dict[str, Dict[str, Any]]] = {"before": {}, "after": {}}
+        for a, b, rel, reason in edges:   # a = the later story, b = the earlier
+            for near, far, side in ((a, b, "before"), (b, a, "after")):
+                if near in ss and far not in ss and far in heads and far not in sides[side]:
+                    at = firsts.get(far)
+                    sides[side][far] = {"story": far, "headline": heads[far], "relation": rel, "reason": reason,
+                                        "first_at": at.isoformat() if at else None,
+                                        "gap": abs((at - start).total_seconds()) if at and start else float("inf")}
+        got: Dict[str, Any] = {}
+        for side, found in sides.items():
+            items = sorted(found.values(), key=lambda r: (r["gap"], r["story"]))
+            for r in items:
+                r.pop("gap")
+            got[side] = sorted(items[:shown], key=lambda r: (r["first_at"] or "", r["story"]))
+            got[side + "_more"] = max(0, len(items) - shown)
+        if any(got.values()):
+            out[rid] = got
+    return out
+
+
 def release_components(edges: Iterable[Tuple[str, str, Optional[str]]]) -> List[List[str]]:
-    """0236: the one-release groups of these same_release edges [(a, b, thing)]: each story keeps only the edges of
-    its own release thing (the thing most of its edges are about, then the lowest id), so a group is one thing and a
-    story that is a stop of two things never chains them; each group 2+ stories, sorted. Pure."""
+    """(pure) The one-release groups of same_release edges [(a, b, thing)]: each story keeps its
+    own thing's edges, so a group is one thing; groups of 2+."""
     edges = sorted((str(a), str(b), str(t or "")) for a, b, t in edges if a != b)
     by: Dict[str, Counter] = defaultdict(Counter)
     for a, b, t in edges:
@@ -1749,22 +1812,45 @@ def release_components(edges: Iterable[Tuple[str, str, Optional[str]]]) -> List[
 
 
 def release_groups(cur: Any, story_ids: Iterable[str]) -> List[List[str]]:
-    """0236 (the one-release row, 0217's input): the groups of `story_ids` the current same_release chain edges join
-    (`release_components`: one thing a group); [] while chain_config's `one_row` is off. An edge is between two stops
-    of one exact thing (stop-v1 says each story is about it), so a story that only mentions the thing is in none (the
-    runaway guard). One read of the chain rows."""
+    """The one-release groups of `story_ids` (`release_components`); [] while `one_row` is off. A sibling
+    pair's edge joins only while `siblings` is on."""
     ids = sorted({str(s) for s in story_ids if s})
-    if not ids or not chain_config().get("one_row"):
+    cfg = chain_config()
+    if not ids or not cfg.get("one_row"):
         return []
     cur.execute(f"""SELECT a::text, b::text, evidence->>'thing' FROM mx_connections
                      WHERE valid_to IS NULL AND a_kind = 'story' AND b_kind = 'story' AND rule = '{CHAIN_RULE}'
-                       AND relation = 'same_release' AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])""", {"s": ids})
+                       AND relation = 'same_release' AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])
+                       AND (%(sib)s OR evidence->'things' IS NULL)""", {"s": ids, "sib": bool(cfg.get("siblings"))})
     return release_components(cur.fetchall())
+
+
+CHAIN_ONE_HAPPENING = ("same_release", "same_event")   # the chain edges News reads as the judge's link
+
+
+def chain_connected(cur: Any, story_ids: Iterable[str]) -> Set[FrozenSet[str]]:
+    """The story pairs a current chain edge calls one happening, for News's judged pairs."""
+    ids = sorted({str(s) for s in story_ids if s})
+    cfg = chain_config()
+    if not ids or not cfg.get("on"):
+        return set()
+    cur.execute(f"""SELECT a::text, b::text FROM mx_connections
+                     WHERE valid_to IS NULL AND a_kind = 'story' AND b_kind = 'story' AND rule = '{CHAIN_RULE}'
+                       AND relation = ANY(%(rels)s) AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])
+                       AND (%(sib)s OR evidence->'things' IS NULL)""",
+                {"s": ids, "rels": list(CHAIN_ONE_HAPPENING), "sib": bool(cfg.get("siblings"))})
+    return {frozenset(r) for r in cur.fetchall()}
 
 
 # the rule written as a literal, so the planner proves migration 0154's partial indexes even from a prepared plan
 _CHAIN_VALID = (f"x.a_kind = 'story' AND x.b_kind = 'story' AND x.rule = '{CHAIN_RULE}' AND x.relation = ANY(%(rels)s) "
-                "AND x.valid_from <= %(at)s AND (x.valid_to IS NULL OR x.valid_to > %(at)s)")
+                "AND x.valid_from <= %(at)s AND (x.valid_to IS NULL OR x.valid_to > %(at)s) "
+                "AND (%(sib)s OR x.evidence->'things' IS NULL)")
+
+
+def siblings_shown() -> bool:
+    """Whether sibling pairs' edges are shown and folded like any other (chain_config `siblings`)."""
+    return bool(chain_config().get("siblings"))
 
 
 def _story_firsts(cur: Any, story_ids: Sequence[str], *, current: bool = False) -> Dict[str, datetime]:

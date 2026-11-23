@@ -1,5 +1,5 @@
-"""Conditional GETs for the polled answers (issue 0195, routers/conditional.py): a weak ETag and no-cache on a listed
-path's 200, a 304 with no body when If-None-Match names it, anything else untouched. No database."""
+"""Conditional GETs for the polled answers (0195, routers/conditional.py): a weak ETag and no-cache on a listed path's
+200, a 304 with no body when If-None-Match names it, anything else untouched. No database."""
 from __future__ import annotations
 
 import asyncio

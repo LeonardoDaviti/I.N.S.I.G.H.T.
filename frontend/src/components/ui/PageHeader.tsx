@@ -1,10 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '../../lib/utils';
 
-/**
- * Page anatomy (design docs system/space-radii-layout.md): title, an optional meta line in the secondary
- * tone ("90 sources · as of just now"), actions on the right (one primary).
- */
+/** Page anatomy: title, an optional meta line in the secondary tone, actions on the right (one primary). */
 export default function PageHeader({
   title,
   meta,
@@ -33,12 +30,8 @@ export default function PageHeader({
   );
 }
 
-/**
- * The page container. Two widths only, so page edges and headers never jump
- * between routes: `reading` (max-w-3xl) for single-column pages you read top to
- * bottom, `ops` (max-w-6xl) for tables and pages with a side rail. `list` and
- * `wide` are the older names for the same two widths.
- */
+/** The page container, two widths only so page edges never jump between routes: `reading` (max-w-3xl) and `ops`
+ *  (max-w-6xl); `list` and `wide` are older names for the same two. */
 export function Page({
   width = 'ops',
   className,

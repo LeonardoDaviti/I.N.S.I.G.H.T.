@@ -1,8 +1,5 @@
-/**
- * Everything the studio shows, found by glob (D1, D6): the markdown docs, the
- * component specimens and the prototypes. Adding a file adds it to /design;
- * there is no list to edit.
- */
+/** Everything the studio shows, found by glob (docs, component specimens, prototypes): adding a file adds it to
+ *  /design; there is no list to edit. */
 import type { ComponentType } from 'react';
 import { fileStem, parseDoc, parsePrinciples, type DesignDoc, type Principle } from './coverage';
 import { docHref, type PrototypeRef } from './studio';
@@ -31,10 +28,7 @@ export const COMPONENT_SPECIMENS: ReadonlyMap<string, ComponentType> = new Map(
     .sort(([a], [b]) => a.localeCompare(b)),
 );
 
-/**
- * The prototypes for the rail (D6): open ones first, oldest first, each with
- * its status and age, so nothing rots silently.
- */
+/** The prototypes for the rail: open ones first, oldest first, each with its status and age, so nothing rots. */
 export function prototypeRefs(now: Date): PrototypeRef[] {
   return [...PROTOTYPES]
     .sort((a, b) => Number(isOpen(b)) - Number(isOpen(a)) || a.id.localeCompare(b.id))

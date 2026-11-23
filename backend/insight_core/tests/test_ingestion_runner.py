@@ -1,8 +1,5 @@
-"""The ingestion module (spec §A, §5.4, §5.7): every test goes through a public seam.
-
-All fakes, no DB, no network: the runner is assembled with the §A.1 keyword constructor
-from in-memory ports (tests/_ingestion_fakes.py), FakeKinds and real FetchGates with no
-delays.
+"""The ingestion module through its public seams: all fakes, no DB, no network (in-memory ports from
+tests/_ingestion_fakes.py, FakeKinds and real FetchGates with no delays).
 """
 from __future__ import annotations
 
@@ -157,7 +154,7 @@ class IngestionRunnerDecisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.decisions.get("skip_backoff", 0), 0)
 
     async def test_forced_folder_fetch_still_skips_unavailable_youtube(self):
-        """Regression for the P5 bypass: track fetch went straight past the yt-dlp switch."""
+        """Track fetch obeys the yt-dlp switch."""
         yt_src, rss_src = _source("https://youtube.com/@c", "youtube"), _source("https://a.test/rss")
         yt, rss = _yt_kind(), _rss_kind()
         h = _Harness([yt_src, rss_src], [yt, rss], folders={"f1": [yt_src["id"], rss_src["id"]]},
@@ -184,7 +181,7 @@ class IngestionRunnerDecisionTests(unittest.IsolatedAsyncioTestCase):
 
 class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_5xx_or_a_timeout_retries_within_hours_never_days(self):
-        # Issue 0088: an eleventh failure in a row waits 7 days, unless it was the other server's trouble.
+        # an eleventh failure in a row waits 7 days, unless it was the other server's trouble (0088)
         errors = {"https://gateway.test/rss": HttpError("HTTP 502 while fetching", status=502),
                   "https://slow.test/rss": HttpError("Timed out fetching", timed_out=True),
                   "https://gone.test/rss": HttpError("HTTP 404 while fetching", status=404),
@@ -196,7 +193,8 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         sources = [_source(url) for url in errors]
         rows = {s["id"]: FetchStateRow(source_id=s["id"], last_outcome="error", consecutive_failures=10)
                 for s in sources}
-        h = _Harness(sources, [_rss_kind(fail)], rows=rows)
+        clock = SleepClock()   # the timed-out host is waited out (a minute) on a fake clock, not a real one
+        h = _Harness(sources, [_rss_kind(fail)], rows=rows, gates=SpyFetchGates(clock=clock, sleep=clock.sleep))
         await h.run(force=True)
         waits = {s["handle_or_url"]: h.state.rows[s["id"]].next_retry_at - NOW for s in sources}
         self.assertEqual(waits["https://gateway.test/rss"], timedelta(hours=12))
@@ -332,7 +330,7 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(h.progress.phases, ["decided", "source", "saved"])
 
     async def test_a_source_event_counts_the_pages_that_lost_their_images(self):
-        # Issue 0032: from each post's metadata.page_read, before the save releases the posts.
+        # from each post's metadata.page_read, before the save releases the posts
         lost = {"page_images": 6, "kept_images": 1, "text_chars": 900, "short_opening": False}
         fine = {**lost, "kept_images": 6}
 
@@ -381,7 +379,7 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class IngestionRunnerHostShareTests(unittest.IsolatedAsyncioTestCase):
-    """Every source at its own pace (2026-11-11): many due sources of one host never stretch one run."""
+    """Every source at its own pace: many due sources of one host never stretch one run."""
 
     def _harness(self, sources, rows, floors):
         self.clock = SleepClock()
@@ -435,7 +433,7 @@ def _limited_once(*handles: str, error: HttpError | None = None):
 
 
 class IngestionRunnerPaceTests(unittest.IsolatedAsyncioTestCase):
-    """Issue 0016: a host that limits us is waited out, slowed down and retried once."""
+    """A host that limits us is waited out, slowed down and retried once (0016)."""
 
     def _harness(self, sources, behaviour, floors=None):
         self.clock = SleepClock()
@@ -474,7 +472,7 @@ class IngestionRunnerPaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.clock.sleeps, [60], "no Retry-After: a minute")
 
     async def test_a_live_fetch_spends_the_budget_an_archive_is_measuring(self):
-        """Issue 0107: the hourly fetch of an archive's host counts against the stretch being measured."""
+        """The hourly fetch of an archive's host counts against the stretch being measured (0107)."""
         source = _source("https://a.test/rss")
         h = self._harness([source], _posts_for(2))
         budgets = h.gates.budgets
@@ -623,7 +621,7 @@ class _FakeWriter:
 
 
 class ArchiveMetadataRecordTests(unittest.IsolatedAsyncioTestCase):
-    """Issue 0015: a run records the cheap archive metadata and never measures a source."""
+    """A run records the cheap archive metadata and never measures a source (0015)."""
 
     async def test_a_run_records_the_cheap_metadata_and_never_inspects(self):
         writer, kind = _FakeWriter(), _rss_kind(_posts_for(4))

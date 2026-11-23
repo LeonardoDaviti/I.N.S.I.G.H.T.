@@ -4,12 +4,8 @@ import SpecimenSlot from '../SpecimenSlot';
 import { frameScenario } from '../fixtures/scenarios';
 import { SPECIMEN_THEMES, SPECIMEN_WIDTHS, type SpecimenTheme } from '../specimen';
 
-/**
- * The specimen under a page doc, with its controls. State, width and theme
- * live in the URL (`?state=&width=&theme=`) so a specimen can be linked and
- * screenshotted (D9); the defaults leave the URL clean. A state with its own
- * width (the 320px top bar) adds it to the widths and opens at it.
- */
+/** The specimen under a page doc, with its controls; state, width and theme live in the URL (defaults leave it
+ *  clean). A state with its own width (the 320px top bar) adds it to the widths and opens at it. */
 export default function PageSpecimen({ page, states }: { page: string; states: readonly string[] }) {
   const [params, setParams] = useSearchParams();
   const state = states.find((name) => name === params.get('state')) ?? states[0];

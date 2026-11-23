@@ -1,7 +1,4 @@
-/**
- * Mark X Shadow's page and panel (issue 0086 E): the shapes of /api/markx/news, /posts/:id and /overview.
- * Types only, so the reader's bundle carries none of it (the page and the panel are their own chunks).
- */
+/** Shapes of the Mark X pages' API (/api/markx/*). Types only, so the reader's bundle carries none of it. */
 
 import type { Byline } from '../lib/byline';
 export type MarkxTag = 'NEW' | 'MERGED' | 'SPLIT' | 'CHANGED' | 'SAME';
@@ -25,34 +22,29 @@ export interface MarkxLine {
   id: string;
   title: string | null;
   source: string | null;
-  /** Who wrote it, via whom (issue 0185). */
   byline?: Byline | null;
   kind: string | null;
   at: string | null;
   url?: string | null;
   role?: string;
-  /** The surging name Mark IX's News joined it by, when it did. */
   name?: string | null;
   why: MarkxWhy | null;
   /** What Mark IX did with it: the News row it is in (and whether that is this row's), or null: none. */
   ix: { row: string; title: string | null; same_row: boolean } | null;
-  /** Its Mark X story (the one tap's key, 0086 F), and the owner's standing one-tap answer, if any. */
+  /** Its Mark X story (the one tap's key), and the owner's standing one-tap answer, if any. */
   story?: string | null;
   flag?: Exclude<MarkxFlag, 'ok'> | null;
-  /** 0127: its fold in its Mark X story (null: not read under read-v3 yet, or its story has no group). */
+  /** Its fold in its Mark X story (null: not read yet, or its story has no group). */
   fold?: MarkxFold | null;
 }
 
-/** 0127: duplicates folded. `head` shows; `folded` sits under it; `shown` is a read member outside the group. */
+/** Duplicates folded: `head` shows; `folded` sits under it; `shown` is a read member outside the group. */
 export type MarkxFoldAnswer = 'same' | 'not_same' | 'undo';
 export interface MarkxFold {
   state: 'head' | 'folded' | 'shown';
   head: string | null;
-  /** Who folded it: the rule or the owner's answer. */
   by: 'rule' | 'owner' | null;
-  /** The owner's standing answer, if any. */
   answer: Exclude<MarkxFoldAnswer, 'undo'> | null;
-  /** What the rule says: folded, head or shown. */
   rule: 'folded' | 'head' | 'shown';
   count: number | null;
 }
@@ -71,11 +63,8 @@ export interface MarkxLeftOut {
   byline?: Byline | null;
   kind: string | null;
   at: string | null;
-  /** The newest check of it, when one was asked. */
   check: MarkxCheck | null;
-  /** The Mark X row it is in now, if any. */
   now_in?: string | null;
-  /** Kept as a mention or digest item. */
   mention: MarkxWhy | null;
 }
 
@@ -91,17 +80,16 @@ export interface MarkxRow {
   score: number;
   story: string | null;
   posts: MarkxLine[];
-  /** 0127: how many of its posts are folded under a head. */
   folded?: number;
   removed: MarkxLeftOut[];
-  /** 0119 A2: the entities its posts make surge (3+ voices that day). */
   surging?: { id: string; name: string; day: string; voices: number }[];
   ix: { id: string; title: string | null; voices?: number; first_at?: string }[];
-  /** 0208: its kept rank (significance, fit, coverage, score in 0..1; the lane; what decided them); null: not ranked yet. */
+  /** Its kept rank (significance, fit, coverage, score in 0..1; the lane; why); null: not ranked yet. */
   rank?: MarkxRank | null;
+  chain?: MarkxRowChain | null;
 }
 
-/** 0208: a row's rank as the jobs process kept it. `why`: the significance answer's fields and the fit's parts. */
+/** A row's rank as the jobs process kept it. `why`: the significance answer's fields and the fit's parts. */
 export interface MarkxRank {
   significance: number | null; fit: number; coverage: number; score: number; notable: boolean;
   why: { event?: string; effect?: number; usable?: string; shipped_in?: string | null; why?: string;
@@ -114,16 +102,13 @@ export interface MarkxNews {
   counts: Partial<Record<MarkxTag, number>> & { rows?: number; ix_rows?: number; gone?: number; untitled?: number };
   items: MarkxRow[];
   gone: { id: string; title: string | null; voices?: number; first_at?: string; posts: MarkxLeftOut[] }[];
-  /** 0127: the fold's count (the lab's F1 and the owner's labels). */
   folds?: MarkxFoldScore;
-  /** 0174: Haiku's titled sections over the rows shown (null: no run yet). */
   sections?: MarkxNewsSections | null;
-  /** 0208: the order the rows are in (ranked for the reader, or by coverage) and the Notable lane's rows. */
   order?: 'ranked' | 'coverage';
   notable?: string[];
 }
 
-/** 0174: the newest valid sectioning over the page's rows: groups in the page's order, `new` the rows added since. */
+/** The newest valid sectioning over the page's rows: groups in the page's order, `new` the rows added since. */
 export interface MarkxNewsSections {
   at: string | null;
   pending: boolean;
@@ -142,14 +127,17 @@ export interface MarkxPostPanel {
     headline: string | null;
     main: { headline_en?: string; actors?: string[]; object?: string; action?: string; date?: string | null } | null;
     mentions: { name: string; role: string }[];
+    /** v10.44: the event type and its subtype ("model_release" / "build"), from the type guides' readings. */
+    event_type?: string | null;
+    subtype?: string | null;
+    origin?: string | null;
   } | null;
   entities: { name: string; type: string | null; role: string | null; maker: string | null; family: string | null;
     version: string | null; variant: string | null; span: string; entity_id?: string | null;
-    /** 0133: 'citation' when the citation rule found it; a document's publisher; the guide of the answer. */
+    /** 'citation' when the citation rule found it; a document's publisher; the guide of the answer. */
     rule?: string | null; by?: string | null; guide?: string;
-    /** 0133 v4.2: its number in the set; the second question's; a new entity (labelled right / wrong); the owner's label. */
+    /** Its number in the set; the second question's; a new entity (labelled right / wrong); the owner's label. */
     n?: number; q2?: boolean; new?: boolean; label?: 'right' | 'wrong' | null }[];
-  /** 0133: the guide of the post's current entities (its newest valid answer); its documents and cited sources. */
   entities_guide?: string | null;
   documents?: MarkxPostPanel['entities'];
   sources?: MarkxPostPanel['entities'];
@@ -157,48 +145,52 @@ export interface MarkxPostPanel {
   stories: (MarkxWhy & { id: string; headline: string | null; first_at: string | null; posts: number })[];
   connections: { relation: string; p: number | null; rule: string | null; from: 'post' | 'story'; other_kind: 'post' | 'story';
     other: string; title?: string | null; reason: string | null }[];
-  /** 0131: the older posts this post connects to (authors' links, entity identity, the judge), oldest first, 10 at most. */
   before?: MarkxBefore[];
-  /** 0131: how many more the list leaves out. */
   before_more?: number;
-  /** 0165 D: the post's subjects' previous events from their timelines (birth, last release, first outside mention). */
   before_timeline?: { entity: { id: string; name: string | null }; items: MarkxTimelineEvent[] }[];
 }
 
-/** 0165 C: one dated line of an entity's timeline, and why it is on the line. */
 export type MarkxTimelineKind = 'birth' | 'earlier_name' | 'renamed' | 'release' | 'first_outside' | 'outside' | 'story'
   | 'later' | 'back' | 'analysis' | 'in_story';
-/** 0165 C: what happened to the thing in a story about it (stop-v1). */
 export type MarkxStop = 'teaser' | 'preview' | 'launch' | 'availability' | 'update' | 'weights' | 'benchmark' | 'ranking'
   | 'adoption' | 'research' | 'incident' | 'deal' | 'analysis' | 'other';
 export interface MarkxTimelineEvent {
   kind: MarkxTimelineKind;
   at: string;
   rank: number;
-  /** One of the 8 most important (shown before "all"). */
   top?: boolean;
   post: { id: string; title: string | null; source: string | null; kind: string | null; url: string | null; byline?: Byline | null } | null;
   /** The name it was written as (birth, release), its earlier name (earlier_name), its name now (renamed). */
   name?: string | null;
-  /** Other reasons the same post is on the line (the birth may be the maker's release, the first outside mention). */
   also?: MarkxTimelineKind[];
   /** outside: the month's posts and sources; first_outside: found by a post linking back. */
   month?: string; n?: number; sources?: number; linked?: boolean;
-  /** story, later, back. */
   story?: string; mark?: 'x' | 'ix'; headline?: string | null; voices?: number;
   /** story (a stop on the line): what happened to it there, when shown (null: not shown); its share of the members. */
   stop?: MarkxStop | null; stop_by?: 'asked' | 'type'; share?: [number, number];
-  /** A post event inside a stop's story, or an analysis after it: that stop's story. */
   on?: string | null;
 }
 export interface MarkxTimeline {
   items: MarkxTimelineEvent[];
   shown: number;
+  /** False when only the top events are listed (the page asks ?all=true for every one). */
+  items_all?: boolean;
   total: number;
   earlier: { id: string; name: string | null; names: string[] }[];
 }
 
-/** 0131: one older post a post connects to (Stalker's first edges). `uncertain`: the judge's alone (label it). */
+/** GET /api/markx/posts/{id}/related: the posts nearest a post by its stored vector. `vector`: false when the
+ *  post has none yet; `guide`: its reading types it a tutorial or explainer. */
+export interface MarkxRelated {
+  post_id: string;
+  vector: boolean;
+  about?: string | null;
+  /** `about`: the page the post reports; `loose`: under the floor (the nearest, when few are close). */
+  items: { id: string; title: string; source: string; at: string | null; url: string | null; byline?: Byline | null;
+    cosine: number; guide: boolean; about?: boolean; loose?: boolean }[];
+}
+
+/** One older post a post connects to. `uncertain`: the judge's alone (label it). */
 export interface MarkxBefore {
   post_id: string;
   relation: string;
@@ -213,7 +205,6 @@ export interface MarkxBefore {
   label: 'right' | 'wrong' | null;
 }
 
-/** One Mark X job's state: a running run's start and stage, work waiting for a run, how the last run ended. */
 export interface MarkxJob {
   running: boolean;
   started_at: string | null;
@@ -222,7 +213,7 @@ export interface MarkxJob {
   wanted_at: string | null;
   finished_at: string | null;
   last: { ok?: boolean; error?: string; seconds?: number; skip_next?: string } | null;
-  /** 0188: failed runs in a row, shown failing from 3 on, and the next try after its backoff (absent from an older API). */
+  /** Failed runs in a row, shown failing from 3 on, and the next try after its backoff. */
   failures?: number;
   failing?: boolean;
   retry_at?: string | null;
@@ -235,35 +226,27 @@ export interface MarkxOverview {
     tokens: { calls: number; tokens_in: number; tokens_out: number; paid_usd: number; api_usd: number };
     failed: { kind: string; error: string | null; tasks: number }[];
     invalid: { kind: string; error: string | null; at: string }[];
-    /** stale (0188): silent for over 3 days (absent from an older API). */
     workers: { worker: string; last_contact: string | null; leased: number; stale?: boolean }[];
     last_run: { id: string; started_at: string; finished_at: string | null; code_version: string | null;
       counts: Record<string, unknown> | null } | null;
-    /** Mark X's jobs, run by insight-ingestion (issue 0112 Decided 10, 12); absent from an older API. */
     jobs?: Record<'decide' | 'candidates', MarkxJob>;
   };
   briefing: { day: string | null; briefings: { created_at: string; guide: string | null;
     lines: { text: string; keys: string[]; stories: string[]; rows?: string[] }[] }[] };
   entities: Record<'today' | 'week', { key: string; version: string | null; name: string; type: string | null; posts: number;
     voices: number; examples: { id: string | null; title: string | null; source: string | null; byline?: Byline | null }[] }[]>;
-  /** The read, entities and embed planners' window (issue 0112): days, or null for every post. */
   reading_window: { days: number | null; default: number };
-  /** 0144: how far back the decision run makes Mark X's own stories (absent from an older API). */
   story_window?: MarkxStoryWindow;
-  /** 0133: the entities guide switch (absent from an older API). */
   entities_guide?: MarkxEntitiesGuide;
-  /** 0164 C: the last run's entity invariants (absent from an older API; null before a run counted them). */
   entity_invariants?: MarkxEntityInvariants | null;
-  /** 0210: the re-ask guard's holds (absent from an older API). */
   holds?: MarkxHolds;
-  /** 0210: the features that read each kind's answers; an off one's kinds are not asked (absent from an older API). */
   consumers?: MarkxConsumer[];
 }
 
 export interface MarkxConsumer { feature: string; on: boolean; default: boolean; why: string; kinds: string[] }
 
-/** 0210: a kind's tasks planned in a day past `per_day` (null: no guard) that are not new posts' are held: asked after
- *  every other task (`low`), never (`stopped`), or as any task (`released`). */
+/** A kind's tasks planned in a day past `per_day` that are not new posts' are held: asked after every other task
+ *  (`low`), never (`stopped`), or as any task (`released`). */
 export type MarkxHoldState = 'low' | 'stopped' | 'released';
 export interface MarkxHolds {
   per_day: number | null;
@@ -272,19 +255,18 @@ export interface MarkxHolds {
     est_usd: number | null; reason: string }[];
 }
 
-/** 0164 C: what must hold after every entities run. `family_org`: the groups holding a product family and an org
- * (0 after the repair; `held`: those your own merges hold together), up to 10 listed. */
+/** What must hold after every entities run. `family_org`: groups holding a product family and an org (`held`:
+ * those your own merges hold together), up to 10 listed. */
 export interface MarkxEntityInvariants {
   at?: string | null;
   family_org?: { count: number; held: number; clusters: { id: string; name: string | null; family: string[]; org: string[] }[] };
   error?: string;
 }
 
-/** 0144 C: the labelled old stories' answers (first post older than 30 days when offered) and the recent ones'. */
 export interface MarkxSamplePrecision { right: number; wrong: number; missed: number; labelled: number; precision: number | null }
 
-/** 0144 A: the story window: the owner's days (null: everything), the window in force (after the fallback), how far
- *  back the backfill reached, and the old stories' precision that keeps "everything". */
+/** The story window: the owner's days (null: everything), the window in force, how far back the backfill
+ *  reached, and the old stories' precision that keeps "everything". */
 export interface MarkxStoryWindow {
   days: number | null;
   default: number;
@@ -297,18 +279,15 @@ export interface MarkxStoryWindow {
   min_labels: number;
 }
 
-/** 0133: which guide new entities tasks are asked under; `ready` false while a guide is the lab's placeholder. */
 export interface MarkxEntitiesGuide {
   guide: string;
   chars: number;
   rule: boolean;
   default: string;
-  arms: { guide: string; chars: number; rule: boolean; ready: boolean; /** 0133 v4.2: the lab's stated line. */ note?: string }[];
-  /** 0133 v4.2: ent-v4.2's running precision on its new entities, from the owner's labels (absent from an older API). */
+  arms: { guide: string; chars: number; rule: boolean; ready: boolean; /** The lab's stated line. */ note?: string }[];
   labels?: MarkxMentionPrecision;
 }
 
-/** 0133 v4.2: the owner's labels on a guide's new entities: all, and the second question's alone (Wilson 95%). */
 export interface MarkxPrecisionStat {
   labelled: number;
   right: number;
@@ -324,19 +303,17 @@ export interface MarkxMentionPrecision extends MarkxPrecisionStat {
   leave_at: { labelled: number; low: number };
 }
 
-/** POST /api/markx/settings/reading-window's answer. */
 export interface MarkxSettings {
   reading_window_days: number | null;
   default: number;
-  /** 0144: the story window's days (null: everything). */
   story_window_days?: number | null;
 }
 
-// ---- Labels (issue 0086 F): one tap on a Mark X News member (v10.22, 0216 D: the Labels queue removed) ----
+// ---- Labels: one tap on a Mark X News member ----
 
 export type MarkxFlag = 'wrong_story' | 'not_about' | 'ok';
 
-// ---- 0119 A3: entities (the list, an entity's page, the review queue) ------------------------------------------
+// ---- entities (the list, an entity's page, the review queue) ------------------------------------------------
 
 export interface MarkxEntityRef {
   id: string;
@@ -364,15 +341,14 @@ export interface MarkxEntityPost {
   url?: string | null;
   read?: boolean;
   roles?: string[];
-  /** 0144: false for a story's post that neither names the entity nor is by it. */
+  /** False for a story's post that neither names the entity nor is by it. */
   about?: boolean;
-  /** 0222: the 2-4 sentences of the post around its first mention of the entity, the mentions marked (`m`); null when
-   *  only its title names it. */
+  /** The 2-4 sentences around its first mention of the entity, mentions marked (`m`); null when only its title does. */
   context?: { t: string; m?: boolean }[] | null;
 }
 
-/** 0144 B2-B3: a Mark X story (mark x) or, for a post in none, its Mark IX story (mark ix), with every post, the
- *  original first: the entity's own earliest post (why `by`), else the root (Mark IX's outside page: why `origin`). */
+/** A Mark X story (mark x) or, for a post in none, its Mark IX story (mark ix), with every post, the original
+ *  first: the entity's own earliest post (why `by`), else the root (why `origin`). */
 export interface MarkxEntityStory {
   story: string;
   headline: string | null;
@@ -380,31 +356,27 @@ export interface MarkxEntityStory {
   newest: string;
   mark?: 'x' | 'ix';
   first_at?: string;
-  original?: { post: string | null; url: string | null; why: 'by' | 'origin' | 'root'; title?: string | null; stored?: string | null };
+  posts_total?: number;
+  joined?: string[];
+  original?: { post: string | null; url: string | null; why: 'release' | 'by' | 'origin' | 'root'; title?: string | null; stored?: string | null };
   posts: MarkxEntityPost[];
 }
 
-/** 0144 B1: the sources that are the entity (through its voice, or the owner's yes), and those offered. */
 export interface MarkxEntityBy {
   sources: { id: string; name: string | null; kind: string | null; via: 'voice' | 'owner' }[];
   proposed: { id: string; name: string | null; kind: string | null }[];
   posts: number;
 }
 
-/** 0168: the platforms a handle is keyed by (the same handle on two platforms is two accounts). */
 export type MarkxHandlePlatform = 'x' | 'github' | 'telegram' | 'bluesky' | 'hf';
 
-/** 0168: an entity's known handles (the owner's yes, its own sources' accounts) and the posts citing them. */
 export interface MarkxEntityHandles {
   known: { platform: MarkxHandlePlatform; handle: string; via: 'owner' | 'source'; display_name: string | null;
     first_seen: string | null; last_seen: string | null }[];
   posts: number;
-  /** Replies to them, hidden unless asked (`replies_shown`). */
   replies: number;
   replies_shown: boolean;
 }
-
-export type MarkxSampleAnswer = 'right' | 'wrong' | 'missed';
 
 export interface MarkxEntityRow extends MarkxEntityRef {
   voices: number;
@@ -426,66 +398,103 @@ export interface MarkxEntityList {
   items: MarkxEntityRow[];
   accuracy: MarkxEntityAccuracy;
   queue: number;
-  /** 0222: the open items Claude's review flagged for you (all you are asked). */
   flagged?: number;
 }
 
-/** Issue 0195: how many stories and posts in no story an entity's page lists (GET ...?stories_limit=&loose_limit=). */
 export interface MarkxEntityLimits { stories?: number; loose?: number }
 
+/** One line of an entity's brief, with the posts it rests on (n: the superscript) and their quotes. */
+export interface MarkxBriefLine {
+  thing: string;
+  text: string;
+  /** Shown apart from the text, never glued into it: a definition's stage and maker, a step's detail, a result's
+   * figures the line does not give */
+  note?: string | null;
+  cites: { post: string; n: number; quote?: string | null; quotes?: string[] }[];
+  sources: number;
+  who?: string[];
+}
+
+/** One measure of an entity over time (one name and unit); a `dispute` value differs from another post's for
+ * the same date and setting (both shown, never averaged). */
+export interface MarkxNumberSeries {
+  measure: string;
+  unit: string | null;
+  money: boolean;
+  posts: number;
+  disputes: number;
+  points: { at: string | null; as_of: string | null; value: number; range_to: number | null; shown: string;
+    setting: string | null; post: string; quote: string | null; dispute: boolean; n: number }[];
+}
+
+export interface MarkxEntityBrief {
+  what: MarkxBriefLine[];
+  how: MarkxBriefLine[];
+  results: MarkxBriefLine[];
+  points: { text: string; cites: number[] }[];
+  numbers?: MarkxNumberSeries[];
+  as_of: string | null;
+  posts: { id: string; n: number; title: string | null; url: string | null; at: string | null; source: string | null }[];
+  /** When its posts hold several things of the name, one brief a sense (the three lists above are then empty) */
+  senses?: MarkxBriefSense[];
+}
+
+export interface MarkxBriefSense {
+  label: string | null;
+  kind: string | null;
+  maker: string | null;
+  post_count: number;
+  what: MarkxBriefLine[];
+  how: MarkxBriefLine[];
+  results: MarkxBriefLine[];
+  numbers?: MarkxNumberSeries[];
+}
+
 export interface MarkxEntityPage {
+  brief?: MarkxEntityBrief | null;
   entity: MarkxEntityRef;
   asked: string;
   redirected: boolean;
   aliases: string[];
   maker: { id: string; name: string } | null;
   family: { id: string; name: string } | null;
-  versions: { id: string; name: string; version: string | null; variant: string | null; level: string }[];
+  versions: { id: string; name: string; version: string | null; variant: string | null; level: string;
+    settings?: { id: string; name: string; variant: string | null }[];
+    builds?: { id: string; name: string; build: string }[] }[];
   posts: number;
   voices: number;
   stories: MarkxEntityStory[];
   loose: MarkxEntityPost[];
-  /** Issue 0195: how many stories and posts in no story there are; `stories` and `loose` list the first ones. */
   stories_total?: number;
   loose_total?: number;
-  /** 0144 B4: the loose posts by role: subject or actor, by, venue / source / recommended, mentions. */
   loose_counts?: Record<'report' | 'by' | 'other' | 'mention', number>;
-  /** 0144 B1 (absent from an older API). */
   by?: MarkxEntityBy;
-  /** 0168 (absent from an older API). */
   handles?: MarkxEntityHandles;
-  /** 0144 C: old stories offered to label here (10 a page, 30 a day). */
-  sample?: { story: string; first_at: string | null; answer: MarkxSampleAnswer | null }[];
   sources: { id: string; name: string | null; kind: string | null; posts: number; reports: number; by?: boolean }[];
   surges: MarkxSurge[];
   accuracy: MarkxEntityAccuracy;
   queue: MarkxQueueItem[];
-  /** 0133: who published it, what it published, the posts citing it as evidence and those recommending it. */
   published_by?: { id: string; name: string; type: string | null }[];
   published?: { id: string; name: string; type: string | null }[];
   citing?: MarkxEntityPost[];
+  citing_total?: number;
+  recommending_total?: number;
+  published_total?: number;
   recommending?: MarkxEntityPost[];
-  /** 0138 A: its original (a paper or release page its posts link, found by rules), stored or not, and its other pages. */
   original?: MarkxOriginal | null;
   addresses?: { kind: 'paper' | 'code' | 'demo' | 'release' | 'package'; url: string; rule: string }[];
-  /** 0229: the papers and pages its posts cite (found by an identifier or a title, not its own page): never its original. */
   cited?: { kind: 'paper' | 'code' | 'demo' | 'release'; url: string; rule: string }[];
-  /** 0138: false when no post's current reading names it; `older` then lists the posts an earlier guide named it in. */
+  /** False when no post's current reading names it; `older` then lists the posts an earlier guide named it in. */
   current?: boolean;
   older?: MarkxOlderPost[];
-  /** 0138 E3: an org, person or document with 2+ works or 10+ posts: its sites, works and people. */
   rabbit_hole?: MarkxRabbitHole | null;
-  /** 0165 A: a product's components (things under it), with their posts. */
   components?: { id: string; name: string | null; type: string | null; posts: number }[];
-  /** 0165 C: its timeline (null under two dated events). */
   timeline?: MarkxTimeline | null;
-  /** 0220: its family's versions on one line (each line oldest version first; the line holding it first). */
   version_line?: MarkxVersionLine | null;
-  /** 0220: the relations posts state between it and other things (only the measured ones). */
   relations?: MarkxEntityRelation[];
+  relations_total?: number;
 }
 
-/** 0220: one version on a family's line: the name most posts use, its first post about it, how many posts name it. */
 export interface MarkxVersionStop {
   id: string;
   name: string;
@@ -498,7 +507,7 @@ export interface MarkxVersionLine {
   family: { id: string; name: string | null };
   lines: MarkxVersionStop[][];
 }
-/** 0220: a relation between two things, as posts state it (out: this thing -> other; in: other -> this thing). */
+/** A relation between two things, as posts state it (out: this thing -> other; in: other -> this thing). */
 export interface MarkxEntityRelation {
   relation: 'based_on' | 'released' | 'acquired' | 'part_of' | 'partnered_with';
   direction: 'out' | 'in';
@@ -513,6 +522,8 @@ export interface MarkxRabbitHole {
   works: { id: string; name: string; url: string | null; kind: string | null; stored: boolean; post_id: string | null }[];
   people: { id: string; name: string }[];
   left: { sites: number; works: number };
+  works_total?: number;
+  missing?: number;
 }
 
 export interface MarkxOriginal {
@@ -520,7 +531,6 @@ export interface MarkxOriginal {
   kind: 'paper' | 'release';
   /** How it was found: identifier (an arXiv id, a DOI), title, maker (its maker's own site), lookup. */
   rule: string;
-  /** The stored post at it; `collected` when Collect originals stored it. */
   post: { id: string; title: string | null; collected: boolean } | null;
   asked: { outcome: string; at: string } | null;
 }
@@ -534,13 +544,11 @@ export interface MarkxOlderPost {
   url: string | null;
   guide: string;
   span: string;
-  /** What the post's current reading names as its subjects instead. */
   now: { id: string | null; name: string; type: string | null }[];
 }
 
 export type MarkxEntityAnswer = 'same' | 'other_version' | 'different' | 'not_entity';
 
-/** 0164 A: the group (cluster) a queue item's name is in: its shown name and type, its names, its sides. */
 export interface MarkxEntityGroup {
   root: string;
   name: string | null;
@@ -557,9 +565,8 @@ export interface MarkxQueueSide extends MarkxEntityRef {
   group?: MarkxEntityGroup;
 }
 
-/** 0164 A: what `same` would do when it would put a product family and an org in one group: only the two names
- * join (`only_names`), each `apart` group staying apart `from` the other side; `needs_choice`: it can't (your own
- * earlier merge holds a name there, or the names are a family's and an org's). */
+/** What `same` would do to a product family and an org: only the two names join (`only_names`), each `apart`
+ * group staying apart `from` the other side; `needs_choice`: it can't (your earlier merge, or family vs org names). */
 export interface MarkxQueueJoin {
   mixes: boolean;
   only_names: boolean;
@@ -569,7 +576,7 @@ export interface MarkxQueueJoin {
 
 export interface MarkxQueueItem {
   id: string;
-  kind: 'alias' | 'collision' | 'rename' | 'handle';   // 0165 B: rename (a: the older name, b: the newer); 0168: handle (a only)
+  kind: 'alias' | 'collision' | 'rename' | 'handle';  // rename: a is the older name, b the newer; handle: a only
   a: MarkxQueueSide;
   b: MarkxQueueSide | null;
   proposal: 'same' | 'other_version' | 'different' | 'split';
@@ -579,13 +586,11 @@ export interface MarkxQueueItem {
   answered_at: string | null;
   created_at: string;
   join?: MarkxQueueJoin | null;
-  /** v10.18: who proposes the alias item: Haiku's answer with its own confidence, or a name rule (no confidence). */
   opinion?: { by: 'haiku'; relation?: string | null; confidence: number | null; rules: string[] }
     | { by: 'rule'; rules: string[] } | null;
-  /** 0222: Haiku's answer was about posts a side no longer holds (posts), or that can't be found on it now
-   *  (unmatched): not shown; the next run closes the item and asks again. */
+  /** Haiku's answer was about posts a side no longer holds, or that can't be found on it now: not shown; the
+   *  next run closes the item and asks again. */
   void?: 'posts' | 'unmatched' | 'head' | null;
-  /** 0222: flagged for you by Claude's review, with why. */
   flag?: { at: string; by: string; note: string | null } | null;
   evidence: {
     judge?: { relation?: string; confidence?: number; evidence?: string } | null;
@@ -594,9 +599,7 @@ export interface MarkxQueueItem {
     mentions?: { n: number; span: string; type: string; maker: string | null }[];
     split_runs?: number | null;
     runs?: number | null;
-    /** 0165 B: why a rename was asked (a shared address, the new post naming the old one). */
     asked_because?: string | null;
-    /** 0168: a handle question's (or a handle-named alias's) "Name (@handle)" pairs. */
     platform?: MarkxHandlePlatform;
     handle?: string;
     display?: string | null;
@@ -615,18 +618,15 @@ export interface MarkxEntityQueue {
   merges: { id: string; from: { id: string; name: string | null }; to: { id: string; name: string | null }; by: string;
     automatic: boolean; at: string; undone_at: string | null; confidence: number | null; kind?: 'same' | 'rename' }[];
   counts: { open: number; answered: Partial<Record<MarkxEntityAnswer, number>>; automatic_merges: number; automatic_undone: number;
-    /** 0222: the open items flagged for you. */
     flagged?: number };
   accuracy: MarkxEntityAccuracy;
-  /** Issue 0195: `open` is a page; the offset of the next one, null at the end (absent from an older API). */
   next_offset?: number | null;
-  /** 0222: flagged (yours, the default) or all (the operator's view). */
   view?: MarkxQueueView;
 }
 
 export type MarkxQueueView = 'flagged' | 'all';
 
-// ---- perspectives inside a story and the story sheet (issue 0119 B6-B7) ----------------------------------------
+// ---- perspectives inside a story and the story sheet ------------------------------------------------------------
 
 export type MarkxPerspectiveLabel = 'original' | 'new_facts' | 'opinion' | 'same' | 'not_this_story';
 export type MarkxPerspectiveAnswer = 'right' | 'wrong' | MarkxPerspectiveLabel;
@@ -692,7 +692,6 @@ export interface MarkxStoryPost {
   url: string | null;
 }
 
-/** 0250: one of a story's things: an entity its members' readings name, its best role there and how many name it. */
 export interface MarkxStoryThing {
   id: string;
   name: string;
@@ -705,7 +704,6 @@ export interface MarkxStoryThing {
 
 export interface MarkxStoryView {
   story: { id: string; headline: string | null; first_at: string | null };
-  /** 0250: the things in this story, subject first, then by how many members name them. */
   things?: MarkxStoryThing[];
   judged: boolean;
   sheet: MarkxSheet | null;
@@ -713,13 +711,10 @@ export interface MarkxStoryView {
   members: MarkxPerspectiveLine[];
   counts: { members: number; worth: number; same: number; copies: number; unjudged: number };
   posts: Record<string, MarkxStoryPost>;
-  /** 0181: the round-ups carrying a member as an item (display only, never a voice). */
   roundups?: { post: string; source: string | null; title: string | null; n: number; item: string }[];
-  /** 0219: what led to the story and what followed, each link typed and explained (only the relations shown). */
   chain?: MarkxChain;
 }
 
-/** 0219: how a later story relates to an earlier one about the same thing. */
 export type MarkxChainRelation = 'same_release' | 'same_event' | 'follows_up' | 'development' | 'reaction' | 'builds_on';
 
 export interface MarkxChainLink {
@@ -739,6 +734,21 @@ export interface MarkxChain {
   before_more: number;
   after_more: number;
   as_of: string | null;
+}
+
+export interface MarkxRowChainLink {
+  story: string;
+  relation: MarkxChainRelation;
+  reason: string | null;
+  headline: string | null;
+  first_at: string | null;
+}
+
+export interface MarkxRowChain {
+  before: MarkxRowChainLink[];
+  after: MarkxRowChainLink[];
+  before_more: number;
+  after_more: number;
 }
 
 export interface MarkxRate {

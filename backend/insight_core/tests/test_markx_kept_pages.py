@@ -1,7 +1,7 @@
-"""Issue 0198: kept pages. Mark X News is built by the jobs process after each decision run (and again when what it
-reads between runs changed) and sent as kept; an entity's page is built at its first open and kept. The kept bytes are
-the route's own answer, byte for byte; a changed input is never sent stale (the page is built as before); the first
-start, with nothing kept, answers as before. Invented names only; a _test database."""
+"""Kept pages (0198): Mark X News is built by the jobs process after each decision run (and when its inputs change
+between runs) and sent as kept; an entity's page is built at its first open and kept. Kept bytes are the route's own
+answer byte for byte; a changed input is never sent stale; with nothing kept the route builds as before. Invented
+names; a _test database."""
 from __future__ import annotations
 
 import json
@@ -41,13 +41,12 @@ def _raw(path, query=None):
 
 
 class _World(Ents, _Api):
-    """Two News rows over two stories with an entity named in them; the run finished. (test_markx_built.Stored's
-    helpers, not its tests.)"""
+    """Two News rows over two stories with an entity named in them; the run finished."""
     story, read, subject = built_tests.Stored.story, built_tests.Stored.read, built_tests.Stored.subject
 
     def setUp(self):
         super().setUp()
-        self.cur.execute("DELETE FROM mx_page_opens")   # 0232: the opens counted (no other test's table)
+        self.cur.execute("DELETE FROM mx_page_opens")   # the opens counted (no other test's table)
         self.addCleanup(self.cur.execute, "DELETE FROM mx_page_opens")
         self.run = repo.start_run(self.cur, code_version="test", config={})
         self.now = datetime.now(timezone.utc)
@@ -82,7 +81,7 @@ class _World(Ents, _Api):
         return news.kept_page(self.cur, only_differences=only, now=now or self.now)
 
     def current(self, only=True, now=None):
-        """0232: the view kept for the inputs now by this code (kept_page sends the newest kept one otherwise)."""
+        """The view kept for the inputs now by this code (kept_page sends the newest kept one otherwise)."""
         run, st = news.page_inputs(self.cur, now or self.now)
         return kept_pages.get(self.cur, "news", news._view_key(only), run, st)
 
@@ -123,7 +122,7 @@ class TheNewsPageKept(_World):
         repo.finish_run(self.cur, run, counts={})
         older = self.kept()
         self.assertIsNone(self.current())
-        self.assertIsNotNone(older)                                 # 0232: the last run's view meanwhile
+        self.assertIsNotNone(older)                                 # the last run's view meanwhile
         self.assertTrue(news.kept_missing(self.cur, self.now))
         self.assertEqual(self.keep()["run"], str(run))
         self.assertEqual(self.kept(), self.built())
@@ -137,7 +136,7 @@ class TheNewsPageKept(_World):
                 change()
             self.assertIsNone(self.current(), why)
             with mock.patch.object(news, "page", side_effect=AssertionError("News built in a request")):
-                self.assertEqual(self.kept(), before, why)          # 0232: the newest kept while the jobs build
+                self.assertEqual(self.kept(), before, why)          # the newest kept while the jobs build
             self.assertTrue(news.kept_missing(self.cur, self.now), why)
             self.keep()
             self.assertEqual(self.kept(), self.built(), why)        # kept again, with the change
@@ -172,8 +171,8 @@ class TheNewsPageKept(_World):
         self.assertEqual(self.kept(now=later), self.built(now=later))
 
     def test_a_deploy_sends_the_previous_codes_view_while_its_inputs_are_the_same(self):
-        """0232: a view kept by the code before a deploy is sent while its inputs are the same, and is missing for
-        the jobs process (built again by this code); an input changed, the newest is sent until then."""
+        """A view kept by the code before a deploy is sent while its inputs are the same, and is missing for the jobs
+        process; with an input changed, the newest is sent until rebuilt (0232)."""
         self.keep()
         body = self.kept()
         with mock.patch.object(kept_pages, "_code", "another deploy"), \
@@ -186,7 +185,7 @@ class TheNewsPageKept(_World):
             self.assertFalse(news.kept_missing(self.cur, self.now))
 
     def test_another_shapes_view_is_never_sent(self):
-        """0232: a view kept in another shape (news.SHAPE) is never sent, not even as the newest: built as before."""
+        """A view kept in another shape (news.SHAPE) is never sent, not even as the newest (0232)."""
         self.keep()
         with mock.patch.object(news, "SHAPE", "another shape"):
             self.assertIsNone(self.kept())
@@ -217,7 +216,7 @@ class TheJobsKeepNews(_World):
 
     def runner(self):
         runner = jobs.Runner(self._db(), spawn=False, plan_every=None)
-        runner.official_every = lambda: None   # 0209: official channels (never run here) would go first, overdue
+        runner.official_every = lambda: None   # official channels (never run here) would go first, overdue
         return runner
 
     def _db(self):
@@ -248,7 +247,7 @@ class TheJobsKeepNews(_World):
         states["decide"]["started_at"] = t0 - timedelta(minutes=10)
         self.assertEqual(jobs.due(states, t0, kept_missing=["news", "main_source"]), "news")
         states["news"]["started_at"] = t0 - timedelta(seconds=30)
-        self.assertIsNone(jobs.due(states, t0, kept_missing=["news", "main_source"]))          # 0199: not asked for
+        self.assertIsNone(jobs.due(states, t0, kept_missing=["news", "main_source"]))          # not asked for
         states["main_source"]["wanted_at"] = t0 - timedelta(minutes=1)
         self.assertEqual(jobs.due(states, t0, kept_missing=["news", "main_source"]), "main_source")
         self.assertIsNone(jobs.due(states, t0, kept_missing=["news"]))
@@ -257,15 +256,15 @@ class TheJobsKeepNews(_World):
         self.assertEqual(jobs.kept_due(states, ["news", "main_source"], t0, after_run=True), ["news"])   # when wanted
 
     def test_a_view_built_only_when_wanted_is_one_policy(self):
-        """0199: a "wanted" view (main_source; the Labels queue's policy before v10.22) is built (after a run or not)
-        only when its job was wanted since its last build: the same after-run step, no second path."""
+        """A "wanted" view (main_source) is built only when its job was wanted since its last build: the same after-run
+        step, no second path (0199)."""
         t0 = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
         states = {j: {"job": j, "wanted_at": None, "started_at": t0 - timedelta(hours=1), "stage": None,
                       "stage_at": None, "finished_at": None, "last": None} for j in jobs.JOBS}
         states["decide"]["started_at"] = t0 - timedelta(minutes=10)                  # no decision run due
         self.assertEqual([(v.job, v.when) for v in jobs.KEPT_VIEWS],
                          [("news", "always"), ("entities", "always"), ("tracks", "always"), ("unread", "always"),
-                          ("main_source", "wanted"), ("discover", "wanted")])   # 0206
+                          ("main_source", "wanted"), ("discover", "wanted")])
         self.assertEqual(jobs.kept_due(states, ["news", "main_source"], t0, after_run=True), ["news"])
         states["main_source"]["wanted_at"] = t0 - timedelta(minutes=1)
         self.assertEqual(jobs.kept_due(states, ["news", "main_source"], t0, after_run=True), ["news", "main_source"])
@@ -280,7 +279,8 @@ class TheEntityPageKept(_World):
         return EV.kept_entity_page(self.cur, eid or self.widget, now=now, **self.PARAMS)
 
     def built(self, eid=None, now=None):
-        return kept_pages.encode(EV.entity_page(self.cur, eid or self.widget, now=now, offer_sample=True, **self.PARAMS))
+        return kept_pages.encode(EV._short(EV.entity_page(self.cur, eid or self.widget, now=now, offer_sample=True,
+                                                         **self.PARAMS)))   # the default answer, its lists cut
 
     def test_built_at_the_first_open_then_sent_as_kept_byte_for_byte(self):
         first = self.open()
@@ -343,8 +343,8 @@ class TheEntityPageKept(_World):
 
 
 class OneKeptPageServesEveryLimit(_World):
-    """0232 (#13, #23): a request's limits are clamped into their caps, and one kept page an entity (built at the
-    caps) is cut to every request's limits, byte for byte the page built at those limits."""
+    """A request's limits are clamped into their caps, and one kept page an entity (built at the caps) is cut to every
+    request's limits, byte for byte the page built at those limits (0232)."""
 
     def setUp(self):
         super().setUp()
@@ -352,10 +352,10 @@ class OneKeptPageServesEveryLimit(_World):
             self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
 
     def test_the_limits_clamp_and_never_error(self):
-        self.assertEqual(EV.limits(), (50, 50, 100))
+        self.assertEqual(EV.limits(), (50, 20, 30))
         self.assertEqual(EV.limits(100000, 100000, 100000), (EV.BY_CAP, EV.STORIES_CAP, EV.LOOSE_CAP))
         self.assertEqual(EV.limits(-5, 0, -1), (0, 1, 1))
-        query = {"stories_limit": 100000, "loose_limit": 100000, "by_limit": 100000}
+        query = {"stories_limit": 100000, "loose_limit": 100000, "by_limit": 100000, "all": "true"}
         status, body, _ = _raw(f"/api/markx/entities/{self.widget}", query)
         self.assertEqual(status, 200)
         self.assertEqual(body, kept_pages.encode(EV.entity_page(
@@ -368,7 +368,7 @@ class OneKeptPageServesEveryLimit(_World):
                 dict(by_limit=1, stories_limit=2, loose_limit=3),
                 dict(by_limit=100000, stories_limit=100000, loose_limit=100000)]
         with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
-            got = [EV.kept_entity_page(self.cur, self.widget, **a) for a in asks]
+            got = [EV.kept_entity_page(self.cur, self.widget, whole=True, **a) for a in asks]
         self.assertEqual(built.call_count, 1)                       # one build serves them all
         for a, body in zip(asks, got):
             by, stories, loose = EV.limits(a["by_limit"], a["stories_limit"], a["loose_limit"])
@@ -389,6 +389,33 @@ class OneKeptPageServesEveryLimit(_World):
         self.assertEqual((cut["loose_total"], len(cut["stories"])), (3, 1))
         self.assertEqual([x["id"] for x in EV._cut(full, 0, 2, 1)["loose"]], ["r1"])
         self.assertEqual(EV._cut(full, 0, 2, 1)["loose_total"], 2)
+
+    def test_the_default_answer_lists_the_first_ones_and_all_answers_every_one(self):
+        """Each story's first posts, the first citing posts and works and the timeline's top events, each with its
+        total; ?all=true every one, from the same kept page (0277)."""
+        posts = [{"id": f"p{i}", "about": i in (7, 9)} for i in range(10)]
+        full = {"stories": [{"story": "s1", "original": {"post": "p8"}, "posts": posts},
+                            {"story": "s2", "original": None, "posts": posts[:2]}],
+                "loose": [], "loose_counts": {"report": 0, "by": 0, "other": 0, "mention": 0},
+                "citing": [{"id": f"c{i}"} for i in range(25)], "published": [{"id": f"w{i}"} for i in range(40)],
+                "rabbit_hole": {"works": [{"id": f"w{i}", "url": f"u{i}", "stored": i < 35} for i in range(40)]},
+                "relations": [{"other": i, "posts": i % 7} for i in range(70)],
+                "surges": [{"day": "d", "post_ids": ["p1"]}],
+                "timeline": {"items": [{"top": i < 3} for i in range(9)], "total": 9}}
+        short = EV._cut(full, 50, 20, 30)
+        s1, s2 = short["stories"]
+        self.assertEqual([p["id"] for p in s1["posts"]], ["p0", "p1", "p2", "p7", "p8", "p9"])   # in the block's order
+        self.assertEqual((s1["posts_total"], s2["posts_total"], len(s2["posts"])), (10, 2, 2))
+        self.assertEqual((len(short["citing"]), short["citing_total"]), (20, 25))
+        self.assertEqual((len(short["published"]), short["published_total"]), (30, 40))
+        hole = short["rabbit_hole"]
+        self.assertEqual((len(hole["works"]), hole["works_total"], hole["missing"]), (30, 40, 5))
+        self.assertEqual((len(short["relations"]), short["relations_total"]), (60, 70))
+        self.assertEqual(min(r["posts"] for r in short["relations"]), 1)   # the least stated are the ones left out
+        self.assertEqual(short["surges"], [{"day": "d"}])
+        self.assertEqual((len(short["timeline"]["items"]), short["timeline"]["items_all"]), (3, False))
+        whole = EV._cut(full, 50, 20, 30, whole=True)
+        self.assertEqual({k: v for k, v in whole.items() if k != "loose_total"}, full)
 
     def test_opens_are_counted_and_another_shape_is_never_sent(self):
         for _ in range(3):
@@ -416,8 +443,8 @@ class OneKeptPageServesEveryLimit(_World):
 
 
 class TheEntityListAndQueueKept(_World):
-    """0216 item 5: the entity list and the queue's first page kept by the jobs process (job "entities"), sent by the
-    routes byte for byte; built as before when nothing is kept for their inputs; with the most opened entity pages."""
+    """The entity list and the queue's first page kept by the jobs process (job "entities"), sent byte for byte; built
+    as before when nothing is kept for their inputs; with the most opened entity pages (0216)."""
 
     def keep(self):
         with self.conn.transaction():
@@ -461,9 +488,26 @@ class TheEntityListAndQueueKept(_World):
         with mock.patch.object(EV, "_entity_page", side_effect=AssertionError("built, not sent as kept")):
             EV.kept_entity_page(self.cur, self.widget)
 
+    def test_a_most_opened_page_is_built_once_a_run_not_at_every_list_build(self):
+        # a mark between runs makes the list and every page stale; the list is built again, the opened page only when
+        # opened (it has its row of this run)
+        EV.kept_entity_page(self.cur, self.widget)
+        self.keep()
+        self.merge(self.ent("Widget Five", "model"), self.widget)
+        self.assertTrue(EV.kept_missing(self.cur))                  # the list is due
+        with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            out = self.keep()
+        self.assertEqual(built.call_count, 0)                       # the hot page is not built between runs
+        self.assertEqual(out["built"], ["entities", "entity_queue"])
+        self.assertEqual((out["hot"]["pages"], out["hot"]["failed"]), (0, 0))
+        self.assertFalse(EV.kept_missing(self.cur))
+        with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            EV.kept_entity_page(self.cur, self.widget)              # opened: built for its inputs now, as before
+        self.assertEqual(built.call_count, 1)
+
 
 class TheFirstLookAfterADeploy(_World):
-    """0232 (#24): at the runner's start (a deploy), its first look builds News and the entity pages before any job."""
+    """At the runner's start (a deploy), its first look builds News and the entity pages before any job (0232)."""
 
     def test_the_after_deploy_views_go_first(self):
         from insight_core.tests._db import db_url
@@ -495,16 +539,16 @@ def _paths(value, at=""):
 
 
 class TheShapesAreNamed(_World):
-    """0232: a page kept by the previous code is sent after a deploy only while its key's shape is the same. The shape
-    of each such page (on this test's world) is frozen here with its SHAPE: a change of what the page answers fails
-    this test until its module's SHAPE is bumped and the new shape recorded (then an older page is never sent)."""
+    """A page kept by the previous code is sent after a deploy only while its shape is the same. Each page's shape is
+    frozen here with its SHAPE: a change fails this test until the module's SHAPE is bumped and the shape recorded."""
 
     def setUp(self):
         super().setUp()
         for i in range(4):
             self.subject(self.post(title=f"Widget 5 review {i}", at=self.now - (i + 2) * H), "Widget 5")
 
-    FROZEN = {"news": ("1", "f66eae3282fc8ecf"), "entity": ("2", "894f8df4804ab46a"),
+    # the entity answer's fields added by the request's cut (posts_total, citing_total, ...) are not kept
+    FROZEN = {"news": ("3", "89f3b3d2fda1404e"), "entity": ("9", "d5d63f7c85a8909f"),
               "entities": ("1", "4efd649ca53508be"), "entity_queue": ("1", "aa10ad3c5d2a3012")}
 
     def shapes(self):

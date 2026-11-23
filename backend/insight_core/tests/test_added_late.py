@@ -1,10 +1,7 @@
-"""A post its feed added late, with an earlier date (issue 0039, v10.13.13).
-
-A live read's new post dated more than ADDED_LATE_SLACK before the source's previous successful
-read was not in that read (every item a read returns is stored then): its feed added it after
-INSIGHT last looked, so it sorts at when it was first seen (surfaced_at = fetched_at), like the
-2-day rule's. Not on a source's first fetch, an archive's pages, a backlog page, or a page your
-other sources linked before (0058). A source switched to a new address has no previous read.
+"""A post its feed added late, with an earlier date (0039). A live read's new post dated more than ADDED_LATE_SLACK
+before the source's previous successful read was not in that read, so it sorts at when it was first seen
+(surfaced_at = fetched_at). Not on a source's first fetch, an archive's pages, a backlog page, or a page your other
+sources linked before (0058); a source switched to a new address has no previous read.
 """
 from __future__ import annotations
 
@@ -74,7 +71,7 @@ class AddedLateTests(unittest.TestCase):
     # ------------------------------------------------------------------ the rule
 
     def test_a_post_dated_before_the_previous_read_sorts_at_when_it_was_first_seen(self):
-        # The owner's case: read at 17:08 without the post dated 10:00; the next read stores it ~31 h after its date.
+        # read at 17:08 without the post dated 10:00; the next read stores it ~31 h after its date
         self.read_before(self.now - timedelta(hours=24))
         self.save(self.draft("late", self.now - timedelta(hours=31)))
         surfaced, fetched, _ = self.placed("late")
@@ -119,7 +116,7 @@ class AddedLateTests(unittest.TestCase):
         self.assertEqual((surfaced, published), (None, None))   # a later fetch's undated post sorts at its fetch
 
     def test_known_news_keeps_its_date(self):
-        # 0058: another source's post linked the page before it was first seen.
+        # another source's post linked the page before it was first seen (0058)
         with self.conn.cursor() as cur:
             cur.execute("""INSERT INTO posts (source_id, url, title, content, published_at, fetched_at)
                            VALUES (%s, %s, 'Links', 'A link post', now(), now() - interval '1 hour') RETURNING id""",

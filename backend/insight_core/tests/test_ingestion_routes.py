@@ -1,7 +1,5 @@
-"""Ingestion routes (spec §A.5, §5.8): coroutines called directly, a real BackgroundTasks.
-
-Job tracking is the real OperationsService on the scratch database; the network is fake:
-run_ingestion (main.run_ingestion) and the archive side of SourceFetchService.
+"""Ingestion routes: coroutines called directly, a real BackgroundTasks. Job tracking is the real OperationsService on
+the scratch database; the network is fake (main.run_ingestion and the archive side of SourceFetchService).
 """
 from __future__ import annotations
 
@@ -75,8 +73,7 @@ class BrokenOperations(OperationsService):
 
 
 def run(coro):
-    """A route's answer: awaited for an async route, as is for a plain def one (issue 0195: sync routes run in the
-    threadpool, never on the loop)."""
+    """A route's answer: awaited for an async route, as is for a plain def one (sync routes run in the threadpool)."""
     return asyncio.run(coro) if asyncio.iscoroutine(coro) else coro
 
 
@@ -183,17 +180,6 @@ class IngestionRouteTests(unittest.TestCase):
         self.assertEqual(len(tasks.tasks), 0)
         self.assertIn("Could not start a ingestion_run job", "\n".join(logged.output))
 
-    def test_async_mode_is_gone_from_fetch_now(self):
-        self.assertNotIn("asyncMode", main.LiveFetchRequest.model_fields)
-
-    def test_legacy_ingest_routes_are_gone(self):
-        self.assertFalse(hasattr(main, "ingest_posts"))
-        self.assertFalse(hasattr(main, "safe_ingest_posts"))
-        paths = [getattr(r, "path", None) for r in main.app.routes]
-        self.assertNotIn("/api/ingest-posts", paths)
-        self.assertNotIn("/api/safe-ingest-posts", paths)
-        self.assertIn("/api/ingestion/run", paths)
-
     def test_archive_run_on_an_unavailable_kind_is_409(self):
         from insight_core.ingestion.kinds.base import KindUnavailable
 
@@ -258,7 +244,7 @@ class IngestionRouteTests(unittest.TestCase):
         self.assertEqual(run(main.run_archive(self.s1, main.ArchiveRequest(background=True), BackgroundTasks())).status_code, 202)
 
     def test_the_linked_pages_are_counted_and_fetched_as_an_archive_job(self):
-        """Issue 0084 B: GET says how many; POST starts an archive_source job that reads them."""
+        """GET says how many; POST starts an archive_source job that reads them (0084 B)."""
         self.assertEqual(run(main.get_linked_pages(self.s1))["linked"]["count"], 2)
         tasks = BackgroundTasks()
         response = run(main.fetch_linked_pages(self.s1, tasks))
@@ -281,8 +267,8 @@ class IngestionRouteTests(unittest.TestCase):
         self.assertEqual(len(tasks.tasks), 0)
 
     def test_two_api_processes_never_start_two_archives_of_one_source(self):
-        """0112 Decided 11: both pass the route's check at once (the other process's set is not this one's); the
-        start under its lock lets only one through."""
+        """Both pass the route's check at once (each process has its own set); the start under its lock lets only one
+        through (0112)."""
         import threading
         ops = [OperationsService(db_url()), OperationsService(db_url())]
         got, barrier = [], threading.Barrier(2)

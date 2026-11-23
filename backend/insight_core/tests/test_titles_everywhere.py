@@ -1,10 +1,6 @@
-"""Titles everywhere, and one stuck job (issue 0070 C): Discover's articles and stories' outside origins
-are titled by one rule (tree_rules.origin_title) with the page's own words when a post quotes them
-(a quoted tweet's text, a link preview's title), a link post's title and a slug without its leading id;
-a job a restart ended is closed when its process starts again.
-
-The rules are tested as pure functions; Discover's titles and the jobs on the database in one
-transaction per test, rolled back (the jobs' test commits and cleans up after itself).
+"""Titles everywhere, and one stuck job (0070 C): Discover's articles and stories' outside origins are titled by one
+rule (tree_rules.origin_title); a job a restart ended is closed when its process starts again. Pure rules, then the
+database, rolled back (the jobs' test commits and cleans up after itself).
 """
 from __future__ import annotations
 
@@ -178,8 +174,8 @@ class DiscoverTitlesTests(unittest.TestCase):
 
 @requires_test_db
 class OneTitleEverywhereTests(unittest.TestCase):
-    """Issue 0072 D1: a post reads one title on every page that shows it, its HTML read everywhere,
-    and search's News filter lists a story's lines as News does."""
+    """A post reads one title on every page that shows it, and search's News filter lists a story's lines as News
+    does (0072)."""
     TITLE = "A new model is out today It runs on one [...]"   # the bridge's cut, its line break lost
     TEXT = "A new model is out today It runs on one card and costs less."
     HTML = "<b>A new model is out today</b><br>It runs on one card and costs less."
@@ -262,7 +258,7 @@ class OneTitleEverywhereTests(unittest.TestCase):
         self.assertEqual(seen, dict.fromkeys(seen, "A new model is out today"))
 
     def test_a_post_another_source_shared_has_its_story_on_its_page(self):
-        # Issue 0072 D4: one voice, copied by another source, reads "also shared by" on the post page too.
+        # one voice, copied by another source, reads "also shared by" on the post page too
         post = self._post(self._source("telegram"), title="A model doubles its limits", content="")
         copy = self._post(self._source("telegram"), minutes=-5, title="A model doubles its limits", content="")
         self._story(post, copy)

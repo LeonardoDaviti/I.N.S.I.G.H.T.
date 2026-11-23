@@ -1,10 +1,6 @@
-"""0208: a link post with no words of its own (a Reddit link post: its title and the page it shares) has its page read
-by the originals step (story_originals kind `linked`), and Mark X reads the post with that page's text
-(tasks.load_posts), its text stamp moving once the page is there (plan_marks.STAMP). A post with words of its own, a
-page stored already, a followed source's page and an old post are each handled as the step says.
-
-No network: FakeHttp answers every page. The tests commit rows, so they run only against a `_test` database; they
-own every source and post on the example sites below."""
+"""A link post with no words of its own has its page read by the originals step (kind `linked`), and Mark X reads the
+post with that page's text, its text stamp moving once the page is there (0208). No network: FakeHttp. The tests
+commit, so they run only against a `_test` database."""
 from __future__ import annotations
 
 import html as html_lib

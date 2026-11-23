@@ -1,15 +1,10 @@
-"""A post is read once, when it is saved (issue 0076): the one parser, its result one `post_parts`
-row per post that every page and the story job read.
+"""A post is read once, when it is saved: the one parser (`parse`), its result one `post_parts` row per post that
+every page and the story job read.
 
-The raw post (title, content, content_html) is what was observed and never changes; its parts are
-derived from it by the rules here (post_fields, post_links), again whenever those rules change
-(`parse_stamp`), so a parse can always be redone. Nothing else calls the read-time rules: a test
-fails if a page imports them (tests/test_post_parts.py, checks/compat.py aside).
-
-The shown bodies are stored as cut points into the raw columns (`Body`): the spans of the raw text
-kept, read after decoding its HTML codes (`decode_entities`) and joined by line breaks where the
-rule put one in for what it cut (`cut_leaves_break`); a copy only where neither says it. Measured
-on the lab (41,637 posts): 60.5% need no cut at all.
+The raw post (title, content, content_html) never changes; its parts are derived from it by the rules here
+(post_fields, post_links), again whenever those rules change (`parse_stamp`), so a parse can always be redone. Nothing
+else calls the read-time rules: a test fails if a page imports them. The shown bodies are stored as cut points into
+the raw columns (`Body`), a copy only where cut points can't say it.
 """
 from __future__ import annotations
 
@@ -33,7 +28,7 @@ LEAD_CHARS = 300   # a row's or a card's text (the feed shows 280: repo_reader.E
 _TAGS = re.compile(r"<[^>]+>")
 _ANCHOR = 32       # characters a cut is found again by (_cuts); not measured, any length is checked
 # A tweet's quote card as Nitter writes it (post_links.QUOTED): a rule, then a <blockquote> citing the
-# quoted tweet; and the quoted tweet's bare address in the text above it (issue 0070).
+# quoted tweet; and the quoted tweet's bare address in the text above it.
 _QUOTE_CARD = re.compile(r"\s*(?:<hr\s*/?>\s*)?<blockquote>(?:(?!</blockquote>).)*?<cite>.*?</blockquote>", re.I | re.S)
 _EMPTY_P = re.compile(r"<p>\s*</p>\s*", re.I)
 
@@ -78,7 +73,7 @@ def body_of(raw: Optional[str], want: Optional[str]) -> Body:
 
 
 def without_quote(html: Optional[str]) -> str:
-    """A tweet's HTML without its quote card and the quoted tweet's bare address (issue 0070)."""
+    """A tweet's HTML without its quote card and the quoted tweet's bare address."""
     quoted = quoted_tweet(html) or ""
     status = re.escape(quoted.rsplit("/", 1)[-1])
     out = _QUOTE_CARD.sub("", html or "", count=1)
@@ -88,7 +83,7 @@ def without_quote(html: Optional[str]) -> str:
 
 @dataclass
 class Parts:
-    """One post's `post_parts` row (migration 0060)."""
+    """One post's `post_parts` row."""
     title: str                          # the title every place shows (post_fields.post_title)
     title_from: str                     # feed field | first line | linked page | none
     lead: str                           # the shown text's start, as a row reads it (LEAD_CHARS)
@@ -96,7 +91,7 @@ class Parts:
     html: Body = field(default_factory=Body)   # ... and its HTML
     quoted: Optional[str] = None        # the tweet it quotes (normalized)
     quote_only: Optional[str] = None    # ... when it has nothing of its own
-    folds_into: Optional[str] = None    # ... and it is its own account's: no row of its own (issue 0076)
+    folds_into: Optional[str] = None    # ... and it is its own account's: no row of its own
     subject: Optional[str] = None       # a short reaction's quoted words, "<Name>: <title>": News's lead title
     opening: Optional[str] = None       # the text's start its stored title covered, when more than the title
     folded: Optional[Dict[str, Any]] = None   # a quote's post without the card (the post page, a thread's reply)
@@ -106,7 +101,7 @@ class Parts:
     reply_to: Optional[str] = None      # the account a tweet answers (Nitter's "R to @…")
     author: Optional[str] = None        # Reddit's poster (its footer)
     words: int = 0                      # the words of its HTML (a link post has few)
-    quoted_words: Dict[str, str] = field(default_factory=dict)   # page -> its own words as quoted (0070)
+    quoted_words: Dict[str, str] = field(default_factory=dict)   # page -> its own words as quoted
     warnings: List[str] = field(default_factory=list)            # where a rule guessed
 
     def digest(self) -> str:
@@ -178,8 +173,8 @@ def parse(title: Optional[str], content: Optional[str], html: Optional[str], url
 
 @lru_cache(maxsize=1)
 def parse_stamp() -> str:
-    """The rules the stored parts were made by (issue 0071's stamps): what the parser makes of the
-    sample's posts (utils/stamps.py). Another stamp parses every post again, writing only what changed."""
+    """The rules the stored parts were made by: what the parser makes of the sample's posts (utils/stamps.py).
+    Another stamp parses every post again, writing only what changed."""
     from . import stamps
     return stamps.fingerprint([asdict(parse(*post)) for post in stamps.PARSED])
 

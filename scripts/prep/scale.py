@@ -1,26 +1,18 @@
 """The server-scale copy (prep_scale, scripts/prepared-db.sh build scale): a migrated copy of prep_mxreal inflated
-to the server's size, as v10.16 slice M built it by hand (issue 0177; plan/research/load-v1016.md), committed and
-deterministic: every id, name, number and vector it writes is a hash of the source rows, so two builds from one
-snapshot and one ref make the same synthetic rows (aside from timestamps, and the ids the real story job and decision
-runs give what they make).
+to the server's size (0177), deterministic: every id, name, number and vector it writes is a hash of the source
+rows, so two builds from one snapshot and one ref make the same synthetic rows (timestamps and real-job ids aside).
 
     python /prep/scale.py [--steps posts,markx,tracks,stories,rounds] [--rounds N]
 
-Run in a backend image with the ref's code at /app and DATABASE_URL the copy (never an original). What it makes:
-  posts    every post cloned one and two years back (ids md5(id:yN), titles "[yN] ", addresses "#yN"), their parts
-           and links: 49,384 -> 148,152 posts
-  markx    the Mark X rows of the 0068 shape emptied, then for 7 posts in 8 (~129.6k): read-v2 and read-v3 readings,
-           ent-v4.2 entities answers and their mentions (5-8 a post, ~840k: two of the post's topic's names, the rest
-           Zipf over 230k names), bge-m3 vectors (300 topic centroids + noise, 1024-d, HNSW), embed/cite/translate/
-           embed_name tasks (real-sized inputs) to ~1.08M tasks and ~0.97M calls (3,000 failed tasks, ~2.6k invalid
-           calls, the rest open), ~440k post_post candidates, 1,500 older mx_runs; story window 400 days
-  tracks   4 topic tracks (5 sources each, probes with vectors, 100 owner labels, ~56k judged items)
+Run in a backend image with the ref's code at /app and DATABASE_URL the copy (never an original). Steps:
+  posts    every post cloned one and two years back (ids md5(id:yN), titles "[yN] ", addresses "#yN"), with
+           parts and links (3x the posts)
+  markx    Mark X rows rebuilt for 7 posts in 8: readings, entities answers and mentions, vectors, tasks and
+           calls at real sizes, post_post candidates, older mx_runs
+  tracks   4 topic tracks (sources, probes with vectors, owner labels, judged items)
   stories  Mark IX's full story job over every post (the real code)
-  rounds   --rounds N (default 0; SCALE_ARGS="--rounds 3" through prepared-db.sh): N decision runs (the real
-           decide.run; the first over the whole copy took over 1.5 h and 30 GB), each followed by a fake worker answering
-           the questions it planned
-           (check/join/pair/merge/connect/card/headline/track/cite, by a hash of the task): entities by identity's own
-           linking, Mark X stories, News
+  rounds   --rounds N (default 0): N real decision runs, each followed by a fake worker answering the questions
+           it planned by a hash of the task
 """
 from __future__ import annotations
 
@@ -53,7 +45,7 @@ def guard(conn) -> None:
     with conn.cursor() as cur:
         cur.execute("SELECT current_database()")
         name = cur.fetchone()[0]
-    conn.commit()   # never left idle in a transaction while the steps run (it held back vacuum for an hour)
+    conn.commit()   # never left idle in a transaction while the steps run (it holds back vacuum)
     if name in ("insight", "insight_lab") or name.startswith("insight_server_1105"):
         sys.exit(f"refusing to inflate {name}: an original")
 
@@ -110,8 +102,8 @@ SET session_replication_role = DEFAULT;
 ANALYZE posts; ANALYZE post_parts; ANALYZE post_links;
 """
 
-# The Mark X rows of the snapshot's 0068 shape (ent-v3, read-v2 on a few posts) emptied, as slice M did; the
-# per-post rows the backfills keep (handles, round-ups, units) stay and are completed by them.
+# The Mark X rows of the snapshot emptied; the per-post rows the backfills keep (handles, round-ups, units) stay
+# and are completed by them.
 KEEP_MX = ("mx_guides", "mx_settings", "mx_handle_refs", "mx_handle_pairs", "mx_handle_scans", "mx_roundups", "mx_units",
            "mx_attach", "mx_roundup_issues", "mx_workers")
 
@@ -325,8 +317,8 @@ def step_posts(conn):
         if cur.fetchone():
             say("posts: cloned already")
             return
-    # the three tables' secondary indexes dropped for the load and made again after it (a bulk build writes far less
-    # than 99k rows' index updates, which took 30 min on this disk); the definitions read from the copy itself
+    # the three tables' secondary indexes dropped for the load and made again after it (a bulk build is far
+    # cheaper than row-by-row index updates); the definitions read from the copy itself
     with conn.cursor() as cur:
         cur.execute("""SELECT i.indexrelid::regclass::text, pg_get_indexdef(i.indexrelid) FROM pg_index i
                         WHERE i.indrelid = ANY('{posts,post_parts,post_links}'::regclass[]) AND NOT i.indisunique
@@ -414,7 +406,11 @@ def fake_answer(t):
     if k in ("check", "join", "pair", "merge", "connect"):
         rel = ["same_event", "same_event", "same_event", "development", "reaction", "mention", "different", "different",
                "different", "cant_tell"][_h(t["input_hash"]) % 10]
-        return {"relation": rel, "confidence": 60 + _h(t["input_hash"], "c") % 40, "reason": "Synthetic answer."}
+        out = {"relation": rel, "confidence": 60 + _h(t["input_hash"], "c") % 40, "reason": "Synthetic answer."}
+        if t.get("guide") == "judge-read-v2":   # the post's own words, as the server checks them
+            from insight_core.markx import validate
+            out["post_quote"] = validate.judge_blocks(t.get("input") or "")[1][:60].strip()
+        return out
     if k == "card":
         return {"headline_en": "Story card " + t["input_hash"][:10], "actors": ["Acme"], "object": "thing",
                 "action": "did", "date": None, "summary_en": "A summary."}
@@ -466,8 +462,7 @@ def step_rounds(conn, rounds: int):
 def main_() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", default=",".join(STEPS))
-    # 0 by default: the first decision run over the whole copy (identity's full pass over ~130k read posts) took over
-    # 1.5 h and 30 GB of memory on the scratch server (2026-11-13); an agent measuring decision runs makes its own
+    # 0 by default: the first decision run over the whole copy takes hours and tens of GB
     ap.add_argument("--rounds", type=int, default=int(os.environ.get("SCALE_ROUNDS", "0")))
     args = ap.parse_args()
     sys.path.insert(0, "/app")

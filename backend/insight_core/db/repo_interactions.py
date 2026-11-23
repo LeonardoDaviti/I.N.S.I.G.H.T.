@@ -39,11 +39,8 @@ class PostInteractionsRepository:
         }
 
     def get_post_reader_state(self, cur: Cursor, post_id: str) -> Dict[str, Any]:
-        """Interaction-log aggregates plus the read-state projection (read_at, starred_at, later_at,
-        and resume_block of resume_blocks: where a long post was left, issue 0030).
-
-        `is_favorited` comes from the projection (post_reader_state.starred_at), which the
-        favorite endpoint writes; the interaction log stays the audit trail.
+        """Interaction-log aggregates plus the read-state projection (read_at, starred_at, later_at, resume_block).
+        `is_favorited` comes from post_reader_state.starred_at; the interaction log stays the audit trail.
         """
         query = """
             SELECT

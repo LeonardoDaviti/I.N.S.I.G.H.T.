@@ -5,11 +5,8 @@ import { WALK, WALK_MESSAGE, initialWalk, walkReducer } from './walk';
 /** While playing, the beat on each page before the next move: long enough to look. */
 export const DWELL_MS = 1200;
 
-/**
- * The walk's controls, wired to its frame: the studio posts `run` for each
- * step it starts and listens for the frame's `ready` and `done`, only from
- * that frame's window on this origin. Playing, it moves on after a beat.
- */
+/** The walk's controls: posts `run` for each step and listens for `ready` and `done` only from that frame's window
+ *  on this origin. Playing, it moves on after a beat. */
 export function useWalk() {
   const [state, dispatch] = useReducer(walkReducer, initialWalk);
   const frame = useRef<HTMLIFrameElement | null>(null);

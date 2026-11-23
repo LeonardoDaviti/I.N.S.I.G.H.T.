@@ -5,10 +5,8 @@ import { voicesApi } from '../services/voices';
 
 export const VOICES_KEY = ['voices'] as const;
 
-/**
- * The voice a reader scope is (issue 0132 A): `voice:<id>` that voice, `source:<id>` the voice that source is a
- * channel of (null when none); undefined while it loads, and for the Main feed and a track.
- */
+/** The voice a reader scope is (`voice:<id>`, or the voice a `source:<id>` belongs to; null when none);
+ *  undefined while it loads, and for the Main feed and a track. */
 export function useScopeVoice(scope: string): Voice | null | undefined {
   const [kind, id] = scope.split(':');
   const asks = (kind === 'voice' || kind === 'source') && Boolean(id);

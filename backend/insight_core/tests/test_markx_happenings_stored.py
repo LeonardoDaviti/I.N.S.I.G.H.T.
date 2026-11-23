@@ -1,15 +1,7 @@
-"""0175 (Stealth v10.16 slice H): stored happenings (mx_happenings, migration 0118).
-
-  - Rows: a reading, then its mentions, then a link each add a row when the key changes; the same key from a new basis
-    updates the row in place; old rows stay; the newest is the post's.
-  - Equivalence: on seeded random worlds put through links, merges, pins, undone merges, new mention sets and relinks,
-    0166's code (tests/legacy/happening_784d232.py) and the recompute (`compute`) give the same keys, `keys` (stored,
-    computed again where the basis moved) gives them too, and Pairing's happening source makes the same candidates
-    with the old code and the new (default groups and every group).
-  - The backfill: resumable, newest first, a sweep catching a merge, a code change keying every post again; the
-    candidates job's step in a savepoint.
-
-The DB part runs only on a database whose name ends in _test (it empties the mx_* tables inside its transaction)."""
+"""Stored happenings (0175, mx_happenings): a row is added when a post's key changes (the same key from a new basis
+updates in place, old rows stay, the newest is the post's); on seeded random worlds the legacy code, the recompute and
+the stored keys agree, and Pairing's candidates are the same; the backfill is resumable. The DB part runs only on a
+_test database."""
 from __future__ import annotations
 
 import contextlib
@@ -71,7 +63,7 @@ class _Db(unittest.TestCase):
 
     def post(self, source, hours, r, names, *, hooked=True):
         """A read post with its ent-v3 mentions: through tasks.record (the hook stores its key) or straight into the
-        tables (no key stored: the backfill's and the pool's unkeyed posts)."""
+        tables (no key stored)."""
         url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
         self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
                          "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
@@ -207,8 +199,8 @@ class Rows(_Db):
 
 @requires_test_db
 class Equivalence(_Db):
-    """0166's code, the recompute and the stored keys agree through every change a key's inputs see; Pairing's source
-    makes the same candidates with the old code and the new."""
+    """The legacy code, the recompute and the stored keys agree through every change a key's inputs see; Pairing's
+    source makes the same candidates with the old code and the new."""
 
     SEEDS = range(10)
     maxDiff = None

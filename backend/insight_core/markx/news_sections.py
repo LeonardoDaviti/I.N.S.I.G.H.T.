@@ -1,33 +1,12 @@
-"""Mark X News in sections (issue 0174, Stealth v10.16): Haiku divides the News page into 3-8 titled sections, and
-every row shows a Haiku headline.
+"""News in sections: Haiku divides the News page into titled sections, and every row shows a Haiku headline.
 
-**The question** (kind `news_sections`, guide news-sections-v1, one a call): the current News rows (the newest written
-run's, inside News' window, in News' own order: `news.rank_key`), each keyed r1..rN with its headline (`news.headlines`),
-its main entities and their types (the current entities of its posts, subjects before actors, most posts first), its
-kind of happening when one is read (`event_types.of_stories`, the event-type seam) and its voices; and the
-section titles of the last valid answer, each row saying the section it was in. Sphere-agnostic: no list of sections in
-code, the titles are Haiku's. The keys map back to rows through the ask (mx_news_section_asks: the row ids in key order).
-
-**When** (`plan`, the lease's planner, tasks.PLANNERS): when the current rows differ from the last asked ones by
-CHANGE_SHARE or more (new and removed rows over the last asked count), or never asked; at most once every EVERY; never
-while one is waiting (open or leased). A failed question does not count as the last asked one.
-
-**The answer** (`after_answer`, from tasks.record): one mx_news_sections row a section (keep everything), ordered by
-its most important row. `view` gives the page the newest answer's sections over the rows it shows, in the page's order;
-the rows the answer did not cover (added since) are `new`, shown first ("New since"). A pending question never holds
-the page back: the last valid sectioning is shown meanwhile.
-
-**Placement** (`place`, kind `news_place`, guide news-place-v1, issue 0197): between two sectionings, the rows the
-newest one does not cover (`unplaced`) are placed by one small question: the sections' titles (keyed s1..sM, each with
-its most important current headlines) and the new rows only (keyed r1..rK, the sections question's lines), answered
-row by row with a section key or "new". Asked when such rows exist and no full sectioning is due (CHANGE_SHARE) or
-waiting, at most once every PLACE_EVERY, never while one waits. Each placement is a row (mx_news_placements, keep
-everything) tied to the sectioning it placed into, so `last_sectioning` (the page, the next sections question) reads
-the sectioning with its placements, and a newer full sectioning supersedes them. A row answered "new" stays under "New
-since" until the next full sectioning.
-
-**Titles** (`title_rows`, the decision run's stage after News): every row still showing its lead's title has its
-headline task asked first (priority PRIORITY: the open ones raised, a missing one added); a failed one is counted.
+`plan` (a tasks.PLANNERS planner) asks the sections question (rows keyed r1..rN with headline, entities, type, voices
+and last section) when the rows changed by CHANGE_SHARE or more, at most once every EVERY, never while one waits;
+`after_answer` writes mx_news_sections (keep everything). `place` asks a small placement question for rows the newest
+sectioning does not cover; placements are tied to the sectioning they placed into and a newer full sectioning
+supersedes them. `view` gives the page the newest sections, uncovered rows as `new`; a pending question never holds
+the page back. `title_rows` (decision run stage after News) asks a row's headline first while it shows its lead's
+title. Section titles are Haiku's, never a list in code.
 """
 from __future__ import annotations
 
@@ -44,10 +23,9 @@ EVERY = timedelta(minutes=30)         # at most one question in this time
 PRIORITY = -1                         # first among its kind's open tasks (repo.lease_tasks: a caller's urgency)
 ENTITIES_SHOWN = 3
 HEADLINE_CHARS = 160
-NEW_SINCE = "New since"
 PLACE_KIND, PLACE_GUIDE = "news_place", "news-place-v1"
-PLACE_EVERY = timedelta(minutes=10)   # 0197: at most one placement question in this time
-EXAMPLES = 3                          # 0197: a section's most important current headlines shown with its title
+PLACE_EVERY = timedelta(minutes=10)   # at most one placement question in this time
+EXAMPLES = 3                          # a section's most important current headlines shown with its title
 
 
 # ---- the rows ------------------------------------------------------------------------------------------------
@@ -91,16 +69,15 @@ def _entities(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, List[Tuple[
 
 def _types(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Optional[str]]:
     """{row id: its kind of happening}: the event-type seam's story type over its posts (None: none has a type)."""
-    from insight_core.markx import event_types   # 0175: whichever guide gave the posts' types
+    from insight_core.markx import event_types
     if not any(r.get("posts") for r in rows):
         return {}
     return event_types.of_stories(cur, {str(r["id"]): [p["post_id"] for p in r.get("posts") or []] for r in rows})
 
 
 def last_sectioning(cur: Any) -> Optional[Dict[str, Any]]:
-    """The newest valid answer's sections with the rows placed into them since (0197): {task, call, at, sections:
-    [{title, rows}] in their order, placed: {row id: title}, kept_new: {row ids answered "new"}}; None: none yet. A
-    placed row follows its section's own rows; a row's newest placement counts."""
+    """The newest valid answer's sections with its placements: {task, call, at, sections: [{title, rows}], placed:
+    {row id: title}, kept_new: {row ids answered "new"}}; None: none yet. A row's newest placement counts."""
     cur.execute("""SELECT task_id::text, call_id::text, at FROM mx_news_sections
                     ORDER BY at DESC, call_id DESC LIMIT 1""")
     row = cur.fetchone()
@@ -244,7 +221,7 @@ def after_answer(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
     return len(got)
 
 
-# ---- placement (0197) ---------------------------------------------------------------------------------------
+# ---- placement ----------------------------------------------------------------------------------------------
 
 def unplaced(last: Optional[Dict[str, Any]], rows: Sequence[str]) -> List[str]:
     """The rows (ids, in their order) the sectioning `last` (with its placements) does not cover and no placement into
@@ -257,9 +234,8 @@ def unplaced(last: Optional[Dict[str, Any]], rows: Sequence[str]) -> List[str]:
 
 def place_due(section_asks: Sequence[Dict[str, Any]], place_waiting: bool, place_last: Optional[datetime],
               rows: Sequence[str], new: Sequence[str], now: datetime) -> Tuple[bool, str]:
-    """Whether to ask a placement now, and why (or why not): `section_asks` newest first (as `due` reads them), whether
-    a placement waits, when the newest placement was asked, the current rows and the unplaced ones. Never when a full
-    sectioning is waiting or due by its change rule (it supersedes placements); its 30 minutes do not hold one back."""
+    """Whether to ask a placement now, and why (or why not). Never when a full sectioning is waiting or due by its
+    change rule (it supersedes placements); its EVERY does not hold one back."""
     if not new:
         return False, "no new rows"
     if any(a["status"] in ("open", "leased") for a in section_asks):
@@ -304,8 +280,8 @@ def place_asks(cur: Any) -> Tuple[bool, Optional[datetime]]:
 
 
 def place(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
-    """The placement question for the rows the newest sectioning does not cover, when `place_due`: 1 when a task was
-    added, else 0. The cheap checks first: a waiting one or one asked within PLACE_EVERY reads no row."""
+    """The placement question for the uncovered rows when `place_due`: 1 when a task was added, else 0. The cheap
+    checks come first so a waiting or recent one reads no row."""
     from insight_core.markx import tasks
     now = now or datetime.now(timezone.utc)
     waiting, at = place_asks(cur)
@@ -360,9 +336,8 @@ def after_place(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, 
 # ---- the page -----------------------------------------------------------------------------------------------
 
 def view(cur: Any, items: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """The page's sections over its rows (`items`, in the page's order): {at, pending, groups: [{title, rows}], new}.
-    A section's place is its most important row's on the page; `new`: the rows no answer covered yet. No answer yet:
-    at None, no groups."""
+    """The page's sections over `items` (page order): {at, pending, groups: [{title, rows}], new}; a section sits at
+    its most important row; `new`: rows no answer covers. No answer yet: at None, no groups."""
     cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_news_section_asks a JOIN mx_tasks t ON t.id = a.task_id
                                    WHERE t.status IN ('open', 'leased'))""")
     pending = bool(cur.fetchone()[0])
@@ -385,10 +360,9 @@ def view(cur: Any, items: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 # ---- titles ---------------------------------------------------------------------------------------------------
 
 def title_rows(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, int]:
-    """Every current row still titled by its lead (no Haiku headline yet) gets its headline asked first: its open
-    headline tasks (by any of its posts) raised to PRIORITY, or, when none is open or leased, the row's own headline
-    question added at PRIORITY (news.row_headline_input: the page finds its answer by it). {untitled, raised, added,
-    waiting (leased now), failed}."""
+    """Every current row without a Haiku headline gets its headline asked first: its open headline tasks raised to
+    PRIORITY, or, when none is open or leased, the row's own headline question added (news.row_headline_input: the
+    page finds its answer by it). {untitled, raised, added, waiting, failed}."""
     from insight_core.markx import news, tasks
     now = now or datetime.now(timezone.utc)
     _run, rows = current_rows(cur, now)

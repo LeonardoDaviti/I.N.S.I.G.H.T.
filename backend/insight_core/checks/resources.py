@@ -1,25 +1,15 @@
-"""The jobs' resources on the check's copy (issue 0218): each job's own peak memory and seconds, as the jobs process
-runs it (a process of its own, `spawn`ed: markx/jobs.py `_job_main`), for the base and the head; the report fails a head
-over its budget or more than WORSE_BY worse than the base.
+"""The jobs' resources on the check's copy: each job's own peak memory and seconds, as the jobs process runs it (a
+spawned process of its own, markx/jobs.py `_job_main`), for the base and the head; the report fails a head over its
+budget or more than WORSE_BY worse than the base.
 
     python -m insight_core.checks.resources --db <scratch dsn> [--now ISO] [--json resources.json]
 
-The jobs, in this order, each in a fresh process (its peak is its own address space's high-water, utils/peak: what the
-server's job records say, `peak_mb`):
-  - `decide_full`: the decision run (the candidate finder, then decide.run) on the copy as the story job left it: the
-    first run on a copy has no kept state, so it is full (a deploy's first run, the night's). Recorded, compared with
-    the base, no budget of its own (a full run has jobs.CATCH_UP_LIMIT);
-  - `decide`: the next decision run, incremental (the state the first left): the hourly run's footprint;
-  - `stories`: Mark IX's story job, wanted (as a fetch that saved posts wants it), its originals and scouts left out
-    (they read the web: nothing is fetched in a check);
-  - `discover`: Discover's answer kept (its web reads off: INSIGHT_DISCOVER_READS=0).
-The decision runs' clock is the copy's (`--now`, decide's own clock patched in the child, as the measurement harness of
-0216 does). A version without a job (or its API) is "not measured" for it, never a failure.
-
-Budgets (BUDGETS, overridable with RESOURCE_BUDGETS='{"decide": {"peak_mb": 600, "seconds": 90}, ...}'): the decision
-run 600 MB and 90 s (incremental), the story job 300 MB, Discover 300 MB, at the server's size; the check's copy is
-smaller, so a head over them is over at any size. A head more than WORSE_BY (20%) above the base's peak or CPU seconds
-fails too, past a floor (FLOOR_MB, FLOOR_S: a few MB or seconds of noise never fail a check)."""
+The jobs, each in a fresh process (its peak is its own high-water, utils/peak): `decide_full` (the first decision run,
+full; compared, no budget), `decide` (the next, incremental), `stories` (Mark IX's story job, its web reads left out),
+`discover` (its web reads off), then `plan` (the background planners) and the kept views `news`, `entities` and
+`tracks` after those runs (0279 C3: each derived view has its own budget, so a rebuild that grows shows by name). The decision runs' clock is the copy's (`--now`). A version without a job is "not
+measured" for it, never a failure. BUDGETS (overridable with RESOURCE_BUDGETS JSON) are at the server's size; the
+check's copy is smaller, so a head over them is over at any size. Differences under FLOOR_MB / FLOOR_S never fail."""
 from __future__ import annotations
 
 import argparse
@@ -31,10 +21,16 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-JOBS = ("decide_full", "decide", "stories", "discover")
+JOBS = ("decide_full", "decide", "stories", "discover", "plan", "news", "entities", "tracks")
+# the kept views' and the plan job's: about 2x a run on the server (2026-11-23, its last runs: plan 15.5 CPU s / 232 MB,
+# news 13.5 / 204, entities 34.8 / 405, tracks 14.4 / 225; 0279 A)
 BUDGETS: Dict[str, Dict[str, float]] = {"decide": {"peak_mb": 600.0, "seconds": 90.0},
                                          "stories": {"peak_mb": 300.0},
-                                         "discover": {"peak_mb": 300.0}}
+                                         "discover": {"peak_mb": 300.0},
+                                         "plan": {"peak_mb": 400.0, "cpu_s": 30.0},
+                                         "news": {"peak_mb": 400.0, "cpu_s": 30.0},
+                                         "entities": {"peak_mb": 600.0, "cpu_s": 70.0},
+                                         "tracks": {"peak_mb": 400.0, "cpu_s": 30.0}}
 WORSE_BY = 0.20        # a head this much above the base (peak MB, CPU seconds) fails
 FLOOR_MB = 50.0        # ... unless the difference is under these
 FLOOR_S = 5.0

@@ -1,8 +1,9 @@
-"""0215: GET /api/operations/db-statements, the database's top statements (pg_stat_statements), read only."""
+"""GET /api/operations/db-statements, the database's top statements (pg_stat_statements), read only (0215)."""
 from __future__ import annotations
 
 import sys
 import unittest
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,7 +86,7 @@ class TopStatements(unittest.TestCase):
             self.assertEqual(out["indexes"][0]["index"], "mx_embeddings_pkey", "the indexes either way")
 
     def test_each_index_with_its_scans_and_the_buffer_settings(self):
-        """v10.22: whether an index earns its keep (0216 F) and the server's buffers, by a GET."""
+        """Whether an index earns its keep and the server's buffers, by a GET."""
         cur = FakeCursor(SEEN + [(False, False)])
         svc, patched = service(cur)
         with patched:
@@ -97,10 +98,72 @@ class TopStatements(unittest.TestCase):
         self.assertEqual(cur.seen[0][1], (OperationsService.INDEX_MB_SHOWN * 2 ** 20,))
 
 
+class SinceASnapshot(unittest.TestCase):
+    def tearDown(self):
+        ops_module._STATEMENT_BASES.clear()
+
+    def test_the_top_statements_since_a_snapshot_by_their_time_since(self):
+        """v10.42: ?snapshot=1 keeps the counts in the process; ?since=snapshot shows each statement's counts since,
+        the top by that time: a statement hot before and idle since is not shown."""
+        before = [(11, 100, 90000.0, 100, 10, 1, 0), (12, 10, 50.0, 10, 1, 0, 0)]
+        cur = FakeCursor(SEEN + [(True,), before, (True, True), (90050.0, 110), (SINCE,), []])
+        svc, patched = service(cur)
+        with patched:
+            svc.top_statements(snapshot=True, since=None)
+        self.assertIn("snapshot", ops_module._STATEMENT_BASES)
+        now = [(11, 100, 90000.0, 100, 10, 1, 0), (12, 30, 650.0, 40, 3, 2, 0), (13, 5, 100.0, 5, 0, 0, 1)]
+        cur = FakeCursor(SEEN + [(True, True), now, [(12, "SELECT $1"), (13, "UPDATE x SET y = $1")]])
+        svc, patched = service(cur)
+        with patched:
+            out = svc.top_statements(since="snapshot")
+        self.assertEqual((out["enabled"], out["total_ms"], out["calls"]), (True, 700.0, 25))
+        self.assertEqual([(x["id"], x["calls"], x["total_ms"], x["mean_ms"], x["statement"]) for x in out["statements"]],
+                         [("12", 20, 600.0, 30.0, "SELECT $1"), ("13", 5, 100.0, 20.0, "UPDATE x SET y = $1")])
+        self.assertEqual(out["since"], ops_module._STATEMENT_BASES["snapshot"][0])
+        self.assertFalse(any("pg_stat_statements_reset" in sql for sql, _ in cur.seen), "read only: never a reset")
+
+    def test_no_snapshot_says_so(self):
+        svc, patched = service(FakeCursor(SEEN))
+        with patched:
+            out = svc.top_statements(since="start")
+        self.assertEqual((out["enabled"], out["statements"]), (False, []))
+        self.assertIn("snapshot=1", out["reason"])
+
+    def test_a_snapshot_size(self):
+        """5,000 statements (pg_stat_statements.max's default) kept: measured here, a few MB at most."""
+        import tracemalloc
+        rows = [(k, 10, 1.5, 10, 3, 1, 0) for k in range(5000)]
+        tracemalloc.start()
+        with mock.patch.object(ops_module, "statement_counts", wraps=ops_module.statement_counts):
+            got = ops_module.statement_counts(FakeCursor([rows]))
+        size, _peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertEqual(len(got), 5000)
+        self.assertLess(size, 4 * 2 ** 20, size)
+
+
+class RouteTimings(unittest.TestCase):
+    def test_each_route_by_its_template(self):
+        """v10.42: the count and time of each route, keyed by its template, never a path's values."""
+        import main
+        from insight_core.tests._asgi import call
+        from insight_core.utils import route_timings
+        route_timings._ROWS.clear()
+        for _ in range(2):
+            call(main.app, "GET", "/api/version")
+        call(main.app, "GET", f"/api/operations/jobs/{uuid.uuid4()}")
+        call(main.app, "GET", "/api/no-such-route")
+        rows = {r["route"]: r for r in route_timings.snapshot()["routes"]}
+        self.assertEqual(rows["GET /api/version"]["count"], 2)
+        self.assertIn("GET /api/operations/jobs/{job_id}", rows)
+        self.assertIn("GET (unmatched)", rows)
+        self.assertTrue(all("-" not in k.split("/")[-1] or "{" in k for k in rows), "no uuid in a key")
+
+
 @requires_db
 class OnTheDatabase(unittest.TestCase):
     def test_every_statement_is_planned_for_its_values(self):
-        """0215: no generic plan for a prepared statement (an optional filter's index lost: 47 ms -> 4,224 ms)."""
+        """No generic plan for a prepared statement: an optional filter's index would be lost (0215)."""
         from insight_core.db import database
         with database.connection(db_url()) as conn:
             self.assertEqual(conn.execute("SHOW plan_cache_mode").fetchone()[0], "force_custom_plan")

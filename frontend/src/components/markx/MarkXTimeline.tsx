@@ -6,14 +6,14 @@ import type { MarkxEntityRelation, MarkxStop, MarkxTimeline, MarkxTimelineEvent,
   MarkxVersionLine } from '../../services/markx';
 import { bylineText } from '../../lib/byline';
 
-/** Why a line is on the timeline (0165 C), in words. */
+/** Why a line is on the timeline, in words. */
 const WHY: Record<MarkxTimelineKind, string> = {
   birth: 'first seen', earlier_name: 'last seen under its earlier name', renamed: 'first seen under its name now',
   release: 'release', first_outside: 'first outside mention', outside: 'outside mentions', story: 'story',
   later: 'later development', back: 'back in the news', analysis: 'analysis', in_story: 'named in a story',
 };
 
-/** What happened to the thing in a story (0165's stops), in words. */
+/** What happened to the thing in a story, in words. */
 const STOP: Record<MarkxStop, string> = {
   teaser: 'teaser', preview: 'preview', launch: 'launch', availability: 'availability', update: 'update',
   weights: 'weights', benchmark: 'benchmark', ranking: 'ranking', adoption: 'adoption', research: 'research',
@@ -77,12 +77,11 @@ export function timelineRows(items: MarkxTimelineEvent[]): { e: MarkxTimelineEve
 }
 
 /**
- * The entity page's Timeline (0165 C): every dated event INSIGHT holds about it, oldest first (its birth, its earlier
- * names, its releases, the outside mentions, the stories about it as stops with the posts inside them and the
- * breakdowns written on it, back in the news); the most important by default, "all" opens the rest (the stories that
- * only name it among them).
+ * The entity page's Timeline: every dated event INSIGHT holds about it, oldest first (its birth, earlier names,
+ * releases, outside mentions, the stories about it as stops with their posts and breakdowns); the most important by
+ * default, "all" opens the rest.
  */
-export function Timeline({ timeline }: { timeline: MarkxTimeline }) {
+export function Timeline({ timeline, onAll }: { timeline: MarkxTimeline; onAll?: () => void }) {
   const [all, setAll] = useState(false);
   const shown = all ? timeline.items : timeline.items.filter((e) => e.top);
   const left = timeline.total - shown.length;
@@ -107,17 +106,15 @@ export function Timeline({ timeline }: { timeline: MarkxTimeline }) {
       </ol>
       {left > 0 ? (
         <button type="button" className="mt-2 text-[0.8125rem] text-fg underline-offset-2 hover:underline"
-                onClick={() => setAll(true)}>All {plural(timeline.total, 'event')}</button>
+                onClick={() => { setAll(true); if (timeline.items_all === false) onAll?.(); }}>All {plural(timeline.total, 'event')}</button>
       ) : null}
     </section>
   );
 }
 
 
-/**
- * 0220: the family's versions on one line ("Orbit 2 -> Orbit 2.5 -> Orbit 3"), each with the month of its first post
- * about it; the page's own version marked, the others linked. A family running two numbered lines shows each.
- */
+/** The family's versions on one line ("Orbit 2 -> Orbit 2.5 -> Orbit 3"), each with the month of its first post; the
+ *  page's own version marked, the others linked. A family running two numbered lines shows each. */
 export function VersionLine({ line }: { line: MarkxVersionLine }) {
   return (
     <section aria-label="Version line">
@@ -145,11 +142,11 @@ const RELATION: Record<MarkxEntityRelation['relation'], [string, string]> = {
   part_of: ['Part of', 'Its parts'], partnered_with: ['Partnered with', 'Partnered with'],
 };
 
-/** 0220: how a relation reads from this thing's page (out: it -> the other thing; in: the other thing -> it). */
+/** How a relation reads from this thing's page (out: it -> the other thing; in: the other thing -> it). */
 const relationWords = (relation: MarkxEntityRelation['relation'], direction: MarkxEntityRelation['direction']) =>
   RELATION[relation][direction === 'out' ? 0 : 1];
 
-/** 0220: the relations posts state between this thing and others (only the measured ones reach the page), grouped. */
+/** The relations posts state between this thing and others (only the measured ones reach the page), grouped. */
 export function ThingLinks({ relations }: { relations: MarkxEntityRelation[] }) {
   if (!relations.length) return null;
   const groups = new Map<string, MarkxEntityRelation[]>();

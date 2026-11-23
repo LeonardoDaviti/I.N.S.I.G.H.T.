@@ -1,5 +1,5 @@
-"""Identity facts (issue 0184, markx/entity_facts.py), invented names: bare names, facts rows kept, placement by the
-stated maker, a split made into senses, makers stated in later posts, the readers behind the switch."""
+"""Identity facts (0184, markx/entity_facts.py), invented names: bare names, facts rows kept, placement by the stated
+maker, a split made into senses, makers stated in later posts, the readers behind the switch."""
 from __future__ import annotations
 
 import unittest

@@ -1,13 +1,11 @@
-"""One story, many sources (issue 0050): post links, the joining rules, roles, voices, the story
-job, the folded feed, read propagation, unread counts and Discover.
-
-The rules are tested as pure functions; the job, the feed and the counts on the database in
-one transaction per test, rolled back (the job regroups every post it sees, the test's own
-included, and nothing of it is kept). Assertions are scoped to the test's own rows.
+"""One story, many sources (0050): post links, the joining rules, roles, voices, the story job, the folded feed,
+read propagation, unread counts and Discover. Rules as pure functions; the job, feed and counts on the database in one
+rolled-back transaction per test, assertions scoped to the test's own rows.
 """
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import signal
 import sys
@@ -60,8 +58,8 @@ def ids(stories):
 @requires_db
 class TextCharsInSql(unittest.TestCase):
     def test_the_length_text_key_reads_without_decompressing(self):
-        """v10.22: story_rules.text_chars_sql is min(len(text), SAME_TEXT_MIN_CHARS) for any text (1-4 bytes a
-        character), what text_key reads, by octet_length where the bytes alone tell."""
+        """story_rules.text_chars_sql is min(len(text), SAME_TEXT_MIN_CHARS) for any text (1-4 bytes a character),
+        what text_key reads."""
         from insight_core.utils.story_rules import SAME_TEXT_MIN_CHARS as N, text_chars_sql
         texts = ["", "a" * (N - 1), "a" * N, "é" * (N - 1), "é" * N, "😀" * (N - 1), "😀" * N, "a" * (4 * N),
                  "é" * (2 * N - 1), "x" * 10000 + "é", None]
@@ -163,8 +161,7 @@ class JoiningRulesTests(unittest.TestCase):
                                             links=[("https://s1.test/2026/10/a-post", "a")])]), [], "its own voice")
 
     def test_a_cited_stored_post_with_a_one_segment_address_still_joins(self):
-        """Found on the server's data: @dennis_it cited blog.cloudflare.com/yandex-outage 2.8 hours
-        after Cloudflare posted it, and the one-segment address was taken for a profile page."""
+        """A post citing an article's one-segment address hours after it is a citation, not a profile page."""
         cited = post("cf", "cloudflare", site="cloudflare.com", hours=0)
         citer = post("tg", "dennis_it", kind="telegram", hours=2.8,
                      links=[("https://blog.cloudflare.com/yandex-outage", "cf")])
@@ -183,6 +180,24 @@ class JoiningRulesTests(unittest.TestCase):
         self.assertEqual(ids(stories), [["a", "r"], ["b", "c"]])
         self.assertEqual(stories[1].mentions, {"r"}, "the roundup counts for story 2 but is not in it")
         self.assertEqual(stories[0].mentions, set())
+
+    def test_a_told_roundup_joins_no_story_by_its_links(self):
+        """A post Mark X tags a round-up (3+ anchors) joins no story by citation or link, its first anchor too; it
+        mentions every story it lists. Untagged it joins its first; a tag on a post of fewer anchors changes
+        nothing."""
+        one, two, three = (f"https://news.example/2026/10/story-{n}" for n in (1, 2, 3))
+        cited = post("a", "s1", hours=1, url="https://s1.test/2026/10/the-first-story-told", links=[(one, None)])
+        posts = [post("r", "weekly", hours=2, roundup=True,
+                      links=[(cited.url, "a"), (two, None), (three, None)]),
+                 cited, post("b", "s2", hours=1, links=[(one, None)]),
+                 post("c", "s3", hours=2, links=[(two, None)]), post("d", "s4", hours=2, links=[(two, None)])]
+        stories = group(posts)
+        self.assertEqual(ids(stories), [["a", "b"], ["c", "d"]])
+        self.assertEqual([s.mentions for s in stories], [{"r"}, {"r"}], "it mentions both, its first one too")
+        untold = group([dataclasses.replace(p, roundup=False) for p in posts])
+        self.assertEqual(ids(untold), [["a", "b", "r"], ["c", "d"]], "untold, its first anchor joins it (0050)")
+        self.assertEqual(ids(group([post("t", "weekly", hours=2, roundup=True, links=[(cited.url, "a")]), cited])),
+                         [["a", "t"]], "a tag alone, with one link, is no roundup")
 
     def test_a_story_needs_two_sources(self):
         self.assertEqual(group([post("a", "s1", title="One two three four five"),
@@ -203,7 +218,7 @@ class RolesTests(unittest.TestCase):
 
 
 class NamedVoicesTests(unittest.TestCase):
-    """Issue 0082: a story's names are the voices its count counts, one each."""
+    """A story's names are the voices its count counts, one each (0082)."""
 
     NAMES = {"r1": "r/sub", "s1": "Blog One", "s2": "Blog One Feed", "s3": "Blog Three", "tg1": "Channel A",
              "tg2": "Channel B", "x1": "Account A", "x2": "Account B", "sv": "Saved"}
@@ -282,8 +297,8 @@ class DiscoverRulesTests(unittest.TestCase):
         self.assertEqual([s.key for s in found], ["x.com/nn_teacher"])
 
     def test_a_blog_with_posts_at_its_root_is_one_site(self):
-        """On the server's data blog.cloudflare.com (16 voices) was never suggested: its root-level
-        posts made it look like a platform of one-post "accounts". Publishers by year, likewise."""
+        """A blog whose posts sit at the root level is a publisher, not a platform of one-post "accounts"; publishers
+        by year likewise."""
         links = []
         for n in range(10):
             links += self.links("blog.cloudflare.com", ["v1", "v2", "v3"], [f"post-number-{n}-about-something"])
@@ -389,7 +404,7 @@ class StoryJobTests(unittest.TestCase):
         self.assertTrue(self.cur.fetchone()[0])
 
     def test_a_sites_linked_articles_are_its_hosts_article_links(self):
-        # Issue 0060: what Follow ranks a site's findings by.
+        # what Follow ranks a site's findings by (0060)
         site = f"lab-{self.mark}.test"
         source, other = self._source("A"), self._source("B")
         post = (self._link(f"https://www.{site}/blog/a-post-about-the-model") + self._link(f"https://{site}/about")
@@ -433,7 +448,7 @@ class StoryJobTests(unittest.TestCase):
         self.assertEqual(self.cur.fetchall(), before)
 
     def test_an_old_story_is_regrouped_too(self):
-        # Issue 0072 A: no window and no frozen stories; a change to a month-old post regroups its story.
+        # no window and no frozen stories; a change to a month-old post regroups its story (0072 A)
         old = self._source("Old")
         other = self._source("Other")
         title = f"An old story told twice {self.mark}"
@@ -450,8 +465,7 @@ class StoryJobTests(unittest.TestCase):
         return (SystemSettingsRepository.get(self.cur, SETTINGS_KEY) or ({}, None))[0].get("rebuild")
 
     def test_a_rebuilds_progress_counts_what_is_regrouped_with_posts_saved_meanwhile(self):
-        # 0215: the server showed done -1,132 of 157,752 (the posts at the rebuild's start less the redo: keys left,
-        # and every post saved since was queued with the rest). Now: what is regrouped of every post now.
+        # done counts what is regrouped of every post now, never negative (0215)
         self._launch()
         value = SystemSettingsRepository.get(self.cur, SETTINGS_KEY)[0]
         SystemSettingsRepository.upsert(self.cur, SETTINGS_KEY, {**value, "rules": "older rules"})
@@ -459,7 +473,7 @@ class StoryJobTests(unittest.TestCase):
         late, _ = self._post(self.simon, site="late", title="Saved while the rebuild runs")
         seen = []
         while self.service.advance(self.cur, Counter()):
-            self.service.settle_slice(self.cur)   # 0216: a quiet batch's progress is kept at its slice's end
+            self.service.settle_slice(self.cur)   # a quiet batch's progress is kept at its slice's end (0216)
             rebuild = self._rebuild()
             if rebuild and rebuild["phase"] == "stories":
                 self.cur.execute("SELECT count(*) FROM posts")
@@ -477,7 +491,7 @@ class StoryJobTests(unittest.TestCase):
         self.cur.execute("SELECT count(*) FROM story_queue WHERE key IN (%s, %s)", ("post:" + late, "redo:" + late))
         self.assertEqual(self.cur.fetchone()[0], 0, "the post saved meanwhile is regrouped too")
 
-    # ---- 0216: a rule change redoes what its parts need ------------------------------------------
+    # ---- a rule change redoes what its parts need (0216) ------------------------------------------
 
     def _set(self, **value):
         kept = SystemSettingsRepository.get(self.cur, SETTINGS_KEY)[0]
@@ -527,7 +541,7 @@ class StoryJobTests(unittest.TestCase):
     def test_a_key_rule_change_regroups_only_the_posts_whose_keys_moved(self):
         self._launch()
         before = self._rows()
-        # As the old rules kept them: one of the take's keys in another form, a name the lab's title no longer says
+        # as the old rules kept them: one of the take's keys in another form, a name the lab's title no longer says
         self.cur.execute("UPDATE story_keys SET key = 'u:https://old-form.test/' || %(mark)s WHERE post_id = %(id)s "
                          "AND key = (SELECT min(key) FROM story_keys WHERE post_id = %(id)s AND key NOT LIKE 'n:%%')",
                          {"mark": self.mark, "id": self.take})
@@ -577,14 +591,14 @@ class StoryJobTests(unittest.TestCase):
         self.assertEqual(self._made_by(), {rules_stamp()["grouping"]})
 
     def test_the_servers_rebuild_from_before_the_split_ends_by_one_news_pass(self):
-        # 0216: on the server since 2026-11-14: v10.17's rows (a single stamp), a rebuild by these rules begun for a
-        # News rule, past its names step, ~64% regrouped. Deploying 0216 must not regroup the rest.
+        # legacy rows (a single stamp) with a rebuild begun for a News rule, past its names step, partly regrouped:
+        # deploying the new rules must not regroup the rest (0216)
         from insight_core.services.stories_service import LEGACY_RULES, whole_stamp
         self._launch()
         before = self._rows()
         now = rules_stamp()
         StoriesRepository.redo_every_post(self.cur)
-        self.cur.execute("UPDATE story_queue SET queued_at = now() WHERE key LIKE 'redo:%%'")   # as v10.21 queued them
+        self.cur.execute("UPDATE story_queue SET queued_at = now() WHERE key LIKE 'redo:%%'")   # as queued before
         self.cur.execute("UPDATE post_edges SET made_by = %s", (whole_stamp(),))
         self._set(rules="v10.17", rebuild={"rules": whole_stamp(), "phase": "stories", "started_at": self.now.isoformat(),
                                            "done": 1, "total": 3, "queued": 3})
@@ -603,7 +617,7 @@ class StoryJobTests(unittest.TestCase):
         self.assertEqual(self._job()["changed"], 0, "as a full run makes it")
 
     def test_rows_of_a_listed_single_stamp_differing_in_news_redo_news_alone(self):
-        # 0216: the scale copy's case (v10.17's rows, no rebuild begun): the names and News, the connections relabelled
+        # legacy rows, no rebuild begun: the names and News redone, the connections relabelled (0216)
         from insight_core.services.stories_service import LEGACY_RULES
         self._launch()
         before = self._rows()
@@ -660,7 +674,7 @@ class StoryJobTests(unittest.TestCase):
         self._launch()
         [row] = self._feed()
         self.assertEqual(row["id"], self.lab)
-        # One name a voice (issue 0082): the channel's copy is the lab's voice, named once with it.
+        # one name a voice (0082): the channel's copy is the lab's voice, named once with it
         self.assertEqual([(s["name"], [w["name"] for w in s["with"]]) for s in row["story"]["sources"]],
                          [("Anthropic", ["A channel"]), ("Simon Willison", [])])
         self.assertEqual([(p["id"], p["role"]) for p in row["story"]["posts"]], [(self.copy, "share"), (self.take, "report")])
@@ -732,8 +746,8 @@ class StoryJobTests(unittest.TestCase):
 
 @requires_test_db
 class StoryJobYieldsTests(unittest.TestCase):
-    """v10.13.7: an incremental run stops after STEP_BUDGET_S with work left, then rests REST_AFTER_YIELD_S, so the
-    decision run (which waits for the story job's lock) gets its turn; a run with nothing left ends as before."""
+    """An incremental run stops after STEP_BUDGET_S with work left, then rests REST_AFTER_YIELD_S so the decision run
+    (which waits for the story job's lock) gets its turn; a run with nothing left ends as before."""
 
     def setUp(self):
         from insight_core.services import stories_service as S
@@ -789,14 +803,14 @@ class StoryJobYieldsTests(unittest.TestCase):
                 mock.patch.object(jobs, "mark_ix", lambda cur: {"locked": False, "rebuild": None}):
             with self._advance([False]):
                 self.assertEqual(self.service.recompute(), {"skipped": "a decision run's turn"})
-            # 0215: during this job's rebuild too (the rebuild holds no decision run, so the run can start)
+            # during this job's rebuild too (the rebuild holds no decision run, so the run can start)
             with mock.patch.object(jobs, "mark_ix", lambda cur: rebuild), self._advance([False]):
                 self.assertEqual(self.service.recompute(), {"skipped": "a decision run's turn"})
             with psycopg.connect(db_url()) as conn, conn.cursor() as cur:   # it started: the job goes on
                 cur.execute("UPDATE mx_jobs SET started_at = %s WHERE job = 'decide'", (self.now - timedelta(minutes=1),))
             with self._advance([False]):
                 self.assertNotIn("skipped", self.service.recompute())
-        with self._advance([False]):   # 0209: Mark X off: no decision run will start, nothing to step aside for
+        with self._advance([False]):   # Mark X off: no decision run will start, nothing to step aside for
             self.assertNotIn("skipped", self.service.recompute())
 
     def _restore_decide(self, saved):
@@ -828,7 +842,7 @@ class DiscoverServiceTests(unittest.TestCase):
     def test_suggested_then_hidden(self):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             for n in range(3):
-                source = insert_scratch_source(cur, enabled=True)   # on: your sources (issue 0200)
+                source = insert_scratch_source(cur, enabled=True)   # on: your sources
                 url = f"https://voice{n}-{self.mark}.test/p"
                 html = "".join(f'<a href="https://{self.site}/2026/10/the-story-{k}">The story {k}</a>' for k in range(2))
                 cur.execute("INSERT INTO posts (source_id, url, normalized_url, url_host, content_html, published_at) "
@@ -871,8 +885,7 @@ def _killed_in_the_job(url: str) -> None:
 
 
 class OwnProcessTests(unittest.TestCase):
-    """The story job runs in a process of its own (issue 0072), so the API and ingestion keep none
-    of what it read."""
+    """The story job runs in a process of its own (0072), so the API and ingestion keep none of what it read."""
 
     def test_the_job_runs_in_another_process_and_is_waited_for(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -891,7 +904,7 @@ class OwnProcessTests(unittest.TestCase):
         self.assertIn(f"exit code {-signal.SIGKILL}", logs.output[0])
 
     def test_a_fetch_run_only_wants_the_story_job(self):
-        # 0216: the jobs runner runs it (markx/jobs.py, in a process of its own); the fetch run's time is its fetch
+        # the jobs runner runs it (markx/jobs.py, in a process of its own); the fetch run's time is its fetch
         from insight_core.ingestion import default_runner
         from insight_core.markx.jobs import want_stories
 
@@ -906,8 +919,7 @@ class OwnProcessTests(unittest.TestCase):
 
 @requires_test_db
 class KilledJobTests(unittest.TestCase):
-    """A story job killed in its process (out of memory, issue 0072) writes nothing and holds
-    nothing: the next run recomputes."""
+    """A story job killed in its process (out of memory) writes nothing and holds nothing: the next run recomputes."""
 
     def _setting(self):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:

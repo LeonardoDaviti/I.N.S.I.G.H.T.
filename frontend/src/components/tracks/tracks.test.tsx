@@ -1,5 +1,4 @@
-// 0145 (tracks as topics, Mark X): the track's topic view (sections by sub-topic, Discover with its rank, joined by
-// INSIGHT, ✓ / ✗), a folder that is no topic yet, the sheet (describe, sub-topics), the sources it found, and the lines
+// Tracks as topics (0145): the topic view, a folder that is no topic yet, the sheet, the sources it found, the lines
 // in words. Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
@@ -205,5 +204,37 @@ describe("Discover's line (0145)", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(got).not.toHaveBeenCalled();
     expect(screen.queryByRole('region', { name: 'Sources your tracks found' })).toBeNull();
+  });
+});
+
+describe('v10.41: misleading examples and the review lane', () => {
+  it('flags the ✓ examples the description does not ask for, and says what the blind check decides', async () => {
+    const page: TrackPage = {
+      ...PAGE, counts: { ...PAGE.counts, checking: 40, checked_out: 7 }, discover_per_week: 25,
+      examples: { ...PAGE.examples, misleading: [{ post_id: 'p7', title: 'An electronics kitchen timer', why: 'A kitchen timer, not a print.' }] },
+    };
+    vi.spyOn(tracksApi, 'page').mockResolvedValue(page);
+    renderWithProviders(<TrackTopic folderId="f1" />, { api: makeFakeApi({}) });
+    const flagged = await screen.findByRole('region', { name: 'Examples that may mislead the judge' });
+    expect(flagged).toHaveTextContent('These examples may mislead the judge');
+    expect(within(flagged).getByRole('link', { name: 'An electronics kitchen timer' })).toBeInTheDocument();
+    expect(flagged).toHaveTextContent('A kitchen timer, not a print.');
+    const discover = screen.getByRole('region', { name: 'Discover' });
+    expect(discover).toHaveTextContent('each week’s 25 best of the last 4 weeks, for your review');
+    expect(discover).toHaveTextContent('40 more posts waiting for the blind check');
+    expect(footerLine(page.footer!, page.counts)).toContain('7 posts taken out by the blind check');
+  });
+
+  it('says where a post past the lane stands', () => {
+    const base = { track: 'f1', post: 'p1', confidence: 0.8, why: 'A desk tray.', label: null };
+    expect(whyLine({ ...base, state: 'checking' } as never)).toMatch(/^Waiting for the blind check/);
+    expect(whyLine({ ...base, state: 'checked_out' } as never)).toMatch(/^Out \(the blind check\)/);
+  });
+
+  it('shows no flag when every example fits', async () => {
+    vi.spyOn(tracksApi, 'page').mockResolvedValue({ ...PAGE, examples: { ...PAGE.examples, misleading: [] } });
+    renderWithProviders(<TrackTopic folderId="f1" />, { api: makeFakeApi({}) });
+    await screen.findByRole('region', { name: 'Discover' });
+    expect(screen.queryByRole('region', { name: 'Examples that may mislead the judge' })).toBeNull();
   });
 });

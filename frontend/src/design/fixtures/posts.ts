@@ -1,8 +1,5 @@
-/**
- * The post page's states as post details (Design Studio D5): an article, media,
- * a long title, the h1–h6 scale and a Telegram post with no title. The long
- * title borrows the break-ui worst post (`PostDetailPage.fixtures.ts`).
- */
+/** The post page's states as post details: an article, media, a long title (the break-ui worst post), the h1–h6
+ *  scale and a Telegram post with no title. */
 import type { Post, PostDetailResponse } from '../../services/api';
 import { postFixtureDetail } from '../../pages/PostDetailPage.fixtures';
 import { sourceId } from './sites';
@@ -112,7 +109,7 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
       return detail('p-headings', { title: 'The prose scale, h1 to h6', content_html: HEADINGS, content: HEADINGS.replace(/<[^>]+>/g, '') }, now);
     case 'missing-title':
       return detail('p-missing-title', {
-        // Stored with no title: the API's title is the text's first line (display_title).
+        // stored with no title: the API's title is the text's first line (display_title)
         title: TELEGRAM.split('\n')[0],
         source_id: sourceId('s-newz'),
         source: 'https://t.me/s/ai_dispatch',
@@ -123,7 +120,7 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         url: 'https://t.me/ai_dispatch/3150',
       }, now);
     case 'teaser':
-      // Issue 0140: the feed's written abstract, its page built by a script that holds no data to read.
+      // the feed's written abstract, its page built by a script that holds no data to read
       return detail('p-teaser', {
         title: 'Serving a sparse model with wide expert parallelism',
         source_display_name: 'An example project blog',
@@ -134,15 +131,14 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         teaser_reason: 'its page needs a script to show the article',
       }, now);
     case 'story':
-      // Covered by (issue 0055) and a link to a stored post (issue 0057): a Russian/English story.
+      // Covered by and a link to a stored post: a Russian/English story
       return detail('p-story', {
         title: 'Introducing Kimi K3.1 Pro',
         url: 'https://simonwillison.net/2026/Oct/23/kimi-k31-pro/',
         content_html: STORY_HTML,
         content: STORY_HTML.replace(/<[^>]+>/g, ''),
         internal_links: { 'https://t.me/data_whispers/9951': 'p-article' },
-        // A tree (issue 0064): the origin is Kimi's own page, outside INSIGHT, that 8 posts link;
-        // this post is one of them; a forward hangs under the post it copies.
+        // a tree: the origin is Kimi's own page outside INSIGHT that 8 posts link; a forward hangs under what it copies
         story: {
           id: 'p-story-ai-newz', voices: 4, first: null, parent_id: null, parent_reason: 'citation',
           origin: { url: 'https://kimi.ai/blog/kimi-k3-1-pro', title: 'Introducing Kimi K3.1 Pro', linked_by: 8 },
@@ -156,7 +152,7 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         },
       }, now);
     case 'thread':
-      // An X thread (issue 0066): oddlogic_games' first post, then its five replies to itself, in order.
+      // an X thread: the first post, then its five replies to itself, in order
       return detail('p-bg', {
         title: 'software is dead. sad.', content: 'software is dead. sad.', content_html: '<p>software is dead. sad.</p>',
         source_id: sourceId('s-bg'), source: 'https://nitter.local/oddlogic_games/rss', source_display_name: 'oddlogic_games',
@@ -165,7 +161,7 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         story: {
           id: 'p-bg', voices: 1, first: 'p-bg', parent_id: null, parent_reason: null, origin: null, thread: true,
           sources: [{ id: sourceId('s-bg'), name: 'oddlogic_games' }],
-          // Each reply as stored (issue 0068): read as the post's body is.
+          // each reply as stored: read as the post's body is
           posts: THREAD_REPLIES.map(([id, text, hoursAgo], i) => ({
             ...storyPost(id, 'oddlogic_games', text.split('\n')[0], 'report', now, hoursAgo, false), text,
             html: `<p>${text.replace(/\n/g, '<br>\n')}</p>`,

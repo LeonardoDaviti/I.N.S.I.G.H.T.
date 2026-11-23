@@ -11,17 +11,17 @@ interface PostNavProps {
   step?: { onPrevious: (() => void) | null; onNext: (() => void) | null };
 }
 
-/** Under 360px the sticky row also holds the Aa control (issue 0045), so Previous and Next keep
- *  only their arrows there (the words stay their names); the row after the post has room. */
-const STEP_LABEL = 'max-[359px]:sr-only';
+/** The sticky row also holds the post's actions and Aa, so under 640px Back, Previous and Next keep only their
+ *  arrows there (the words stay their names). */
+const STEP_LABEL = 'max-sm:sr-only';
 
-/** Back / Previous / Next on the post page, on one line at every width (issue 0010). */
+/** Back / Previous / Next on the post page, on one line at every width. */
 export default function PostNav({ label, size, backLabel, onBack, step }: PostNavProps) {
   return (
     <nav aria-label={label} className="-ml-2.5 flex min-w-0 flex-nowrap items-center gap-1">
       <Button variant="ghost" size={size} onClick={onBack} title="Back (u)">
         <ArrowLeft aria-hidden="true" />
-        {backLabel}
+        <span className={size === 'sm' ? STEP_LABEL : undefined}>{backLabel}</span>
       </Button>
       {step ? (
         <>

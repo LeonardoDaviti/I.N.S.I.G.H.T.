@@ -1,5 +1,5 @@
-"""The stored structure of a post (issue 0076: `post_parts`, written by utils/post_parser.py at save):
-what the pages read, with no parser. A shown body is stored as cut points into its raw column (Body)."""
+"""The stored structure of a post (`post_parts`, written by utils/post_parser.py at save): what the pages read, with
+no parser. A shown body is stored as cut points into its raw column (Body)."""
 from __future__ import annotations
 
 import html as html_lib

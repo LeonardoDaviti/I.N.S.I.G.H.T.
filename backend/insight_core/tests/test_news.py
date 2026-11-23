@@ -1,10 +1,7 @@
-"""News and Classics (issue 0051): the score, the name rule, News stories, classics, cited again,
-Hide, Background, Discover's order and track scoping.
-
-The rules are tested as pure functions; the job and the views on the database in one transaction
-per test, rolled back (the job regroups every post it sees, the test's own included, and nothing
-of it is kept). Assertions are scoped to the test's own rows. Discover's order needs committed
-rows (its service opens its own connections): that class runs only on a `_test` database.
+"""News and Classics (0051): the score, the name rule, News stories, classics, cited again, Hide, Background,
+Discover's order and track scoping. Rules as pure functions; the job and views on the database in one rolled-back
+transaction per test, assertions scoped to the test's own rows. Discover's order needs committed rows, so that class
+runs only on a `_test` database.
 """
 from __future__ import annotations
 
@@ -62,6 +59,24 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(lead([("a", "share"), ("b", "share")]), "a")
         self.assertIsNone(lead([]))
 
+    def test_a_row_is_led_by_its_earliest_report_and_starts_at_its_earliest_post(self):
+        # a preview its reading says is no report, a saved page with no text and a reply that is only a link never
+        # lead while a post reports the event; the row still starts at its earliest post
+        from insight_core.utils.story_rules import lead_order, story_times
+        preview = post("a", "seo", title="Acme Q3 earnings: what to expect", report=False)
+        saved = post("b", "me", kind="saved", hours=1, title="Acme")
+        link = post("c", "fan", hours=2, title="R to @acme: https://acme.example/q3")
+        report = post("d", "wire", hours=3, title="Acme reports Q3 revenue up 12%", report=True)
+        later = post("e", "blog", hours=4, title="Acme's Q3, read closely")
+        ps = [later, report, link, saved, preview]
+        times = story_times(ps)
+        self.assertEqual([p.id for p in lead_order(ps, times)], ["d", "a", "b", "c", "e"])
+        self.assertEqual([p.id for p in lead_order([preview, saved, link], times)], ["a", "b", "c"],
+                         "no report: the earliest that says something")
+        self.assertEqual(lead_order([later, preview], times)[0].id, "e", "an unread post may lead")
+        rows = news(ps, [Story(id="a", first_at=T0, posts=ps, voices=0, roles={}, reasons={}, mentions=set())], [])
+        self.assertEqual((rows[0].id, rows[0].first_at), ("d", T0))
+
     def test_a_roundup_leads_no_row_with_a_report_but_an_origin_always_leads(self):
         posts = [("digest", "report"), ("a", "share"), ("b", "report")]
         self.assertEqual(lead(posts, roundups=["digest"]), "b", "issue 0083: the weekly digest is passed over")
@@ -71,8 +86,8 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(lead([("r1", "report"), ("r2", "report")], roundups=["r1", "r2"]), "r1")
 
     def test_without_an_origin_the_first_share_of_its_page_leads(self):
-        """Issue 0103: no post roots the row (its stories start at an outside page): the first post
-        sharing that page leads, before the first report. An origin still leads; a roundup never does."""
+        """No post roots the row (its stories start at an outside page): the first post sharing that page leads,
+        before the first report. An origin still leads; a roundup never does (0103)."""
         posts = [("early", "share"), ("hub", "share"), ("talk", "report"), ("blog", "report")]
         self.assertEqual(lead(posts, sharers=["hub", "blog"]), "hub", "the release page's share, not the later complaint")
         self.assertEqual(lead(posts), "talk", "no page shared: the first report, as before")
@@ -125,8 +140,8 @@ class NameTests(unittest.TestCase):
                          ["steam frame"])
 
     def test_a_name_already_in_use_does_not_surge(self):
-        # Measured on the server's data: a name said twice or more in the 30 days before its burst
-        # was a real story about a quarter of the time ("has been", "world cup", "open weights").
+        # measured: a name said twice or more in the 30 days before its burst was a real story about a quarter of
+        # the time
         said = [post(f"u{n}", "s1", hours=-78 - 30 * n, title="Steam Frame rumours") for n in range(2)]
         everyone = followed("s1", "s2", "s3")
         self.assertEqual(surges(said + self.burst(), everyone), [], "said twice before")
@@ -145,7 +160,7 @@ class NameTests(unittest.TestCase):
                          ["meta vr glasses", "vr glasses"], "a longer name covering fewer posts keeps both")
 
     def test_a_name_said_inside_a_joined_word_is_in_its_burst(self):
-        # Issue 0083: a repo's name ("org/Model-V4.1-Flash-1017") says "flash 1017"; it was one word.
+        # a repo's name ("org/Model-V4.1-Flash-1017") says "flash 1017", not one word (0083)
         posts = self.burst("Model V4.1 Flash 1017 is out", sources=("s1", "s2", "s3"), hours=(0, 5, 30))
         posts.append(post("slug", "s4", hours=6, title="org/Model-V4.1-Flash-1017 · Weights"))
         self.assertIn("flash 1017", phrases("org/Model-V4.1-Flash-1017 · Weights"))
@@ -155,7 +170,7 @@ class NameTests(unittest.TestCase):
         self.assertTrue(all("slug" in ids for ids in found.values()), found)
 
     def test_phrases_among_is_the_phrases_wanted(self):
-        """0199: the incremental judge's phrases are made only from runs that may say a wanted name; the same set."""
+        """The incremental judge's phrases are made only from runs that may say a wanted name; the same set (0199)."""
         from insight_core.utils.news_rules import phrases_among
         titles = ["org/Model-V4.1-Flash-1017 · Weights", "GPT-6.1 Terra and GPT 6.1 terra", "-- Nov 2026 --",
                   "Meta VR Glasses are here", "", None, "Opus 5.5: the review"]
@@ -164,8 +179,7 @@ class NameTests(unittest.TestCase):
             self.assertEqual(phrases_among(t, wanted), phrases(t) & wanted, t)
 
     def test_a_date_is_no_name(self):
-        # Issue 0111: "<month> <year>" surged and joined a column's dated issue with an unrelated question
-        # (the three date surges on the server's copy, all three of unrelated posts).
+        # "<month> <year>" surges must not join a column's dated issue with an unrelated question (0111)
         for title, date in (("Column: Autodoxing (02 Nov 2026)", ("02 nov", "nov 2026", "02 nov 2026", "autodoxing 02 nov")),
                             ("The best small model at Nov 2026?", ("nov 2026",)), ("Roundup #44: July 2026", ("july 2026",)),
                             ("Notes from March 20, 2026", ("march 20", "march 20 2026")), ("June 10th update", ("june 10th",)),
@@ -181,8 +195,8 @@ class NameTests(unittest.TestCase):
 
 
 class OwnerTests(unittest.TestCase):
-    """Issue 0111: a followed source's other channels are one owner, by 0109's rule (a name of one in the
-    other's own place, and a link between them), and two sources of one place are one."""
+    """A followed source's other channels are one owner (a name of one in the other's own place, and a link between
+    them), and two sources of one place are one (0111)."""
 
     channels = [("blog", "site", "Jane Doe Blog", None, "janedoe.example"),
                 ("yt", "youtube", "@JaneDoe", "youtube.com/@janedoe", ""),
@@ -212,7 +226,7 @@ class OwnerTests(unittest.TestCase):
 
 class NewsStoriesTests(unittest.TestCase):
     def test_one_owners_channels_are_one_voice(self):
-        # Issue 0111: a person's video channel and blog, one News voice; the row of only them is no News
+        # a person's video channel and blog, one News voice; the row of only them is no News (0111)
         page = "https://news.example/2026/10/the-talk"
         posts = [post("v", "yt", kind="youtube", title="A Talk With Someone", links=[(page, None)]),
                  post("b", "blog", title="A talk with someone, the transcript", links=[(page, None)])]
@@ -226,7 +240,7 @@ class NewsStoriesTests(unittest.TestCase):
         self.assertEqual((row.voices, row.reports + row.shares), (2, 2))
 
     def test_the_lead_comes_from_the_main_story_or_its_own_name(self):
-        # Issue 0111: (id, 0050 story, its voices, the joining name)
+        # (id, 0050 story, its voices, the joining name)
         row = [("p1", "big", 5, "paper name"), ("t1", "thread", 1, "model x"), ("p2", "big", 5, "model x"),
                ("p3", "big", 5, "paper name"), ("l1", None, 0, "paper name"), ("l2", None, 0, "model x"),
                ("s1", "small", 2, "paper name")]
@@ -247,10 +261,8 @@ class NewsStoriesTests(unittest.TestCase):
         self.assertEqual(story.names, {"a": "steam frame", "b": "steam frame", "c": "steam frame"})
 
     def runaway(self):
-        """0203: the shape of the server's runaway Mark X row (2026-11-14: 57 stories, 397 posts in one row), with
-        invented names: three judged stories, each about its own happening, whose side posts say another's surging
-        name (a digest in the release story names the CEO; a reaction in the other release story too), a post that is
-        in two stories, and a loose post about the CEO."""
+        """The shape of a runaway row (0203), invented names: three judged stories, each about its own happening,
+        whose side posts say another's surging name, a post in two stories, and a loose post about the CEO."""
         def run(prefix, n, title, start, extra=()):
             ps = [post(f"{prefix}{k}", f"{prefix}s{k}", hours=start + k, title=f"{title} {k}") for k in range(n)]
             return ps + [post(pid, src, hours=start + n, title=t) for pid, src, t in extra]
@@ -304,13 +316,19 @@ class NewsStoriesTests(unittest.TestCase):
                          "... and join once the judge connected them")
         small = stories[:1] + [Story(id="B", first_at=b[0].t, posts=b[:2], voices=0, roles={}, reasons={},
                                      mentions=set())]
-        self.assertEqual(len(news(a + b[:2], small, found, judged=set())), 1, "a small one joins by its core")
+        self.assertEqual(len(news(a + b[:2], small, found)), 1, "Mark IX: a small one joins by its core")
+        # Mark X joins two stories of any size only through the judge, never by a shared name alone
+        self.assertEqual(len(news(a + b[:2], small, found, judged=set())), 2, "Mark X: a small story stays apart")
+        self.assertEqual(len(news(a + b[:2], small, found, judged={frozenset(("A", "B"))})), 1, "... unless judged")
+        loose = [post("l1", "ls1", hours=30, title="Nimbus 4 first look"),
+                 post("l2", "ls2", hours=31, title="Nimbus 4 so far")]
+        named = [Surge("nimbus 4", a[0].t, [p.id for p in a + loose], 0)]
+        [row] = [r for r in news(a + loose, stories[:1], named, judged=set()) if "a0" in {p.id for p in r.posts}]
+        self.assertTrue({"l1", "l2"} <= {p.id for p in row.posts}, "a post of no story still joins by its name")
 
     def test_the_rows_depend_on_the_inputs_never_on_their_order(self):
-        """0205: the incremental job hands its stories in by id and their posts in no time order (array_agg DISTINCT),
-        the full job in its own order; the rows must be the same. Every order of stories, their posts, the surges and
-        the posts gives one answer, and a pass handed only one component's stories (the incremental pass) rows that
-        component as the full pass does."""
+        """The rows depend on no input order (the incremental and full jobs read in different orders), and a pass
+        handed one component's stories rows it as the full pass does (0205)."""
         import random
         posts, stories, found = self.runaway()
 
@@ -335,9 +353,8 @@ class NewsStoriesTests(unittest.TestCase):
         self.assertEqual(got, [r for r in want if set(r[0]) <= group], "the incremental pass rows its group as the full")
 
     def test_a_storys_posts_saying_the_familys_name_are_named_by_it(self):
-        """0205 (a lead that lost the row's name): in a row the name "k3.1" reached, the release story's posts that
-        say only "K3.1" are named k3.1 as before 0203, though the name did not join them (their story did): main_story
-        reads these names, so the row's lead comes from the posts saying the row's own name."""
+        """In a row the name "k3.1" reached, the release story's posts saying only "K3.1" are named k3.1 though the
+        name did not join them: main_story reads these names, so the lead says the row's own name (0205)."""
         rel = [post(f"k{k}", f"ks{k}", hours=k, title=t) for k, t in enumerate(
             ("Kimi K3.1 Pro is live", "Introducing Kimi K3.1 Pro", "Вышла Kimi K3.1", "K3.1 is out"))]
         loose = [post("l1", "loose", hours=5, title="Kimi K3.1 Pro on my laptop"),
@@ -354,8 +371,8 @@ class NewsStoriesTests(unittest.TestCase):
         self.assertIsNone(k_row.names.get("k2"), "a name names a post only in a row it reached")
 
     def test_stories_that_agree_join_even_when_the_surges_first_story_refuses(self):
-        """0205: one IPO in 4 rows. The surge's first post was a release story's (its main name another), which the
-        IPO stories each refused; joining each post to the first only left the connected IPO stories apart."""
+        """One IPO in one row, not 4: a surge whose first post was in a release story (another main name) still joins
+        the connected IPO stories (0205)."""
         def run(prefix, n, title, start):
             return [post(f"{prefix}{k}", f"{prefix}s{k}", hours=start + k, title=f"{title} {k}") for k in range(n)]
         rel = run("r", 6, "Acme Vela 6 is out", 0)          # main name: vela 6 (its lead says acme too)
@@ -406,8 +423,7 @@ class ClassicRulesTests(unittest.TestCase):
         self.assertEqual(classics([cite("a", 0, self.page), cite("a", 400, self.page)], {}), [], "one voice")
 
     def test_one_voices_date_alone_makes_no_classic(self):
-        """On the server's data a Gwern page dated 2023 linked a 2026 post: the spread starts at the
-        second voice's first link, so one early date can't stretch it."""
+        """The spread starts at the second voice's first link, so one early-dated page can't stretch it."""
         self.assertEqual(classics([cite("gwern", -1300, self.page), cite("b", 0, self.page), cite("c", 30, self.page)], {}),
                          [])
 
@@ -440,7 +456,7 @@ class ClassicRulesTests(unittest.TestCase):
             self.assertFalse(is_reference(url), url)
 
     def test_licence_and_legal_pages_are_not_classics(self):
-        # Issue 0111: a licence (cited by every model card) and a company's terms are references, by their shape.
+        # a licence (cited by every model card) and a company's terms are references, by their shape (0111)
         for url in ("https://commons.example/licenses/by/4.0", "https://foundation.example/licenses/LICENSE-2.0",
                     "https://hub.example/org/model/blob/main/LICENSE", "https://raw.example/org/repo/main/LICENSE.Open-1.1",
                     "https://lab.example/legal/consumer-terms", "https://lab.example/legal/privacy", "https://router.example/terms",
@@ -530,8 +546,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(self.cur.fetchone()[0], 0, "a name never folds rows in the Main feed")
 
     def test_mark_x_rows_are_the_main_news_and_mark_ix_the_fallback(self):
-        """Issue 0205: News reads Mark X's stored rows (its newest written run) through the same reading as Mark
-        IX's; Mark IX's rows when Mark X is off or has no row in the window (with the note), and on asking (`ix`)."""
+        """News reads Mark X's newest stored rows through the same reading as Mark IX's; Mark IX's rows when Mark X is
+        off or has none in the window (with the note), and on asking (`ix`) (0205)."""
         from unittest import mock
         from insight_core.markx import api as mx_api, news as mx_news, repo as mx_repo
         self._week()
@@ -560,8 +576,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual([i["id"] for i in ix], [self.fresh[0], self.older[0]], "the older News is Mark IX's, unchanged")
 
     def test_a_source_without_a_name_is_named_by_its_address(self):
-        """An empty display name falls back like a missing one: the reader derives a name from the
-        address (sourceLabel), never a blank."""
+        """An empty display name falls back like a missing one: the reader derives a name from the address, never a
+        blank."""
         from insight_core.db.repo_stories import SourceFacts
         name = f"Quux{self.mark[:4]} 7"
         empty, missing, named = self._source(""), self._source("x"), self._source("Gamma")
@@ -581,7 +597,7 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual((facts.name[empty], facts.name[missing]), (address[empty], address[missing]))
 
     def test_news_names_every_voice_it_counts(self):
-        """Issue 0069 (R6): toolsmith_pete reposting oddlogic_games' tweet is 2 voices, so News names both."""
+        """A repost of another account's tweet is 2 voices, so News names both (0069)."""
         accounts = {}
         for name in ("toolsmith_pete", "oddlogic_games"):
             accounts[name] = self._source(name)
@@ -598,7 +614,7 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual([s["name"] for s in item["story"]["sources"]], ["toolsmith_pete", "oddlogic_games"])
 
     def test_news_shows_30_days(self):
-        """Issue 0077: News reads 30 days; "recent" is still the last 48 hours."""
+        """News reads 30 days; "recent" is still the last 48 hours (0077)."""
         self._week()
         self.now += timedelta(days=20)
         items = self._mine(self.news.news_on(self.cur, "all")["items"])
@@ -612,8 +628,8 @@ class NewsJobTests(unittest.TestCase):
         return {r[0] for r in self.cur.fetchall()}
 
     def test_a_row_before_the_window_is_kept(self):
-        """Issue 0077: nothing is deleted. A run past a row's 30 days leaves it as it is, its posts in
-        it; a second run changes nothing."""
+        """Nothing is deleted: a run past a row's 30 days leaves it and its posts; a second run changes nothing
+        (0077)."""
         self._week()
         self.cur.execute("SELECT * FROM news_stories WHERE id = %s", (self.fresh[0],))
         before = self.cur.fetchone()
@@ -645,8 +661,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertGreaterEqual(run["news_removed"], 1)
 
     def test_one_source_says_its_part(self):
-        """Issue 0077: on one source each row says the source's part, the strongest of its posts:
-        origin (its post started the row), report, share, else mention (its roundup lists the story)."""
+        """On one source each row says the source's part, the strongest of its posts: origin, report, share, else
+        mention (0077)."""
         page = f"https://press-{self.mark}.test/2026/10/the-press-release"
         press, a, b, weekly = (self._source(n) for n in ("Press", "Alpha", "Beta", "Weekly"))
         own = self._post(press, site="press", url=page, hours_ago=10, title="We ship the thing")
@@ -667,8 +683,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual([i["id"] for i in self._mine(self.news.news_on(self.cur, "all")["items"])], [own])
 
     def test_a_roundup_leads_no_row_with_a_report(self):
-        """Issue 0083: a row with no origin (an outside page) is led by its first report the stories
-        list as no roundup, not by a weekly digest that came first."""
+        """A row with no origin is led by its first report that is no roundup, not by a digest that came first
+        (0083)."""
         page = f"https://outside-{self.mark}.test/2026/10/the-release"
         weekly, a, b = (self._source(n) for n in ("Weekly", "Alpha", "Beta"))
         others = [f"https://else-{self.mark}.test/2026/10/story-{n}" for n in (1, 2)]
@@ -685,9 +701,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(item["id"], report)
 
     def test_a_row_without_an_origin_leads_with_the_share_of_its_page_and_names_followed_sources_first(self):
-        """Issue 0103: a row whose story starts at an outside page is led by the first post sharing that
-        page (a Reddit link post), not a later report joined by the name; its names list the followed
-        sources before the Reddit author, the count and the set unchanged."""
+        """A row whose story starts at an outside page is led by the first post sharing that page, not a later report
+        joined by the name; its names list the followed sources before the Reddit author (0103)."""
         name = f"Quux{self.mark[:4]} 7"
         page = f"https://hub-{self.mark}.test/org/quux-{self.mark[:4]}-7"
         sub = insert_source(self.cur, "r/sub", platform="reddit", in_main_digest=True, followed_days=60)
@@ -707,10 +722,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(item["story"]["voices"], 3)
 
     def test_a_story_joined_by_another_name_never_leads(self):
-        """Issue 0111: a row's lead comes from its main 0050 story (the most voices), or from a story or
-        post joined to it by that story's own name. 0203: a name the main story says in passing (one of its three
-        posts, not its lead) is none of its core names, so the thread about that other name is a row of its own; it
-        never titles the main story's row."""
+        """A row's lead comes from its main story (most voices), or a story or post joined by that story's own name; a
+        name the main story says in passing is no core name, so its thread is a row of its own (0111, 0203)."""
         main, side = f"Zork{self.mark[:4]} 9", f"Quux{self.mark[:4]} 7"
         page = f"https://paper-{self.mark}.test/2026/10/the-paper"
         a, b, c, d, e = (self._source(n) for n in ("Alpha", "Beta", "Gamma", "Delta", "Epsilon"))
@@ -730,9 +743,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertNotEqual(delta["story"]["id"], first, "the bench thread is a row of its own")
 
     def test_one_owners_channels_are_one_news_voice(self):
-        """Issue 0111: a person's blog and video channel (the blog links the channel's videos, the channel's
-        handle holds the blog's name) are one voice in News, named once, the channel with it; a row of only
-        them is no News; a Reddit poster with a followed account's handle is that account."""
+        """A person's blog and video channel are one voice in News, named once; a row of only them is no News; a
+        Reddit poster with a followed account's handle is that account (0111)."""
         handle = f"janedoe{''.join(c for c in self.mark if c.isalpha()) or 'x'}"
         name = f"Zork{self.mark[:4]} 9"
         blog = self._source("Jane Doe Blog")
@@ -761,8 +773,8 @@ class NewsJobTests(unittest.TestCase):
         return [r[0] for r in self.cur.fetchall()]
 
     def test_a_post_page_names_its_news_row(self):
-        """Issue 0083: the post page says the News row a post is in, as the Main feed's News shows it,
-        else as its own source's (a source outside the Main feed); nothing for a post in none."""
+        """The post page says the News row a post is in, as the Main feed's News shows it, else as its own source's;
+        nothing for a post in none (0083)."""
         self._week()
         row = self.news.row_of(self.cur, self.fresh[1], self.b)
         [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["id"] == self.fresh[0]]
@@ -778,7 +790,7 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(self.news.row_of(self.cur, posts[2], outside[2])["scope"], f"source:{outside[2]}")
 
     def test_started_it_only_when_first(self):
-        """Issue 0082: a source whose post roots its 0050 story, in a row another post began, didn't start it."""
+        """A source whose post roots its story, in a row another post began, didn't start it (0082)."""
         name = f"Zork{self.mark[:4]} 9"
         page = f"https://beta-{self.mark}.test/2026/10/the-release"
         a, b, c = (self._source(n) for n in ("Alpha", "Beta", "Gamma"))
@@ -796,8 +808,8 @@ class NewsJobTests(unittest.TestCase):
                          "Alpha came first but roots no story; Beta roots one, after Alpha")
 
     def test_names_are_the_voices_counted(self):
-        """Issue 0082: each Reddit author is a voice, named u/<author> in its subreddit, on News, the feed
-        row and the post page alike: the count is the names."""
+        """Each Reddit author is a voice, named u/<author> in its subreddit, on News, the feed row and the post page
+        alike: the count is the names (0082)."""
         from insight_core.db.repo_reader import ReaderRepository
         from insight_core.services.post_detail_service import PostDetailService
         page = f"https://blog-{self.mark}.test/2026/10/the-release"
@@ -892,8 +904,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(len(self.news.background(self.cur, reader)), 2)
 
     def test_two_posts_at_one_address_are_one_anchor(self):
-        """Issue 0049: normalized_url is not unique (one address, two titles: Daring Fireball's
-        footnote post). A link to it joins one stored post, the first seen, everywhere."""
+        """normalized_url is not unique (one address, two titles): a link to it joins one stored post, the first seen,
+        everywhere (0049)."""
         from insight_core.db.repo_stories import SourceFacts
         self._classics()
         essays = self._source("Essays")
@@ -926,7 +938,7 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(self._mine_classics(f"folder:{self._folder(self._source('Nobody'))}"), [])
 
     def test_one_source_says_its_part_in_a_classic(self):
-        """Issue 0077: on one source a classic is its own post (origin) or a page it cites (report)."""
+        """On one source a classic is its own post (origin) or a page it cites (report) (0077)."""
         self._classics()
         essays = self._source("Essays")
         self._post(essays, site="essays", url=self.essay, title="Machines of Loving Grace", hours_ago=24 * 600)
@@ -938,8 +950,8 @@ class NewsJobTests(unittest.TestCase):
         self.assertNotIn("scope_role", self._mine_classics()[0])
 
     def test_one_source_is_named_first_among_a_classics_citers(self):
-        """Issue 0105: on one source's page its own voices lead a classic's citers (a Reddit author with its
-        subreddit as `place`); elsewhere the order stays first citation first, with no place."""
+        """On one source's page its own voices lead a classic's citers (a Reddit author with its subreddit as
+        `place`); elsewhere first citation first, with no place (0105)."""
         self._classics()
         sub = insert_source(self.cur, "r/sub", platform="reddit", in_main_digest=True, followed_days=60)
         self._post(sub, site="reddit", hours_ago=24 * 300,
@@ -972,7 +984,7 @@ class DiscoverClassicsTests(unittest.TestCase):
         many, few = f"many-{self.mark}.test", f"few-{self.mark}.test"
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             for n in range(4):
-                source = insert_scratch_source(cur, enabled=True)   # on: your sources (issue 0200)
+                source = insert_scratch_source(cur, enabled=True)   # on: your sources
                 url = f"https://voice{n}-{self.mark}.test/p"
                 html = "".join(f'<a href="https://{many}/2026/10/the-story-{k}">Story {k}</a>' for k in range(2))
                 if n < 3:
@@ -1016,7 +1028,7 @@ class NewsRouteTests(unittest.TestCase):
         self.assertIsInstance(body["classics"], list)
         self.assertEqual(self.call(self.app, "GET", "/api/news", query={"scope": "nowhere"})[0], 400)
         status, _, body = self.call(self.app, "GET", "/api/news", query={"scope": "all", "mark": "ix"})
-        self.assertEqual((status, body["mark"], body["fallback"], body["note"]), (200, "ix", False, None))   # 0205
+        self.assertEqual((status, body["mark"], body["fallback"], body["note"]), (200, "ix", False, None))
         status, _, body = self.call(self.app, "GET", "/api/news", query={"scope": "all"})
         self.assertIn(body["mark"], ("x", "ix"))
         self.assertEqual(body["fallback"], body["mark"] == "ix", "main falls back to the older News only with a note")

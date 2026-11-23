@@ -1,4 +1,5 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueries, useQueryClient, type QueryClient } from '@tanstack/react-query';
@@ -56,20 +57,17 @@ import { proxiedImage } from '../lib/mediaProxy';
 import { htmlText } from '../lib/inertHtml';
 import { useMarkxOn } from '../hooks/useMarkxOn';
 
-// Mark X's folded panel (issue 0086 E): its own chunk, fetched only while Mark X is on.
 const MarkXPanel = lazy(() => import('../components/markx/MarkXPanel'));
-// Connected (issue 0125): Earlier, Later and Outside INSIGHT, its own chunk, loaded after the post.
+const MarkXRelated = lazy(() => import('../components/markx/MarkXRelated'));
+const PostTeach = lazy(() => import('../components/post/PostTeach'));   // v10.42: More / Less like this
 const Connected = lazy(() => import('../components/post/Connected'));
-const MarkXTranslation = lazy(() => import('../components/markx/MarkXTranslation'));   // 0130 D
+const MarkXTranslation = lazy(() => import('../components/markx/MarkXTranslation'));
 
 /**
- * The post reading view (/posts/:id): one centred column — source and date, the
- * title with its icon actions in its top-right corner (open original, read later, keep,
- * copy), the images, the text — and nothing beside it. Read continuously, the
- * next posts of the feed follow below (issue 0014).
+ * The post reading view (/posts/:id): one centred column (source and date, title, images, text), the post's
+ * actions in the sticky band. Read continuously, the feed's next posts follow below.
  */
 
-/** The dev-only `?data=` fixtures, imported on demand: a production build drops them. */
 const POST_FIXTURE_NAMES = ['worst', 'empty', 'missing', 'slow'] as const;
 const loadPostFixtures = import.meta.env.DEV ? () => import('./PostDetailPage.fixtures') : null;
 
@@ -89,22 +87,17 @@ function postFixtureApi(name: string): Partial<Api> | null {
   };
 }
 
-/** A story line on the post page, and its indent in the tree (issue 0064): two levels at most, one on a
- *  phone, where a line at the deepest indent names its parent instead, "↳ Mat Duggan" (issue 0068).
- *  As the feed row's, kept here so the reader's initial JS does not grow. */
-const STORY_LINE = 'flex min-w-0 items-baseline gap-x-1.5 max-sm:flex-wrap';   // a phone: the title on its own line (issue 0070)
+/** A story line on the post page and its tree indent: two levels at most, one on a phone (a deepest line names
+ *  its parent instead, "↳ Mat Duggan"). Kept here so the reader's initial JS does not grow. */
+const STORY_LINE = 'flex min-w-0 items-baseline gap-x-1.5 max-sm:flex-wrap';  // a phone: the title on its own line
 const INDENT = ['', 'pl-2 sm:pl-4', 'pl-2 sm:pl-8'];
 const Under = ({ name }: { name?: string }) =>
   name ? <span className="max-w-[30%] shrink-0 truncate sm:hidden">↳ {sourceLabel(name)}</span> : null;
 
 /**
- * "Covered by 4" at the end of a post (issue 0055): its story's other posts, as the feed's folded
- * row lists them (unread dot, source, title opening it here, "· share", date), the story's first
- * report marked "first". Its own block, so the reader's initial JS does not grow. The posts are the
- * story's tree (issue 0064): the origin first (a page outside INSIGHT opens in Save any page), its
- * children indented, then theirs; this post in its place as "this post", or, when it is the
- * origin, what came from it. A thread lists only what wasn't read above it (issue 0070): not the
- * replies after this post.
+ * "Covered by 4" at the end of a post: its story's tree as the feed's folded row lists it (the origin first,
+ * children indented, this post in its place as "this post"). A thread lists only what wasn't read above it.
+ * Its own block, so the reader's initial JS does not grow.
  */
 function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; postId: string }) {
   const now = new Date();
@@ -178,7 +171,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
         })}
       </ul>
       {story.roundups?.length ? (
-        // The roundups that mention the story and are not in it, each source once (issue 0068).
+        // The roundups that mention the story and are not in it, each source once.
         <p className="mt-1 [overflow-wrap:anywhere]">
           Also in roundups:{' '}
           {story.roundups.map((roundup, i) => (
@@ -195,7 +188,6 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
   );
 }
 
-/** The thread's replies that follow this post, in order (issue 0066). */
 function threadAfter(story: FeedStory, postId: string): StoryPost[] {
   const next: StoryPost[] = [];
   for (let at = postId, reply; (reply = story.posts.find((p) => p.parent_id === at && p.parent_reason === 'thread')); at = reply.id) {
@@ -205,10 +197,8 @@ function threadAfter(story: FeedStory, postId: string): StoryPost[] {
 }
 
 /**
- * A thread read in order (issue 0066): the replies that follow this post, each its date opening it.
- * Each reply reads as the post's body does (issue 0068): the same reader, its links as links (a stored
- * post's opening here), its pictures through the image cache. A reply's quote of a tweet its story
- * holds is no card (issue 0070): "↩ quotes the post above".
+ * A thread read in order: the replies after this post, each read as the post's body is (links, image cache);
+ * a reply quoting a tweet its story holds is no card ("↩ quotes the post above").
  */
 function ThreadPosts({ story, postId }: { story: FeedStory; postId: string }) {
   return (
@@ -230,7 +220,7 @@ function ThreadPosts({ story, postId }: { story: FeedStory; postId: string }) {
   );
 }
 
-/** A post read here reads as read in every cached post page's "covered by" (issue 0055). */
+/** A post read here reads as read in every cached post page's "covered by". */
 function patchStoryRead(queryClient: QueryClient, postId: string, readAt: string | null) {
   queryClient.setQueriesData<PostDetailResponse>({ queryKey: ['post'] }, (data) => {
     const story = data?.post?.story;
@@ -240,15 +230,13 @@ function patchStoryRead(queryClient: QueryClient, postId: string, readAt: string
   });
 }
 
-/** Plain text of a post for the clipboard: the stored text, else the HTML's text. */
 function postPlainText(post: Post): string {
   const text = typeof post.content === 'string' ? post.content.trim() : '';
   if (text) return text;
   const html = typeof post.content_html === 'string' ? post.content_html : '';
-  return htmlText(html).trim();   // inert: the feed's HTML never runs here (issue 0187)
+  return htmlText(html).trim();  // inert: the feed's HTML never runs here
 }
 
-/** A section heading in the reading column: small, semibold, a hairline above. */
 function SectionHeading({ title, meta, actions }: { title: string; meta?: ReactNode; actions?: ReactNode }) {
   return (
     <div className="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-t border-line pt-6">
@@ -261,7 +249,6 @@ function SectionHeading({ title, meta, actions }: { title: string; meta?: ReactN
   );
 }
 
-/** A spinner inside a button while its request is in flight. */
 function Busy({ when, children }: { when: boolean; children: ReactNode }) {
   return when ? <Loader2 aria-hidden="true" className="motion-safe:animate-spin" /> : <>{children}</>;
 }
@@ -420,7 +407,6 @@ function buildYouTubeTranscriptBlocks(
   });
 }
 
-/** The YouTube player, privacy-enhanced, in a reserved 16:9 frame. */
 function VideoPlayer({ videoId, title, className = '' }: { videoId: string; title: string; className?: string }) {
   return (
     <div className={`aspect-video w-full overflow-hidden rounded-md border border-line bg-black ${className}`}>
@@ -436,18 +422,15 @@ function VideoPlayer({ videoId, title, className = '' }: { videoId: string; titl
   );
 }
 
-/** The page frame, shared by the loading skeleton and the loaded post. */
 const PAGE_CLASS = 'mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8';
-/** One column of ~70ch at the body size, centred, nothing beside it; the reading width may change it (issue 0045). */
+/** One column of ~70ch at the body size, centred; the reading width may change it. */
 const GRID_CLASS = 'grid grid-cols-[minmax(0,var(--reading-column,42rem))] justify-center';
 
-/** The post page's frame: it carries the reading settings (CSS variables, none by default). */
 function ReadingFrame({ children }: { children: ReactNode }) {
   const [settings] = useReadingSettings();
   return <div data-reading-frame className="contents" style={readingStyle(settings)}>{children}</div>;
 }
 
-/** The sticky band under the top bar that holds the post navigation, over the reading column. */
 function NavBand({ children }: { children?: ReactNode }) {
   return (
     <div data-nav-band className="reader-material reader-edge sticky top-topbar z-30 px-4 py-1 sm:px-6">
@@ -458,8 +441,7 @@ function NavBand({ children }: { children?: ReactNode }) {
   );
 }
 
-/** The loading frame: the same container, grid and column as the loaded page, so
- *  React swaps only the children on arrival (no width or padding jump). */
+/** The loading frame: the same container, grid and column as the loaded page, so no width or padding jump. */
 function PostSkeleton() {
   return (
     <>
@@ -470,9 +452,8 @@ function PostSkeleton() {
             <span className="sr-only">Loading post</span>
             <div aria-hidden="true">
               <div className="mb-8">
-                <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
+                <div className="flex min-h-[2.25rem] items-start">
                   <Skeleton className="mt-1 h-3 w-48" />
-                  <Skeleton className="h-6 w-24" />
                 </div>
                 <Skeleton className="mt-2 h-7 w-11/12" />
                 <Skeleton className="mt-2 h-7 w-2/3" />
@@ -492,10 +473,8 @@ function PostSkeleton() {
 }
 
 /**
- * /posts/:id. The post loads through `usePost` (react-query, `['post', id]`), so
- * a post the feed prefetched opens from cache with no skeleton (spec §F.3). Each
- * post gets its own `PostArticle` (keyed by id): its state starts from that post
- * and nothing of another post (metadata, reading time) carries over.
+ * /posts/:id. Loads through `usePost` (`['post', id]`), so a prefetched post opens from cache. Each post gets
+ * its own `PostArticle` (keyed by id), so nothing of another post carries over.
  */
 export default function PostDetailPage() {
   const navigate = useNavigate();
@@ -524,32 +503,25 @@ export default function PostDetailPage() {
   );
 }
 
-/** A root margin edge far beyond the viewport: "anywhere above" (or below) it counts. */
 const FAR = '100000px';
 
-/** The feed's sort key of a post: its cached feed row's, else published, else fetched. */
 function postSortAt(queryClient: QueryClient, postId: string, post: Post): string | null {
   return findFeedItems(queryClient, [postId]).get(postId)?.sort_at ?? post.published_at ?? post.fetched_at ?? null;
 }
 
 interface Stream {
   entries: ContextEntry[];
-  /** The index of the post in view. */
   current: number;
-  /** The height each post had when it was last mounted, kept while it is not. */
   heights: Record<string, number>;
 }
 
 const streamAt = (id: string, ctx: FeedContext | null): Stream => ({ entries: [{ id, pageCursor: ctx?.cursor ?? null }], current: 0, heights: {} });
 
 /**
- * The page around the posts: the sticky navigation, the keys, the help and Back.
- * One at a time, it shows the URL's post. Continuous (the stored default, with a
- * feed context), the feed's next post follows below as you reach the end of the
- * current one (issue 0014). The post crossing the screen's midline is current;
- * the URL follows it (replaced, with the same state, so Back still leaves for
- * the list). At most three posts are mounted, previous, current and next; one
- * further away keeps its height so the scroll does not jump.
+ * The page around the posts: sticky navigation, keys, help and Back. Continuous (with a feed context), the
+ * feed's next post follows below the current one's end. The post crossing the midline is current; the URL
+ * follows it (replaced, so Back still leaves for the list). At most three posts are mounted (previous,
+ * current, next); one further away keeps its height so the scroll does not jump.
  */
 function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixture: string | null }) {
   const navigate = useNavigate();
@@ -563,14 +535,11 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
   const slots = useRef(new Map<string, HTMLElement>());
   const endRef = useRef<HTMLDivElement>(null);
 
-  // ---- the feed context: prev/next, back, and the post page's keys (spec §F.5) ----
   const ctx: FeedContext | null = useMemo(() => decodeFeedContext(searchParams.get('ctx')), [searchParams]);
-  // The stream follows a feed: without a context (or an IntersectionObserver) a post stands alone.
   const continuous = flow === 'continuous' && ctx !== null && typeof IntersectionObserver !== 'undefined';
 
   const [stream, setStream] = useState(() => streamAt(postId, ctx));
-  // A post reached from outside the stream (a link, j or k past its ends, one at a
-  // time) starts a new stream; the URL catching up with the stream does not.
+  // A post reached from outside the stream starts a new stream; the URL catching up with the stream does not.
   if (!stream.entries.some((entry) => entry.id === postId)) setStream(streamAt(postId, ctx));
   const { entries, current } = stream;
   const currentEntry = entries[current];
@@ -583,7 +552,6 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
     sortAt: currentPost ? postSortAt(queryClient, currentEntry.id, currentPost) : null,
   });
 
-  // A new stream starts at the top of the page.
   const head = entries[0].id;
   const firstHead = useRef(head);
   useEffect(() => {
@@ -600,11 +568,9 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
 
   const openNeighbor = (entry: ContextEntry | null) => {
     if (!entry || !ctx) return;
-    // Replace, so Back still leads to the feed rather than through every post read.
     navigate(postHref(entry.id, { ...ctx, cursor: entry.pageCursor }), { replace: true, state: location.state });
   };
 
-  /** Make the stream's post at `index` current: the URL follows, the heights are kept. */
   const makeCurrent = (index: number) => {
     const entry = entries[index];
     if (!entry || index === current) return;
@@ -616,7 +582,6 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
   const makeCurrentRef = useRef(makeCurrent);
   makeCurrentRef.current = makeCurrent;
 
-  // The post crossing the midline is current. Every slot is watched, kept heights too.
   useEffect(() => {
     if (!continuous) return undefined;
     const observer = new IntersectionObserver((seen) => {
@@ -628,7 +593,6 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
     return () => observer.disconnect();
   }, [continuous, entries]);
 
-  // Near the end of the last post, the next one joins the stream (its detail is prefetched).
   const atEnd = current === entries.length - 1;
   const nextId = continuous && atEnd ? neighbors.next?.id ?? null : null;
   const nextCursor = neighbors.next?.pageCursor ?? null;
@@ -659,7 +623,6 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
     else navigate(feedPath);
   };
 
-  // In the stream, Previous and Next move to a post already there; past its ends they open one.
   const jump = (index: number) => {
     slots.current.get(entries[index].id)?.scrollIntoView?.({ block: 'start' });
     makeCurrent(index);
@@ -680,13 +643,18 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
   const backLabel = hasHistory || returnTo ? 'Back' : 'Back to feed';
   const step = ctx ? { onPrevious: goPrevious, onNext: goNext } : undefined;
   const endNav = <PostNav label="After the post" size="lg" backLabel={backLabel} onBack={goBack} step={step} />;
+  // The current post renders its own actions into this slot of the sticky band (a portal).
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
 
   return (
     <>
       <NavBand>
         <div className="flex min-w-0 items-center justify-between gap-2">
           <PostNav label="Post navigation" size="sm" backLabel={backLabel} onBack={goBack} step={step} />
-          <ReadingSettingsButton />
+          <div className="flex shrink-0 items-center">
+            <div ref={setActionsSlot} data-bar-actions className="flex items-center" />
+            <ReadingSettingsButton />
+          </div>
         </div>
       </NavBand>
       <div className={PAGE_CLASS}>
@@ -717,6 +685,7 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
                       divider={index > 0}
                       offerResume={index === 0}
                       keysEnabled={entry === currentEntry && !helpOpen}
+                      actionsSlot={actionsSlot}
                     />
                   ) : query.isError ? (
                     <p className="mt-16 text-[0.875rem] text-fg-3">{errorMessage(query.error)}</p>
@@ -766,24 +735,17 @@ interface PostArticleProps {
   detail: PostDetailResponse;
   api: Api;
   fixture: string | null;
-  /** The post in view: its reading time runs, its keys (m, s) and the tab title are its own. */
   current: boolean;
   /** When the open is recorded (and the post marked read): on mount, or once its end passes the top half of the screen. */
   readOn: 'mount' | 'end';
-  /** A post that follows another in the stream starts after a rule, and its byline has no `settings`. */
   divider: boolean;
-  /** The post opened (the stream's first) offers to continue where you stopped; one joining below does not. */
   offerResume: boolean;
   keysEnabled: boolean;
+  actionsSlot: HTMLElement | null;
 }
 
-/**
- * One post and its own state (reader state, comments, YouTube progress, star,
- * open and reading time). Keyed by the post id, so nothing of another post
- * carries over.
- */
-/** "Read on example.com", or "Read “<the page's title>” on example.com" when it says more than the post's title (issue 0072);
- *  "Open the picture" and "Watch on reddit.com" for a link post's picture and video (issue 0072 D4). */
+/** "Read on example.com", or "Read “<title>” on example.com" when the page's title says more; "Open the picture"
+ *  and "Watch on <site>" for a link post's picture and video. */
 function readOnLabel(link: { url: string; title: string | null; kind?: string }, shown: string): string {
   const site = publicationOf(link.url) || link.url;
   if (link.kind === 'picture') return 'Open the picture';
@@ -791,7 +753,8 @@ function readOnLabel(link: { url: string; title: string | null; kind?: string },
   return link.title && link.title !== shown ? `Read “${link.title}” on ${site}` : `Read on ${site}`;
 }
 
-function PostArticle({ postId, detail, api, fixture, current, readOn, divider, offerResume, keysEnabled }: PostArticleProps) {
+/** One post and its own state; keyed by the post id, so nothing of another post carries over. */
+function PostArticle({ postId, detail, api, fixture, current, readOn, divider, offerResume, keysEnabled, actionsSlot }: PostArticleProps) {
   const queryClient = useQueryClient();
   const initial = useMemo(() => initialComments(detail.post as Post), [detail.post]);
   const post = detail.post as Post;
@@ -799,7 +762,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
   const [readerState, setReaderState] = useState<ReaderState | null>(detail.reader_state || null);
   const [youtubeProgress, setYouTubeProgress] = useState<YouTubeWatchProgress | null>(null);
   const [youtubeProgressDraft, setYouTubeProgressDraft] = useState(0);
-  // Comments stored with the post; fetching them is hidden while Reddit refuses it (issue 0012).
   const { comments, fetchedAt: commentsFetchedAt } = initial;
   const [loadingYouTubeProgress, setLoadingYouTubeProgress] = useState(false);
   const [savingYouTubeProgress, setSavingYouTubeProgress] = useState(false);
@@ -852,7 +814,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     setSavingYouTubeProgress(false);
   };
 
-  // YouTube posts only: the saved watch position.
   useEffect(() => {
     const videoId = extractYouTubeVideoId(detail.post);
     if (detail.post?.platform !== 'youtube' || !videoId) return;
@@ -866,7 +827,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     [detail.post],
   );
 
-  // Record the open once, with this post's own metadata; the server marks it read.
   const recordOpen = useCallback(() => {
     if (openRecordedRef.current) return;
     openRecordedRef.current = true;
@@ -889,15 +849,12 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     });
   }, [api, meta, mutations, postId, queryClient]);
 
-  // One post at a time: opening it is reading it.
   useEffect(() => {
     if (readOn === 'mount') recordOpen();
   }, [readOn, recordOpen]);
 
-  // Finished once its end has passed the top half of the screen: in the stream that is when
-  // it is read, and in either flow a post in Later leaves it then (issue 0022; an open
-  // alone never does). The root reaches far above the viewport, so a fast scroll or a
-  // jump past the end still counts, and an end already above the midline counts at once.
+  // Finished once its end passes the top half of the screen: then it is read (in the stream) and leaves Later. The
+  // root reaches far above the viewport, so a fast scroll or a jump past the end still counts.
   useEffect(() => {
     const node = endRef.current;
     if (!node || typeof IntersectionObserver === 'undefined') return undefined;
@@ -911,9 +868,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     return () => observer.disconnect();
   }, [readOn, recordOpen]);
 
-  // Reading time runs while the post is current and the tab is visible, and is sent when
-  // it stops being current. Under a second (StrictMode's mount check, a j held down) is
-  // not reading and is not recorded.
+  // Reading time runs while the post is current and the tab visible. Under a second (StrictMode's mount check,
+  // a j held down) is not reading and is not recorded.
   useEffect(() => {
     if (!current) return undefined;
     rememberSelection(postId);
@@ -953,29 +909,24 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     } else {
       setReaderState((current) => ({ ...current, post_id: postId, is_favorited: response.favorited }));
     }
-    // The feed shows the same star: keep its cached rows in step.
     const starred = response.reader_state?.is_favorited ?? response.favorited ?? nextFavorited;
     patchFeeds(queryClient, new Set([postId]), { starred_at: starred ? new Date().toISOString() : null });
     setAnnouncement(starred ? 'Kept' : 'No longer kept');
     setTogglingFavorite(false);
   };
 
-  // A post with no HTML body renders its stored plain text, never read as HTML.
   const bodyHtml = typeof post?.content_html === 'string' && post.content_html.trim() ? post.content_html : null;
   const renderContent = bodyHtml ?? (typeof post?.content === 'string' ? post.content : '');
-  // Images the body already shows stay inline; the rest: the first under the
-  // title, the others after the text. A video post shows its player instead.
+  // Images the body already shows stay inline; the first other one under the title, the rest after the text.
   const media = useMemo(() => postMedia(post, `${renderContent}\n${post.content || ''}`), [post, renderContent]);
   const bodyImageSrc = useCallback((src: string) => proxiedImage(postId, src), [postId]);
-  // The same element while the body is the same: the renderer's blocks are not rebuilt on
-  // every state change (a star, an announcement), so a block keeps its focus (issue 0030).
+  // The same element while the body is the same, so a block keeps its focus across state changes.
   const internalLinks = post?.internal_links;
   const markdownBody = useMemo(
     () => <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} html={bodyHtml !== null} internalLinks={internalLinks} />,
     [renderContent, bodyImageSrc, bodyHtml, internalLinks],
   );
   const isYouTubePost = post?.platform === 'youtube';
-  // A blog post that carries a YouTube video: the player stands in for the hero.
   const embeddedVideoId = !isYouTubePost ? media.video?.id ?? null : null;
   const heroImage = isYouTubePost || embeddedVideoId ? null : media.images[0] ?? null;
   const moreImages = heroImage ? media.images.slice(1) : media.images;
@@ -1006,11 +957,9 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     return body.slice(0, 24);
   };
   const sourceName = postSourceName(post);
-  // The API's title is already the short one (issue 0009). A post whose whole text is that
-  // title shows it once, as the heading.
+  // The API's title is already the short one; a post whose whole text is that title shows it once.
   const displayTitle = post.title || 'Untitled post';
   const bodyIsTitle = useMemo(() => postPlainText(post).replace(/\s+/g, ' ') === displayTitle, [post, displayTitle]);
-  // Continue where I stopped (issue 0030): long text posts only, never a fixture.
   const longPost = useMemo(() => postPlainText(post).length >= LONG_POST_CHARS, [post]);
   const position = useReadingPosition({
     postId, api, body: bodyRef, end: endRef, saved: detail.reader_state ?? null,
@@ -1019,7 +968,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
   const publishedLabel = postBylineTime(post?.published_at || post?.fetched_at || null);
   const publishedFull = feedFullTime(post?.published_at || post?.fetched_at || null);
   const publishedIso = post?.published_at || post?.fetched_at || undefined;
-  // What the page states about itself (issue 0039): when it changed, its status and confidence.
   const page = useMemo(() => pageState(post.metadata, post.published_at), [post.metadata, post.published_at]);
   const pageLine = [page.update ? updateLine(page.update) : null, ...page.notes].filter(Boolean).join(' · ');
 
@@ -1042,7 +990,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
   const cachedItem = findFeedItems(queryClient, [postId]).get(postId);
   const isRead = Boolean(readerState?.read_at);
   const isLater = Boolean(readerState?.later_at);
-  /** This post as a feed row, for the shared read and Later mutations. */
   const asFeedItem = (): FeedItem => cachedItem ?? {
     id: postId, title: post.title ?? '', excerpt: '', url: post.url ?? '',
     source_id: post.source_id ?? '', source_display_name: post.source_display_name ?? '', platform: post.platform ?? '',
@@ -1053,7 +1000,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     const read = !isRead;
     const previous = { read_at: readerState?.read_at ?? null, later_at: readerState?.later_at ?? null };
     const item = asFeedItem();
-    // Marking read finishes the post, so it leaves Later too (issue 0022).
     setReaderState((current) => ({ ...current, post_id: postId, read_at: read ? new Date().toISOString() : null, ...(read ? { later_at: null } : {}) }));
     try {
       await mutations.setRead(item, read);
@@ -1087,15 +1033,26 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
 
   return (
     <>
-      {/* A plain rule: the header below already names the post's source and title. */}
+      {current && actionsSlot ? createPortal(
+        <PostActions
+          url={post.url}
+          discussionUrl={typeof post.metadata?.comments_url === 'string' ? post.metadata.comments_url : null}
+          starred={isFavorited}
+          starring={togglingFavorite}
+          onStar={() => void handleToggleFavorite()}
+          later={isLater}
+          onLater={() => void setLater(!isLater)}
+          copied={copyState === 'copied'}
+          onCopy={() => void handleCopy()}
+        />,
+        actionsSlot,
+      ) : null}
       {divider ? <hr className="mb-10 mt-16 border-0 border-t border-line-strong" /> : null}
 
-      {/* ---- Header: source / date and the actions on one line, then the title ---- */}
       <header className="mb-8">
-        <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
+        <div className="flex min-h-[2.25rem] items-start">
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
-            {/* The source name reads the source. No settings link: a post is for reading, and a
-                source is managed in Sources (owner, 2026-10-31, reversing issue 0010's `/ settings`). */}
+            {/* The source name reads the source; a source is managed in Sources, not here. */}
             {post.source_id ? (
               <>
                 <TextLink
@@ -1111,11 +1068,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
                 {middleTruncate(sourceName, 40)}
               </span>
             )}
-            {/* Who wrote it, via whom, quoting whom (Byline, issue 0185). */}
             {carriedLine(post) ? <span>{carriedLine(post)}</span> : null}
-            {/* A page you saved that is its source's post (issue 0122): "<source> · saved by you". */}
             {post.metadata?.saved_by_owner && post.platform !== 'saved' ? <span className="whitespace-nowrap">· saved by you</span> : null}
-            {/* A story's original INSIGHT collected by itself (issue 0123, Collect originals): never saved by you. */}
             {post.metadata?.collected_original ? (
               <span className="whitespace-nowrap">
                 {post.metadata?.collected_as === 'classic' ? '· classic, collected'
@@ -1130,7 +1084,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
               </span>
             ) : null}
             {post.counts ? (
-              // A Hacker News item's counts (issue 0070), no longer its text.
               <span className="whitespace-nowrap">
                 <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
                 <span className="tabular-nums">{countsLabel(post.counts)}</span>
@@ -1143,17 +1096,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
               </span>
             ) : null}
           </p>
-          <PostActions
-            url={post.url}
-            discussionUrl={typeof post.metadata?.comments_url === 'string' ? post.metadata.comments_url : null}
-            starred={isFavorited}
-            starring={togglingFavorite}
-            onStar={() => void handleToggleFavorite()}
-            later={isLater}
-            onLater={() => void setLater(!isLater)}
-            copied={copyState === 'copied'}
-            onCopy={() => void handleCopy()}
-          />
         </div>
         <h1 dir="auto" className="mt-2 break-words text-pretty [font-family:var(--reading-font)] text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
           {displayTitle}
@@ -1183,7 +1125,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
         />
       )}
 
-      {/* ---- YouTube watch mode ---- */}
       {isYouTubePost && youtubeVideoId && (
         <section aria-label="Video" className="mb-10 space-y-5">
           <VideoPlayer videoId={youtubeVideoId} title={post.title || youtubeVideoId} />
@@ -1281,7 +1222,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
         </section>
       )}
 
-      {/* ---- The article ---- */}
       <article ref={bodyRef} aria-label={isYouTubePost ? 'Transcript' : 'Post content'} className="min-w-0">
         {isYouTubePost && youtubeTranscriptBlocks.length ? (
           <p className="mb-5 flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem] tabular-nums text-fg-3">
@@ -1338,7 +1278,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
           ) : bodyIsTitle ? null : renderContent.trim() ? (
             <>
               {markdownBody}
-              {/* A teaser (issue 0140): the feed's summary only, why, and the page itself. */}
               {post.teaser_reason ? (
                 <p data-teaser className="mt-4 text-[0.8125rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">
                   {`Summary only · ${post.teaser_reason}`}
@@ -1352,22 +1291,19 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
               ) : null}
             </>
           ) : post.link?.post_id ? (
-            // A link post's page stored in INSIGHT (issue 0072) opens here.
             <p data-read-on><Link to={`/posts/${post.link.post_id}`} className="text-link">{readOnLabel(post.link, displayTitle)}</Link></p>
           ) : post.link || post.url ? (
-            // No body stored (issue 0069): the title above is all INSIGHT has, so the next step is the page itself;
-            // a link post's is the page it shares (issue 0072).
+            // No body stored: the next step is the page itself (a link post's: the page it shares).
             <p data-read-on>
               <a href={post.link?.url ?? post.url} target="_blank" rel="noopener noreferrer" className="text-link">{readOnLabel(post.link ?? { url: post.url ?? "", title: null }, displayTitle)} ↗</a>
             </p>
           ) : null}
         </div>
       </article>
-      {markxOn && !fixture ? <Suspense fallback={null}><MarkXTranslation postId={postId} /></Suspense> : null}{/* 0130 D */}
+      {markxOn && !fixture ? <Suspense fallback={null}><MarkXTranslation postId={postId} /></Suspense> : null}
 
       <PostImageList images={moreImages} postId={postId} />
 
-      {/* ---- In News (issue 0083): the News row it is in, its title and voices, linking that News ---- */}
       {post.news ? (
         <p data-news className="mt-8 min-w-0 text-[0.8125rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">
           In News:{' '}
@@ -1376,7 +1312,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
         </p>
       ) : null}
 
-      {/* ---- Background (issue 0051): the classics this post builds on, at most 2, quiet ---- */}
       {post.background?.length ? (
         <div data-background className="mt-8 flex flex-col gap-1 text-[0.8125rem] leading-5 text-fg-3">
           {post.background.map((classic) => (
@@ -1393,18 +1328,17 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
         </div>
       ) : null}
 
-      {/* ---- Mark X (issue 0086 E): folded, only while Mark X Shadow is on ---- */}
       {markxOn && !fixture ? <Suspense fallback={null}><MarkXPanel postId={postId} url={post.url} /></Suspense> : null}
+      {markxOn && !fixture ? <Suspense fallback={null}><MarkXRelated postId={postId} /></Suspense> : null}
+      {/* v10.42: teach INSIGHT More / Less of this post's things, its kind of news, its source */}
+      {markxOn && !fixture ? <Suspense fallback={null}><PostTeach postId={postId} /></Suspense> : null}
 
       {post.story?.thread ? <ThreadPosts story={post.story} postId={postId} /> : null}
 
-      {/* ---- Connected (issue 0125): what this post links and what links it, before its story ---- */}
       {!fixture ? <Suspense fallback={null}><Connected postId={postId} /></Suspense> : null}
 
-      {/* ---- Covered by (issue 0055): the post's story, its other posts, open ---- */}
       {post.story ? <CoveredBy story={post.story} post={post} postId={postId} /> : null}
 
-      {/* ---- Reddit discussion ---- */}
       {isRedditPost && comments.length > 0 && (
         <section className="mt-14" aria-labelledby={`post-discussion-${postId}`}>
           <SectionHeading

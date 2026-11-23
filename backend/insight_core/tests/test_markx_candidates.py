@@ -1,9 +1,7 @@
-"""Mark X Shadow's candidates (issue 0086 B) on synthetic posts with fixed vectors (a fake embedder: never the
-GGUF), in one transaction rolled back after each test: the four sources at 0086 B's thresholds (embedding with
-the prototype's 8 nearest, story centroids, Mark IX's joins, specific entities, late bursts), what each leaves
-out, idempotence, Mark IX's tables only read, and the debounce.
-
-Runs only on a database whose name ends in _test (it empties the mx_* tables inside its transaction)."""
+"""Mark X candidates (0086 B) on synthetic posts with fixed vectors (a fake embedder), in one rolled-back transaction
+per test: the sources at 0086 B's thresholds (embedding nearest, story centroids, Mark IX's joins, specific entities,
+late bursts), what each leaves out, idempotence, Mark IX's tables only read, and the debounce. Only on a _test
+database (it empties the mx_* tables inside its transaction)."""
 from __future__ import annotations
 
 import json
@@ -86,8 +84,8 @@ class _Cands(unittest.TestCase):
 
 class Documents(unittest.TestCase):
     def test_a_document_page_by_the_address_shapes_of_0106_and_0109(self):
-        """0121 Decided 5: a paper is one page whatever its path; a record or a filing by its first segment; an
-        article, a home page, a post are no document."""
+        """A paper is one page whatever its path; a record or a filing by its first segment; an article, a home page, a
+        post are no document (0121 Decided 5)."""
         abs_, pdf = C.document_key("https://preprints.test.invalid/abs/2501.01234"), \
             C.document_key("https://preprints.test.invalid/pdf/2501.01234v2")
         self.assertIsNotNone(abs_)
@@ -212,9 +210,8 @@ class Entities(_Cands):
         self.assertEqual(self.pairs("entity"), {(a, b)})
 
     def test_the_flush_finds_only_the_entity_pairs_of_posts_whose_mentions_are_new(self):
-        """0121 Decided 7 (the v10.0.1 review: 75 s, 35 s of CPU, for 0 new candidates on a day's data): a post whose
-        entities were written since the last run has its entity pairs found; its embedding neighbours, links and
-        bursts were found when its vector came (the posts embedded since the last run), and are not looked at again."""
+        """A post whose entities were written since the last run has its entity pairs found; its embedding neighbours,
+        links and bursts were found when its vector came and are not looked at again (0121 Decided 7)."""
         s1, s2 = self.source(), self.source()
         a = self.post(s1, T0, vector=unit((0, 1)))
         b = self.post(s2, T0 + H, vector=at_cos(0.99))

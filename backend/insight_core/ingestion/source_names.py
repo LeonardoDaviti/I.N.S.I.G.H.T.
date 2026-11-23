@@ -1,20 +1,12 @@
-"""A source's own name (issue 0178): every source gets one, from what its feed or page calls itself.
+"""A source's own name, from what its feed or page calls itself.
 
     name = await own_name(http, source)       # "Example Weekly", or None
     name = clean_name(raw_title, address)      # a title made fit to be a name, or None
 
-A source added without a name showed its feed address everywhere a name is shown (Discover's voices, a post's
-source line). Where the name comes from, by what the source reads:
-  - a feed (generic RSS, Substack, a Telegram bridge's channel feed): the feed's own <title>, else the site's
-    home page (og:site_name, else its <title>);
-  - a followed page (page watching): the site's home page's og:site_name, else the page's own <title>;
-  - a subreddit: "r/<name>" (its address says it);
-  - anything else (a native Telegram channel, YouTube, X): none here; the repair (scripts/repair_source_names)
-    takes the name another source of the same account has (a bridge's feed of the channel).
-A fetch names an unnamed feed source too, from the feed it just read (kinds.base.FetchedPosts.title).
-A title is a name when, once tidied (entities, spaces, a "RSS feed" / "Atom" tail), it says something an
-address doesn't: not empty, not a generic word ("Feed", "Blog", "Home", "RSS"), not an address. Nothing here
-ever writes over a name: a name the owner set is kept (the callers write only where none is set).
+A feed: its <title>, else the home page's og:site_name or <title>; a followed page: the home page's og:site_name,
+else the page's <title>; a subreddit: "r/<name>"; other kinds: none here (scripts/repair_source_names). A title is a
+name once tidied when it is not empty, a generic word or an address. Never writes over a name: callers write only
+where none is set.
 """
 from __future__ import annotations
 

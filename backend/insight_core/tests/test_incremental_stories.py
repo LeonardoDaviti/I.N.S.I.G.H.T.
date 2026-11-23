@@ -1,9 +1,6 @@
-"""The incremental story job (issue 0072 A) and the date-only rule (0072 D).
-
-After each change the job regroups only what the new or changed posts touch; a full run over the
-same posts then changes nothing (the full rebuild is the oracle). The rules as pure functions; the
-job on the database in one transaction per test, rolled back. The lab's row-by-row check of 30, 300
-and 3,000 posts is scripts/story_identity.py.
+"""The incremental story job (0072 A) and the date-only rule (0072 D). After each change the job regroups only what
+the new or changed posts touch; a full run over the same posts then changes nothing (the full rebuild is the oracle).
+Rules as pure functions; the job on the database in one rolled-back transaction per test.
 """
 from __future__ import annotations
 
@@ -211,8 +208,8 @@ class IncrementalJobTests(unittest.TestCase):
         self.assert_same_as_full()
 
     def test_a_story_past_its_window_keeps_its_news_row(self):
-        """Issue 0077: nothing is deleted. Past the 30 days the job writes, the row stays as it was,
-        in the incremental job and a full run alike; a later change to its story leaves it too."""
+        """Nothing is deleted: past the 30 days the job writes, the row stays as it was, incremental and full alike; a
+        later change to its story leaves it too (0077)."""
         page = self._page("news")
         a = self._post(self._source("A"), links=[page])
         self._post(self._source("B"), links=[page])
@@ -241,9 +238,8 @@ class IncrementalJobTests(unittest.TestCase):
         self.assert_same_as_full()
 
     def test_a_row_leaves_the_window_whole(self):
-        """Issue 0111: a row is in the window by its first post. When that post leaves, the row leaves as it
-        was, all its posts in it; its second post never comes back leading a row of its own. The incremental
-        job and a full run alike."""
+        """A row is in the window by its first post; when that post leaves, the row leaves whole, its second post never
+        leading a row of its own; incremental and full alike (0111)."""
         name = f"Zork{self.mark[:4]} 9"
         sources = [self._source(n, followed_days=90) for n in ("A", "B", "C")]
         first, second, third = (self._post(s, hours_ago=h, title=f"{name} {t}") for s, h, t in
@@ -279,17 +275,16 @@ class IncrementalJobTests(unittest.TestCase):
         self.cur.execute("UPDATE posts SET content_html = %s, links_scanned_at = NULL WHERE id = %s", (html, pid))
 
     def assert_every_story_row_is_whole(self):
-        """Issue 0110: every story_posts and story_mentions row names a stored story."""
+        """Every story_posts and story_mentions row names a stored story (0110)."""
         self.cur.execute("SELECT count(*) FROM story_posts sp LEFT JOIN stories s ON s.id = sp.story_id WHERE s.id IS NULL")
         self.assertEqual(self.cur.fetchone()[0], 0)
         self.cur.execute("SELECT count(*) FROM story_mentions m LEFT JOIN stories s ON s.id = m.story_id WHERE s.id IS NULL")
         self.assertEqual(self.cur.fetchone()[0], 0)
 
     def test_a_roundup_listing_a_page_its_story_left_mentions_nothing(self):
-        """Issue 0110 (the server's v9.17 rebuild failed on it): a page is outside the scope's stories
-        once the posts joined through it stop linking it, and a roundup of the same batch lists it. Its
-        story was read from the stored link edges, of those very posts: a story this batch removes,
-        so the mention named a story no longer stored (story_mentions_story_id_fkey)."""
+        """A page is outside the scope's stories once the posts joined through it stop linking it while a roundup of
+        the same batch lists it: the mention must not name a story this batch removed (story_mentions_story_id_fkey,
+        0110)."""
         page, first, other = self._page("left"), self._page("first"), self._page("other")
         a = self._post(self._source("A"), links=[page], stored_hours_ago=3)
         b = self._post(self._source("B"), links=[page], stored_hours_ago=2)

@@ -1,13 +1,7 @@
 /**
- * The feed context a post page carries in `?ctx=` (spec §F.3), so prev/next keep
- * following the feed order after a reload: `<scope>:<filter>:<cursor>`.
- *
- * - `scope` is the API form: `all`, `folder:<uuid>` or `source:<uuid>`.
- * - `cursor` is the keyset cursor of the feed page that holds the post (empty for
- *   the first page). The post page reloads that page to find its neighbours.
- *
- * Feed cursors use the backend's encoding (urlsafe base64 of "<iso>|<uuid>", no
- * padding), so the client can build one from any item it has loaded.
+ * The feed context a post page carries in `?ctx=` (`<scope>:<filter>:<cursor>`), so prev/next keep following
+ * the feed order after a reload. `scope` is the API form; `cursor` is the keyset cursor of the feed page that
+ * holds the post (empty for the first), in the backend's encoding (urlsafe base64 of "<iso>|<uuid>", no padding).
  */
 
 export type FeedFilter = 'all' | 'unread' | 'later' | 'starred' | 'updated' | 'history';
@@ -29,7 +23,6 @@ export function isFeedFilter(value: unknown): value is FeedFilter {
 export function isValidScope(scope: string): boolean {
   if (scope === 'all') return true;
   const [kind, id, ...rest] = scope.split(':');
-  // A voice (issue 0132 A): every channel of one voice, read as a source's page.
   return rest.length === 0 && (kind === 'folder' || kind === 'source' || kind === 'voice') && UUID_RE.test(id ?? '');
 }
 
@@ -113,10 +106,8 @@ function comesAfter(entry: { id: string; sortAt: string }, current: { id: string
 }
 
 /**
- * Prev/next for `current` by its place in the feed order, whether or not the
- * loaded entries still hold it: a post read under the `unread` filter drops out
- * of a reloaded page, but its neighbours are still the posts around its sort key.
- * After the last loaded entry, `loadNext` names the next page's cursor.
+ * Prev/next for `current` by its place in the feed order, whether or not the loaded entries still hold it (a
+ * post read under `unread` drops out of a reloaded page). After the last loaded entry, `loadNext` names the cursor.
  */
 export function neighborsAt(
   entries: readonly SortedEntry[],
@@ -124,8 +115,8 @@ export function neighborsAt(
   nextCursor: string | null,
 ): Omit<ContextNeighbors, 'found'> {
   const others = entries.filter((entry) => entry.id !== current.id);
-  // A loaded post's neighbours are the entries around it, in whatever order the list has
-  // (Later is oldest saved first, issue 0022); one no longer loaded goes by its sort key.
+  // A loaded post's neighbours are the entries around it, in the list's order (Later is oldest first); one no
+  // longer loaded goes by its sort key.
   const at = entries.findIndex((entry) => entry.id === current.id);
   let index = at >= 0 ? at : others.findIndex((entry) => comesAfter(entry, current));
   if (index < 0) index = others.length;
@@ -144,28 +135,22 @@ export function scopePath(scope: string): string {
   return `/read/${kind}/${id}`;
 }
 
-/** The reader scoped to one folder (a track): where every track link goes (Design Studio D5). */
 export function folderReadPath(folderId: string): string {
   return `/read/folder/${encodeURIComponent(folderId)}`;
 }
 
-/** The reader scoped to one voice: every channel of it (issue 0132 A). */
 export function voiceReadPath(voiceId: string): string { return `/read/voice/${encodeURIComponent(voiceId)}`; }
 
-/** The reader scoped to one source: where every "read this source" link goes (issues 0010, 0011). */
 export function sourceReadPath(sourceId: string): string { return `/read/source/${encodeURIComponent(sourceId)}`; }
 
-/** Where a source is managed: Sources with its detail sheet open (issue 0003). */
 export function sourceSettingsHref(sourceId: string): string {
   return `/settings/sources?source=${encodeURIComponent(sourceId)}`;
 }
 
-/** Where a track is managed: Sources scrolled to its group (issue 0003). */
 export function trackSettingsHref(folderId: string): string {
   return `/settings/sources?track=${encodeURIComponent(folderId)}`;
 }
 
-/** Where a reader scope is managed; null for the main feed. */
 export function scopeSettingsHref(scope: string): string | null {
   const [kind, id] = scope.split(':');
   if (kind === 'source' && id) return sourceSettingsHref(id);

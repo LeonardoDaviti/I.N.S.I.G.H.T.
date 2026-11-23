@@ -1,5 +1,4 @@
-// 0207 (tracks: evolving sub-topics, digests, new since you looked, tools in use): the lines in words and the topic
-// view's new parts. Synthetic data only.
+// Evolving sub-topics, digests, new since you looked, tools in use (0207). Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

@@ -23,7 +23,7 @@ export interface FeedFixture {
   counts: UnreadCounts;
 }
 
-/** `allSources`: a topic track's every post of its sources, not only its items (v10.12.1): a list of its own. */
+/** `allSources`: a topic track's every post of its sources, not only its items: a list of its own. */
 export function feedKey(scope: string, filter: FeedFilter, view: FeedView, fixtureName?: string, allSources = false) {
   const key = fixtureName ? [...FEED_ROOT_KEY, scope, filter, view, 'fixture', fixtureName] : [...FEED_ROOT_KEY, scope, filter, view];
   return allSources ? [...key, 'all-sources'] : key;
@@ -37,9 +37,8 @@ function fixturePage(fixture: FeedFixture, view: FeedView, cursor: string | null
 }
 
 /**
- * The reader feed (spec §F.3): `useInfiniteQuery(['feed', scope, filter, view])`
- * with `staleTime: Infinity` and no refetch on focus, so nothing reorders the list
- * while it is being read. New posts surface through the unread counts instead.
+ * The reader feed: `useInfiniteQuery(['feed', scope, filter, view])` with `staleTime: Infinity` and no refetch on
+ * focus, so nothing reorders the list while it is read. New posts surface through the unread counts instead.
  */
 export function useFeed({ scope, filter, view, fixture, allSources = false }: {
   scope: string; filter: FeedFilter; view: FeedView; fixture?: FeedFixture | null; allSources?: boolean;
@@ -54,8 +53,7 @@ export function useFeed({ scope, filter, view, fixture, allSources = false }: {
       return view === 'by_source' ? api.getFeedGroups(params) : api.getFeed(params);
     },
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    // History (issue 0052) changes with every post you open: coming back to it loads it afresh,
-    // with the post just read on top; it still never refetches under you while you read it.
+    // History changes with every post you open: coming back reloads it, but it never refetches under you.
     staleTime: filter === 'history' ? 0 : Infinity,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -90,9 +88,8 @@ export function useFeed({ scope, filter, view, fixture, allSources = false }: {
   return { ...query, ...derived };
 }
 
-/** Unread counts for the rail badges and the "N new posts" pill. Checked every 10
- *  seconds while a fetch job runs, else every 60 (never in a hidden tab), so posts
- *  saved during a run show up as the pill while the list itself stays put. */
+/** Unread counts for the rail badges and the new-posts pill: every 10 s while a fetch job runs, else 60 (never
+ *  in a hidden tab), so posts saved during a run show as the pill while the list stays put. */
 export function useUnreadCounts(fixture?: FeedFixture | null) {
   const api = useApi();
   const fetching = useRunningFetchJob() !== null;

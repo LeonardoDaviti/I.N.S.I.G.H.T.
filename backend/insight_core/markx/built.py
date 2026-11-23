@@ -1,26 +1,10 @@
-"""Stealth v10.4 (issue 0128): how a Mark X story is built, by the owner's rules (0120 "What the owner decided").
+"""How a Mark X story is built (issue 0128): its event type, its leaks, its original and its published order.
 
-  1. **The story's event type**, from its members' read-v3 readings (0127's `read3`): the most common news type
-     (`folds.story_type`), else the most common type of the read members (a story of leaks is `leak_rumour`).
-  2. **Leaks.** A leak is a member read as `leak_rumour`; a story's release is its earliest member of the story's news
-     type that isn't one.
-       - Inside a story: a leak before the release joins it when it is at most JOIN_HOURS before, or it is the only
-         voice that leaked; two or more voices leaking it earlier than that are coverage of its own (by the rule its
-         own story, linked "came true"; the decision rules don't split stories by type yet, so it is shown, not split).
-       - Across stories (`came_true`): a leak story (its type `leak_rumour`) and a later release story (a news type,
-         its release within CAME_TRUE_DAYS of the leak story's first post) are linked when Mark X's judged connection
-         joins them (development, follows up, same event); nothing else links them (a shared main subject alone was
-         measured 0 of 5 right on the lab's unseen rumours, 0128, and dropped in v10.18, 0203). A one-voice leak story
-         at most JOIN_HOURS before the release joins it; any other stays its own story, linked both ways.
-  3. **The original by code** (0120 "The original by code", the port in perspectives.Story): a member whose own page
-     is the page most members link to, else the maker's own post, the maker's page, a link post carrying the maker's
-     page; shown as the story's first post. No member is: the source page is shown, the earliest post first.
-  4. **Published order** (PUBLISHED): a post's own date (a saved page's is the page's, 0063); the time it was put in
-     front of the owner (surfaced_at, 0039) only for a post with no date.
-
-**Nothing is stored:** a function of the readings, the members, the mentions and the connections Mark X keeps,
-computed when a page is built, as the fold is (0127 §3). The decision rules, task inputs and perspectives' frozen
-inputs are unchanged. Reads only; Mark IX's tables are read, never written.
+The event type is its members' most common news type from their readings (`folds.story_type`). A leak before the
+release joins it when at most JOIN_HOURS before or the only voice that leaked; a leak story links "came true" to a
+later release story only through Mark X's judged connection (`came_true`; a shared subject alone measured wrong). The
+original is found by code (`original`: the page most members link, else the maker's own post or page), shown first;
+the rest in published order. Nothing is stored: computed when a page is built from what Mark X keeps. Reads only.
 """
 from __future__ import annotations
 
@@ -38,10 +22,8 @@ CAME_TRUE_DAYS = 30      # a leak story is linked to a release at most this long
 LEAK = event_types.LEAK
 NEWS_TYPES = event_types.NEWS_TYPES
 CONNECTED = ("development", "follows_up", "same_event")
-# Only Mark X's own judged connections link a leak story to its release. A shared main subject alone (SUBJECT_LINKS,
-# off since 0128) linked 0 of 5 right on the lab's unseen rumours (runs 2-3: 0/2, 0/2): a later post on the same
-# subject is rarely the leak's confirmation. Dropped as dead code in v10.18 (0203); the lab's pairwise judge
-# (read_v3e: F1 0.80) is the measured way to add another link.
+# only Mark X's own judged connections link a leak story to its release (a shared main subject alone measured 0 of 5
+# right: 0128)
 ORIGINAL_ORDER = ("links", "maker", "maker-page", "maker-link")
 CODE = "built-v1"
 
@@ -55,7 +37,7 @@ class Post:
     at: datetime                       # published (PUBLISHED)
     event_type: Optional[str]          # None: no read-v3 reading yet
     origin: Optional[str] = None
-    kind: Optional[str] = None         # its source's kind (post_links.source_kind): a saved page is no voice (0189)
+    kind: Optional[str] = None         # its source's kind (post_links.source_kind): a saved page is no voice
 
 
 def _read(posts: Iterable[Post]) -> List[Post]:
@@ -104,8 +86,7 @@ def leaks_inside(posts: Sequence[Post], join_hours: float = JOIN_HOURS) -> List[
 
 
 def voices(posts: Iterable[Post]) -> int:
-    """A story's voices by Voice's MARKX rule over each member's source: a saved page is none (0189: v10.16 counted
-    every member's source, a saved page's too)."""
+    """A story's voices by Voice's MARKX rule over each member's source: a saved page is none."""
     return voice.count((voice.Said(p.source, p.kind) for p in posts), voice.Policy.MARKX)
 
 
@@ -180,7 +161,7 @@ def _load(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]
                      WHERE sp.story_id = ANY(%s::uuid[]) AND sp.valid_to IS NULL AND sp.role = 'member'""",
                 (list(story_ids),))
     rows = cur.fetchall()
-    types = event_types.types_of(cur, [r[1] for r in rows])   # 0175: a post's type through the seam
+    types = event_types.types_of(cur, [r[1] for r in rows])   # a post's type through the seam
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for sid, pid, src, at, platform, handle in rows:
         et, origin = types[pid]
@@ -192,7 +173,7 @@ def _load(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]
 def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str], among: Optional[Iterable[str]] = None) -> List[str]:
     """The current, unmerged Mark X stories of 2+ members with a member published in [lo, hi] and a read-v3 reading
     of a leak or a news type: the stories a viewed one may be linked "came true" to. `among`: only these stories
-    (v10.17: those a judged connection joins to a viewed one: only a connection links)."""
+    (those a judged connection joins to a viewed one)."""
     among = None if among is None else sorted(set(among) - have)
     if among is not None and not among:
         return []
@@ -200,7 +181,7 @@ def _neighbours(cur: Any, lo: datetime, hi: datetime, have: Set[str], among: Opt
                       JOIN mx_stories s ON s.id = sp.story_id AND s.merged_into IS NULL
                      WHERE sp.valid_to IS NULL AND sp.role = 'member' AND {PUBLISHED} BETWEEN %(lo)s AND %(hi)s
                        {"AND sp.story_id = ANY(%(among)s::uuid[])" if among is not None else ""}
-                       AND {event_types.typed_sql("sp.post_id", "%(types)s", event_types.type_guides(cur))}""",   # 0175; 0212: ent-v5 first when on
+                       AND {event_types.typed_sql("sp.post_id", "%(types)s", event_types.type_guides(cur))}""",
                 {"lo": lo, "hi": hi, "types": [LEAK, *NEWS_TYPES], "among": among})
     return sorted({r[0] for r in cur.fetchall()} - have)
 
@@ -210,7 +191,7 @@ def _connected(cur: Any, story_ids: Sequence[str]) -> Set[FrozenSet[str]]:
         return set()
     cur.execute("""SELECT a::text, b::text FROM mx_connections WHERE valid_to IS NULL AND a_kind = 'story'
                      AND b_kind = 'story' AND relation = ANY(%s) AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))
-                     AND rule IS DISTINCT FROM 'chain_stops'""",   # 0219: a story chain is graph's, not decide's
+                     AND rule IS DISTINCT FROM 'chain_stops'""",   # a story chain is graph's, not decide's
                 (list(CONNECTED), list(story_ids), list(story_ids)))
     return {frozenset(r) for r in cur.fetchall()}
 
@@ -242,7 +223,7 @@ def stories_of(cur: Any, story_ids: Iterable[str], *, book: Any = None, links: b
     posts = in_published_order(cur, P.load_members(cur, every))
     book = book if book is not None else identity.lazy_book(cur)
     makers = P.Makers(book, P.mentions_of(cur, every))
-    makers.prepare(posts)   # v10.17 (0186): what the stories ask of the book, in a few reads, not one each
+    makers.prepare(posts)   # what the stories ask of the book, in a few reads, not one each
     return {sid: P.Story([m["id"] for m in ms if m["id"] in posts], posts, makers)
             for sid, ms in rows.items() if any(m["id"] in posts for m in ms)}
 
@@ -255,11 +236,10 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     rows = _load(cur, ids)
     if not rows:
         return {}
-    book = identity.lazy_book(cur)   # v10.17 (0186): what the stories ask of the book, not the whole book
+    book = identity.lazy_book(cur)   # what the stories ask of the book, not the whole book
     times = [m["at"] for ms in rows.values() for m in ms if m["at"]]
-    # v10.17 (0186): a story is linked "came true" only through a judged connection, so only the stories connected to
-    # a viewed one can be linked to it (was: every typed story of the window, ~60 days of stories, their subjects and
-    # every leak x release pair among them, for the same links)
+    # a story is linked "came true" only through a judged connection, so only the stories connected to a viewed one
+    # are read
     among = {s for c in _connected(cur, ids) for s in c}
     near = _neighbours(cur, min(times) - timedelta(days=CAME_TRUE_DAYS), max(times) + timedelta(days=CAME_TRUE_DAYS),
                        set(rows), among) if times else []
@@ -271,6 +251,7 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     firsts = {s: min(ps, key=lambda p: (p.at, p.id)).id for s, ps in world.items() if ps}
     titles = _titles(cur, sorted({x[k] for x in links for k in ("leak", "release")}), firsts)
     sts = stories_of(cur, ids, book=book)
+    differ = disputes(cur, ids)
     out: Dict[str, Dict[str, Any]] = {}
     for sid in ids:
         ps = world.get(sid)
@@ -294,8 +275,21 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
                                "joins": x["joins"], "via": x["via"],
                                "posts": [p.id for p in sorted(world[x["leak"]], key=lambda p: (p.at, p.id))]}
                               for x in links if x["release"] == sid],
+            "disputes": differ.get(sid, []),
         }
     return out
+
+
+def disputes(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """Where each story's sources differ, as its current sheet keeps it (perspectives.disputes_of); none while the
+    switch is off."""
+    from insight_core.markx import perspectives
+    if not story_ids or not perspectives.disputes_on(cur):
+        return {}
+    cur.execute("""SELECT story_id::text, sheet->'disputes' FROM mx_sheets
+                    WHERE valid_to IS NULL AND story_id = ANY(%s::uuid[]) AND jsonb_typeof(sheet->'disputes') = 'array'""",
+                (list(story_ids),))
+    return {sid: got for sid, got in cur.fetchall() if got}
 
 
 def line_roles(b: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:

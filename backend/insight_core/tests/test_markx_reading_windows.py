@@ -1,6 +1,5 @@
-"""Issue 0176 (Stealth v10.16): the fresh lane (posts fetched in the last 24 hours planned and leased first, with a
-cap both ways) and long posts' entities read in windows (0150 C). The DB tests run only on a database whose name ends
-in _test, each in a transaction rolled back after it."""
+"""The fresh lane (posts fetched in the last 24 hours planned and leased first, capped both ways) and long posts'
+entities read in windows (0176). The DB tests run only on a _test database, each rolled back."""
 from __future__ import annotations
 
 import json
@@ -67,7 +66,7 @@ class Windows(unittest.TestCase):
         ws = tasks.text_windows(text, 1500, cap=12)
         self.assertEqual(len(ws), 12)
         self.assertLess(ws[-1][1], len(text))
-        self.assertEqual(len(tasks.text_windows(text, 1500, cap=1)), 1)              # cap 1: as before 0176
+        self.assertEqual(len(tasks.text_windows(text, 1500, cap=1)), 1)              # cap 1: one window
 
     def test_each_later_window_says_which_it_is_and_shows_its_text_without_links(self):
         p = _post(_long(9_000))
@@ -223,8 +222,7 @@ class WindowMentions(_Db):
 
 
 class WindowsUnderEnt42(_Db):
-    """ent-v4.2 (the server's arm, 6,000 characters): a later window drops the post's own title, takes no cite merge,
-    and a cite answer waits for the first window, as it waited for the post's one answer before."""
+    """A later window drops the post's own title, takes no cite merge, and a cite answer waits for the first window."""
 
     def test_a_later_window_and_the_cite_answer(self):
         from insight_core.markx import ent42
@@ -253,7 +251,7 @@ class FreshPlanning(_Db):
         late = self.post(title="A deal closed", published=self.now - 5 * D, fetched=self.now - 2 * H)
         old = self.post(title="Old news", published=self.now - 5 * D, fetched=self.now - 3 * D)
         self.post(title="From an archive", published=self.now - 300 * D, fetched=self.now - H)   # imported: not new
-        self.assertEqual(tasks.plan_posts(self.cur, "read", now=self.now), 0)                   # outside the window: never, before
+        self.assertEqual(tasks.plan_posts(self.cur, "read", now=self.now), 0)                   # outside the window: never
         self.assertEqual(tasks.plan_fresh(self.cur, "read", now=self.now), 1)
         self.assertEqual(tasks.plan_fresh(self.cur, "entities", now=self.now), 1)
         self.cur.execute("SELECT DISTINCT a::text FROM mx_tasks")
@@ -315,7 +313,7 @@ class FreshLease(_Db):
         old = self.queue(30, fresh=False)
         new = self.queue(3, fresh=True)
         got = self.lease(5, fresh=(), fresh_hours=None)
-        self.assertEqual((len(set(got) & set(new)), len(set(got) & set(old))), (3, 2))   # today's first by rank, as before
+        self.assertEqual((len(set(got) & set(new)), len(set(got) & set(old))), (3, 2))   # today's first by rank
 
     def test_a_fresh_posts_headline_rides_in_the_lane(self):
         old = self.queue(20, fresh=False)
@@ -325,9 +323,8 @@ class FreshLease(_Db):
         self.assertIn(str(hid), self.lease(4))
 
     def test_the_lag_of_a_fresh_post_behind_a_backfill(self):
-        """The fixture behind the issue's numbers: 400 backfill tasks waiting, 10 posts fetched now, leases of 20.
-        Before 0176 the new posts wait behind the whole queue only when their dates rank them behind it (a post dated
-        days before it was fetched, the real case); with the lane they are all in the first lease."""
+        """400 backfill tasks waiting, 10 posts fetched now but dated days back, leases of 20: with the lane the new
+        posts are all in the first lease."""
         old = self.queue(400, fresh=False)
         self.cur.execute("UPDATE posts SET published_at = now() - interval '1 day' WHERE id IN "
                          "(SELECT a FROM mx_tasks WHERE id = ANY(%s::uuid[]))", (old,))       # the backfill: yesterday's
@@ -354,6 +351,7 @@ class FreshLaneApi(_Api):
         super().setUp()
         self.addCleanup(setattr, api, "FRESH_REST_SECONDS", api.FRESH_REST_SECONDS)
         api.FRESH_REST_SECONDS = 0.0
+        api._PLAN_REST.clear()   # a planner rest an earlier module's lease left in this process
 
     def test_a_lease_plans_new_posts_even_when_the_queue_is_full(self):
         for k in range(25):                                         # a full queue: the general planner rests
@@ -379,8 +377,7 @@ class FreshLaneApi(_Api):
 
 @requires_test_db
 class WindowsIncremental(unittest.TestCase):
-    """0169's invariant with windows: an incremental run after a long post's later windows are answered is a full
-    run's result (the entities stage reads mx_mentions_now, every window's rows). The scene is 0169's tests'."""
+    """With windows, an incremental run after a long post's later windows are answered equals a full run (0169)."""
     setUp = TI.Incremental.setUp
     post, ix_story, answer, read_all, scene = (TI.Incremental.post, TI.Incremental.ix_story, TI.Incremental.answer,
                                                TI.Incremental.read_all, TI.Incremental.scene)

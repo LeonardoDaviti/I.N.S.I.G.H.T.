@@ -1,9 +1,7 @@
 /**
- * The reader's download budget (Design Studio D8, issue 0061): the studio and the
- * blog are dev-only, absent from the production build (v10.17, issue 0190), and what two routes download first, in gzip bytes, may grow at
- * most 1% over the release's baseline and never past 110% of the v9.8 ceiling
- * base, which no `--update` resets. Pure functions over Vite's build manifest,
- * so the build check (`scripts/bundle-check.mjs`) and its test share them.
+ * The reader's download budget: what each route downloads first (gzip bytes) may grow at most 1% over the
+ * release's baseline and never past 110% of the ceiling base, which no `--update` resets. Pure over Vite's
+ * manifest, shared by `scripts/bundle-check.mjs` and its test.
  */
 
 export interface ManifestChunk {
@@ -17,11 +15,7 @@ export interface ManifestChunk {
 
 export type Manifest = Record<string, ManifestChunk>;
 
-/**
- * What each route downloads before it shows: opening the feed (`/`, the app entry
- * and the reader), and opening a post from it (the feed's files and the post page's);
- * Mark X's page, an entity's and a story's, each opened from a link (issue 0195).
- */
+/** What each route downloads before it shows: the feed, a post opened from it, and the Mark X pages. */
 export const ROUTES = {
   feed: ['index.html', 'src/pages/ReaderPage.tsx'],
   post: ['index.html', 'src/pages/ReaderPage.tsx', 'src/pages/PostDetailPage.tsx'],
@@ -40,10 +34,7 @@ export function allInitialFiles(manifest: Manifest): string[] {
   return [...new Set((Object.keys(ROUTES) as Route[]).flatMap((route) => initialFiles(manifest, ROUTES[route])))];
 }
 
-/**
- * The dev-only code (issue 0190): the Design Studio (src/design), the blog's posts (src/blog) and its page. A
- * production build's manifest holds none of it; `npm run dev` serves it (App.tsx, `import.meta.env.DEV`).
- */
+/** Dev-only code, absent from a production manifest (App.tsx, `import.meta.env.DEV`). */
 export const DEV_ONLY_PREFIXES = ['src/design/', 'src/blog/', 'src/pages/BlogPage'] as const;
 
 /** The growth a route may take over its baseline within a release. */

@@ -15,11 +15,8 @@ function tally(events: readonly TransportEvent[]): { event: TransportEvent; coun
   return [...seen.values()];
 }
 
-/**
- * What the fixtures did not cover, inside the frame (D4): every unmocked read,
- * loud, and every write the frame answered without sending, quiet. Nothing
- * when the frame stayed inside its fixtures and wrote nothing.
- */
+/** What the fixtures did not cover, inside the frame: every unmocked read, loud, and every faked write, quiet.
+ *  Nothing when the frame stayed inside its fixtures. */
 export default function RequestBar({ report, setupError }: { report: FrameReport; setupError?: string | null }) {
   const events = useSyncExternalStore(report.subscribe, report.events, report.events);
   const lines = tally(events);

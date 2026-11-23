@@ -1,45 +1,17 @@
-"""A person's handles (issue 0168 A-D): which posts cite an account, by a deterministic rule over the post's FULL text,
-and which handles are whose, learned from "Display Name (@handle)" pairs and confirmed by the owner once.
+"""A person's handles: which posts cite an account (a deterministic rule over the post's FULL text, links and author
+fields) and which handles are whose (learned from "Display Name (@handle)" pairs, confirmed by the owner once).
 
-**The rule (A).** A post cites a handle when its whole title and text (not the 1.5k / 6k characters the entities guide
-reads: E7 found 31% of the gain in long round-ups), its kept links, or its author fields say so, in one of these forms:
-
-  - `repost`  : a repost of another account's post (an X feed's row whose author is not the feed's account; a Telegram
-                forward's channel when the header names it)                                         -> role `by`
-  - `quote`   : the tweet a post quotes (post_parts.quoted)                                         -> role `by`
-  - `embed`   : an embedded tweet as a page writes it out ("— Name (@handle) May 3, 2026")          -> role `by`
-  - `status`  : a link to one of the account's posts (x.com / twitter / nitter / xcancel / fx... status links, a Bluesky
-                post, a Telegram channel's post). It names the cited post's AUTHOR, never its subject -> role `source`
-  - `said`    : "@h said / confirmed / announced ...", "@h: ...", "according to @h"                 -> role `source`
-  - `at`      : any other @mention                                                                  -> role `mention`
-  - `profile` : a link to the account's profile                                                     -> role `mention`
-  - `reply`   : the post replies to the account ("R to @h:")                                        -> role `reply` (hidden
-                by default)
-
-An `@h` is an X handle outside Telegram posts; in a Telegram post it is a Telegram channel or user. Never an e-mail, a
-CSS / BibTeX / code at-word, a path's `/@user`, a Mastodon `@user@host`, or a bare word (E7: bare words 67% right). The
-post's own account (its source's) is never cited by its own post: the person's own sources are "By" (0144 B1).
-**Boilerplate**: a citation whose sentence 3+ posts of one source repeat (digits outside addresses aside), or a mention
-whose nearest words (the word before, the handle, the word after) 5+ posts of one source repeat, is the source's
-furniture, not a citation (E7's one error class: a round-up's section header "The <Group> @x Discord has no new
-messages" in 93 issues); found at read time from the refs' line keys, nothing hard-coded.
-
-**Handles are keyed by platform** (x, github, telegram, bluesky, hf): the same handle on two platforms is two accounts
-(E7: GitHub's same handle was a different person), joined only by a declared link (0162's research).
-
-**Pairs (C).** "Display Name (@handle)" in a post's text (a quote's header, a round-up's "Tweet from Name (@h)"): E7
-measured 580 of 583 agreeing. Each pair is stored; `learn` proposes a handle for the person or org whose name the pairs
-agree on (2+ posts, AGREE share), one owner question (mx_entity_queue kind `handle`); a second handle paired with the
-same name is offered as that entity's other handle, with the time range its pairs span (a renamed account). Never a
-handle from a name alone: only pairs, the person's own followed accounts, or the owner.
-
-**Names from handles (D).** An entity named by a handle ("ikestrel" typed an org) whose handle's pairs agree on a display
-name: when an entity of that name exists, an alias question (the owner merges); otherwise a `handle` question whose
-yes keeps the handle and shows the display name (entity_repair.shown reads `learned_names`).
-
-Stored in mx_handle_scans / mx_handle_refs / mx_handle_pairs (one row set a post's digest: a post read again under a
-new rule or new text gets a new set; the old rows stay, unread) and mx_entity_handles (the owner's answers, newest
-counts). Migration 0112.
+Forms and the role they give (`role_of`): repost, quote, embed -> `by`; status link (names the cited post's AUTHOR,
+never its subject), "@h said / according to @h" -> `source`; any other @mention, profile link -> `mention`; "R to @h"
+-> `reply` (hidden by default). An `@h` is an X handle outside Telegram posts, a Telegram account inside them; never an
+e-mail, code at-word, `/@user` path, Mastodon `@user@host` or bare word. A post never cites its own source's account.
+Boilerplate (a line or a mention's neighbouring words repeated across a source's posts: BOILER_POSTS, BOILER_WINDOW)
+is not a citation; found at read time, nothing hard-coded. Handles are keyed by platform: the same handle on two
+platforms is two accounts. `learn` turns agreeing pairs into owner questions (mx_entity_queue kind `handle`), never a
+handle from a name alone. Entry points: `stage` (the decision run), `scan` (pure), `posts_citing`, `entity_handles`,
+`answer_item` / `add_handle` (the owner's answers), the CLI.
+Writes mx_handle_scans / mx_handle_refs / mx_handle_pairs (one row set per post digest; old sets stay, unread) and
+mx_entity_handles (the owner's answers, newest counts).
 """
 from __future__ import annotations
 
@@ -136,7 +108,7 @@ NOT_NAMES = {"it", "this", "that", "here", "there", "me", "him", "her", "them", 
              "tweet", "source", "credit", "photo", "video", "image", "pic", "account", "profile", "below", "above"}
 UNIT = re.compile(r"^\d+(?:[a-z]{1,2}|x|px|pm|am)?$", re.I)
 REPLY = re.compile(r"^R to @(\w+): ")
-REPOST = byline.RT_BY   # Nitter's "RT by @x: " (Byline's one pattern, issue 0189)
+REPOST = byline.RT_BY   # Nitter's "RT by @x: "
 
 
 @dataclass(frozen=True)
@@ -190,11 +162,9 @@ def _fold(s: str) -> str:
 
 
 def _line_at(text: str, pos: int, window: bool = False) -> Tuple[str, str]:
-    """(the key of the line holding `pos`, a short snippet around it). A long line is narrowed to its sentence;
-    folded (_fold: case, spaces, digits outside addresses) ("s:" keys). `window` (a plain @mention or a profile link):
-    the nearest word before, the handle and the nearest word after, punctuation skipped ("w:" keys): a round-up's
-    section header ("<Group> @h Discord <the next item's title>") repeats there though its sentence never does, while
-    a list of handles ("@a , @h , and @b") keeps its neighbours."""
+    """(the boilerplate key of the line holding `pos`, a snippet). "s:" keys: the folded sentence; `window` (a plain
+    @mention or profile link) "w:" keys: the words before and after the handle, so a repeated section header is caught
+    though its sentence never repeats."""
     snip = re.sub(r"\s+", " ", text[max(0, pos - SNIPPET // 2): pos + SNIPPET // 2]).strip()
     if window:
         before = [t for t in re.findall(r"\S+", text[max(0, pos - 60):pos]) if WORD.search(t)][-1:]
@@ -265,10 +235,8 @@ def _clean_name(raw: str) -> Optional[str]:
 
 def scan(*, kind: str, own: Optional[str], title: str, text: str, links: Sequence[str] = (), author: Optional[str] = None,
          quoted: Optional[str] = None, forwarded: Optional[str] = None) -> Tuple[List[Ref], List[Pair]]:
-    """The handle refs and name pairs of one post (pure). `kind`: its source's kind (tasks.Post.kind); `own`: the
-    source's own account on its platform ("x:handle", "telegram:channel", ...), never cited by its own post;
-    `title`: the stored title (Nitter's "RT by @x:" / "R to @x:" read); `links`: its kept links' addresses; `author`:
-    posts.author; `quoted`: the tweet it quotes (post_parts.quoted); `forwarded`: a Telegram forward's channel."""
+    """The handle refs and name pairs of one post (pure). `own`: the source's own account ("x:handle", ...), never
+    cited by its own post; `quoted`: the tweet it quotes; `forwarded`: a Telegram forward's channel."""
     at_platform = "telegram" if kind == "telegram" else "x"
     own_p, _, own_h = (own or "").partition(":")
     refs: Dict[Tuple[str, str, str], Ref] = {}
@@ -303,8 +271,7 @@ def scan(*, kind: str, own: Optional[str], title: str, text: str, links: Sequenc
     body = REPOST.sub("", REPLY.sub("", raw_title)) + "\n" + (text or "")
     pairs: List[Pair] = []
     claimed: Set[int] = set()   # an embed's "(@h)" is its embed, not a mention too
-    # v10.16: an embed and a pair both hold "(@": a body without one has neither, and PAIR's lazy name tried 80
-    # characters from every position of every body (9 of a scan's 11 s on the scale copy's 2,000 newest posts)
+    # an embed and a pair both hold "(@": skip PAIR's slow lazy match on bodies without one
     paren = "(@" in body
     for m in EMBED.finditer(body) if paren else ():
         add("x", m.group(2), "embed", pos=m.start(2), body=body)
@@ -338,8 +305,7 @@ def scan(*, kind: str, own: Optional[str], title: str, text: str, links: Sequenc
 
 
 def account_of(platform: Optional[str], handle: Optional[str]) -> Optional[Tuple[str, str]]:
-    """A source's own account as a handle key ((platform, handle)), or None: an X, Telegram, GitHub, Bluesky or model
-    hub account it follows (repo_stories.source_account)."""
+    """A source's own account as a handle key ((platform, handle)), or None."""
     from insight_core.db.repo_stories import source_account
     acc = source_account(platform, handle) or ""
     for prefix, p in (("x.com/", "x"), ("t.me/", "telegram"), ("github.com/", "github"), ("huggingface.co/", "hf"),
@@ -430,8 +396,7 @@ def scan_pending(cur: Any, *, limit: int = SCAN_LIMIT, deadline: Optional[float]
     {posts, refs, pairs, done: nothing left pending}."""
     import time
     got: Counter = Counter({"posts": 0, "refs": 0, "pairs": 0})
-    # v10.24 (0221): no batch past the deadline (one a run went past it, so a long full pass never starved the scan:
-    # the stage now spends its budget in order, and the scan has what the linking and the full pass leave)
+    # no batch past the deadline
     while got["posts"] < limit and (deadline is None or time.monotonic() < deadline):
         ids = pending(cur, min(SCAN_BATCH, limit - got["posts"]))
         if not ids:
@@ -457,18 +422,9 @@ def answers(cur: Any, members: Iterable[str]) -> Dict[Tuple[str, str], Dict[str,
             for p, h, a, d, f, l, at in cur.fetchall()}
 
 
-def confirmed_elsewhere(cur: Any, book: Any, platform: str, handle: str) -> Set[str]:
-    """The roots the owner said have this handle."""
-    cur.execute("""SELECT DISTINCT ON (entity_id) entity_id::text, answer FROM mx_entity_handles
-                    WHERE platform = %s AND handle = %s ORDER BY entity_id, created_at DESC, id DESC""",
-                (platform, handle))
-    return {book.root(e) for e, a in cur.fetchall() if a == "yes" and book.root(e) in book.ents}
-
-
 def entity_handles(cur: Any, book: Any, root: str, members: Iterable[str], by_sources: Sequence[Dict[str, Any]] = ()
                    ) -> List[Dict[str, Any]]:
-    """The entity's known handles: the owner's yes (with the display name and time range the pairs gave) and the
-    accounts of its own sources (0144 B1's "By": a person's followed account is theirs). [{platform, handle, via,
+    """The entity's known handles: the owner's yes and its own sources' accounts. [{platform, handle, via,
     display_name, first_seen, last_seen}], current ones first."""
     got: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for (p, h), a in answers(cur, members).items():
@@ -525,7 +481,7 @@ def posts_citing(cur: Any, handles: Sequence[Dict[str, Any]], *, exclude_sources
 
 def learned_names(cur: Any, book: Any) -> Dict[str, Tuple[str, Set[str]]]:
     """{root: (the display name the owner's confirmed handles carry, those handles squashed)}: an entity named by its
-    handle is shown by the name its pairs gave (D; entity_repair.shown)."""
+    handle is shown by the name its pairs gave (entity_repair.shown)."""
     cur.execute("""SELECT DISTINCT ON (entity_id, platform, handle) entity_id::text, handle, answer, display_name
                      FROM mx_entity_handles ORDER BY entity_id, platform, handle, created_at DESC, id DESC""")
     out: Dict[str, Tuple[str, Set[str]]] = {}
@@ -543,9 +499,8 @@ def learned_names(cur: Any, book: Any) -> Dict[str, Tuple[str, Set[str]]]:
 
 def pair_names(cur: Any) -> Dict[Tuple[str, str], Dict[str, Any]]:
     """{(platform, handle): {name, sq, n, total, share, first, last, posts}} of the handles whose current pairs agree.
-    A name's support is every pair whose name ends with its words ("Video Ivo Kestrel" and "Ivo Kestrel" both support
-    "Ivo Kestrel": a header's preceding word glued on); the best-supported name must hold PAIR_MIN+ posts and AGREE+
-    of the handle's pairs."""
+    A name's support is every pair whose name ends with its words (a header's preceding word may be glued on); the
+    best-supported name must hold PAIR_MIN+ posts and AGREE+ of the handle's pairs."""
     from insight_core.markx import names as N
     cur.execute("""SELECT pr.platform, pr.handle, pr.name_sq, count(DISTINCT pr.post_id), min(pr.at), max(pr.at),
                           (array_agg(pr.name ORDER BY pr.at DESC))[1], (array_agg(pr.post_id::text ORDER BY pr.at DESC))[1:3]
@@ -596,12 +551,10 @@ def _ask(cur: Any, *, a: str, reason: str, conf: float, evidence: Dict[str, Any]
 
 
 def learn(cur: Any, book: Any, *, run_id: Any = None, limit: int = PROPOSE_LIMIT) -> Dict[str, int]:
-    """C + D: the owner questions the agreeing pairs raise (never applied by themselves):
-      - a handle for the one person or org named like the pairs' display name (`pairs`; `second_handle` when the
-        entity already has another handle on that platform: an old or renamed account, its pairs' time range given);
-      - an entity named by the handle itself: an alias question with the display name's entity (`handle_name`), or,
-        when none exists, a handle question whose yes shows the display name (`named_by_handle`).
-    A namesake (two entities of the name) is never asked. {asked, aliases, skipped}."""
+    """The owner questions the agreeing pairs raise (never applied by themselves): a handle for the one person or org
+    named like the pairs' display name (`pairs`, or `second_handle` beside an existing one), and for an entity named
+    by the handle itself an alias question (`handle_name`) or a handle question (`named_by_handle`). Namesakes are
+    never asked. {asked, aliases, skipped}."""
     from insight_core.markx import identity as I
     from insight_core.markx import names as N
     from insight_core.markx import schemas
@@ -609,8 +562,7 @@ def learn(cur: Any, book: Any, *, run_id: Any = None, limit: int = PROPOSE_LIMIT
     agree = pair_names(cur)
     if not agree:
         return dict(got)
-    # the persons and orgs named by the pairs' display names and handles (v10.23, 0218: only those forms are ever looked
-    # up, so only their names are read: Book.named_by; was every entity and alias of the book)
+    # only the persons and orgs named by the pairs' display names and handles are read (Book.named_by)
     forms = {p["sq"] for p in agree.values()} | {N.squash(h) for (_pl, h) in agree}
     named_ents, named_aliases = book.named_by(forms)
     book.prime(ids=[eid for eid, _sq in named_ents] + [eid for _k, eid in named_aliases])
@@ -648,7 +600,7 @@ def learn(cur: Any, book: Any, *, run_id: Any = None, limit: int = PROPOSE_LIMIT
         ev = {"platform": platform, "handle": handle, "display": p["name"], "pairs": p["n"], "total": p["total"],
               "share": p["share"], "first": p["first"], "last": p["last"], "examples": p["posts"]}
         by_handle = {r for r in by_sq.get(N.squash(handle), set()) if r != target} if p["sq"] != N.squash(handle) else set()
-        for h_root in sorted(by_handle):              # D: an entity named by the handle
+        for h_root in sorted(by_handle):              # an entity named by the handle
             if target is not None:
                 if I.pair(h_root, target) in book.never:
                     continue
@@ -685,7 +637,7 @@ def answer_item(cur: Any, book: Any, item: Dict[str, Any], ans: str) -> Dict[str
     e = book.ents.get(root)
     display = ev.get("display")
     if yes and e is not None and display and _sq(e.shown_name or e.name) == _sq(ev.get("handle")):
-        # D at once: an entity shown under this handle is shown by its display name (entity_repair.shown keeps it)
+        # at once: an entity shown under this handle is shown by its display name (entity_repair.shown keeps it)
         new = None if display == e.name else display
         cur.execute("""UPDATE mx_entities SET shown_name = %s, shown_by = 'evidence'
                         WHERE id = %s AND shown_by IS DISTINCT FROM 'owner'""", (new, root))
@@ -711,8 +663,7 @@ def add_handle(cur: Any, book: Any, entity_id: str, platform: str, handle: str, 
 
 
 def stage(cur: Any, book: Any, *, run_id: Any, deadline: Optional[float] = None) -> Dict[str, Any]:
-    """The decision run's handle step: scan the pending posts (newest first, within the deadline), then ask what the
-    pairs raise."""
+    """The decision run's handle step: scan the pending posts within the deadline, then `learn`."""
     import time
     out: Dict[str, Any] = {"scan": scan_pending(cur, deadline=deadline)}
     if deadline is None or time.monotonic() < deadline:

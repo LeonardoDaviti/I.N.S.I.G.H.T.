@@ -1,10 +1,6 @@
 /**
- * The search page's URL (issue 0040): `/search?q=&scope=&filter=&days=&order=`, so a
- * search survives a reload and Back. No `scope` searches every post; the scope you searched
- * from (the Main feed `all`, a track, a source) is the first chip and can be taken off.
- * Later, Kept, History, News and Classics (one at a time), and the last week, month or year, are
- * the other chips. No `order` is best match for 2+ words and newest for one (issue 0139); an
- * order chosen stays in the URL.
+ * The search page's URL, `/search?q=&scope=&filter=&days=&order=`, so a search survives a reload and Back. No
+ * `scope` searches every post; no `order` is best match for 2+ words, newest for one.
  */
 import type { SearchFilter, SearchOrder } from '../services/api';
 import { isValidScope } from './feedContext.ts';
@@ -18,7 +14,7 @@ export interface SearchState {
   order: SearchOrder | null;
 }
 
-/** As the backend's default_order (issue 0139): 2+ words (not `or`, not an excluded -word) order by best match. */
+/** As the backend's default_order: 2+ words (not `or`, not an excluded -word) order by best match. */
 export function defaultOrder(q: string): SearchOrder {
   const words = q.split(/\s+/).filter((w) => w && w.toLowerCase() !== 'or' && !w.startsWith('-') && /[\p{L}\p{N}]/u.test(w));
   return words.length >= 2 ? 'best' : 'newest';
@@ -45,7 +41,7 @@ export function parseSearch(params: URLSearchParams): SearchState {
   return {
     q: params.get('q') ?? '',
     scope: scope && isValidScope(scope) ? scope : null,
-    // The lists to search, one at a time: Later, Kept, History (issue 0139), News and Classics (issue 0056).
+    // The lists to search, one at a time.
     filter: /^(later|starred|history|news|classics)$/.test(filter ?? '') ? filter as SearchFilter : 'all',
     days: SEARCH_DAYS.some((choice) => choice.days === days) ? days : null,
     order: order === 'best' || order === 'newest' ? order : null,

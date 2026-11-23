@@ -1,4 +1,4 @@
-// The track page's lines in words (issue 0145): pure, so they are tested apart.
+// The track page's lines in words: pure, so they are tested apart.
 import type {
   ShadowMeasure, TrackCalibration, TrackItem, TrackPage, TrackSection, TrackSeen, TrackSuggestion, TrackTool, TrackWhy,
 } from '../../services/tracks';
@@ -30,7 +30,7 @@ const FINDER_WORDS: Record<string, string> = {
   classifier: 'classifier', tool: 'tool in use', linked: 'linked by its sources',
 };
 
-/** 0147: "found by: example post, entity, domain" (null for an active source's item, which every post is). */
+/** "found by: example post, entity, domain" (null for an active source's item, which every post is). */
 export function foundByLine(item: Pick<TrackItem, 'found_by'>): string | null {
   const got = (item.found_by ?? []).map((f) => FINDER_WORDS[f] ?? f);
   return got.length ? `found by: ${got.join(', ')}` : null;
@@ -41,13 +41,13 @@ export function suggestionLine(s: TrackSuggestion): string {
   return `${s.source}: ${s.n} of your ${s.track_name} in 30 days — make it active?`;
 }
 
-/** 0207: the moment a section's "new" counts from: its own last look, else the track's look before this visit. */
+/** The moment a section's "new" counts from: its own last look, else the track's look before this visit. */
 export function baseline(seen: TrackSeen | null | undefined, sectionId: string | null): string | null {
   if (!seen) return null;
   return (sectionId && seen.subtopics[sectionId]) || seen.track;
 }
 
-/** 0207: how many posts joined after the look (none before any look: the first look sets the baseline). */
+/** How many posts joined after the look (none before any look: the first look sets the baseline). */
 export function newSince(joined: number[] | undefined, since: string | null): number {
   if (!since || !joined?.length) return 0;
   const t = Date.parse(since) / 1000;
@@ -57,33 +57,33 @@ export function newSince(joined: number[] | undefined, since: string | null): nu
   return n;
 }
 
-/** 0207: whether one post joined after the look. */
+/** Whether one post joined after the look. */
 export function isNew(item: Pick<TrackItem, 'joined_at'>, since: string | null): boolean {
   if (!since || !item.joined_at) return false;
   return Date.parse(item.joined_at) > Date.parse(since);
 }
 
-/** 0207: "12 new since you looked" for the whole track (its sections' counts added). */
+/** "12 new since you looked" for the whole track (its sections' counts added). */
 export function trackNewLine(page: Pick<TrackPage, 'sections'>, seen: TrackSeen | null | undefined): string | null {
   if (!seen?.track) return null;
   const n = page.sections.reduce((acc, s) => acc + newSince(s.joined, seen.track), 0);
   return n ? `${plural(n, 'post')} new since you looked` : 'nothing new since you looked';
 }
 
-/** 0207: a sub-topic's state in words: found this week, or quiet (nothing new in 30 days). */
+/** A sub-topic's state in words: found this week, or quiet (nothing new in 30 days). */
 export function stateWords(s: Pick<TrackSection, 'state'>): string | null {
   if (s.state === 'new') return 'new this week';
   if (s.state === 'quiet') return 'quiet';
   return null;
 }
 
-/** 0207: a Shadow feature's label: "Shadow: 79% of posts in the right sub-topic (157 of 200 checked)". */
+/** A Shadow feature's label: "Shadow: 79% of posts in the right sub-topic (157 of 200 checked)". */
 export function shadowLine(m: ShadowMeasure | undefined): string | null {
   if (!m || m.on) return null;
   return `Shadow: ${pct(m.right / m.of)} of ${m.what} (${m.right} of ${m.of} checked)`;
 }
 
-/** 0207: one tool's line: who discusses it and how recently. */
+/** One tool's line: who discusses it and how recently. */
 export function toolLine(t: TrackTool): string {
   return [plural(t.voices, 'voice'), plural(t.posts, 'post'), t.recent ? `${t.recent} in 30 days` : null]
     .filter(Boolean).join(' · ');
@@ -92,7 +92,8 @@ export function toolLine(t: TrackTool): string {
 export function footerLine(f: NonNullable<TrackPage['footer']>, counts: TrackPage['counts']): string {
   return [`$${f.cost_usd.toFixed(2)} so far`, `$${f.cost_per_day.toFixed(2)} a day`,
     `${f.items_per_day} items a day`, plural(f.tasks, 'question'),
-    counts.out ? `${plural(counts.out, 'post')} judged out (kept)` : null].filter(Boolean).join(' · ');
+    counts.out ? `${plural(counts.out, 'post')} judged out (kept)` : null,
+    counts.checked_out ? `${plural(counts.checked_out, 'post')} taken out by the blind check` : null].filter(Boolean).join(' · ');
 }
 
 const NOT_ASKED: Record<string, string> = {
@@ -104,7 +105,7 @@ const NOT_ASKED: Record<string, string> = {
   history_pending: 'older than the description, and the history pass has not reached it yet',
 };
 
-/** Issue 0185: one line on where a post stands in the track and why, from Haiku's stored verdict. */
+/** One line on where a post stands in the track and why, from Haiku's stored verdict. */
 export function whyLine(w: TrackWhy): string {
   const conf = w.confidence != null ? ` (confidence ${pct(w.confidence)})` : '';
   const said = w.why ? `: “${w.why}”` : '';
@@ -120,6 +121,10 @@ export function whyLine(w: TrackWhy): string {
       const cut = w.shown === false && w.cut ? ` — below the Discover cut (the page shows ${w.cut})` : '';
       return `In Discover${at}: Haiku says it belongs${conf}, but its source is not in this track${said}${cut}${older}`;
     }
+    case 'checked_out':
+      return `Out (the blind check): Haiku said it belongs${conf}${said}, and the second, blind check said it doesn’t`;
+    case 'checking':
+      return `Waiting for the blind check: Haiku says it belongs${conf}${said}, past this week’s Discover picks; the check joins it or takes it out`;
     case 'out':
       return (w.label === 'out' ? 'Out: your ✗' : `Out: Haiku says it doesn’t belong${conf}${said}`) + older;
     case 'waiting':
@@ -132,4 +137,10 @@ export function whyLine(w: TrackWhy): string {
       if (w.reason === 'below_bar') return `Not asked: its source is not in this track, and the finders did not put it up${w.bar != null ? ` (bar ${w.bar.toFixed(2)})` : ''}`;
       return `Not asked: ${NOT_ASKED[w.reason ?? ''] ?? 'never judged for this track'}`;
   }
+}
+
+/** Discover's line: each recent week's best picks for review; the rest the blind check decides. */
+export function discoverLine(counts: { discover?: number; checking?: number }, perWeek = 25, weeks = 4): string {
+  const rest = counts.checking ? ` · ${plural(counts.checking, 'more post')} waiting for the blind check, which joins them or takes them out` : '';
+  return `Posts from your other sources that look like this track: each week’s ${perWeek} best of the last ${plural(weeks, 'week')}, for your review. ✓ takes one in; ✗ teaches it what doesn’t belong.${rest}`;
 }

@@ -31,10 +31,8 @@ function pageEntries(page: FeedPage | undefined, pageCursor: string | null): Sor
 }
 
 /**
- * Prev/next on the post page (spec §F.3, §F.5), in the order of the feed the post
- * was opened from (`?ctx=`). The reader's cached feed answers when it holds the
- * post; otherwise (a reload) the context's page is fetched. At the end of the
- * loaded order the next page is fetched to find `next`.
+ * Prev/next on the post page, in the order of the feed it was opened from (`?ctx=`): the reader's cached feed
+ * when it holds the post, else (a reload) the context's page is fetched; at the end, the next page.
  */
 export function usePostNeighbors(
   api: Api,

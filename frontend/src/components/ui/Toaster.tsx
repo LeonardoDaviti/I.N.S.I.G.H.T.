@@ -2,11 +2,8 @@ import type { CSSProperties } from 'react';
 import { Toaster as Sonner } from 'sonner';
 import { useTheme } from '../ThemeProvider';
 
-/**
- * The app's toaster: sonner, monochrome. No rich (coloured) toasts; the toast
- * reads as a raised surface with a hairline border, and error toasts carry the
- * word, not a hue. Bottom-right, out of the reader's way.
- */
+/** The app's toaster: sonner, monochrome (a raised surface with a hairline; errors carry the word, not a hue),
+ *  bottom-right. */
 const MONO_VARS = {
   '--normal-bg': 'rgb(var(--raised))',
   '--normal-border': 'rgb(var(--border-strong))',
@@ -34,7 +31,7 @@ export default function Toaster() {
       theme={theme === 'theme-dark' ? 'dark' : 'light'}
       position="bottom-right"
       style={MONO_VARS}
-      // Above a phone's home bar (issue 0073): sonner's own offsets, plus the safe area (0 elsewhere).
+      // above a phone's home bar: sonner's own offsets, plus the safe area (0 elsewhere)
       offset={{ bottom: 'calc(24px + env(safe-area-inset-bottom))', right: 'calc(24px + env(safe-area-inset-right))' }}
       mobileOffset={{ bottom: 'calc(16px + env(safe-area-inset-bottom))' }}
       toastOptions={{ style: { fontSize: '0.875rem' } }}

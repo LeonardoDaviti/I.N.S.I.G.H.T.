@@ -1,29 +1,17 @@
-"""Mark X entity names (issue 0090 B, 0119 A1): the name key and the version parser, in code.
+"""Entity names: the name key (`key`, `squash`), handles, scripts and the version parser (`parse`, `vt`,
+`fields_key`, `reordered`, `clean`, `setting`).
 
-Ported from the lab (plan/research/lab/markx/proto: entparse.py, eidparse.py, frozen in experiment 2), with one fix
-0119 asks for first: the maker is no longer stripped from a name whose maker is its family ("Acme V4 Pro" by Acme
-parses as family Acme, version V4, variant Pro; the lab's parser stripped "Acme" and found no version).
-
-  key(name)               the identity key: tasks.name_key (NFKC, every dash '-', no soft hyphen, casefold, ё as е,
-                          letters glued to digits split, separators one space) with a leading '@' and 'the ' dropped
-  squash(key)             every separator gone ("deep seek" = "deepseek"; '+' and '#' kept)
-  is_handle(span)         a social handle as written ("@acme_ai", "acme_ai")
-  handle_forms(span)      the squashed forms it can stand for ({"acmeai", "acme"}), and which of them drop a word
-  scripts(name)           the scripts of its letters; more than one is a mixed-script name (flagged)
-  parse(name, type, maker) family, version, variant, size, build
-  vt(version)             a version as a tuple ("4.10" != "4.1"; "V4" = (4,); "K3.1" = ('k', 3, 1))
-  fields_key(fields, maker) (family key, version tuple, variant key, size key, build key)
-
-A size ("27B", "8x7B", "A3B", "E4B") or a build ("GGUF", "Q4_K_M", "EXL3", a date) is never a version.
+A size ("27B", "8x7B", "A3B", "E4B") or a build ("GGUF", "Q4_K_M", a date) is never a version; a size has no leading
+zero ("GR00T" states none). A maker in front is dropped unless it is the family ("Acme V4 Pro" by Acme: family Acme).
 """
 from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
 DASHES = dict.fromkeys(map(ord, "‐‑‒–—―−⁃﹘﹣－"), "-")
-SIZE = re.compile(r"^(\d+(\.\d+)?[kmbt]|\d+x\d+(\.\d+)?[bt]|a\d+(\.\d+)?b|e\d+b)$")
+SIZE = re.compile(r"^((0|[1-9]\d*)(\.\d+)?[kmbt]|\d+x\d+(\.\d+)?[bt]|a\d+(\.\d+)?b|e\d+b)$")
 BUILD = re.compile(r"^(gguf|ggml|awq|gptq|exl2|exl3|mlx|fp4|fp8|fp16|bf16|int4|int8|nvfp4|mxfp4|q\d(_[0-9a-z]+)*"
                    r"|iq\d(_[0-9a-z]+)*|\d{4}|\d{6,8})$")
 VERSION = re.compile(r"^(v?\d+(\.\d+)*[a-z]{0,2}|[a-z]\d+(\.\d+)*[a-z]?)$")
@@ -36,8 +24,8 @@ NONE = {f: None for f in FIELDS}
 
 
 def base_key(name: Optional[str]) -> str:
-    """0090's name key (mx_mentions.name_key): NFKC, every dash '-', no soft hyphen, casefold, ё as е, letter-digit
-    glue split, separators as one space. base_key("Nimbus3.8‑Flash") == base_key("nimbus 3.8 flash")."""
+    """The name key (mx_mentions.name_key): NFKC, dashes '-', casefold, ё as е, letter-digit glue split, separators
+    one space. base_key("Nimbus3.8‑Flash") == base_key("nimbus 3.8 flash")."""
     s = unicodedata.normalize("NFKC", name or "").translate(DASHES).replace("­", "")
     s = s.casefold().replace("ё", "е")
     s = re.sub(r"(?<=[a-zа-я])(?=\d)", " ", s)
@@ -54,8 +42,7 @@ def key(name: Optional[str]) -> str:
 
 
 SQUASH = r"[^0-9a-zа-яͰ-Ͽ一-鿿぀-ヿ가-힯+#]+"   # what squash drops
-# squash(key) in Postgres (v10.17, 0186: the same answer for every code point, measured), as migration 0127's
-# indexes on mx_entity_aliases.key and mx_entities.key spell it: a query must write it exactly so to use them
+# squash(key) in Postgres, spelled exactly as migration 0127's indexes spell it: a query must match it to use them
 SQUASH_SQL = "regexp_replace(key, '" + SQUASH + "', '', 'g')"
 
 
@@ -110,7 +97,9 @@ def tokens(name: Optional[str]):
             if not u:
                 continue
             m = re.fullmatch(r"([a-z]{2,})(\d+(\.\d+)*[a-z]?)", u)   # nimbus3.8 -> nimbus, 3.8 ; zeta4o -> zeta, 4o
-            out += [m.group(1), m.group(2)] if m and not SIZE.match(u) and not BUILD.match(u) else [u]
+            # never a number with a leading zero ("gr00t"): letters for o written as zeros
+            lead0 = m is not None and re.match(r"0\d", m.group(2)) is not None
+            out += [m.group(1), m.group(2)] if m and not lead0 and not SIZE.match(u) and not BUILD.match(u) else [u]
     return out
 
 
@@ -163,7 +152,48 @@ def parse(name: Optional[str], type_: Optional[str] = None, maker: Optional[str]
         fk = f["family"]
         if fk.startswith(mk + " ") and len(fk) > len(mk) + 1:
             f["family"] = fk[len(mk) + 1:]
+    return clean(f, name)
+
+
+RATIO = re.compile(r"^\s*\d+\s*:\s*\d+\s*$")                       # "5:1", "16:9": a ratio, never a version
+MODEL_ID = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*?[-_](\d+)[-_](\d{1,2})$")   # "acme-nimbus-5-1": 5.1
+# effort / settings words: a variant made of them is the version run another way, not a release. The plain ones
+# always say a setting ("o9 low"); the others are tiers as often and count only in brackets ("(max)"). measured: 0259
+SETTING_PLAIN = frozenset(("low", "high", "xhigh", "minimal"))
+SETTING_WORDS = SETTING_PLAIN | frozenset(("max", "maximum", "medium", "mid", "min", "ultra", "ultracode", "default"))
+
+
+def not_a_version(v: Any) -> bool:
+    """A stated version that is no version: a ratio ("5:1")."""
+    return v not in (None, "", "null") and bool(RATIO.match(str(v)))
+
+
+def clean(fields: Optional[Dict[str, Any]], name: Optional[str] = None, versions: Optional[Set[Tuple]] = None) -> Dict[str, Any]:
+    """The fields as a version reads them: a ratio is no version ("5:1"); a model id ("acme-nimbus-5-1") is version
+    5.1 only when its family states it (`versions`), since an id's last two numbers are as often a shape. Anything
+    else as given (the same dict)."""
+    f = fields if fields is not None else {}
+    v, var = f.get("version"), f.get("variant")
+    if not_a_version(v):
+        return {**f, "version": None}
+    m = MODEL_ID.match(unicodedata.normalize("NFKC", name or "").strip()) if versions else None
+    if m and str(v or "").strip() == m.group(1) and str(var or "").strip() == m.group(2) \
+            and vt(f"{m.group(1)}.{m.group(2)}") in versions:
+        return {**f, "version": f"{m.group(1)}.{m.group(2)}", "variant": None}
     return f
+
+
+def setting(variant: Optional[str], name: Optional[str] = None, type_: Optional[str] = None) -> bool:
+    """A model's variant that is a setting of its version: all settings words, and either only plain ones ("low",
+    "xhigh") or written in brackets in the name ("Nimbus 5.2 (max)")."""
+    if type_ not in ("model", None) or not variant:
+        return False
+    ws = key(variant).split()
+    if not ws or not all(w in SETTING_WORDS for w in ws):
+        return False
+    if all(w in SETTING_PLAIN for w in ws):
+        return True
+    return any(key(b) == " ".join(ws) for b in re.findall(r"[(\[]([^()\[\]]+)[)\]]", name or ""))
 
 
 _VNUM = re.compile(r"(\d+|[a-z]+)")
@@ -176,6 +206,16 @@ def vt(v: Any) -> Optional[Tuple]:
     s = re.sub(r"^v(?=\d)", "", s)
     parts = _VNUM.findall(s)
     return tuple(int(p) if p.isdigit() else p for p in parts) or None
+
+
+def vnorm(t: Optional[Tuple]) -> Optional[Tuple]:
+    """A version tuple without its trailing zeros ("5.0" = "5"; "1.10" stays)."""
+    if not t:
+        return t
+    t = tuple(t)
+    while len(t) > 1 and t[-1] == 0:
+        t = t[:-1]
+    return t
 
 
 def nk(v: Any) -> Optional[str]:
@@ -198,6 +238,21 @@ def fields_key(f: Optional[Dict[str, Any]], maker: Optional[str] = None) -> Tupl
 def version_part(fk: Optional[Tuple]) -> Tuple:
     """What decides 'another version': version tuple, variant, size, build (the family left out)."""
     return tuple(fk[1:]) if fk else (None, None, None, None)
+
+
+def reordered(a: Optional[Tuple], b: Optional[Tuple], makers: Iterable[Optional[str]] = ()) -> bool:
+    """Two parses of one name in another word order ("Claude Opus 4.5" / "Claude 4.5 Opus"): the same stated version,
+    size and build, and the same family + variant words in any order; the maker's words left out only when both
+    state the same maker. Never two different words ("Flash" / "Pro") or a version or size apart."""
+    if not a or not b or a == b or a[1] is None or a[1] != b[1] or a[3:] != b[3:]:
+        return False
+    ms = [key(m) for m in makers]
+    mw = set(ms[0].split()) if len(ms) == 2 and ms[0] and ms[0] == ms[1] else set()
+
+    def words(fk: Tuple) -> list:
+        return sorted(w for w in f"{fk[0] or ''} {fk[2] or ''}".split() if w not in mw)
+    wa = words(a)
+    return bool(wa) and wa == words(b)
 
 
 def has_version(fk: Optional[Tuple]) -> bool:

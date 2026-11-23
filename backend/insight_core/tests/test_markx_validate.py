@@ -1,8 +1,6 @@
-"""Mark X Shadow's answer checks (issue 0086 C's table): the shape and sets from each kind's schema, and
-what only the input can tell: spans and versions in the post, figures and versions in the members, the
-keys a briefing cites, a card's odd members, a translation's numbers and length. No database.
-
-Every fixture is synthetic (made-up sources and posts; product and company names only)."""
+"""Mark X's answer checks (0086 C): the shape and sets from each kind's schema, and what only the input can tell (spans
+and versions in the post, figures in the members, cited keys, a translation's numbers and length). No database;
+synthetic fixtures only."""
 from __future__ import annotations
 
 import re
@@ -106,13 +104,14 @@ class TheSchemaAndSets(unittest.TestCase):
 
     def test_every_judge_kind_takes_a_relation_from_its_set_and_a_confidence_in_0_100(self):
         for kind in ("check", "join", "pair", "merge", "connect"):
+            g = "judge-read-v1" if kind in ("join", "pair") else None   # v2 also quotes (JudgeQuotes0258)
             with self.subTest(kind=kind):
-                self.assertIsNone(check(kind, judge(), "STORY ...")[1])
-                self.assertIn("relation", check(kind, judge(relation="related"), "x")[1])
-                self.assertIn("above 100", check(kind, judge(confidence=120), "x")[1])
-                self.assertIn("below 0", check(kind, judge(confidence=-1), "x")[1])
-                self.assertIn("not number", check(kind, judge(confidence="high"), "x")[1])
-                self.assertIn("confidence missing", check(kind, {"relation": "different"}, "x")[1])
+                self.assertIsNone(check(kind, judge(), "STORY ...", g)[1])
+                self.assertIn("relation", check(kind, judge(relation="related"), "x", g)[1])
+                self.assertIn("above 100", check(kind, judge(confidence=120), "x", g)[1])
+                self.assertIn("below 0", check(kind, judge(confidence=-1), "x", g)[1])
+                self.assertIn("not number", check(kind, judge(confidence="high"), "x", g)[1])
+                self.assertIn("confidence missing", check(kind, {"relation": "different"}, "x", g)[1])
 
 
 class Entities(unittest.TestCase):
@@ -125,7 +124,7 @@ class Entities(unittest.TestCase):
         self.assertEqual(len(answer["entities"]), 2)
 
     def test_a_span_not_in_the_post_is_refused(self):
-        # v10.20: the only entity dropped, so nothing is left: refused (asked again), saying why
+        # the only entity dropped, so nothing is left: refused (asked again), saying why
         error = check("entities", {"entities": [entity(span="Widget 5 Pro")]}, POST)[1]
         self.assertEqual(error, "every entity was dropped: entities[0].span 'Widget 5 Pro' does not occur in the post")
 
@@ -142,7 +141,7 @@ class Entities(unittest.TestCase):
         self.assertTrue(version_occurs("Widget 4.1", "the Widget-4.1 notes"))
 
     def test_the_folded_input_is_kept_and_each_input_read_as_its_own(self):
-        # 0243: the input's folded forms are kept between one answer's checks; a different input is folded anew
+        # the input's folded forms are kept between one answer's checks; a different input is folded anew
         from insight_core.markx.validate import occurs
         texts = [f"post {n}: Widget-{n}.1 notes" for n in range(20)]
         for _ in range(2):
@@ -156,7 +155,7 @@ class Entities(unittest.TestCase):
     def test_type_and_role_come_from_their_sets(self):
         self.assertIn("type", check("entities", {"entities": [entity(type="company")]}, POST)[1])
         self.assertIn("role", check("entities", {"entities": [entity(role="main")]}, POST)[1])
-        # v10.20: a relation outside the set is dropped (relations have no reader), the answer stands
+        # a relation outside the set is dropped (relations have no reader), the answer stands
         answer, error = check("entities", {"entities": [], "relations": [{"a": "A", "rel": "likes", "b": "B"}]}, POST)
         self.assertIsNone(error)
         self.assertEqual(answer["relations"], [])
@@ -164,7 +163,7 @@ class Entities(unittest.TestCase):
 
     def test_at_most_twenty_entities(self):
         self.assertIsNone(check("entities", {"entities": [entity()] * 20}, POST)[1])
-        # v10.20: the first 20 stored (the guide puts subjects, actors and versions first), the 21st dropped
+        # the first 20 stored (the guide puts subjects, actors and versions first), the 21st dropped
         answer, error = check("entities", {"entities": [entity()] * 20 + [entity(name="Gadget")]}, POST)
         self.assertIsNone(error)
         self.assertEqual(len(answer["entities"]), 20)
@@ -176,7 +175,7 @@ class Entities(unittest.TestCase):
 
 
 class Salvage(unittest.TestCase):
-    """v10.20: an entity list's bad entries are dropped (kept under "dropped" with why), the rest stored."""
+    """An entity list's bad entries are dropped (kept under "dropped" with why), the rest stored."""
     ACME = entity(span="Acme", name="Acme", type="org", role="actor", maker=None, family=None, version=None,
                   variant=None)
 
@@ -254,18 +253,17 @@ class StoryAnswers(unittest.TestCase):
         self.assertIn("17 words", check("headline", {"headline_en": " ".join(["w"] * 17)}, MEMBERS)[1])
 
     def test_a_headline_has_two_words_of_slack_over_the_guides_14(self):
-        """0121 Decided 2: 9 of 165 recorded headline answers were refused for one word over 14, where readings
-        have slack (guide 20, check 25). A card keeps its 14: its headline is the judge's, not the page's."""
+        """A card keeps its 14-word headline limit: its headline is the judge's, not the page's (0121)."""
         self.assertIsNone(check("headline", {"headline_en": " ".join(["w"] * 16)}, MEMBERS)[1])
         self.assertIn("more than 16", check("headline", {"headline_en": " ".join(["w"] * 17)}, MEMBERS)[1])
         self.assertIn("15 words", check("card", self.card(headline_en=" ".join(["w"] * 15)), MEMBERS)[1])
 
     def test_a_card_that_numbers_its_odd_members_is_kept_as_given(self):
-        """6 of the 43 recorded cards named odd members by position; nothing reads `odd`, so it is not refused."""
+        """Nothing reads `odd`, so odd members named by position are not refused."""
         self.assertIsNone(check("card", self.card(odd=[2]), MEMBERS)[1])
 
     def test_a_headline_version_is_found_by_its_number(self):
-        """A recorded headline wrote "GPT-5.6" where its members said "their 5.6 versions": right, not invented."""
+        """A headline's "GPT-5.6" where its members say "their 5.6 versions" is right, not invented."""
         members = MEMBERS + "\n- id 11111111 [Example Blog, site, 2026-11-02T13:00] Cheaper than their 5.6 versions | x"
         self.assertIsNone(check("headline", {"headline_en": "Acme prices Widget 4.1 Pro below Widget 5.6"}, members)[1])
         self.assertIn("'Widget 5.7'", check("headline", {"headline_en": "Acme prices it below Widget 5.7"}, members)[1])
@@ -337,7 +335,7 @@ class TheHelpers(unittest.TestCase):
         self.assertEqual(fold("Ёлка  —  Widget‑4"), "елка - widget-4")
 
     def test_typographic_apostrophes_and_quotes_fold_as_plain_ones(self):
-        """0121 Decided 6: a valid name was refused for an apostrophe ("Where's" against the post's "Where’s")."""
+        """An apostrophe's form ("Where's" against the post's "Where’s") does not refuse a name (0121)."""
         self.assertEqual(fold("Where’s ‘it’ “now”"), fold("Where's 'it' \"now\""))
         post = POST.replace("Title: Acme выпустила Widget‑4.1 Pro", "Title: Acme’s “Widget‑4.1 Pro” is out")
         for span in ("Acme's", "Acme’s", '"Widget-4.1 Pro"', "“Widget-4.1 Pro”"):
@@ -348,43 +346,151 @@ class TheHelpers(unittest.TestCase):
 class TheKindsAndGuides(unittest.TestCase):
     def test_twelve_kinds_each_with_a_guide_file_and_a_schema(self):
         self.assertEqual(set(schemas.KINDS), {"read", "entities", "check", "join", "pair", "card", "merge", "connect",
-                                              "headline", "briefing", "translate", "embed",   # embed: S2
-                                              "alias", "collide", "embed_name",                # 0119 A1
-                                              "alias2", "alias3", "alias4",                     # 0130 A2; 0201
-                                              "rename", "stop", "chain", "derive",              # 0165 B, C; 0219; 0234
-                                              "perspective", "sheet", "read3",                         # 0119 B
-                                              "relate", "stance",                               # 0131, 0132 B
-                                              "back",                                           # 0136
-                                              "cite",                                           # 0133 v4.2
-                                              "track", "subtopics", "probes",                   # 0145, 0147
-                                              "digest", "subtopic_place",                       # 0207
-                                              "scout", "identity",                              # 0148, 0162
-                                              "websearch",                                      # 0171
-                                              "source_judge",                                   # 0173
-                                              "news_sections",                                  # 0174
-                                              "reading",                                        # 0212
-                                              "news_place",                                     # 0197
-                                              "unit_types",                                     # 0181
-                                              "significance",                                   # 0208
-                                              "track_schema", "track_things", "track_same"})    # 0245
+                                              "headline", "briefing", "translate", "embed",
+                                              "alias", "collide", "embed_name",
+                                              "alias2", "alias3", "alias4",
+                                              "rename", "stop", "chain", "derive",
+                                              "perspective", "sheet", "read3", "dispute",
+                                              "relate", "stance",
+                                              "back",
+                                              "cite",
+                                              "track", "subtopics", "probes",
+                                              "digest", "subtopic_place",
+                                              "scout", "identity",
+                                              "websearch",
+                                              "source_judge", "question",
+                                              "news_sections",
+                                              "reading",
+                                              "news_place",
+                                              "unit_types",
+                                              "significance",
+                                              "track_schema", "track_things", "track_same"})
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())
                 self.assertIsInstance(kind.schema, dict)
                 self.assertIn(kind.subject, ("post", "post_story", "post_post", "story", "story_story", "day",
                                              "entity", "entity_entity", "source", "track", "post_track",
-                                             "research_pair", "research_run",   # 0132 B: source; 0145; 0162; 0171
-                                             "source_candidate",                # 0173
-                                             "news_run",                         # 0174
-                                             "thing_thing"))                    # 0245
+                                             "research_pair", "research_run",
+                                             "source_candidate", "question",
+                                             "news_run",
+                                             "thing_thing"))
 
     def test_the_guides_name_no_channel_account_or_subreddit(self):
-        """Scrubbed copies (the build plan's rule): no handle, channel or subreddit address in any guide (persp-v1's "@x"
-        is its placeholder for a repost's author)."""
+        """No handle, channel or subreddit address in any guide (persp-v1's "@x" is a placeholder)."""
         for path in sorted(schemas.GUIDES_DIR.glob("*.md")):
             with self.subTest(guide=path.name):
                 text = path.read_text(encoding="utf-8")
                 self.assertIsNone(re.search(r"t\.me/|(?<![\w.])r/\w|(?<![\w.])@(?!handles\b|x\b)\w|x\.com/|twitter\.com/|youtube\.com/", text))
+
+
+class JudgeQuotes0258(unittest.TestCase):
+    """judge-read-v2 (join and pair): an answer quotes the POST it judged, so an answer written from another question's
+    content is refused; a quote of the post's own words passes (0258)."""
+
+    @staticmethod
+    def question(kind="pair"):
+        from datetime import datetime, timezone
+        from insight_core.markx import tasks
+        at = datetime(2100, 3, 1, tzinfo=timezone.utc)
+        anchor = tasks.Post("a1", "x", "Example Dev News", "s1", at, "Cursor adds Fable 5.2",
+                            "Cursor added Claude Fable 5.2, scoring 56.9% on CursorBench, available to every plan.")
+        post = tasks.Post("p2", "telegram", "Example Physics", "s2", at, "Black holes and Fable 5.2",
+                          "In 1983, physicists showed that black holes form very abruptly. Fable 5.2 found the "
+                          "transition is abrupt there too.", links=[("https://example.com/paper", "the paper")])
+        reading = {"kind": "commentary", "events": "one", "main": {"headline_en": "Model checks a physics result"},
+                   "mentions": [{"name": "Fable 5.2", "role": "subject"}]}
+        rd = {"a1": {"kind": "report", "main": {"headline_en": "Cursor adds Fable 5.2"}}, "p2": reading}
+        if kind == "pair":
+            return tasks.pair_input(anchor, post, rd)
+        return tasks.join_input(post, reading, [anchor], {"headline_en": "Cursor adds Fable 5.2 with a CursorBench score",
+                                                          "summary_en": "Cursor ships the model to every plan."})
+
+    def test_the_kinds_ask_judge_read_v2_and_keep_v1(self):
+        for kind in ("join", "pair"):
+            self.assertEqual(schemas.KINDS[kind].guide, "judge-read-v2")
+            self.assertEqual(schemas.answer_guides(kind), ("judge-read-v2", "judge-read-v1"))
+            self.assertIn("post_quote", schemas.schema_for(kind, "judge-read-v2")["required"])
+            self.assertIs(schemas.schema_for(kind, "judge-read-v1"), schemas.JUDGE_SCHEMA)
+        self.assertEqual(schemas.guide_ids()["judge-read-v1"], "join")   # stored as before: its row loads unchanged
+        self.assertEqual(schemas.guide_ids()["judge-read-v2"], "join")
+        self.assertNotEqual(schemas.guide_body("judge-read-v1"), schemas.guide_body("judge-read-v2"))
+        self.assertIn("post_quote", schemas.guide_body("judge-read-v2"))
+        self.assertEqual(schemas.answer_guides("merge"), ("judge-story-v1",))
+
+    def test_an_answer_written_from_another_question_is_refused(self):
+        for kind in ("pair", "join"):
+            text = self.question(kind)
+            with self.subTest(kind=kind):
+                cross = judge(post_quote="Cursor added Claude Fable 5.2, scoring 56.9% on CursorBench", confidence=90,
+                              reason="Post announces Fable 5.2 availability in Cursor with its CursorBench score")
+                # the story's words, though in this question, are not the POST's
+                self.assertEqual(check(kind, cross, text, "judge-read-v2")[1],
+                                 "post_quote: not in this question's POST title or text")
+                elsewhere = judge(post_quote="the first physics problem of the story")
+                self.assertIn("not in this question's POST", check(kind, elsewhere, text, "judge-read-v2")[1])
+                reading_words = judge(post_quote="Model checks a physics result")   # the reading is not the post
+                self.assertIn("not in this question's POST", check(kind, reading_words, text, "judge-read-v2")[1])
+                self.assertIn("not in this question's POST",
+                              check(kind, judge(post_quote="https://example.com/paper"), text, "judge-read-v2")[1])
+                self.assertIn("post_quote missing", check(kind, judge(), text, "judge-read-v2")[1])
+                self.assertIn("empty", check(kind, judge(post_quote="  "), text, "judge-read-v2")[1])
+                self.assertIn("shorter than", check(kind, judge(post_quote="Fable 5.2"), text, "judge-read-v2")[1])
+                bad_story = judge(post_quote="black holes form very abruptly", story_quote="a physics breakthrough")
+                self.assertEqual(check(kind, bad_story, text, "judge-read-v2")[1],
+                                 "story_quote: not in this question's STORY")
+                # no guide named: the kind's current one checks it
+                self.assertIsNotNone(check(kind, cross, text)[1])
+
+    def test_a_grounded_answer_is_accepted(self):
+        for kind in ("pair", "join"):
+            text = self.question(kind)
+            with self.subTest(kind=kind):
+                ok = judge(relation="different", post_quote="black holes  form very abruptly",   # folded: spaces, case
+                           reason="The post is about a physics result, not Cursor shipping the model.")
+                self.assertIsNone(check(kind, ok, text, "judge-read-v2")[1])
+                self.assertIsNone(check(kind, dict(ok, post_quote="In 1983, Physicists showed"), text, "judge-read-v2")[1])
+                self.assertIsNone(check(kind, dict(ok, post_quote="Black holes and Fable 5.2"), text, "judge-read-v2")[1])
+                about = dict(ok, relation="mention", story_quote="Cursor added Claude Fable 5.2")
+                self.assertIsNone(check(kind, about, text, "judge-read-v2")[1])
+                self.assertIsNone(check(kind, dict(ok, story_quote=None), text, "judge-read-v2")[1])
+                self.assertIsNone(check(kind, judge(relation="cant_tell", post_quote=""), text, "judge-read-v2")[1])
+                # an answer of v1 (no quote) stays valid under v1
+                self.assertIsNone(check(kind, judge(), text, "judge-read-v1")[1])
+
+    def test_a_short_post_may_be_quoted_whole(self):
+        from datetime import datetime, timezone
+        from insight_core.markx import tasks
+        at = datetime(2100, 3, 1, tzinfo=timezone.utc)
+        anchor = tasks.Post("a1", "x", "Example", "s1", at, "Widget 4 is out", "Acme released Widget 4 today.")
+        post = tasks.Post("p2", "x", "Example", "s2", at, "Widget 4!", "")
+        text = tasks.pair_input(anchor, post, {})
+        self.assertIsNone(check("pair", judge(post_quote="Widget 4!"), text, "judge-read-v2")[1])
+        self.assertIn("shorter than", check("pair", judge(post_quote="Widget"), text, "judge-read-v2")[1])
+
+
+class HeadlineMembers(unittest.TestCase):
+    """A headline reads the story's core, not its earliest 6 posts regardless."""
+
+    def post(self, i, source, title, hours):
+        from datetime import datetime, timedelta, timezone
+        from insight_core.markx import tasks
+        return tasks.Post(id=f"p{i}", kind="x", source=source, source_id=source, title=title, text=title + " today",
+                          at=datetime(2026, 11, 1, tzinfo=timezone.utc) + timedelta(hours=hours))
+
+    def test_a_big_storys_first_side_post_is_left_out_for_what_most_voices_report(self):
+        from insight_core.markx import tasks
+        side = self.post(0, "early", "Fine tune a harness for agents", 0)
+        core = [self.post(i, f"s{i}", "Acme ships Nimbus 5.1", i) for i in range(1, 9)]
+        copy = self.post(9, "s1", "Acme ships Nimbus 5.1", 10)            # s1's own copy: one line of s1 is enough
+        shown = tasks.headline_members([side, *core, copy])
+        self.assertEqual([p.id for p in shown], [f"p{i}" for i in range(1, 7)])
+        self.assertNotIn("Fine tune a harness", tasks.headline_input([side, *core, copy]))
+
+    def test_a_small_story_shows_every_post_earliest_first(self):
+        from insight_core.markx import tasks
+        ps = [self.post(i, f"s{i % 2}", f"Acme ships Nimbus {i}", -i) for i in range(5)]
+        self.assertEqual([p.id for p in tasks.headline_members(ps)], ["p4", "p3", "p2", "p1", "p0"])
 
 
 if __name__ == "__main__":

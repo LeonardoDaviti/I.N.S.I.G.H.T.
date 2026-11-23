@@ -1,11 +1,6 @@
-"""Discover's cards and ranking (issue 0239; 0237 #2 and #5), on invented companies, newsletters, channels and repos.
-
-- A company's card is led by its announcing section (its newsroom host), not its investor-relations host with the most
-  links; the judge reads the lead.
-- A publishing platform's hosts are sites of their own: one newsletter followed there hides no other.
-- A video is its channel's once Discover read which; a channel 3+ voices link is a suggestion.
-- A repository 2+ voices link is suggested as its releases feed.
-- The reader-fit term (a switch, off) moves unjudged rows linked by sources you read above broad ones.
+"""Discover's cards and ranking (0239), on invented names: a company's card is led by its announcing section; a
+publishing platform's hosts are sites of their own; a video is its channel's; a repository 2+ voices link is suggested
+as its releases feed; the reader-fit term (a switch, off) moves rows linked by sources you read above broad ones.
 """
 from __future__ import annotations
 
@@ -43,7 +38,7 @@ def row(key, score, voices, *, url=None, **extra):
 
 
 class CardLead(unittest.TestCase):
-    """#2: an invented company whose IR host has the most links, whose newsroom host is one of its places."""
+    """An invented company whose IR host has the most links, whose newsroom host is one of its places."""
 
     def test_the_newsroom_leads_the_card_and_is_what_the_judge_reads(self):
         found = [row("ir.acme.example", 6.0, ["a", "b", "c", "d"]), row("acme.example", 4.0, ["a", "e"]),
@@ -61,7 +56,7 @@ class CardLead(unittest.TestCase):
         self.assertEqual(R.one_card_per_domain(found)[0]["key"], "acme.example")
 
     def test_the_site_itself_the_best_keeps_the_lead(self):
-        """0248: a publisher's own host with the most links leads its card over its old blogs. host."""
+        """A publisher's own host with the most links leads its card over its old blogs. host (0248)."""
         found = [row("press.example", 9.0, ["a", "b", "c"]), row("blogs.press.example", 2.0, ["d"])]
         [card] = R.one_card_per_domain(found)
         self.assertEqual(card["key"], "press.example")
@@ -80,7 +75,7 @@ class CardLead(unittest.TestCase):
 
 
 class PublicationSites(unittest.TestCase):
-    """#5: on a site of publications (a publishing platform), each host is a site of its own."""
+    """On a publishing platform, each host is a site of its own."""
 
     PUBS = {"letters.example"}
 
@@ -148,7 +143,7 @@ class Videos(unittest.TestCase):
 
 
 class Order(unittest.TestCase):
-    """#5: the reader-fit term, behind INSIGHT_DISCOVER_READER_FIT (off)."""
+    """The reader-fit term, behind INSIGHT_DISCOVER_READER_FIT (off)."""
 
     def rows(self):
         return [row("broad.example", 5.0, list("abcdefgh"), reader_fit=0.1),
@@ -246,7 +241,7 @@ class EndToEnd(unittest.TestCase):
         platform = f"letters{self.m}.example"
         for k, pub in enumerate(("one", "uno")):   # two publications followed there
             self._source(10 + k, [], host=f"{pub}.{platform}")
-        # 0248: and a site of many owners by the data (discover_rules.federation): your sources link 10+ of its hosts
+        # and a site of many owners by the data (discover_rules.federation): your sources link 10+ of its hosts
         self._source(20, [f"https://w{n}.{platform}/p/a-post" for n in range(10)])
         other = [f"https://two.{platform}/p/a-long-post-slug-{n}" for n in range(2)]
         for k in range(3):
@@ -256,8 +251,8 @@ class EndToEnd(unittest.TestCase):
         self.assertIn(f"two.{platform}", self._listed())
 
     def test_a_company_you_follow_two_sections_of_is_followed(self):
-        """0248: two followed hosts of one company (its newsroom, its engineering blog) are one owner's site, not a
-        site of publications: its other hosts and the company itself are followed, never suggested."""
+        """Two followed hosts of one company are one owner's site, not a site of publications: its other hosts and the
+        company itself are followed, never suggested (0248)."""
         company = f"maker{self.m}.example"
         self._source(10, [], host=f"newsroom.{company}")
         self._source(11, [], host=f"engineering.blogs.{company}")

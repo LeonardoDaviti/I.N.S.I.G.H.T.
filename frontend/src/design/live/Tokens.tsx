@@ -3,11 +3,8 @@ import { docAt } from '../library';
 import { channelsToHex, documentedTokens, rootValue, useRootClass } from './liveStyle';
 import Section from './Section';
 
-/**
- * The colour tokens, live (P2): the names and roles from the tokens doc's
- * table, the values from the running page. A documented token the page
- * doesn't define says so instead of showing a blank swatch (P11).
- */
+/** The colour tokens, live: names and roles from the tokens doc, values from the running page; a documented token
+ *  the page doesn't define says so. */
 export default function Tokens({ rules }: { rules?: string }) {
   const rootClass = useRootClass();
   const theme = rootClass.includes('theme-light') ? 'light' : 'dark';

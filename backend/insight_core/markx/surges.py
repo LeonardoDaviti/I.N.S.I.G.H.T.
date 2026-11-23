@@ -1,22 +1,9 @@
-"""Mark X entity surges (issue 0119 A2, 0090 E): a stage of the decision run, no model.
-
-Per day (UTC, the post's published time) and per entity at the version level (an entity is one name key's: the
-exact version), the distinct voices (sources; a saved page is no voice) whose post credits it (the lab's `rollup`,
-surge2_count.py):
-  - the post's subject credits its own entity, its maker's and its family's (the roll-up);
-  - the post's actor credits its own entity;
-  - no other role credits anything (0133: a cited `source` or a `recommended` work never makes a surge).
-0133: the mentions counted are each post's current set (mx_mentions_now: its newest valid entities answer).
-Every credit goes through the merges (an entity's root). A day of 3 or more voices is a surge (no 7-day warm-up;
-the 3x baseline waits for a month of data). Stored in mx_entity_surges with its posts and, for a surge credited
-through the roll-up, the children that credited it ("Acme, via Nimbus 5"). A recount that changes a row closes it
-(valid_to) and opens another; a day that stops surging is closed. Nothing is deleted.
-
-Incremental: the days of the mentions linked this run, and every day of the entities merged or undone since; the
-nightly full pass recounts every day of the window.
-
-Measured (lab, 2026-11-06, out/surges_v2, out/surges_v3): 91% (84-95%) precise on a fresh 24-day window, 88%
-(83-91%) across both windows, recall 46%.
+"""Entity surges: a decision run stage, no model. Per UTC day and per entity (version level, through the merges),
+the distinct voices (a saved page is none) whose post credits it in its current mention set: a subject credits its
+own entity, its maker and its family (the roll-up); an actor its own; no other role anything. A day of MIN_VOICES or
+more is a surge, stored in mx_entity_surges with its posts and roll-up children ("Acme, via Nimbus 5"). A recount
+that changes a row closes it (valid_to) and opens another; nothing is deleted. Incremental: the days of mentions
+linked this run and of entities merged or undone since; the nightly full pass recounts the window.
 """
 from __future__ import annotations
 
@@ -66,8 +53,7 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
                        {f"AND {day} = ANY(%s::date[])" if day_list is not None else ""}""",
                 (guide, since, day_list) if day_list is not None else (guide, since))
     rows = cur.fetchall()
-    # v10.17.2 (0204): what the credits ask of the book, read ahead in one go (a page's book, identity.lazy_book,
-    # reads it now; a whole book holds it already)
+    # what the credits ask of the book, read ahead in one go
     book.prime(ids=[book.pins.get((r[0], r[6], r[5]), r[2]) for r in rows],
                keys=[k for r in rows if r[1] == "subject"
                      for k in (N.key(r[3]), N.key(r[4]), N.fields_key({"family": r[4]}, r[3])[0]) if k])
@@ -89,11 +75,10 @@ def count(cur: Any, book: I.Book, days: Optional[Iterable[date]], since: date, g
 
 def stage(cur: Any, *, now: datetime, run_id: Any, days: Optional[Iterable[date]], window_days: int = 30,
           book: Optional[I.Book] = None) -> Dict[str, Any]:
-    """Recount the days (None: every day of the window) and write what changed. `book`: the entity book as it is now
-    (its entities, names, merges and pins; no mention count is read), else a page's book is read here (v10.17.2,
-    0204: the entities the days' mentions credit, not the whole book)."""
+    """Recount the days (None: every day of the window) and write what changed. `book`: the entity book as it is now,
+    else a lazy book is read here."""
     from insight_core.markx import schemas
-    guide = schemas.mention_guides()   # 0133: the current set
+    guide = schemas.mention_guides()   # the current set
     book = I.lazy_book(cur) if book is None else book
     since = (now.astimezone(timezone.utc) - timedelta(days=window_days)).date()
     acc = count(cur, book, days, since, guide)

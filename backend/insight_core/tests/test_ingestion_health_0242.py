@@ -1,11 +1,11 @@
-"""Issue 0242 (0237 #6): sources that stopped without anyone seeing.
+"""Sources that stopped without anyone seeing (0242).
 
-- kinds.base.collapsed: a feed fails only when it collapses (most items on a few addresses); a few items sharing
-  one are stored as the distinct posts, with a warning. parsing._identities: links (or guids) that differ only by
-  what normalize_url drops are one shared address, so the item's guid is its identity.
-- kinds.reddit: Reddit's OAuth API with the owner's registered app (a recorded listing, FakeHttp, no network);
-  without credentials the kind is unavailable with the reason, never a backoff.
-- operations_service.stalled_fields: the flag for a source on whose last success is old or that keeps failing.
+- kinds.base.collapsed: a feed fails only when it collapses (most items on a few addresses); a few items sharing one
+  are stored as distinct posts, with a warning. parsing._identities: links (or guids) that differ only by what
+  normalize_url drops are one shared address, so the item's guid is its identity.
+- kinds.reddit: Reddit's OAuth API with the owner's registered app (FakeHttp); without credentials the kind is
+  unavailable with the reason, never a backoff.
+- operations_service.stalled_fields: the flag for a source whose last success is old or that keeps failing.
 - source_doctor.dead_finding: a host with no answer for DEAD_AFTER is marked dead, never switched off.
 """
 from __future__ import annotations
@@ -73,7 +73,7 @@ def _item(n: int, url: str) -> dict:
 
 class CollapsedTests(unittest.TestCase):
     def test_a_few_items_sharing_an_address_are_stored_as_the_distinct_posts(self):
-        # The server's blog: 48 items, 2 of which share one address. Was a failure, then dormant.
+        # 48 items, 2 of which share one address: not a failure
         posts = [_item(n, f"https://blog.example/p/{n}") for n in range(46)]
         posts += [_item(46, "https://blog.example/p/same"), _item(47, "https://blog.example/p/same")]
         self.assertIsNone(collapsed(posts))

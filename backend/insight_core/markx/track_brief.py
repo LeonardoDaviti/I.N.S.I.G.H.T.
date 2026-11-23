@@ -1,39 +1,25 @@
-"""A track's brief (issue 0245, the general track briefer; built: 0249, Stealth v10.27): the weekly issue, the quick
-look and the tables, read from the things markx/track_things.py keeps.
+"""A track's brief: the weekly issue, the quick look and the tables, read from markx/track_things.py's things
+(issue 0245, the general track briefer).
 
-**"What changed"** is 0207's `digest` kind deepened, not a second summariser: its second guide digest-v2 (`plan`, the
-digest planner's part) is asked over a period's rows, numbered [1]..[n] (the things and practices with a report from
-a post of the period, each "new" when first reported in it); 2-4 points about the things and practices only, never
-authors or sources, each citing the rows it rests on (validate: only the question's rows, and every figure a point
-gives is one of its rows'). A week's question is asked again only when its rows change (the same rows are the same
-question: repo.add_task's one task), the week in progress at most every BRIEF_EVERY. Code writes the rest: the
-sections (one a kind, in the schema's order, the practices last), their counts and headers, and the posts of the
-period that gave no row ("also in the track").
-
-**The weekly issue** (`issue`): a Monday-Sunday week (UTC), its things and points as of the week's end, kept as a page
-per track and week (kept_pages, page PAGE, key "<track>:<monday>"), built in the jobs process (`keep_issues`, the
-"tracks" job) for the closed weeks, ISSUE_WEEKS at most back; never deleted. A closed issue built again whose things
-or points differ from the kept one says `updated` (keep everything: the reader sees a correction, not a silent edit).
-
-**The quick look** (`quick_look`): the things found since the track's seen state (0207's mx_track_seen look, or a
-given time; never looked: the week in progress), by kind with counts; the newest brief's points that cite one of them
-(`as_of` its time, `stale` when a thing came after it); the posts joined since that gave no row. Read live (it depends
-on the look): a few indexed reads.
-
-**The tables** (`table`): every current thing of one kind, newest first, filtered by its own fields' values: number
-and money `<field>.min` / `<field>.max` (and money `<field>.currency`), enum `<field>=a,b`, text `<field>=words`
-(contained, folded), link `<field>=any`.
-
-Behind entity_bands.json `tracks.briefs` (track_things.on): off, nothing is planned or kept and every read is empty.
+"What changed" is the `digest` kind under BRIEF_GUIDE (`plan`): asked over a period's rows numbered [1]..[n], 2-4
+points about the things and practices only, each citing its rows (validated: only the question's rows, every figure
+one of theirs); asked again only when the rows change. Code writes the rest (sections, counts, "also in the track").
+`issue` is a Monday-Sunday week (UTC), kept per track and week by the jobs process (`keep_issues`), never deleted; a
+closed issue built again with other things says `updated`. `quick_look` is read live since the track's last look.
+`table` filters a kind's current things by their fields, words (`q`) and named entities. Behind entity_bands.json
+`tracks.briefs` (track_things.on): off, nothing is planned or kept and every read is empty.
 """
 from __future__ import annotations
 
+import re
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from insight_core.db.repo_post_parts import shown_title
 from insight_core.markx import track_things as TT
 
-DIGEST_KIND, BRIEF_GUIDE = "digest", "digest-v2"
+DIGEST_KIND, BRIEF_GUIDE = "digest", "digest-v3"
 BRIEF_MIN = 2                 # a period with fewer rows has no "what changed"
 BRIEF_ROWS = 60               # rows a brief question shows at most (new ones first)
 BRIEF_EVERY = timedelta(hours=12)
@@ -42,6 +28,10 @@ PAGE = "track_brief"
 KEPT_LAG = timedelta(minutes=15)
 LINE_CHARS = 160
 PRACTICE_HEADER = "Practices and claims"
+QUIET_ROWS = 5        # a section with this many rows or more hides its quiet columns
+QUIET_FILLED = 0.2    # a column filled in fewer rows than this share is quiet
+QUIET_SAME = 0.6      # a choice column whose one value fills more rows than this share is quiet (most rows alike)
+EMPTY_CHOICES = ("other", "unknown", "none", "n/a")
 
 
 # ---- weeks -----------------------------------------------------------------------------------------------------
@@ -69,13 +59,22 @@ def _order(kinds: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
     return order
 
 
-def rows_between(cur: Any, track_id: str, start: Optional[datetime], end: Optional[datetime]
-                 ) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
-    """(the current things with a report from a post dated in [start, end), each with `new` (its first report's post
-    in the period) — kinds in schema order, new first, newest post first — and every thing's reports)."""
+def track_rows(cur: Any, track_id: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]],
+                                                Dict[str, List[Dict[str, Any]]]]:
+    """(the track's kinds, its current things of those kinds, every thing's reports): what `rows_between` cuts a
+    period from."""
     kinds = TT._kinds(cur, track_id)
     things = [t for t in TT.current(cur, track_id) if t["kind"] in kinds]
-    rs = TT.reports(cur, track_id, [t["id"] for t in things])
+    return kinds, things, TT.reports(cur, track_id, [t["id"] for t in things])
+
+
+def rows_between(cur: Any, track_id: str, start: Optional[datetime], end: Optional[datetime], *,
+                 loaded: Optional[Tuple[Any, Any, Any]] = None
+                 ) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+    """(the current things with a report from a post dated in [start, end), each with `new` (its first report's post
+    in the period) — kinds in schema order, new first, newest post first — and every thing's reports). `loaded`: the
+    track's `track_rows`, read once by a caller that cuts many periods (v10.42: `plan`)."""
+    kinds, things, rs = loaded or track_rows(cur, track_id)
 
     def inside(at: Optional[datetime]) -> bool:
         return at is not None and (start is None or at >= start) and (end is None or at < end)
@@ -100,7 +99,7 @@ def row_line(kind: Dict[str, Any], t: Dict[str, Any], n_posts: int) -> str:
 
 def brief_input(track: Dict[str, Any], kinds: Dict[str, Dict[str, Any]], period: str, rows: Sequence[Dict[str, Any]],
                 rs: Dict[str, List[Dict[str, Any]]]) -> Tuple[str, List[str]]:
-    """A digest-v2 question: the track, the period, the kinds, the rows [1]..[n] (new ones first, BRIEF_ROWS at most):
+    """A brief question: the track, the period, the kinds, the rows [1]..[n] (new ones first, BRIEF_ROWS at most):
     (the question, the thing ids in its order)."""
     shown = sorted(rows, key=lambda t: not t["new"])[:BRIEF_ROWS]
     lines = TT.header(track)[:2] + [f"PERIOD: {period}", "", "KINDS:"]
@@ -131,10 +130,10 @@ def _weeks(cur: Any, track_id: str, now: datetime) -> List[date]:
 
 
 def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
-    """The digest planner's part (tasks.PLANNERS["digest"]): a digest-v2 question for each week of each topic track
-    with BRIEF_MIN+ rows whose rows differ from its last question's (the week in progress at most every BRIEF_EVERY;
-    none while one is waiting): how many were added."""
-    from insight_core.markx import repo, schemas, tracks
+    """The digest planner's part (tasks.PLANNERS["digest"]): a brief question for each week of each topic track with
+    BRIEF_MIN+ rows whose rows differ from its last question's (the week in progress at most every BRIEF_EVERY; none
+    while one is waiting): how many were added."""
+    from insight_core.markx import schemas, tracks
     if not TT.on():
         return 0
     now = now or datetime.now(timezone.utc)
@@ -150,25 +149,53 @@ def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
                         WHERE a.track_id = %s ORDER BY a.week, a.created_at DESC""", (tid,))
         last = {w: (ids, at, st) for w, ids, at, st in cur.fetchall()}
         this = monday(now)
+        # v10.42: the track's rows and reports read once, each week cut from them (was: all of them read again for
+        # each of its ISSUE_WEEKS + 1 weeks, on every digest lease); asking adds no row or report
+        loaded = None
         for w in _weeks(cur, tid, now):
             was = last.get(w)
-            if was is not None and (was[2] in ("open", "leased") or (w == this and now - was[1] < BRIEF_EVERY)):
+            if was is not None and was[2] in ("open", "leased"):
                 continue
-            rows, rs = rows_between(cur, tid, *bounds(w))
-            if len(rows) < BRIEF_MIN:
+            loaded = loaded or track_rows(cur, tid)
+            rows, rs = rows_between(cur, tid, *bounds(w), loaded=loaded)
+            # the week in progress at most every BRIEF_EVERY, unless most rows its brief cites left it
+            if was is not None and w == this and now - was[1] < BRIEF_EVERY and not _cites_left(cur, tid, w, rows):
                 continue
-            text, ids = brief_input(t, kinds, _period(w), rows, rs)   # the same rows: the same task (one ask)
-            task_id, new = repo.add_task(cur, kind=DIGEST_KIND, guide=BRIEF_GUIDE, subject_kind="track", input=text,
-                                         a=tid)
-            cur.execute("""INSERT INTO mx_track_brief_asks (task_id, track_id, week, thing_ids)
-                           VALUES (%s, %s, %s, %s::uuid[]) ON CONFLICT DO NOTHING""", (task_id, tid, w, ids))
-            added += new
+            added += _ask(cur, t, kinds, w, _period(w), rows, rs)
     return added
 
 
-def points(cur: Any, track_id: str, week: Optional[date] = None) -> Optional[Dict[str, Any]]:
-    """The newest valid brief of the week (None: of any week): {points: [{text, cites: [thing ids]}], at, week}, each
-    cite its thing's current root; a point left with no cite is not shown."""
+def _ask(cur: Any, t: Dict[str, Any], kinds: Dict[str, Dict[str, Any]], week: date, period: str,
+         rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]) -> int:
+    """One brief question over `rows` (BRIEF_MIN at least), kept with its week and rows: 1 when new."""
+    from insight_core.markx import repo
+    if len(rows) < BRIEF_MIN:
+        return 0
+    text, ids = brief_input(t, kinds, period, rows, rs)   # the same rows: the same task (one ask)
+    task_id, new = repo.add_task(cur, kind=DIGEST_KIND, guide=BRIEF_GUIDE, subject_kind="track", input=text,
+                                 a=t["folder_id"])
+    cur.execute("""INSERT INTO mx_track_brief_asks (task_id, track_id, week, thing_ids)
+                   VALUES (%s, %s, %s, %s::uuid[]) ON CONFLICT DO NOTHING""", (task_id, t["folder_id"], week, ids))
+    return new
+
+
+def plan_subject(cur: Any, t: Dict[str, Any], *, now: datetime, period: str) -> int:
+    """One "what changed" over every row of a subject that is not a week's (an entity: entity_brief), asked again
+    when its rows change, at most every BRIEF_EVERY, none while one waits (the asks keyed by this week)."""
+    from insight_core.markx import schemas
+    schemas.ensure_guides(cur)
+    cur.execute("""SELECT a.created_at, k.status FROM mx_track_brief_asks a JOIN mx_tasks k ON k.id = a.task_id
+                    WHERE a.track_id = %s ORDER BY a.created_at DESC LIMIT 1""", (t["folder_id"],))
+    was = cur.fetchone()
+    if was is not None and (was[1] in ("open", "leased") or now - was[0] < BRIEF_EVERY):
+        return 0
+    return _ask(cur, t, TT._kinds(cur, t["folder_id"]), monday(now), period,
+                *rows_between(cur, t["folder_id"], None, None))
+
+
+def _answered(cur: Any, track_id: str, week: Optional[date]) -> Optional[Tuple[List[Dict[str, Any]], Any, date]]:
+    """The newest valid brief of the week (None: of any week): ([{text, cites}], at, week), each cite its thing's
+    current root (a cite of a thing dropped since stays, as its id)."""
     cur.execute("""SELECT a.thing_ids::text[], c.answer, c.created_at, a.week
                      FROM mx_track_brief_asks a JOIN mx_calls c ON c.task_id = a.task_id AND c.valid
                     WHERE a.track_id = %s AND (%s::date IS NULL OR a.week = %s::date)
@@ -178,96 +205,217 @@ def points(cur: Any, track_id: str, week: Optional[date] = None) -> Optional[Dic
         return None
     ids, answer, at, w = r
     root = TT.roots(cur, track_id)
-    cur.execute("SELECT id::text FROM mx_track_things WHERE track_id = %s AND status = 'current'", (track_id,))
-    live = {i for (i,) in cur.fetchall()}
     out = []
     for p in (answer or {}).get("points") or []:
         cites = [root.get(ids[n - 1], ids[n - 1]) for n in p.get("cites") or [] if isinstance(n, int) and 1 <= n <= len(ids)]
-        cites = [c for c in dict.fromkeys(cites) if c in live]
-        if p.get("text") and cites:
+        if p.get("text"):
+            out.append({"text": p["text"], "cites": list(dict.fromkeys(cites))})
+    return out, at, w
+
+
+def points(cur: Any, track_id: str, week: Optional[date] = None, *,
+           within: Optional[Sequence[str]] = None) -> Optional[Dict[str, Any]]:
+    """The newest valid brief of the week (None: of any week): {points: [{text, cites: [thing ids]}], at, week}, each
+    cite its thing's current root; a point left with no cite is not shown. `within` (a week's issue's rows): a point
+    is shown only when every row it cites is one of them."""
+    got = _answered(cur, track_id, week)
+    if got is None:
+        return None
+    pts, at, w = got
+    cur.execute("SELECT id::text FROM mx_track_things WHERE track_id = %s AND status = 'current'", (track_id,))
+    live = {i for (i,) in cur.fetchall()}
+    keep = None if within is None else set(within)
+    out = []
+    for p in pts:
+        if keep is not None and not (p["cites"] and set(p["cites"]) <= keep):
+            continue
+        cites = [c for c in p["cites"] if c in live]
+        if cites:
             out.append({"text": p["text"], "cites": cites})
     return {"points": out, "at": at, "week": w} if out else None
+
+
+def _cites_left(cur: Any, track_id: str, week: date, rows: Sequence[Dict[str, Any]]) -> bool:
+    """Whether most of the rows the week's newest brief cites are no longer its rows: then it is asked again whatever
+    BRIEF_EVERY says."""
+    got = _answered(cur, track_id, week)
+    cited = {c for p in (got[0] if got else []) for c in p["cites"]}
+    if not cited:
+        return False
+    now_ids = {t["id"] for t in rows}
+    return 2 * len(cited - now_ids) > len(cited)
 
 
 # ---- shapes ----------------------------------------------------------------------------------------------------
 
 def _posts(cur: Any, track_id: str, ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
-    """{post: {id, title, url, at, why}} (the why: the track judge's newest line)."""
-    from insight_core.markx import tracks
+    """{post: {id, title, url, at (its publication), why}} (the why: the track judge's newest line)."""
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, p.title, p.url, {tracks._date()},
+    cur.execute(f"""SELECT p.id::text, {shown_title()}, p.url, {TT.post_date()}, p.source_id::text,
                            (SELECT i.why FROM mx_track_items i WHERE i.track_id = %s AND i.post_id = p.id
                              AND i.verdict IS NOT NULL ORDER BY i.version DESC LIMIT 1)
                       FROM posts p WHERE p.id = ANY(%s::uuid[])""", (track_id, list(ids)))
     return {i: {"id": i, "title": (" ".join((ti or "").split()))[:LINE_CHARS] or None, "url": u,
-                "at": _iso(at), "why": why} for i, ti, u, at, why in cur.fetchall()}
+                "at": _iso(at), "why": why, "source_id": src} for i, ti, u, at, src, why in cur.fetchall()}
+
+
+def sources_of(rs: Sequence[Dict[str, Any]], posts: Dict[str, Dict[str, Any]]) -> int:
+    """How many independent sources reported a thing (a post not loaded counts as its own): the brief's rank."""
+    return len({(posts.get(r["post"]) or {}).get("source_id") or r["post"] for r in rs})
 
 
 def _iso(t: Optional[datetime]) -> Optional[str]:
     return t.isoformat() if t else None
 
 
+def _digits(s: str) -> set:
+    import re
+    return set(re.findall(r"\d+(?:[.,]\d+)?", s or ""))
+
+
+def _says_nothing(f: Dict[str, Any], v: Any) -> bool:
+    """A value that tells the reader nothing: a choice of "other" (or like it)."""
+    return f.get("type") == "enum" and TT.fold(v) in EMPTY_CHOICES
+
+
 def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, Any]],
                posts: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """A row: its fields in the schema's order (each value typed, in words, with its quote and the post it came
-    from), every post that reported it (newest first), its dates."""
+    """A row: its fields in the schema's order (each value typed, in words, with its quote, its post and the linked
+    `page` it was quoted from), every post that reported it (newest first), its dates. Not shown (kept in the row): a
+    choice of "other", and a practice's evidence that only repeats its result's figures."""
     fields = {}
     for f in kind["fields"]:
         v = (t["fields"] or {}).get(f["name"])
-        if v is not None:
+        if v is not None and not _says_nothing(f, v["value"]):
             fields[f["name"]] = {"value": v["value"], "shown": TT.shown_value(f, v["value"]), "quote": v.get("quote"),
-                                 "post": v.get("post")}
+                                 "post": v.get("post"), **({"page": v["page"]} if v.get("page") else {})}
+    if t["kind"] == TT.PRACTICE_KIND and "evidence" in fields and "result" in fields:
+        ev = _digits(fields["evidence"]["shown"])
+        if ev and ev <= _digits(fields["result"]["shown"]):
+            del fields["evidence"]
     seen = list(dict.fromkeys(r["post"] for r in reversed(list(rs))))
     return {"id": t["id"], "kind": t["kind"], "fields": fields, "posts": [posts[p] for p in seen if p in posts],
+            "sources": sources_of(rs, posts),
             "first_at": _iso(t["first_at"]), "last_at": _iso(t["last_at"]), "found_at": _iso(t["found_at"]),
             **({"new": t["new"]} if "new" in t else {})}
 
 
-def _sections(kinds: Dict[str, Dict[str, Any]], rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]],
-              posts: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """One section a kind that has rows (schema order, the practices last): its header and count written by code."""
-    out = []
-    for k in sorted(kinds, key=lambda k: _order(kinds).get(k, 99)):
-        its = [t for t in rows if t["kind"] == k]
-        if not its:
-            continue
-        d = kinds[k]
-        header = PRACTICE_HEADER if k == TT.PRACTICE_KIND else k.replace("_", " ").capitalize()
-        out.append({"kind": k, "header": f"{header} ({len(its)})", "about": d.get("about") or "", "count": len(its),
-                    "new": sum(1 for t in its if t.get("new")),
-                    "fields": [{"name": f["name"], "type": f["type"], **({"unit": f["unit"]} if f.get("unit") else {}),
-                                **({"values": f["values"]} if f.get("values") else {})} for f in d["fields"]],
-                    "things": [thing_view(d, t, rs.get(t["id"], []), posts) for t in its]})
+def _quiet(fields: Sequence[Dict[str, Any]], views: Sequence[Dict[str, Any]]) -> set:
+    """The columns that tell a section's rows apart too little to show: with QUIET_ROWS+ rows, a column (never the
+    name) filled in under QUIET_FILLED of them, or a choice whose one value fills over QUIET_SAME. The values stay in
+    each row and in the tables."""
+    from collections import Counter
+    n = len(views)
+    if n < QUIET_ROWS:
+        return set()
+    out = set()
+    for f in fields[1:]:
+        got = [v["fields"][f["name"]]["shown"] for v in views if f["name"] in v["fields"]]
+        if len(got) < QUIET_FILLED * n:
+            out.add(f["name"])
+        elif f.get("type") == "enum" and got and Counter(got).most_common(1)[0][1] > QUIET_SAME * n:
+            out.add(f["name"])
     return out
 
 
+def _fold_practices(rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]
+                    ) -> Tuple[Dict[str, str], set]:
+    """(practice -> the thing it is shown inside, the practices not shown). A practice every post of which also gave
+    a thing of the track's own kinds is shown inside the newest such thing; one with only its `what` is not shown
+    here (kept, and in the tables)."""
+    by_post: Dict[str, str] = {}
+    for t in rows:                      # rows: newest first within a kind, so the first thing a post gave is kept
+        if t["kind"] != TT.PRACTICE_KIND:
+            for r in rs.get(t["id"], []):
+                by_post.setdefault(r["post"], t["id"])
+    host, quiet = {}, set()
+    for t in rows:
+        if t["kind"] != TT.PRACTICE_KIND:
+            continue
+        ps = {r["post"] for r in rs.get(t["id"], [])}
+        if ps and all(p in by_post for p in ps):
+            host[t["id"]] = by_post[sorted(ps, key=lambda p: (p not in by_post, p))[0]]
+        elif not ({"result", "evidence"} & set(t["fields"] or {})):
+            quiet.add(t["id"])
+    return host, quiet
+
+
+def _sections(kinds: Dict[str, Dict[str, Any]], rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]],
+              posts: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One section a kind that has rows (schema order, the practices last): its header and count written by code;
+    its quiet columns left out (`_quiet`); the practices folded into their things or not shown (`_fold_practices`:
+    the section's `inside` and `quiet` count them; each thing carries its folded practices)."""
+    host, quiet = _fold_practices(rows, rs)
+    views = {t["id"]: thing_view(kinds[t["kind"]], t, rs.get(t["id"], []), posts) for t in rows}
+    inside: Dict[str, List[Dict[str, Any]]] = {}
+    for p, h in host.items():
+        inside.setdefault(h, []).append(views[p])
+    out = []
+    for k in sorted(kinds, key=lambda k: _order(kinds).get(k, 99)):
+        its = [t for t in rows if t["kind"] == k]
+        shown = [t for t in its if t["id"] not in host and t["id"] not in quiet]
+        # ranked: more independent sources first, then the rows' own order (new first, newest post first)
+        shown = [t for _, t in sorted(enumerate(shown), key=lambda x: (-sources_of(rs.get(x[1]["id"], []), posts), x[0]))]
+        if not shown:
+            continue
+        d = kinds[k]
+        things = [dict(views[t["id"]], **({"practices": inside[t["id"]]} if t["id"] in inside else {})) for t in shown]
+        hide = _quiet(d["fields"], things)
+        header = PRACTICE_HEADER if k == TT.PRACTICE_KIND else k.replace("_", " ").capitalize()
+        out.append({"kind": k, "header": f"{header} ({len(shown)})", "about": d.get("about") or "",
+                    "count": len(shown), "new": sum(1 for t in shown if t.get("new")),
+                    "inside": sum(1 for t in its if t["id"] in host), "quiet": sum(1 for t in its if t["id"] in quiet),
+                    "fields": [{"name": f["name"], "type": f["type"], **({"unit": f["unit"]} if f.get("unit") else {}),
+                                **({"values": f["values"]} if f.get("values") else {})}
+                               for f in d["fields"] if f["name"] not in hide],
+                    "things": things})
+    return out
+
+
+def _hosts(sections: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+    """{folded practice: the thing it is shown inside}: a point citing it cites its thing."""
+    return {p["id"]: t["id"] for s in sections for t in s["things"] for p in t.get("practices") or []}
+
+
 def _also(cur: Any, track: Dict[str, Any], start: Optional[datetime], end: Optional[datetime], *,
-          joined: bool = False) -> List[str]:
-    """The posts in the track dated (`joined`: joined) in [start, end) that gave no row (no report of any thing)."""
+          joined: bool = False, fresh: Optional[datetime] = None) -> List[str]:
+    """The posts in the track published in [start, end) that gave no row; `joined`: joined in [start, end) and
+    published since `fresh` (by publication, as the things are), newest published first."""
     from insight_core.markx import track_subtopics
     items = track_subtopics.in_track(cur, track)
+    ids = [it["post_id"] for it in items]
+    if not ids:
+        return []
+    cur.execute(f"SELECT p.id::text, {TT.post_date()} FROM posts p WHERE p.id = ANY(%s::uuid[])", (ids,))
+    pub = dict(cur.fetchall())
 
-    def when(it: Dict[str, Any]) -> Optional[datetime]:
-        return track_subtopics.joined_at(it) if joined else it.get("at")
-    ids = [it["post_id"] for it in items if when(it) is not None and (start is None or when(it) >= start)
-           and (end is None or when(it) < end)]
+    def inside(t: Optional[datetime], lo: Optional[datetime], hi: Optional[datetime]) -> bool:
+        return t is not None and (lo is None or t >= lo) and (hi is None or t < hi)
+    if joined:
+        ids = [it["post_id"] for it in items if inside(track_subtopics.joined_at(it), start, end)
+               and inside(pub.get(it["post_id"]), fresh, None)]
+    else:
+        ids = [p for p in ids if inside(pub.get(p), start, end)]
     if not ids:
         return []
     cur.execute("""SELECT DISTINCT r.post_id::text FROM mx_track_thing_reports r JOIN mx_track_things t ON t.id = r.thing_id
                     WHERE t.track_id = %s AND r.post_id = ANY(%s::uuid[])""", (track["folder_id"], ids))
     gave = {p for (p,) in cur.fetchall()}
     epoch = datetime.min.replace(tzinfo=timezone.utc)
-    at = {it["post_id"]: when(it) or epoch for it in items}
-    return sorted((p for p in ids if p not in gave), key=lambda p: (at[p], p), reverse=True)
+    return sorted((p for p in dict.fromkeys(ids) if p not in gave), key=lambda p: (pub.get(p) or epoch, p), reverse=True)
 
 
-def _point_views(got: Optional[Dict[str, Any]], shown: Sequence[str]) -> List[Dict[str, Any]]:
+def _point_views(got: Optional[Dict[str, Any]], shown: Sequence[str], host: Optional[Dict[str, str]] = None
+                 ) -> List[Dict[str, Any]]:
     """The points, each cite as its row (its thing id and its number among the rows shown, for the superscripts)."""
     if not got:
         return []
     n = {t: i for i, t in enumerate(shown, 1)}
-    return [{"text": p["text"], "cites": [{"thing": c, "n": n.get(c)} for c in p["cites"]]} for p in got["points"]]
+    host = host or {}
+    return [{"text": p["text"], "cites": [{"thing": c, "n": n.get(c)}
+                                          for c in dict.fromkeys(host.get(c, c) for c in p["cites"])]}
+            for p in got["points"]]
 
 
 def _track(cur: Any, folder_id: Any) -> Dict[str, Any]:
@@ -303,9 +451,9 @@ def issue(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = Non
     also = _also(cur, t, start, end)
     posts = _posts(cur, tid, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])} | set(also)))
     sections = _sections(kinds, rows, rs, posts)
-    got = points(cur, tid, week)
     shown = [x["id"] for s in sections for x in s["things"]]
-    body = {**base, "points": _point_views(got, shown), "points_at": _iso(got["at"]) if got else None,
+    got = points(cur, tid, week, within=shown + list(_hosts(sections)))   # only points about the week's rows
+    body = {**base, "points": _point_views(got, shown, _hosts(sections)), "points_at": _iso(got["at"]) if got else None,
             "sections": sections, "also": [posts[p] for p in also if p in posts],
             "counts": {"things": len(rows), "new": sum(1 for x in rows if x["new"]),
                        "posts": len({r["post"] for x in rows for r in rs.get(x["id"], []) if r["at"] and start <= r["at"] < end}),
@@ -339,7 +487,8 @@ def inputs(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = No
                                                                    ORDER BY x.id)))
                               FROM mx_track_thing_reports r JOIN mx_track_things x ON x.id = r.thing_id
                               JOIN posts p ON p.id = r.post_id
-                             WHERE x.track_id = %(t)s::uuid AND {tracks._date()} >= %(s)s AND {tracks._date()} < %(e)s),
+                             WHERE x.track_id = %(t)s::uuid AND {TT.post_date()} >= %(s)s AND {TT.post_date()} < %(e)s
+                               AND p.filtered_by IS NULL),   -- v10.44: a post hidden leaves the issue
                            (SELECT md5(string_agg(concat_ws(':', id, status, merged_into, updated_at), ',' ORDER BY id))
                               FROM mx_track_things WHERE track_id = %(t)s::uuid AND status = 'merged'),
                            (SELECT json_build_array(count(*), max(c.created_at)) FROM mx_track_brief_asks a
@@ -409,6 +558,12 @@ def issues(cur: Any, folder_id: Any, *, now: Optional[datetime] = None) -> List[
 
 # ---- the quick look --------------------------------------------------------------------------------------------
 
+def fresh_from(since: datetime, now: datetime) -> datetime:
+    """New since a look: a thing found since it whose first post is dated since it or in the week in progress (a
+    thing re-read from an older post is in its week's issue, not news)."""
+    return min(since, bounds(monday(now))[0])
+
+
 def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, now: Optional[datetime] = None
                ) -> Dict[str, Any]:
     """What is new since `since` (None: the week in progress): {on, track, since, sections (new things by kind),
@@ -425,45 +580,52 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
         return {**base, "sections": [], "points": [], "as_of": None, "stale": False, "also": [],
                 "counts": {"things": 0, "also": 0}, "nothing_new": True, "last_issue": None, "weeks": []}
     kinds = TT._kinds(cur, tid)
-    rows = [dict(x, new=True) for x in TT.current(cur, tid) if x["found_at"] > since and x["kind"] in kinds]
+    fresh = fresh_from(since, now)
+    rows = [dict(x, new=True) for x in TT.current(cur, tid)
+            if x["found_at"] > since and x["kind"] in kinds and x["first_at"] is not None and x["first_at"] >= fresh]
     rs = TT.reports(cur, tid, [x["id"] for x in rows])
-    also = _also(cur, t, since, None, joined=True)
+    rows = TT.reported(rows, rs)
+    also = _also(cur, t, since, None, joined=True, fresh=fresh)
     posts = _posts(cur, tid, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])} | set(also)))
     order = _order(kinds)
     rows.sort(key=lambda x: (order.get(x["kind"], 99), -x["found_at"].timestamp(), x["id"]))
     sections = _sections(kinds, rows, rs, posts)
     got = points(cur, tid)
     new_ids = {x["id"] for x in rows}
-    if got:
-        got = dict(got, points=[p for p in got["points"] if set(p["cites"]) & new_ids])
+    if got:   # the newest brief's points about a new thing; none new: this week's points still lead the look
+        cited = [p for p in got["points"] if set(p["cites"]) & new_ids]
+        got = dict(got, points=cited or ([] if rows or got["week"] != monday(now) else got["points"]))
     shown = [x["id"] for s in sections for x in s["things"]]
-    pts = _point_views(got, shown) if got and got["points"] else []
+    pts = _point_views(got, shown, _hosts(sections)) if got and got["points"] else []
     return {**base, "sections": sections, "points": pts, "as_of": _iso(got["at"]) if pts else None,
             "stale": bool(pts) and any(x["found_at"] > got["at"] for x in rows),
             "also": [posts[p] for p in also if p in posts], "counts": {"things": len(rows), "also": len(also)},
-            "nothing_new": not rows and not also, "last_issue": closed[0] if closed else None, "weeks": weeks}
+            "nothing_new": not rows and not also and not pts, "last_issue": closed[0] if closed else None, "weeks": weeks}
 
 
-RAIL_QUIET = timedelta(days=30)   # a track not opened for this long shows no count in the rail (0245's UX)
+SINCE_LINES = 3   # a track's top lines in "Since you looked"
 
 
-def new_count(cur: Any, folder_id: Any, *, now: Optional[datetime] = None) -> int:
-    """The rail's count (0245): the track's current things found since the reader's last look at it; 0 when it was
-    never opened, or not for RAIL_QUIET, or the briefer is off. One indexed count."""
-    from insight_core.markx import track_subtopics
-    if not TT.on():
-        return 0
-    now = now or datetime.now(timezone.utc)
-    look = track_subtopics.seen(cur, folder_id)["track"]
-    if not look:
-        return 0
-    at = datetime.fromisoformat(look)
-    if now - at > RAIL_QUIET:
-        return 0
-    kinds = list(TT._kinds(cur, str(folder_id)))
-    cur.execute("""SELECT count(*) FROM mx_track_things WHERE track_id = %s AND status = 'current' AND created_at > %s
-                      AND kind = ANY(%s)""", (str(folder_id), at, kinds))
-    return int(cur.fetchone()[0])
+def since_lines(cur: Any, folder_id: Any, since: datetime, *, now: Optional[datetime] = None,
+                n: int = SINCE_LINES) -> Dict[str, Any]:
+    """A track in "Since you looked", read from its quick look since `since`: {id, name, since, new, also, lines: the
+    top `n` (things first reported after the look first, then by independent sources; each {text, kind, sources,
+    post}), then the joined posts}. KeyError: not a topic track."""
+    q = quick_look(cur, folder_id, since, now=now)
+    # first reported after the look first (a thing re-read from an older post is not new to the reader), then by
+    # sources; stable
+    things = sorted((t for s in q["sections"] for t in s["things"]),
+                    key=lambda t: (not (t["first_at"] and datetime.fromisoformat(t["first_at"]) > since), -t["sources"]))
+    lines: List[Dict[str, Any]] = []
+    for t in things[:n]:
+        name = next(iter(t["fields"].values()), None)
+        post = t["posts"][0]["id"] if t["posts"] else (name or {}).get("post")
+        lines.append({"text": name["shown"] if name else t["kind"].replace("_", " "), "kind": t["kind"],
+                      "sources": t["sources"], "post": post})
+    for p in q["also"][:max(0, n - len(lines))]:
+        lines.append({"text": p["title"] or p["url"], "kind": None, "sources": 1, "post": p["id"]})
+    return {"id": q["track"]["id"], "name": q["track"]["name"], "since": q["since"], "new": q["counts"]["things"],
+            "also": q["counts"]["also"], "lines": lines}
 
 
 # ---- the tables ------------------------------------------------------------------------------------------------
@@ -482,13 +644,93 @@ def _match(f: Dict[str, Any], v: Any, op: str, want: str) -> bool:
         return TT.fold(v) in {TT.fold(w) for w in want.split(",") if w.strip()}
     if t == "link":
         return bool(v)
-    return TT.fold(want) in TT.fold(v)
+    return has_words(words(want), words(TT.shown_value(f, v)))   # the field's words, numbers whole
 
 
-def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit: int = 100, offset: int = 0
-          ) -> Dict[str, Any]:
+# ---- search inside a track's table -------------------------------------------------------------------------------
+
+_THOUSANDS = re.compile(r"(?<=\d)[,\u00a0\u202f'](?=\d{3}(?!\d))")   # not a space: "Qwen3 235B" is two figures
+_GLUED = re.compile(r"(?<=\d)(?=[^\W\d_])|(?<=[^\W\d_])(?=\d)")
+_TOKEN = re.compile(r"[^\W_]+(?:[.,]\d+)*")
+WORD_PREFIX = 3     # a word of letters this long or longer matches a word it starts ("quant": "quantised"); shorter, whole
+ENTITY_CHIPS = 12   # the entities a table offers as filters at most (the most rows first, two rows or more)
+SEARCH_PARAMS = ("q", "entity", "entity_type")   # a table's own params, never a field's filter
+
+
+def words(s: Any) -> List[str]:
+    """Text as search compares it: folded words, a figure's thousands groups joined ("1,500" is 1500), letters and
+    digits glued apart ("i5-2400" is i 5 2400, "24GB" is 24 gb, "Qwen3.8-27B" is qwen 3.8 27 b)."""
+    s = _THOUSANDS.sub("", TT.fold(s))
+    return _TOKEN.findall(_GLUED.sub(" ", s))
+
+
+def _whole(w: str) -> bool:
+    return any(c.isdigit() for c in w) or len(w) < WORD_PREFIX
+
+
+def has_words(want: Sequence[str], have: Sequence[str]) -> bool:
+    """Every wanted word is one of `have`: a number (or a short word) as a whole word ("24" is not "2400", "pi" is not
+    "pipeline"), a longer word as the start of one ("llm": "llms")."""
+    hs = set(have)
+    return all(w in hs if _whole(w) else any(h.startswith(w) for h in hs) for w in want)
+
+
+def row_words(view: Dict[str, Any]) -> List[str]:
+    """What a search reads of a row: every field's value in words and the titles of the posts that gave it."""
+    return words(" ".join([x["shown"] for x in view["fields"].values()] + [p.get("title") or "" for p in view["posts"]]))
+
+
+def _entities(cur: Any, rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]
+              ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """{row: {entity root: {name, type, words}}}: the entities the posts that gave each row name (their current
+    mentions, pins and redirects read: track_things._mentions); `words` its name's, the mention's name and span's."""
+    ments = TT._mentions(cur, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])}))
+    ids = sorted({root for ms in ments.values() for root, _nk, _span in ms})
+    names: Dict[str, Tuple[str, str]] = {}
+    if ids:
+        cur.execute("""SELECT id::text, COALESCE(shown_name, name), COALESCE(shown_type, type) FROM mx_entities
+                        WHERE id = ANY(%s::uuid[])""", (ids,))
+        names = {i: (n, ty or "other") for i, n, ty in cur.fetchall()}
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for x in rows:
+        got: Dict[str, Dict[str, Any]] = {}
+        for r in rs.get(x["id"], []):
+            for root, nk, span in ments.get(r["post"], []):
+                if root in names:
+                    e = got.setdefault(root, {"name": names[root][0], "type": names[root][1],
+                                              "words": {tuple(words(names[root][0]))}})
+                    e["words"].update(tuple(words(k)) for k in (nk, span) if k)
+        out[x["id"]] = got
+    return out
+
+
+def names_entity(want: Sequence[str], e: Dict[str, Any]) -> bool:
+    """The wanted words run, in order, inside one of the entity's names ("raspberry pi" is in "Raspberry Pi 5")."""
+    n, w = len(want), tuple(want)
+    return n > 0 and any(ws[i:i + n] == w for ws in e["words"] for i in range(len(ws) - n + 1))
+
+
+def entity_chips(ents: Dict[str, Dict[str, Dict[str, Any]]], rows: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """The table's entity filters over these rows: the entities the most rows' posts name (ENTITY_CHIPS at most, two
+    rows or more) and the types they have, each with its count of rows."""
+    by: Dict[str, Dict[str, Any]] = {}
+    types: Dict[str, int] = defaultdict(int)
+    for x in rows:
+        for root, e in ents.get(x, {}).items():
+            by.setdefault(root, {"id": root, "name": e["name"], "type": e["type"], "rows": 0})["rows"] += 1
+        for ty in {e["type"] for e in ents.get(x, {}).values()}:
+            types[ty] += 1
+    top = sorted((e for e in by.values() if e["rows"] >= 2), key=lambda e: (-e["rows"], e["name"].casefold()))
+    return {"entities": top[:ENTITY_CHIPS],
+            "types": [{"type": t, "rows": n} for t, n in sorted(types.items(), key=lambda kv: (-kv[1], kv[0]))]}
+
+
+def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit: int = 100, offset: int = 0,
+          q: str = "", entity: str = "", entity_type: str = "") -> Dict[str, Any]:
     """GET .../things?kind=&filters: every current thing of `kind`, newest first, filtered by its fields (see the
-    module). ValueError: an unknown kind, field or operator, or a bad number; KeyError: not a topic track."""
+    module); `q` words ANDed across a row's fields and its posts' titles (`has_words`), `entity` a name the row's
+    posts name, `entity_type` a type of one they name; `chips` the entities and types the rows' posts name (before the
+    entity filters). ValueError: an unknown kind, field or operator, or a bad number; KeyError: not a topic track."""
     t = _track(cur, folder_id)
     tid = t["folder_id"]
     kinds = TT._kinds(cur, tid) if TT.on() else {}
@@ -521,10 +763,23 @@ def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit
                 return False
         return True
     kept = [x for x in TT.current(cur, tid, kind) if passes(x)]
+    rs = TT.reports(cur, tid, [x["id"] for x in kept])
+    kept = TT.reported(kept, rs)
+    posts = _posts(cur, tid, sorted({r["post"] for x in kept for r in rs.get(x["id"], [])}))
+    views = {x["id"]: thing_view(d, x, rs.get(x["id"], []), posts) for x in kept}
+    want = words(q)
+    if want:   # the rows whose own fields hold every word first (newest first in each): a title only places a row
+        kept = [x for x in kept if has_words(want, row_words(views[x["id"]]))]
+        kept.sort(key=lambda x: not has_words(want, row_words(dict(views[x["id"]], posts=[]))))
+    ents = _entities(cur, kept, rs)
+    chips = entity_chips(ents, [x["id"] for x in kept])
+    named, typed = words(entity), TT.fold(entity_type)
+    if named or typed:
+        kept = [x for x in kept if (not named or any(names_entity(named, e) for e in ents[x["id"]].values()))
+                and (not typed or any(TT.fold(e["type"]) == typed for e in ents[x["id"]].values()))]
     page = kept[offset:offset + limit]
-    rs = TT.reports(cur, tid, [x["id"] for x in page])
-    posts = _posts(cur, tid, sorted({r["post"] for x in page for r in rs.get(x["id"], [])}))
     return {"on": True, "track": {"id": tid, "name": t["name"]}, "kind": kind, "kinds": list(kinds),
             "about": d.get("about") or "", "fields": [{k: f[k] for k in ("name", "type", "unit", "values") if f.get(k)}
                                                      for f in d["fields"]],
-            "filters": filters, "count": len(kept), "things": [thing_view(d, x, rs.get(x["id"], []), posts) for x in page]}
+            "filters": filters, "search": {"q": q, "entity": entity, "entity_type": entity_type}, "chips": chips,
+            "count": len(kept), "things": [views[x["id"]] for x in page]}

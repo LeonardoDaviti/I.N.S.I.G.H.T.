@@ -1,15 +1,9 @@
-"""The source-kind seam (spec §D.1).
+"""The source-kind seam: one adapter per kind owns live fetch, inspection and archive pages.
 
-A source kind is the fetch strategy resolved from a source's platform and URL. Exactly one
-adapter exists per kind; it owns live fetch, inspection and archive pages, and declares
-how hard it may hit its sources in a PolitenessProfile. FetchGates (ingestion/gates.py)
-is the only place a profile is turned into concurrency acquisitions. An archive's pause
-between pages (RateLimit.delay_after) is not slept by the kind: the archive loop hands it to
-the host's gate slot, so the wait between two pages is max(host gap, pause), never the sum.
-Pauses inside one request's worth of work (a live fetch reading several pages, Substack's
-post bodies) are slept by the kind, through KindHttp.sleep.
-
-Import-light on purpose: adapters/*.py import this module.
+A kind declares how hard it may hit its sources in a PolitenessProfile; FetchGates (ingestion/gates.py) is the only
+place a profile becomes concurrency. An archive's pause between pages (RateLimit.delay_after) is not slept by the
+kind: the archive loop hands it to the host's gate slot, so the wait is max(host gap, pause), never the sum. Pauses
+inside one request's work are slept by the kind through KindHttp.sleep. Import-light: adapters/*.py import it.
 """
 from __future__ import annotations
 
@@ -48,7 +42,7 @@ class RateLimit:
         return self.page_delay_s
 
     def as_settings(self) -> dict[str, int | float]:
-        """The persisted settings.archive.rate_limit shape (Mark VIII keys)."""
+        """The persisted settings.archive.rate_limit shape."""
         settings: dict[str, int | float] = {"page_delay_seconds": _tidy(self.page_delay_s)}
         if self.batch_size:
             settings["batch_size"] = self.batch_size
@@ -73,14 +67,11 @@ class PolitenessProfile:
     min_posts_per_fetch: int = 0
     requires: Literal["none", "ytdlp", "telegram_creds", "reddit_creds"] = "none"
     blocking_io: bool = False            # the kind's fetch/inspect/archive run in a thread
-    fetches: bool = True                 # False: never due, its posts come by hand (Saved, issue 0031)
+    fetches: bool = True                 # False: never due, its posts come by hand (Saved)
 
     def rate_limit(self, *layers: Optional[Mapping[str, Any]]) -> RateLimit:
-        """Profile defaults <- each layer in order (persisted settings, then request overrides).
-
-        Layers use the persisted keys (page_delay_seconds / batch_size /
-        batch_cooldown_seconds). None values are ignored, negatives clamp to 0, and batch
-        keys only apply to kinds that have a batch cooldown at all (Mark VIII semantics).
+        """Profile defaults <- each layer in order (persisted settings, then request overrides), by the persisted
+        keys. None values are ignored, negatives clamp to 0, batch keys apply only to kinds with a batch cooldown.
         """
         values: dict[str, float] = {
             "page_delay_seconds": self.page_delay_s,
@@ -107,8 +98,7 @@ class PolitenessProfile:
         )
 
     def estimate_seconds(self, pages: int, rate: Optional[RateLimit] = None, host_gap_s: float = 0.0) -> int:
-        """One second per page plus every wait between pages: max(host gap, the pause), as the
-        archive loop's gate slot waits it."""
+        """One second per page plus every wait between pages: max(host gap, the pause), as the gate slot waits."""
         if pages <= 0:
             return 0
         rate = rate or self.rate_limit()
@@ -147,8 +137,8 @@ class KindUnavailable(Exception):
 
 @runtime_checkable
 class KindSession(Protocol):
-    """A kind's per-run session (B8). The runner opens it lazily, before the kind's first due
-    source, and closes it in a finally once the run is done with the kind."""
+    """A kind's per-run session. The runner opens it lazily, before the kind's first due source, and closes it in
+    a finally once the run is done with the kind."""
 
     async def open(self) -> None: ...        # may raise KindUnavailable(reason); never prompts
 
@@ -167,14 +157,13 @@ class NullKindSession:
 
 @dataclass(frozen=True)
 class ReadCheck:
-    """A test read that failed (BaseKind.test_read, issue 0254): its reason, and gone when the platform says the
-    account is not there (an HTTP 404 or 410): adding it is refused; any other failure (a timeout, a bot check, a
-    bridge down) may pass, and the source is added with the reason as a warning."""
+    """A test read that failed (BaseKind.test_read): its reason; `gone` (the platform says the account is not
+    there) refuses the add, any other failure adds the source with the reason as a warning."""
     reason: str
     gone: bool = False
 
 
-# A platform's answer that the account is not there (issue 0254: "yt-dlp ... HTTP Error 404").
+# A platform's answer that the account is not there ("yt-dlp ... HTTP Error 404").
 GONE_STATUSES = (404, 410)
 GONE_WORDS = ("http error 404", "http error 410", "does not exist", "not found")
 
@@ -214,12 +203,8 @@ class SourceKind(Protocol):
 
 
 def source_host_key(source: Source) -> str:
-    """The host-limiter bucket for a source (HOST_FLOORS keys).
-
-    Only a URL has a host: extract_url_host would parse bare handles as hosts ("@chan" ->
-    "chan", "r/MachineLearning" -> "r"), handing nearly every handle source a private bucket.
-    For URLs it applies HOST_ALIASES and strips "www.", the same as posts.url_host, so
-    www.reddit.com and old.reddit.com share one bucket. Bare handles group per platform.
+    """The host-limiter bucket for a source (HOST_FLOORS keys): a URL's host with HOST_ALIASES and no "www.", as
+    posts.url_host; bare handles group per platform (parsed as hosts they would each get a private bucket).
     """
     handle = str(source.get("handle_or_url") or "")
     if "://" in handle:
@@ -236,9 +221,8 @@ def start_at(**position: Any) -> dict:
     return {**position, "collected_posts": 0, "pages_fetched": 0}
 
 
-# Why an archive's pages added nothing (issue 0130 B4): the counts a kind keeps in its checkpoint's "skipped",
-# carried across a resume. A listed page already stored (not read again), one that is no post (no article, or
-# no date nor og:type article), one that could not be read.
+# Why an archive's pages added nothing: the counts a kind keeps in its checkpoint's "skipped", carried across a
+# resume (already stored, no post, unreadable).
 SKIP_STORED = "stored"
 SKIP_NO_POST = "no_post"
 SKIP_UNREADABLE = "unreadable"
@@ -248,40 +232,34 @@ UNREADABLE = "unreadable"
 
 
 def layout_changed_line(pages: int) -> str:
-    """What an archive or a fetch says when a reader's listed posts read as no post (issue 0130 B2)."""
+    """What an archive or a fetch says when a reader's listed posts read as no post."""
     return (f"The site's layout changed: {pages} listed page{'' if pages == 1 else 's'} read and no post found on any; "
             "its reader needs an update")
 
 
 class EmptyFetch(ValueError):
-    """A fetch that worked and stored nothing it should have (issue 0135): a feed whose items none
-    were read, a channel whose every video was skipped. Raised by the kind, so the fetch is an error
-    with this reason: source health shows it, the summary counts it and backoff applies."""
+    """A fetch that worked and stored nothing it should have (no item read, every video skipped). Raised by the
+    kind, so the fetch is an error with this reason: health shows it and backoff applies."""
 
 
-# Over this share of a fetch's items skipped, the fetch says so as a warning (issue 0135).
+# Over this share of a fetch's items skipped, the fetch says so as a warning.
 SKIPPED_WARNING_SHARE = 0.5
 
 
 class FetchedPosts(list):
-    """A fetch's posts, with a warning when it skipped over SKIPPED_WARNING_SHARE of its items
-    (issue 0135). A plain list to every caller; the runner reads `warning`. `failure`: the fetch
-    stored fewer posts than its items for no reason a feed gives (issue 0137 A1, collapsed): the
-    runner saves the posts and records the fetch as failing, with this reason."""
+    """A fetch's posts (a plain list to every caller) with `warning` when over SKIPPED_WARNING_SHARE of its items
+    were skipped, and `failure` when the feed collapsed: the runner saves the posts and records a failing fetch."""
 
     warning: Optional[str] = None
     failure: Optional[str] = None
-    # What the fetch learned the source is (issue 0167: {"substack": True}, a Substack publication on its own
-    # domain): the runner merges it into the source's settings, and the next fetch reads it by that kind.
+    # what the fetch learned the source is ({"substack": True}): merged into its settings, read by that kind next
     recognised: Optional[dict] = None
-    # What the feed read calls itself (its <title>, issue 0178): the runner names a source that has no name by it.
+    # what the feed calls itself: the runner names a source that has no name by it
     title: Optional[str] = None
 
 
-# A feed collapses when its items lose most of their own addresses (issue 0242): over this share of its distinct items
-# fold into another item's address. The two cases seen on the server set it: a blog of 48 items, 2 of which share one
-# address, loses 1 item (2%): it is stored, 47 posts; a feed of 888 items on 2 addresses loses 886 (99.8%). Any line
-# between them separates the two; half is the middle, and it reads as "most items share a few addresses". Not tuned.
+# A feed collapses when over this share of its distinct items fold into another item's address; not tuned: the
+# middle between the two server cases (2% and 99.8%, 0242).
 COLLAPSED_SHARE = 0.5
 
 
@@ -304,10 +282,9 @@ def _shared_line(groups: dict) -> str:
 
 
 def collapsed(posts: list) -> Optional[str]:
-    """"the feed has 282 items but 1 would be stored (282 items share 1 address)" when the feed collapses: over
-    COLLAPSED_SHARE of its distinct items (another guid, or another title) fold into another item's address, else
-    None (issues 0137 A1, 0242). Duplicates (the same guid, or no guid and the same title) are no failure; a few
-    items sharing an address are stored as the posts they are distinct as (shared_addresses says so)."""
+    """"the feed has 282 items but 1 would be stored (282 items share 1 address)" when over COLLAPSED_SHARE of its
+    distinct items fold into another item's address, else None. Duplicates (same guid, or same title) are no
+    failure."""
     groups = _address_groups(posts)
     distinct = sum(len(identities) for identities in groups.values())
     stored = len(groups)
@@ -318,7 +295,7 @@ def collapsed(posts: list) -> Optional[str]:
 
 def shared_addresses(posts: list) -> Optional[str]:
     """"2 of 48 items share 1 address: 47 posts stored" when some items share an address and the feed does not
-    collapse (a warning, issue 0242), else None."""
+    collapse (a warning), else None."""
     groups = _address_groups(posts)
     distinct = sum(len(identities) for identities in groups.values())
     stored = len(groups)
@@ -337,7 +314,7 @@ BROKEN_ITEMS_SHOWN = 3
 
 
 def broken_items_line(broken: list) -> Optional[str]:
-    """"1 broken item skipped: the item "X" (line 2189): unclosed CDATA section" (issue 0254), None for none."""
+    """"1 broken item skipped: the item "X" (line 2189): unclosed CDATA section", None for none."""
     if not broken:
         return None
     shown = "; ".join(broken[:BROKEN_ITEMS_SHOWN]) + ("; ..." if len(broken) > BROKEN_ITEMS_SHOWN else "")
@@ -346,10 +323,8 @@ def broken_items_line(broken: list) -> Optional[str]:
 
 def checked_fetch(posts: list, items: int, skipped: Mapping[str, int], *, noun: str = "items",
                   broken: Optional[list] = None) -> "FetchedPosts":
-    """The fetch's posts, or EmptyFetch when it had items and none became a post (issue 0135):
-    "every item was skipped: <reasons>" when each was skipped for a reason, else "the feed has N
-    items but 0 were stored". Over half skipped is the posts with a warning; broken: the items the feed's parser
-    skipped (parsing.read_feed, issue 0254), always a warning."""
+    """The fetch's posts, or EmptyFetch when it had items and none became a post. Over half skipped is the posts
+    with a warning; `broken` (the items parsing.read_feed skipped) is always a warning."""
     total_skipped = sum(skipped.values())
     if items and not posts:
         if total_skipped >= items:
@@ -387,39 +362,37 @@ class BaseKind:
     available_basis: AvailableBasis = "unknown"
     # Why this kind's host refuses every archive request (None: it can archive).
     archive_refused: str | None = None
-    # fetch_latest takes memory= (an http.AddressMemory) and fetches conditionally (issue 0044).
+    # fetch_latest takes memory= (an http.AddressMemory) and fetches conditionally.
     conditional: bool = False
-    # Its posts are pages read from a site's own lists (page watch, the site adapters), not a
-    # feed's items: a new one first seen long after its date is new to you (issue 0039).
+    # Its posts are pages read from a site's own lists, not a feed's items: one first seen long after its date is
+    # new to you.
     page_based: bool = False
     # Its stored pages can be re-read for changes (page_post), when the owner switches it on.
     watches: bool = False
-    # read_post reads one of its pages as a post (issue 0084 B: a page its posts link, not stored).
+    # read_post reads one of its pages as a post (a page its posts link, not stored).
     reads_posts: bool = False
-    # Its archive pages go from the newest post to the oldest (a channel, an account, a publication's list):
-    # an archive "back to a date" stops once a page passes the date (issue 0130 C).
+    # Its archive pages go newest to oldest: an archive "back to a date" stops once a page passes the date.
     chronological: bool = False
 
     def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden
         raise NotImplementedError
 
     def page_post(self, source: Source, url: str, page: str) -> Optional[dict]:
-        """The post the page html at url is, read the way a fetch reads it; None when it is no
-        article. Kinds that set watches implement it (issue 0039)."""
+        """The post the page html at url is, read the way a fetch reads it; None when it is no article. Kinds that
+        set watches implement it."""
         return None
 
     def host_key(self, source: Source) -> str:
         return source_host_key(source)
 
     async def test_read(self, source: Source) -> Optional["ReadCheck"]:
-        """Why this kind cannot read the source being added (issue 0254), None when it read it or has no read of its
-        own to try: a feed's address goes through the feed finder, a platform account (a channel, an X account)
-        only this kind can read. Never raises."""
+        """Why this kind cannot read the source being added; None when it read it or has no read of its own (feeds
+        go through the feed finder). Never raises."""
         return None
 
     async def read_post(self, source: Source, url: str) -> Optional[dict]:
-        """One page of this source read as its post, with the page's own date; None when it is no
-        post. Kinds that set reads_posts implement it (issue 0084 B). Raises what the request raises."""
+        """One page of this source read as its post, with the page's own date; None when it is no post. Kinds that
+        set reads_posts implement it. Raises what the request raises."""
         return None
 
     async def fetch_latest(self, source: Source, limit: int) -> list[dict]:  # pragma: no cover
@@ -437,12 +410,9 @@ class BaseKind:
         return False
 
     async def start_checkpoint(self, source: Source, stored: Mapping[str, Any]) -> Optional[dict]:
-        """Where an archive starts so it continues below the stored posts: this kind's own
-        checkpoint shape with collected_posts 0, or None (it starts at the newest post).
-
-        `stored` is PostsService.get_source_post_stats: post_count, oldest_published_at,
-        oldest_external_id. Called only when the source has stored posts. A position jump
-        starts one page early; the URL upsert absorbs the overlap (issue 0015).
+        """Where an archive starts so it continues below the stored posts: this kind's checkpoint shape with
+        collected_posts 0, or None (start at the newest). `stored`: PostsService.get_source_post_stats. A position
+        jump starts one page early; the URL upsert absorbs the overlap.
         """
         return None
 

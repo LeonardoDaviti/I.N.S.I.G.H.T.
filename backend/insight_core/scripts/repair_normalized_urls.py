@@ -2,17 +2,13 @@
 
     python -m insight_core.scripts.repair_normalized_urls [--db DSN] [--batch N] [--dry-run]
 
-1,146 posts of the server's copy of 2026-11-05 (7 sources, all fetched 18-21 March 2026) have an address but no
-`normalized_url` (nor `canonical_url`, nor `url_host`), so every read that matches posts by `normalized_url` (News,
-stories, Discover, originals, the linked line) misses them. This fills each by today's rule, the save path's own
-(utils/post_fields.build_post_fields: normalize_url, canonicalize_url, extract_url_host of the post's url), and only
-where the column is empty: nothing filled before is changed, no post is removed (two posts of one address stay two
-posts; the story job's queue regroups the ones filled, as for any address change).
+Some posts have an address but no `normalized_url` (nor `canonical_url`, `url_host`), so every read that matches
+by `normalized_url` misses them. This fills each by the save path's rule (utils/post_fields.build_post_fields),
+only where the column is empty; no post is removed (the story job's queue regroups the ones filled).
 
-A batch a transaction, oldest id first, its rows `FOR UPDATE SKIP LOCKED`: a stopped run goes on where it stopped,
-and two at once never write one row twice. A post with no http(s) address is left as it is (none on the server's
-copy); one today's rule cannot read is left and counted. The deploy's first start runs it (the ingestion process, logged); this runs it by hand.
-Prints {posts, filled, unreadable, seconds} as JSON. Reads no page, fetches nothing.
+A batch a transaction, oldest id first, `FOR UPDATE SKIP LOCKED`: resumable and safe to run twice at once. A post
+with no http(s) address is left; one the rule cannot read is left and counted. The ingestion start runs it;
+this runs it by hand. Prints {posts, filled, unreadable, seconds} as JSON. Fetches nothing.
 """
 from __future__ import annotations
 
@@ -34,8 +30,8 @@ from insight_core.utils.url_normalization import canonicalize_url, extract_url_h
 logger = logging.getLogger("insight.repair_normalized_urls")
 
 BATCH = 500
-# What is missing: an http(s) address of the post's own, no normalized form of it (the invariant's scope:
-# post.address_unnormalized). Anything else in `url` is no address today's rule reads.
+# What is missing: an http(s) address of the post's own with no normalized form (invariant
+# post.address_unnormalized).
 MISSING_SQL = "normalized_url IS NULL AND url ~* '^https?://'"
 
 

@@ -3,7 +3,7 @@ import type { MarkxBuilt, MarkxBuiltLine, MarkxOriginalHow } from '../../service
 import { TextLink } from '../ui';
 import { bylineText } from '../../lib/byline';
 
-/** 0128 (Stealth v10.4): how a Mark X story is built. The shapes the News row and the story view carry. */
+/** How a Mark X story is built: the shapes the News row and the story view carry. */
 export type BuiltRow = MarkxRow & { built?: MarkxBuilt | null };
 export type BuiltLine = MarkxLine & { built?: MarkxBuiltLine | null };
 export type BuiltStoryView = MarkxStoryView & { built?: MarkxBuilt | null };
@@ -32,7 +32,7 @@ const HOW_WORDS: Record<MarkxOriginalHow, string> = {
   'maker-link': 'by its maker: a link to the maker’s page',
 };
 
-/** The measured numbers the header states (0128, the lab's unseen clusters, 2026-11-07). */
+/** The measured numbers the header states. */
 export const BUILT_LAB = 'Experimental: the original shown first is right on 61% of the lab’s unseen clusters '
   + '(82–88% among their real members); event types are 74% right a post; leak links come only from Mark X’s own connections.';
 
@@ -85,10 +85,38 @@ export function CameTrue({ built }: { built: MarkxBuilt | null | undefined }) {
   );
 }
 
-/**
- * The story page's "How it was built" (0128): the event type, the original first (or the source page), the leaks
- * before the release and the stories linked "came true", with the measured accuracy.
- */
+/** "Where sources differ": each fact two or more sources state differently, each side with its sources and quotes
+ *  (a side only claimed says so). Nothing when they agree. */
+export function SourcesDiffer({ built }: { built: MarkxBuilt | null | undefined }) {
+  const ds = built?.disputes ?? [];
+  if (!ds.length) return null;
+  return (
+    <section aria-label="Where sources differ" className="mt-2 space-y-2 text-[0.8125rem] leading-5" data-built="disputes">
+      <p className="font-semibold text-fg-2">Where sources differ</p>
+      {ds.map((d, n) => (
+        <div key={n}>
+          <p className="text-fg [overflow-wrap:anywhere]">{d.fact}</p>
+          <ul className="ml-3 text-fg-2">
+            {d.sides.map((s, k) => (
+              <li key={k} className="[overflow-wrap:anywhere]">
+                <span className="font-medium text-fg">{s.says}</span>
+                {s.claimed ? <span className="text-fg-3"> (claimed)</span> : null}
+                {s.by.map((b) => (
+                  <span key={b.post} className="block text-fg-3">
+                    <TextLink to={`/posts/${encodeURIComponent(b.post)}`} muted>{b.source || 'a source'}</TextLink>: “{b.quote}”
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** The story page's "How it was built": the event type, the original first (or the source page), the leaks before
+ *  the release and the stories linked "came true", with the measured accuracy. */
 export function BuiltSection({ built, posts }: { built: MarkxBuilt | null | undefined; posts: Record<string, MarkxStoryPost> }) {
   if (!built) return null;
   const first = built.original ? posts[built.original.post] : undefined;
@@ -123,6 +151,7 @@ export function BuiltSection({ built, posts }: { built: MarkxBuilt | null | unde
         </ul>
       ) : null}
       <CameTrue built={built} />
+      <SourcesDiffer built={built} />
     </section>
   );
 }

@@ -1,16 +1,10 @@
-"""0132 B (Stealth v10.6)'s routes, the source analysis page's (no bearer: the app's own; 404 when Mark X is off, as
-every /api/markx path). Both pages read source_stats rows only (markx/source_stats.py): nothing is computed here.
+"""The source analysis page's routes (the app's own; 404 when Mark X is off). They read source_stats rows only:
+nothing is computed here. Included into markx/api.py's router.
 
-GET  /api/markx/sources                 one row per voice and per source with no voice: {rows [{kind, id, name, platform,
-                                        enabled, channels, stats {signal: {value, n, too_few}}}], columns, formulas,
-                                        computed_at, job (the stats job's last run)}; no overall score
-GET  /api/markx/sources/{id}            a voice's or a source's page: {subject, tabs [{kind, id, name, platform, computed,
-                                        cards [{card, title, experimental, signals [{signal, value, n, min, counts,
-                                        too_few, formula, evidence}]}]}], computed_at}; 404 for neither
-POST /api/markx/sources/stance/label    {task, pattern, answer: right | wrong | undo}: the owner's label on a
-                                        stance pattern (mx_labels, item kind stance) -> {labels {pattern: answer}}
-
-Included into markx/api.py's router (its prefix and its switch).
+GET  /api/markx/sources                 one row per voice and per source with no voice: {rows, columns, formulas,
+                                        computed_at, job}; no overall score
+GET  /api/markx/sources/{id}            a voice's or a source's page: {subject, tabs, computed_at}; 404 for neither
+POST /api/markx/sources/stance/label    {task, pattern, answer: right | wrong | undo} -> {labels {pattern: answer}}
 """
 from __future__ import annotations
 

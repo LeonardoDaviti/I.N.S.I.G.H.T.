@@ -1,7 +1,5 @@
-"""page_watch (issue 0028): a page without a feed, followed through its links and the sitemap.
-
-Fixtures trimmed from https://www.anthropic.com/news, its robots.txt, sitemap.xml, one article
-and one category page (2026-10-27).
+"""page_watch (0028): a page without a feed, followed through its links and the sitemap. Fixtures trimmed from
+https://www.anthropic.com/news, its robots.txt, sitemap.xml, one article and one category page.
 """
 from __future__ import annotations
 
@@ -160,7 +158,7 @@ class PageWatchKindTests(unittest.TestCase):
         self.assertEqual(post["media_urls"], ["https://www-cdn.anthropic.com/images/Stre.jpg"])
         self.assertEqual(post["platform"], "rss")
         self.assertEqual(post["source"], LISTING)
-        # How well the page was read (issue 0032), next to the kind's name.
+        # how well the page was read (0032), next to the kind's name
         self.assertEqual(post["metadata"], {"adapter": "page_watch", "page_read": {
             "page_images": 0, "kept_images": 0, "text_chars": len(post["content"]), "short_opening": False}})
 
@@ -330,7 +328,7 @@ class PreviewTests(unittest.TestCase):
                                               "published_at": "2026-10-22T00:00:00+00:00"})
 
     def test_a_redirected_listing_takes_the_prefix_of_where_it_landed(self):
-        # deepmind.google/discover/blog/ -> /blog/, groq.com/news -> /blog (2026-10-27).
+        # deepmind.google/discover/blog/ -> /blog/, groq.com/news -> /blog
         moved = NEWS_PAGE.replace('href="/news/', 'href="/blog/').replace(f"{SITE}/news/s1-sec/", f"{SITE}/blog/s1-sec/")
         responses = {f"{SITE}/blog": moved, f"{SITE}/robots.txt": "",
                      f"{SITE}/blog/public-benefit-fund": article("Public benefit fund", "2026-10-22T00:00:00.000Z")}
@@ -341,8 +339,7 @@ class PreviewTests(unittest.TestCase):
         self.assertIn("Public benefit fund", [item["title"] for item in result["items"]])
 
     def test_a_sitemap_that_is_not_xml_is_no_sitemap(self):
-        # deepmind.google (2026-10-28): a sitemap answered with bytes that aren't XML (compressed,
-        # no .gz name) raised from the parser's read step and failed the preview with a 500.
+        # a sitemap answered with bytes that aren't XML (compressed, no .gz name) must not fail the preview
         http = FakeHttp(anthropic(**{f"{SITE}/sitemap.xml": "\x1f\x8b\x08 not xml at all"}))
         result = run(preview(http, LISTING))
         self.assertEqual((result["prefix"], result["sitemap"]), ("/news/", False))
@@ -389,8 +386,8 @@ def example_site(listing: str, page: str, sitemap: str = "", articles=()) -> dic
 
 
 class SectionPrefixTests(unittest.TestCase):
-    """v10.13.10: a listing page whose own path holds no articles is followed under its article links' section;
-    the pages that work today keep the listing's path."""
+    """A listing page whose own path holds no articles is followed under its article links' section; the pages that
+    work today keep the listing's path."""
 
     def preview(self, listing: str, page: str, sitemap: str = "", articles=(), prefix=None):
         self.http = FakeHttp(example_site(listing, page, sitemap, articles))
@@ -527,8 +524,8 @@ def day(year: int, month: int, date: int) -> datetime:
 
 
 class AddressAndFutureDateTests(unittest.TestCase):
-    """v10.13.7: the address's day ranks above a date written once on the page (a sponsor's or an event's), and
-    no date more than a day ahead is a post's."""
+    """The address's day ranks above a date written once on the page (a sponsor's or an event's), and no date more than
+    a day ahead is a post's."""
 
     PAGE = ('<html><head><title>x</title><meta property="og:type" content="article"></head><body><article>'
             '<p>Some text.</p><aside>Join us on November 17, 2099 for the launch.</aside></article></body></html>')
@@ -556,8 +553,8 @@ class AddressAndFutureDateTests(unittest.TestCase):
 
 
 class BodyDateTrustTests(unittest.TestCase):
-    """v10.25 (issue 0228): the page's markup, then its address's day, and only then a date read from its body; a
-    body date its address contradicts, or one before the web began, is held (no date), not guessed."""
+    """The page's markup, then its address's day, and only then a date read from its body; a body date its address
+    contradicts, or one before the web began, is held (no date), not guessed (0228)."""
 
     @staticmethod
     def page(body: str, tags: str = "") -> str:

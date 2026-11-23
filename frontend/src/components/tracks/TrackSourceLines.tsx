@@ -6,10 +6,8 @@ import { folderReadPath } from '../../lib/feedContext';
 import TextLink from '../ui/TextLink';
 import { suggestionLine } from './trackWords';
 
-/**
- * Discover's line on the sources your tracks found (issue 0145, Mark X): a source you don't read in a track that
- * brought it 3+ posts in 30 days; the track's page makes it active in one tap. Nothing while Mark X is off.
- */
+/** Discover's line on the sources your tracks found (Mark X): a source you don't read in a track that brought it 3+
+ *  posts in 30 days; the track's page makes it active in one tap. Nothing while Mark X is off. */
 export default function TrackSourceLines() {
   const on = useMarkxOn();
   const query = useQuery({ queryKey: ['markx-track-suggestions'], queryFn: () => tracksApi.suggestions(), enabled: on, staleTime: 60_000 });

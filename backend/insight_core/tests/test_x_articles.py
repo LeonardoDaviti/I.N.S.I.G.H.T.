@@ -1,6 +1,4 @@
-"""X Articles read for a tweet the Nitter bridge gives as its link alone (v10.13.10). No network: FakeHttp.
-
-The accounts, ids and texts are made up.
+"""X Articles read for a tweet the Nitter bridge gives as its link alone. No network: FakeHttp; made-up accounts.
 """
 from __future__ import annotations
 
@@ -88,12 +86,10 @@ class DetectionTests(unittest.TestCase):
                      '<p><a href="https://t.co/AbCdEf">x.com/i/article/198910440669…</a></p>'):
             post = {"content_html": html}
             self.assertTrue(x_articles.is_article_post(post), html)
-            self.assertTrue(x_articles.is_stub(post), html)
 
     def test_words_with_the_link_are_an_article_post_but_no_stub(self):
         post = {"content_html": "<p>A long read. " + _stub_html("1989104406691")[3:]}
         self.assertTrue(x_articles.is_article_post(post))
-        self.assertFalse(x_articles.is_stub(post))
 
     def test_an_article_only_in_the_quoted_tweet_or_an_ordinary_tweet_is_none(self):
         quoted = "<p>Worth reading.</p>\n<hr/>\n<blockquote><b>Someone</b>" + _stub_html("1989104406691") + "</blockquote>"

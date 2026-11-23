@@ -1,5 +1,5 @@
-// v10.12.1: the New track dialog. With Mark X on it also asks what belongs and what doesn't (filled: the track is a
-// topic, saved as the track sheet saves it); with Mark X off it asks a name only. Synthetic data only.
+// The New track dialog: with Mark X on it also asks what belongs and what doesn't (filled: the track is a topic);
+// with Mark X off, a name only. Synthetic data only.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

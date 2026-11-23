@@ -1,10 +1,8 @@
-"""0173 (Stealth v10.15)'s routes: "Is this worth it?" for a candidate source (Shadow; the app's own; 404 when Mark X is
-off, as every /api/markx path). Included into markx/api.py's router.
+"""Routes for "Is this worth it?" on a candidate source (the app's own; 404 when Mark X is off). Included into
+markx/api.py's router. Nothing here writes a source: Follow is the Add source dialog's.
 
-GET  /api/markx/source-judge?address=<address>     the latest judgement of the address ({judgement: null}: never asked)
-POST /api/markx/source-judge {address, again?}     the owner's tap: the cached judgement (30 days), else a new one, its
-                                                   test read and question in the background -> {judgement}
-Nothing here writes a source: Follow is the Add source dialog's, as every add.
+GET  /api/markx/source-judge?address=<address>     the latest judgement ({judgement: null}: never asked)
+POST /api/markx/source-judge {address, again?}     the cached judgement (30 days), else a new one in the background
 """
 from __future__ import annotations
 

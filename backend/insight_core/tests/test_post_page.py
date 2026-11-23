@@ -1,8 +1,5 @@
-"""The post page knows what INSIGHT has: its story (issue 0055, "covered by" at the end of the
-post) and the links of its text that are stored posts (issue 0057, they open in INSIGHT).
-
-On the database, one transaction per test, rolled back; assertions are scoped to the test's own
-rows (the story job regroups every post it sees, and nothing of it is kept).
+"""The post page knows what INSIGHT has: its story ("covered by", 0055) and the links of its text that are stored
+posts (0057). On the database, rolled back; assertions are scoped to the test's own rows.
 """
 from __future__ import annotations
 
@@ -79,7 +76,7 @@ class PostPageTests(unittest.TestCase):
         )
         return str(self.cur.fetchone()[0])
 
-    # ---- 0055: the story on the post page -------------------------------------------------------
+    # ---- the story on the post page --------------------------------------------------------------
 
     def _launch(self):
         """A report, a copy of it on another site, and someone's own take, all linking one page."""
@@ -93,7 +90,7 @@ class PostPageTests(unittest.TestCase):
         self.copy = self._post(self.channel, site="channel", hours_ago=4, content=LONG, html=link,
                                content_hash="same-" + self.mark)
         self.take = self._post(self.simon, site="simon", hours_ago=3, title="My notes on the new model", html=link)
-        # Stored first (issue 0072 A: a story keeps the id of its post stored first).
+        # stored first: a story keeps the id of its post stored first
         self.cur.execute("UPDATE posts SET created_at = created_at - interval '1 hour' WHERE id = %s", (self.lab,))
         while StoriesRepository().fill_missing_links(self.cur):
             pass
@@ -106,7 +103,7 @@ class PostPageTests(unittest.TestCase):
     def test_the_lead_carries_the_feed_rows_story(self):
         self._launch()
         story = self._story(self.lab)
-        # All three link one page outside INSIGHT: it is the origin (issue 0064), no post was first.
+        # all three link one page outside INSIGHT: it is the origin, no post was first
         self.assertEqual((story["id"], story["voices"], story["first"]), (self.lab, 2, None))
         self.assertEqual(story["origin"], {"url": self.page, "title": None, "linked_by": 3, "href": self.page})
         self.assertEqual([(s["name"], [w["name"] for w in s["with"]]) for s in story["sources"]],
@@ -149,7 +146,7 @@ class PostPageTests(unittest.TestCase):
         self.assertIsNone(self._story(a))
         self.assertIsNone(self._story(b))
 
-    # ---- 0057: the links that are stored posts --------------------------------------------------
+    # ---- the links that are stored posts ---------------------------------------------------------
 
     def _links(self, post_id, url, html=None, content=None):
         return PostDetailService.internal_links(self.cur, post_id, url, html, content)

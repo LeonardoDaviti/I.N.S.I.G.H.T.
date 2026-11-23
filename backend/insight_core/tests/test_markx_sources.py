@@ -1,9 +1,7 @@
-"""0132 B (Stealth v10.6): the source analysis page. The role rule's order and "official"; the stance answer's quotes
-checked by code; each card's formula and threshold on synthetic sources (posting rate, own share, first to report,
-solo share, News yield, cited by, too few to tell); voices when the table exists, per source when it doesn't; the
-page's routes (rows only, no overall score, 404s); the stance planner (monthly, own posts of 250+ characters) and its
-labels; Part C1 (the last 20 posts read) and C3 (Telegram forwards) off by default; the stats job's schedule.
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""The source analysis page (0132 B): the role rule and "official"; the stance answer's quotes checked by code; each
+card's formula and threshold on synthetic sources; voices when the table exists, per source when it doesn't; the
+page's routes (rows only, no overall score, 404s); the stance planner and its labels; C1 (last 20 posts read) and C3
+(Telegram forwards) off by default; the stats job's schedule. Synthetic data; DB tests only on a _test database."""
 from __future__ import annotations
 
 import json
@@ -271,7 +269,7 @@ class Signals(_World):
         self.assertEqual({sig for (s, sig) in got if s == self.site}, set(S.SIGNALS))
 
     def test_audience_from_profiles(self):
-        """0132 C2: the Audience card's followers, from the channel's current profile; none: no audience data."""
+        """The Audience card's followers, from the channel's current profile; none: no audience data (0132 C2)."""
         from insight_core.ingestion.profiles import Ask, Profile
         from insight_core.services.profiles_service import record
         self.world()
@@ -355,7 +353,7 @@ class Signals(_World):
             self.add(a, url=f"https://x.com/acmelabs2/status/{i}", author="acmelabs2")
             self.add(self.x, url=f"https://x.com/acmelabs/status/{i}", author="acmelabs")
         existed = S.voices_exist(self.cur)
-        # 0132 A's tables, in a transaction rolled back (another slice's migration 0080 makes them)
+        # 0132 A's tables (migration 0080), in a transaction rolled back
         with self.conn.transaction():
             self.cur.execute("CREATE TABLE IF NOT EXISTS voices (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
                              "name text, kind text)")
@@ -375,6 +373,92 @@ class Signals(_World):
             self.assertEqual(S.subject_view(self.cur, a)["subject"]["voice"], {"id": voice, "name": "Acme"})
             raise psycopg.Rollback()
         self.assertEqual(S.voices_exist(self.cur), existed)
+
+
+# ---- the track record (firsts and lead, signal and noise, opened, "switch off?"; 0266) -------------------
+
+class TrackRecord(_World):
+    def test_firsts_lead_signal_noise_and_opened(self):
+        x, site, other = self.world()
+        self.cur.execute("INSERT INTO post_interactions (post_id, interaction_type) VALUES (%s, 'opened')", (site[0],))
+        self.cur.execute("INSERT INTO post_interactions (post_id, interaction_type) VALUES (%s, 'favorited')", (site[1],))
+        track = str(uuid.uuid4())
+        self.cur.execute("INSERT INTO mx_track_places (track_id, post_id, place, rank, calibrated, active) "
+                         "VALUES (%s, %s, 'track', 1, true, true), (%s, %s, 'discover', 1, true, true)",
+                         (track, site[12], track, site[13]))
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_track_places WHERE track_id = %s", (track,))
+        got = self.stats()
+        v = lambda s, sig: (got[(s, sig)].value, got[(s, sig)].n)
+        # the site came first in its 10 stories, the blog 2 hours later in each
+        self.assertEqual(v(self.site, "firsts"), (10, 10))
+        self.assertEqual(v(self.site, "first_share"), (1.0, 10))
+        self.assertEqual(v(self.site, "first_lead"), (2.0, 10))
+        self.assertEqual(got[(self.site, "firsts")].evidence["stories"][0]["other"], "Other Blog")
+        self.assertEqual(v(self.other, "firsts"), (0, 10))
+        self.assertEqual(v(self.other, "first_lead"), (None, 0))
+        # signal: 10 posts in a story of 2+ voices (3 of them in News) and 1 in a track (a Discover place is not)
+        self.assertEqual(v(self.site, "signal_share"), (round(11 / 15, 3), 15))
+        self.assertEqual(v(self.site, "noise_share"), (round(4 / 15, 3), 15))
+        ev = got[(self.site, "signal_share")].evidence
+        self.assertEqual((ev["news"], ev["story"], ev["track"]), (3, 10, 1))
+        self.assertNotIn(site[13], {p["id"] for p in ev["posts"]["track"]})
+        # opened: an open counts, a favourite alone does not
+        self.assertEqual(v(self.site, "opened_share"), (round(1 / 15, 3), 15))
+        # a card of its own, in the list's columns
+        self.assertIn(("record", "Track record, last 30 days"), S.CARDS)
+        self.assertTrue({"firsts", "first_lead", "signal_share", "noise_share", "opened_share"} <= set(S.LIST_COLUMNS))
+
+    def test_a_story_begun_before_the_window_gives_no_first_but_its_posts_are_signal(self):
+        a = self.add(self.site, url="https://wire.example-news.invalid/old", at=NOW - 40 * D)
+        b = self.add(self.other, url="https://other.example-blog.invalid/new", at=NOW - 2 * D)
+        self.story((a, self.site), (b, self.other))
+        got = self.stats()
+        self.assertEqual(got[(self.other, "firsts")].n, 0)
+        self.assertEqual(got[(self.other, "signal_share")].value, 1.0)
+
+    def test_a_date_alone_is_first_only_on_an_earlier_day_and_never_in_the_lead(self):
+        day = (NOW - 3 * D).replace(hour=0, minute=0, second=0, microsecond=0)
+        a = self.add(self.site, url="https://wire.example-news.invalid/d1", at=day)                       # a date alone
+        b = self.add(self.other, url="https://other.example-blog.invalid/d1", at=day + timedelta(hours=10))
+        self.story((a, self.site), (b, self.other))
+        c = self.add(self.site, url="https://wire.example-news.invalid/d2", at=day - D)                  # a day earlier
+        e = self.add(self.other, url="https://other.example-blog.invalid/d2", at=day + timedelta(hours=9))
+        self.story((c, self.site), (e, self.other))
+        got = self.stats()
+        self.assertEqual((got[(self.site, "firsts")].value, got[(self.site, "firsts")].n), (1, 2))
+        self.assertEqual((got[(self.site, "first_lead")].value, got[(self.site, "first_lead")].n), (None, 0))
+        self.assertEqual(got[(self.other, "firsts")].value, 1)     # the timed post, the same day as a date alone
+
+    def test_switch_off_is_a_suggestion_for_high_noise_and_no_first(self):
+        cell = lambda value, n=20, too_few=False: {"value": value, "n": n, "too_few": too_few}
+        noisy = {"noise_share": cell(0.95), "firsts": cell(0, 0), "opened_share": cell(0.0), "cited_by": cell(1)}
+        got = S.switch_off(noisy, True)
+        self.assertEqual((got["posts"], got["noise"], got["cited_by"]), (20, 0.95, 1))
+        self.assertIn("95% in no News row", got["line"])
+        self.assertIsNone(S.switch_off(noisy, False))                                          # already off
+        self.assertIsNone(S.switch_off(dict(noisy, firsts=cell(1, 3)), True))                  # it was first once
+        self.assertIsNone(S.switch_off(dict(noisy, noise_share=cell(0.8)), True))              # not noisy enough
+        self.assertIsNone(S.switch_off(dict(noisy, noise_share=cell(1.0, 4, True)), True))     # too few posts
+        self.assertIsNone(S.switch_off(dict(noisy, opened_share=cell(0.2)), True))             # you open it
+        self.assertIsNone(S.switch_off(dict(noisy, cited_by=cell(3)), True))                   # others link it
+        self.assertIsNone(S.switch_off({}, True))
+
+    def test_the_list_and_the_page_carry_the_suggestion(self):
+        loud = self.source_row("rss", "https://loud.example-loud.invalid/rss", "Loud Feed")
+        self.cur.execute("UPDATE sources SET enabled = true WHERE id = %s", (loud,))
+        for i in range(12):
+            self.add(loud, url=f"https://loud.example-loud.invalid/{i}", at=NOW - (i + 1) * D)
+        self.stats()
+        status, page = call("GET", "/api/markx/sources")
+        self.assertEqual(status, 200)
+        rows = {r["id"]: r for r in page["rows"]}
+        self.assertIn("12 posts in 30 days, 100%", rows[loud]["switch_off"]["line"])
+        self.assertIsNone(rows[self.thin]["switch_off"])                                       # off, and too few
+        status, one = call("GET", f"/api/markx/sources/{loud}")
+        self.assertEqual(status, 200)
+        self.assertEqual(one["tabs"][0]["switch_off"]["posts"], 12)
+        self.cur.execute("SELECT enabled FROM sources WHERE id = %s", (loud,))
+        self.assertTrue(self.cur.fetchone()[0])                                                # nothing switched
 
 
 # ---- the stance planner, its answer on the card, the labels; Part C1 -----------------------------------
@@ -451,8 +535,8 @@ class Stance(_World):
         self.assertEqual(self.cur.fetchone()[0], 20)      # never more
 
     def test_last_posts_ask_only_the_current_readings_kind(self):
-        """0233 (0225 #17): with ent-v5 on, a thin source's last posts get `reading` tasks, never read or entities;
-        off, `reading` plans nothing here."""
+        """With ent-v5 on, a thin source's last posts get `reading` tasks, never read or entities; off, `reading` plans
+        nothing here (0233)."""
         from insight_core.markx import reading5
         for i in range(25):
             self.add(self.thin, url=f"https://thin.example-thin.invalid/v{i}", at=NOW - (400 + i) * D)

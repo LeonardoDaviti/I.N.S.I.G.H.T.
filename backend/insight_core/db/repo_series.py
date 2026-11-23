@@ -1,15 +1,9 @@
-"""Series (issue 0134, migration 0083): the pass that finds a source's series and columns (utils/series.py) and marks
-its series navigation in post_refs, and the post page's Series line.
+"""Series: the pass that finds a source's series and columns (utils/series.py) and marks series navigation in
+post_refs, and the post page's Series line.
 
-- **The pass** (`run`, the story job's, after the refs are read): the sources with a post stored, changed or whose refs
-  were read again since the last pass (an hour of overlap); every source the first time and after a VERSION bump (the
-  backfill). Each source's groups are made again from all its posts; a group that changed is a new row and the old one
-  is closed (valid_to), never deleted; one that did not is left.
-- **Navigation** (`post_refs.navigation`): a same-source link whose two ends are in one group, or whose link words are
-  navigation. Set on the source's open refs whose flag differs, with `navigation_at`.
-- **The line** (`line`): the post's series, its stored parts in order, prev and next; for a column, the issue and the
-  previous and next ones.
-
+`run` (the story job's, after refs are read) reads again the sources with a post stored, changed or re-read
+since the last pass (every source the first time and after a VERSION bump); a changed group is a new row and
+the old one is closed (valid_to), never deleted. `line`: the post's series, parts in order, prev and next.
 Every method takes the caller's cursor and never commits.
 """
 from __future__ import annotations
@@ -38,13 +32,11 @@ LOCK_KEY = "insight.series"
 MARGIN = timedelta(hours=1)
 HEAD = 600                       # the text's start the rule reads for a post with no title (the lab's)
 PARTS_SHOWN = 50                 # a series' parts on the line
-NAV_PAGE = 50                    # posts whose HTML the pass reads for navigation links at once (v10.22.3)
+NAV_PAGE = 50                    # posts whose HTML the pass reads for navigation links at once
 POST_DATE = pairing.ix_date("p")
 
 
 class SeriesRepository:
-    # ---- the pass -----------------------------------------------------------------------
-
     @staticmethod
     def lock(cur: Cursor) -> bool:
         cur.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", (LOCK_KEY,))
@@ -63,8 +55,8 @@ class SeriesRepository:
 
     @classmethod
     def run(cls, cur: Cursor, now: datetime, *, sources: Optional[Sequence[str]] = None) -> Dict[str, Any]:
-        """The incremental pass on the caller's transaction (or, with `sources`, those sources only, the state left).
-        Its counts."""
+        """The incremental pass on the caller's transaction (or, with `sources`, those sources only, the state
+        left). Returns its counts."""
         t0 = time.monotonic()
         state = (SystemSettingsRepository.get(cur, SETTINGS_KEY) or ({}, None))[0] or {}
         fresh = state.get("version") != rule.VERSION
@@ -116,9 +108,8 @@ class SeriesRepository:
             got = by_address.get(address)
             return got if got and got != post else None
 
-        # the links whose words may be navigation (NAV_PREFILTER, a superset), read from their text. v10.22.3: the
-        # posts found first, their texts read NAV_PAGE at a time (was every one's HTML at once: a source of 678 such
-        # posts held 133 MB of text, the story job's process peaked at 691 MB on the scale copy, 1.3 GB on the server)
+        # the links whose words may be navigation (NAV_PREFILTER, a superset): the posts found first, their texts
+        # read NAV_PAGE at a time to bound memory
         cur.execute("SELECT id::text FROM posts WHERE source_id = %s AND content_html ~* %s", (source_id, rule.NAV_PREFILTER))
         found = [r[0] for r in cur.fetchall()]
         words: Dict[Tuple[str, str], str] = {}
@@ -127,7 +118,7 @@ class SeriesRepository:
             page = found[start:start + NAV_PAGE]
             cur.execute("SELECT id::text, url, content_html, content FROM posts WHERE id = ANY(%s::uuid[])", (page,))
             texts = {pid: (url, content_html, content) for pid, url, content_html, content in cur.fetchall()}
-            for pid in page:   # in the order found, as before
+            for pid in page:   # in the order found
                 if pid not in texts:
                     continue
                 url, content_html, content = texts.pop(pid)
@@ -195,8 +186,6 @@ class SeriesRepository:
                             [(sid, m, g.numbers.get(m), k + 1) for k, m in enumerate(g.members)])
             opened += 1
         return Counter(opened=opened, closed=len(gone))
-
-    # ---- the post page's line -----------------------------------------------------------------
 
     @staticmethod
     def line(cur: Cursor, post_id: str) -> Optional[Dict[str, Any]]:

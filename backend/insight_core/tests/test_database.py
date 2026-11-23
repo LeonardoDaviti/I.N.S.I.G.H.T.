@@ -1,6 +1,5 @@
-"""The database module: pooled connections, a statement timeout, the transaction scope.
-
-Each test builds its own small Database on the test database and closes it.
+"""The database module: pooled connections, a statement timeout, the transaction scope. Each test builds its own small
+Database on the test database and closes it.
 """
 from __future__ import annotations
 
@@ -45,7 +44,7 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(cur.fetchone()[0], "5min")
 
     def test_jit_is_off_for_pooled_connections(self):
-        """Measured on the server's data: JIT compiling cost ~300 ms of the Sources list."""
+        """JIT is off: its compiling cost made simple lists slow."""
         database = self.make()
         with database.connection() as conn, conn.cursor() as cur:
             cur.execute("SHOW jit")
@@ -105,7 +104,7 @@ def _hold_lock_and_sleep(url: str, key: int) -> None:
 
 @requires_db
 class RoleTimeoutTests(unittest.TestCase):
-    """Issue 0188: the jobs' and the API's timeouts, set where connections are made."""
+    """The jobs' and the API's timeouts, set where connections are made (0188)."""
 
     def setUp(self):
         saved = {k: os.environ.get(k) for k in (db.ROLE_ENV, "INSIGHT_DB_CLIENT_CHECK_MS")}

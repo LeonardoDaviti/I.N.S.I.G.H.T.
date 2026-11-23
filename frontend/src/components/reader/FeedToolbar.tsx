@@ -9,7 +9,7 @@ import SearchField from './SearchField';
 import SlashChoice from './SlashChoice';
 import TextLink from '../ui/TextLink';
 
-/** Kept is the star (`starred` in the URL and the API, issue 0022); History, what you opened (issue 0052). */
+/** Kept is the star (`starred` in the URL and the API); History, what you opened. */
 const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
   { value: 'unread', label: 'Unread' },
   { value: 'later', label: 'Later' },
@@ -17,15 +17,16 @@ const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'history', label: 'History' },
 ];
-/** A source that watches its pages offers its updates as one more Show choice (issue 0039). */
+/** A source that watches its pages offers its updates as one more Show choice. */
 const UPDATED = { value: 'updated' as const, label: 'Updated' };
-/** Issue 0238: News's own Show: every row, or only the rows with an unread post. */
-export type NewsShow = 'all' | 'unread';
+/** News's own Show: every row, only the rows with an unread post, or what came since the reader's last look. */
+export type NewsShow = 'all' | 'unread' | 'since';
 const NEWS_SHOW: ReadonlyArray<{ value: NewsShow; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'unread', label: 'Unread' },
+  { value: 'since', label: 'Since you looked' },
 ];
-/** News and Classics are views next to the feed (issue 0051), of the Main feed, a track or one source (0077). */
+/** News and Classics are views next to the feed, of the Main feed, a track or one source. */
 const VIEWS: ReadonlyArray<{ value: ReaderView; label: string }> = [
   { value: 'stream', label: 'Stream' },
   { value: 'by_source', label: 'By source' },
@@ -34,7 +35,7 @@ const VIEWS: ReadonlyArray<{ value: ReaderView; label: string }> = [
 ];
 /** One source has nothing to group by source. */
 const SOURCE_VIEWS = VIEWS.filter((option) => option.value !== 'by_source');
-/** A track, with Mark X on, is also read as a topic (issue 0145): its sections by sub-topic, then Discover. */
+/** A track, with Mark X on, is also read as a topic: its sections by sub-topic, then Discover. */
 const TOPIC = { value: 'topic' as const, label: 'Topic' };
 const FLOWS: ReadonlyArray<{ value: ReadingFlow; label: string }> = [
   { value: 'continuous', label: 'Continuous' },
@@ -61,26 +62,22 @@ export interface FeedToolbarProps {
   oneSource?: boolean;
   /** The "N new posts" pill, when there are any. */
   pill?: ReactNode;
-  /** Search what is on screen (issue 0040): the field's Enter, with its words. */
+  /** Search what is on screen: the field's Enter, with its words. */
   onSearch: (query: string) => void;
-  /** Offer Show Updated: one source that watches its pages for changes (issue 0039). */
+  /** Offer Show Updated: one source that watches its pages for changes. */
   updates?: boolean;
-  /** Offer View Topic: a track while Mark X is on (issue 0145). */
+  /** Offer View Topic: a track while Mark X is on. */
   topic?: boolean;
-  /** A topic track's reading views (v10.12.1): its items only, or, switched on, every post of its sources. */
+  /** A topic track's reading views: its items only, or, switched on, every post of its sources. */
   allSources?: { on: boolean; onChange: (on: boolean) => void } | null;
-  /** Issue 0238: News's Show (All / Unread), offered in the News view. */
+  /** News's Show (All / Unread), offered in the News view. */
   newsShow?: { value: NewsShow; onChange: (value: NewsShow) => void } | null;
 }
 
 /**
- * The reader's sticky toolbar, under the app's one top bar: the scope title and
- * its unread count, a search field scoped to it (issue 0040),
- * and the shortcut help as a labelled text action (fetching is
- * an ingestion job and lives in Sources), then the filter, view and how
- * the post page flows (stored here, read there) as slash-separated words; one
- * source's view is Stream / News / Classics (issue 0077), with no flow choice. The
- * theme toggle, the wordmark and the app menu live in the top bar only.
+ * The reader's sticky toolbar under the top bar: the scope title and unread count, a scoped search field, the
+ * shortcut help, then filter, view and post-page flow as slash-separated words (one source: Stream / News /
+ * Classics, no flow choice). Theme toggle, wordmark and app menu live in the top bar only.
  */
 export default function FeedToolbar({
   title, titleHref, subtitle, filter, onFilterChange, view, onViewChange,
@@ -88,8 +85,7 @@ export default function FeedToolbar({
   newsShow = null,
 }: FeedToolbarProps) {
   const [flow, setFlow] = useFlowPreference();
-  // News and Classics rank stories and pages: the feed's Show (a read-state filter) and Posts say nothing there;
-  // News has a Show of its own (issue 0238: its rows with an unread post).
+  // News and Classics rank stories and pages: the feed's Show and Posts say nothing there; News has its own Show
   const ranked = view === 'news' || view === 'classics' || view === 'topic';
   const views = oneSource ? SOURCE_VIEWS : topic ? [...VIEWS, TOPIC] : VIEWS;
   return (
@@ -119,11 +115,9 @@ export default function FeedToolbar({
 }
 
 /**
- * The toolbar's frame, shared by the reader and the search page: the title row (a
- * `field` beside the shortcut help) and the rows below it (`children`). Below md the
- * title opens the drawer of the main feed, tracks and sources (a chevron says so), so
- * there is no second hamburger. From md up, a source or track title links to where it
- * is managed in Sources.
+ * The toolbar's frame, shared by the reader and the search page: the title row (`field` beside the shortcut help)
+ * and the rows below (`children`). Below md the title opens the drawer (no second hamburger); from md up a source
+ * or track title links to where it is managed in Sources.
  */
 export function ReaderToolbar({ title, titleHref, subtitle, onOpenNav, onOpenHelp, field, children }: {
   title: string;
@@ -135,8 +129,7 @@ export function ReaderToolbar({ title, titleHref, subtitle, onOpenNav, onOpenHel
   children: ReactNode;
 }) {
   const heading = 'truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-fg';
-  // Below sm only the title row sticks (issue 0070): the frame's boxes give way (`contents`), so the
-  // rows under the title scroll away with the feed and leave the screen to reading.
+  // below sm only the title row sticks: the frame's boxes give way (`contents`) so the rows scroll with the feed
   return (
     <div className="reader-material reader-edge sticky top-topbar z-30 max-sm:contents">
       <div className="w-full max-w-5xl px-4 pb-2 pt-4 max-sm:contents sm:px-6 lg:px-8">
@@ -153,7 +146,6 @@ export function ReaderToolbar({ title, titleHref, subtitle, onOpenNav, onOpenHel
               <span className="sr-only">, open navigation</span>
             </button>
             {titleHref ? (
-              // A quiet link: the text colour, underlined only on hover.
               <TextLink to={titleHref} className={`${heading} hidden decoration-transparent hover:decoration-fg-3 md:block`}>{title}</TextLink>
             ) : (
               <span className={`${heading} hidden md:block`}>{title}</span>

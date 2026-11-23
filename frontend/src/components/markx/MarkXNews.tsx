@@ -13,9 +13,10 @@ import { plural } from '../../lib/format';
 import { newsPart } from '../../lib/news';
 import { errorMessage } from '../../lib/apiError';
 import { ANSWER_WORDS, ixWords, judged, TAG_WORDS, whyWords } from '../../lib/markx';
-import { FoldedPosts, FoldHeader } from './MarkXFolds';   // 0127: duplicates folded
-import { CameTrue, eventWords, LineRole } from './MarkXBuilt';   // 0128: how the story is built
+import { FoldedPosts, FoldHeader } from './MarkXFolds';
+import { CameTrue, eventWords, LineRole, SourcesDiffer } from './MarkXBuilt';
 import type { BuiltLine, BuiltRow } from './MarkXBuilt';
+import { RowChain } from './MarkXChain';
 import { bylineText } from '../../lib/byline';
 
 const TAG_ORDER: MarkxTag[] = ['NEW', 'MERGED', 'SPLIT', 'CHANGED', 'SAME'];
@@ -33,7 +34,7 @@ function part(row: MarkxRow, now: Date) {
   return newsPart({ part: recent ? 'recent' : 'earlier', first_at: row.first_at }, now);
 }
 
-/** One tap on a member (0086 F): "wrong story" or "not about this", stored as a label; "undo" stores "ok". */
+/** One tap on a member: "wrong story" or "not about this", stored as a label; "undo" stores "ok". */
 function OneTap({ line }: { line: MarkxLine & { story: string } }) {
   const api = useApi();
   const [flag, setFlag] = useState<MarkxFlag | null>(line.flag ?? null);
@@ -145,7 +146,7 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
                   {row.rank.notable ? ' · notable' : ''}
                   {` · significance ${row.rank.significance === null ? 'not asked yet' : row.rank.significance.toFixed(2)}`}
                   {row.rank.why?.effect ? ` (effect ${row.rank.why.effect}/5)` : ''}
-                  {` · fit ${row.rank.fit.toFixed(2)} (Shadow)`}
+                  {` · personal ${row.rank.fit.toFixed(2)}`}{/* v10.42: the reader's interest p (markx/personal.py) */}
                 </span>
               ) : null}
               {row.surging?.length ? (
@@ -160,12 +161,13 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
           </span>
         </summary>
         <div className="pb-4 pl-6">
-          {row.story ? (   // 0119 B6: what each member adds, and the story sheet
+          {row.story ? (   // what each member adds, and the story sheet
             <p className="mb-1 text-[0.8125rem]">
               <TextLink to={`/markx/stories/${encodeURIComponent(row.story)}`}>Perspectives and the story sheet</TextLink>
             </p>
           ) : null}
-          {row.rank?.why?.analysis?.length ? (   // 0208: its expert breakdowns, a Shadow until measured over its bar
+          <RowChain chain={row.chain} />{/* the stories before and after it about the same thing */}
+          {row.rank?.why?.analysis?.length ? (   // its expert breakdowns, a Shadow until measured over its bar
             <ul aria-label="Analysis (Shadow)" className="mb-2 text-[0.8125rem] leading-5">
               {row.posts.filter((line) => row.rank?.why?.analysis?.includes(line.id)).map((line) => (
                 <li key={line.id} className="text-fg-2">
@@ -178,6 +180,7 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
             <FoldedPosts lines={row.posts} render={(line, extra) => <PostLine key={line.id} line={line} now={now} extra={extra} />} />
           </ul>
           <CameTrue built={built} />
+          <SourcesDiffer built={built} />
           {row.removed.length ? (
             <>
               <p className="mt-3 text-[0.75rem] font-medium text-fg-3">In Mark IX’s row, not in this one</p>
@@ -203,8 +206,8 @@ function inParts(items: MarkxRow[], now: Date): Block[] {
   return parts;
 }
 
-/** 0174: Haiku's sections in the server's order (each by its most important row), the rows no answer covered yet
- * first under "New since"; inside each, News' order. */
+/** Haiku's sections in the server's order, the rows no answer covered yet first under "New since"; inside each,
+ *  News' order. */
 function inSections(items: MarkxRow[], sections: MarkxNewsSections): Block[] {
   const byId = new Map(items.map((row) => [row.id, row]));
   const placed = new Set([...sections.new, ...sections.groups.flatMap((g) => g.rows)]);
@@ -219,15 +222,14 @@ function inSections(items: MarkxRow[], sections: MarkxNewsSections): Block[] {
 }
 
 /**
- * Mark X's News beside Mark IX's (issue 0086 E): every row with its tag and headline; opened, each post with why it is
- * there (Mark IX's rule, or Haiku's relation, p and words) and what Mark IX did with it, and the Mark IX posts it left
- * out. "Only differences" is on by default; the rows Mark X no longer counts as News close the list. 0174: the rows
- * under Haiku's titled sections (and how old they are), or the plain list.
+ * Mark X's News beside Mark IX's: every row with its tag and headline; opened, each post with why it is there and
+ * what Mark IX did with it, and the Mark IX posts it left out. "Only differences" is on by default; the rows Mark X
+ * no longer counts as News close the list. Rows under Haiku's titled sections, or the plain list.
  */
 export default function MarkXNews() {
   const api = useApi();
   const [all, setAll] = useState(false);
-  const [plain, setPlain] = useState(false);   // 0174: the plain list instead of Haiku's sections
+  const [plain, setPlain] = useState(false);   // the plain list instead of Haiku's sections
   const query = useQuery({ queryKey: ['markx-news', all], queryFn: () => api.getMarkxNews(all), staleTime: 60_000 });
   const now = useMemo(() => new Date(), [query.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 

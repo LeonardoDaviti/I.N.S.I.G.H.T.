@@ -1,9 +1,5 @@
-/**
- * Feed fixtures (spec §F.7, break-ui CATALOG): the worst case, empty, one and a
- * huge feed. They are the regression data for FeedItem, FeedGroup and FeedList
- * and back the dev-only `?data=worst|empty|one|huge` switch on the reader.
- * Dates are relative to `now`, so "3h ago" and "in 2d" stay true whenever it renders.
- */
+/** Feed fixtures: the worst case, empty, one and a huge feed; regression data for FeedItem, FeedGroup and FeedList
+ *  and the dev-only `?data=` switch. Dates are relative to `now`. */
 import type { FeedGroup, FeedGroupsPage, FeedItem, FeedPage, UnreadCounts } from '../../services/api';
 import type { FeedFixture } from '../../hooks/useFeed';
 
@@ -80,7 +76,7 @@ export function worstFeedItems(now: Date = new Date()): FeedItem[] {
       sort_at: at(now, 2 * DAY),
       published_at: at(now, 2 * DAY),
       reading_minutes: 0,
-      // A story folded under this row (issue 0050): long and non-Latin names, a share, an unread post.
+      // a story folded under this row: long and non-Latin names, a share, an unread post
       story: {
         id: uuid(103),
         voices: 3,

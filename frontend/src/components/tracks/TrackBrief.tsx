@@ -4,33 +4,34 @@ import { useQuery } from '@tanstack/react-query';
 import {
   briefApi, type BriefPoint, type QuickLook, type Thing, type ThingFieldDef, type ThingPost, type ThingSection,
 } from '../../services/tracks';
-import { Button, Chip, ExternalLink, FilterChip, TextLink } from '../ui';
+import { Button, Chip, ExternalLink, FilterChip, Input, TextLink } from '../ui';
 import { ErrorState, LoadingState } from '../states';
 import {
-  chipParams, citeMarks, dayWord, fieldWord, filterChips, hostOf, kindWord, nextSort, sinceLine, sortThings,
+  chipParams, citeMarks, dayWord, fieldWord, filterChips, hostOf, kindWord, nextSort, searchParams, sinceLine, sortThings,
   thingFacts, thingLinks, thingName, toggleChip, weekDay, weekLine, type FilterChipDef, type SortState,
 } from './briefWords';
 
 /**
- * The track briefer's reading views (issue 0245, frontend v10.28): the quick look on top of a track, the weekly
- * issue with its date strip, and the tables with filter chips. Everything comes from the backend's typed rows; no
- * word here is about one track. P6: no metadata on top (no model, no counts beyond "N new"), citations are quiet
- * superscript links to the posts (0002).
+ * The track briefer's reading views: the quick look on top of a track, the weekly issue with its date strip, and
+ * the tables with filter chips. Everything comes from the backend's typed rows; no word here is about one track. No
+ * metadata on top; citations are quiet superscript links to the posts.
  */
 
 const postHref = (id: string) => `/posts/${encodeURIComponent(id)}`;
+const QUICK_ROWS = 5;   // the quick look shows a kind's newest rows; "see all" opens the rest
 
-/** The ↗ to a thing's newest post's original (or the post in INSIGHT when it has no address). */
+
+/** The ↗ to a thing's newest post, in INSIGHT: a post's own address can be a server-side feed bridge's that the
+ *  reader's device cannot open; the post page links its original. */
 function OpenThing({ thing, name }: { thing: Thing; name: string }) {
   const post = thing.posts[0];
   if (!post) return null;
-  const label = `Open the post about ${name}`;
-  return post.url ? (
-    <ExternalLink href={post.url} aria-label={label} title={post.title ?? undefined} className="shrink-0 text-fg-2 no-underline">↗</ExternalLink>
-  ) : (
-    <TextLink to={postHref(post.id)} aria-label={label} title={post.title ?? undefined} className="shrink-0 text-fg-2 no-underline">↗</TextLink>
+  return (
+    <TextLink to={postHref(post.id)} aria-label={`Open the post about ${name}`} title={post.title ?? undefined}
+      className="shrink-0 text-fg-2 no-underline">↗</TextLink>
   );
 }
+
 
 function LinkFacts({ thing, fields }: { thing: Thing; fields: ThingFieldDef[] }) {
   const links = thingLinks(thing, fields);
@@ -90,7 +91,7 @@ function CompactRows({ section, onSeeAll }: { section: ThingSection; onSeeAll?: 
         ) : null}
       </h3>
       <ul>
-        {section.things.map((t) => {
+        {section.things.slice(0, QUICK_ROWS).map((t) => {
           const name = thingName(t, section.fields);
           const facts = thingFacts(t, section.fields);
           return (
@@ -99,12 +100,16 @@ function CompactRows({ section, onSeeAll }: { section: ThingSection; onSeeAll?: 
                 <span className="text-fg">{name}</span>
                 {facts.length ? <span className="text-fg-2"> · {facts.join(' · ')}</span> : null}
                 <LinkFacts thing={t} fields={section.fields} />
+                
               </span>
               <OpenThing thing={t} name={name} />
             </li>
           );
         })}
       </ul>
+      {section.things.length > QUICK_ROWS && !onSeeAll ? (
+        <p className="text-[0.75rem] text-fg-3">+{section.things.length - QUICK_ROWS} more</p>
+      ) : null}
     </section>
   );
 }
@@ -133,10 +138,9 @@ function PostList({ posts, label }: { posts: ThingPost[]; label: string }) {
 }
 
 /**
- * The quick look (0245 moment A) at the top of a track: "since <day> · N new", what changed (when the points are
- * newer than every new row), the new things by kind, the posts that gave no row. "Nothing new since <day>" when
- * empty. When the points are older than the newest find (`stale`), they are not shown here: the page shows them
- * after its posts, "as of <day>" (0002: never a stale brief above fresh posts).
+ * The quick look at the top of a track: "since <day> · N new", what changed, the new things by kind, the posts that
+ * gave no row; "Nothing new since <day>" when empty. Points older than the newest find (`stale`) are not shown here:
+ * the page shows them after its posts, "as of <day>" (never a stale brief above fresh posts).
  */
 export function QuickLookPanel({ look, stale = look.stale, onSeeAll, onOpenIssue, now }: {
   look: QuickLook; stale?: boolean; onSeeAll?: (kind: string) => void; onOpenIssue?: (week: string) => void; now?: Date;
@@ -174,7 +178,7 @@ function Cell({ thing, field }: { thing: Thing; field: ThingFieldDef }) {
   const v = thing.fields[field.name];
   if (!v) return <span className="text-fg-3">—</span>;
   if (field.type === 'link' && typeof v.value === 'string') {
-    return <ExternalLink href={v.value} className="text-fg-2" title={v.value}>{hostOf(v.value)}</ExternalLink>;
+    return <ExternalLink href={v.shown} className="text-fg-2" title={v.shown}>{hostOf(v.shown)}</ExternalLink>;
   }
   return <span title={v.quote ?? undefined}>{v.shown}</span>;
 }
@@ -212,6 +216,7 @@ export function ThingsView({ section, sort, onSort }: {
                 {fields.map((f, i) => (
                   <td key={f.name} className={`py-1.5 pr-3 [overflow-wrap:anywhere] ${i === 0 ? 'text-fg' : 'text-fg-2'}`}>
                     <Cell thing={t} field={f} />
+                    
                   </td>
                 ))}
                 <td className="py-1.5"><OpenThing thing={t} name={thingName(t, fields)} /></td>
@@ -234,6 +239,7 @@ export function ThingsView({ section, sort, onSort }: {
                   {thingFacts(t, fields).join(' · ')}<LinkFacts thing={t} fields={fields} />
                 </p>
               ) : null}
+              
             </li>
           );
         })}
@@ -262,7 +268,7 @@ function DateStrip({ weeks, week, onWeek }: { weeks: string[]; week: string; onW
 
 const issueKey = (id: string, week: string) => ['markx-track-issue', id, week] as const;
 
-/** The weekly issue (0245 moment B): Monday-Sunday, what changed, things by kind, "Also in the track", "updated". */
+/** The weekly issue: Monday-Sunday, what changed, things by kind, "Also in the track", "updated". */
 export function WeekIssueView({ trackId, weeks, initial }: { trackId: string; weeks: string[]; initial: string | null }) {
   const [week, setWeek] = useState<string | null>(initial ?? weeks[0] ?? null);
   const query = useQuery({
@@ -305,25 +311,52 @@ export function WeekIssueView({ trackId, weeks, initial }: { trackId: string; we
 const tableKey = (id: string, kind: string, params: Record<string, string>) =>
   ['markx-track-things', id, kind, params] as const;
 
-/** The tables (0245 moment C): every row of a kind, newest first, filter chips from its typed fields, sortable. */
+/** The tables: every row of a kind, newest first, filter chips from its typed fields, sortable, a search box (every
+ *  word across a row and its posts' titles) and the entities its posts name. */
 export function ThingTables({ trackId, kinds, kind: initial }: { trackId: string; kinds: Array<{ kind: string; header: string }>; kind?: string }) {
   const [kind, setKind] = useState(initial && kinds.some((k) => k.kind === initial) ? initial : kinds[0]?.kind ?? '');
   const [chosen, setChosen] = useState<FilterChipDef[]>([]);
   const [sort, setSort] = useState<SortState>(null);
-  const params = chipParams(chosen);
+  const [typed, setTyped] = useState('');
+  const [q, setQ] = useState('');
+  const [entity, setEntity] = useState('');
+  const [entityType, setEntityType] = useState('');
+  const params = { ...chipParams(chosen), ...searchParams(q, entity, entityType) };
+  const narrowed = Object.keys(params).length > 0;
   const all = useQuery({ queryKey: tableKey(trackId, kind, {}), queryFn: () => briefApi.things(trackId, kind), enabled: Boolean(kind), staleTime: 60_000 });
   const filtered = useQuery({
     queryKey: tableKey(trackId, kind, params), queryFn: () => briefApi.things(trackId, kind, params),
-    enabled: Boolean(kind) && chosen.length > 0, staleTime: 60_000,
+    enabled: Boolean(kind) && narrowed, staleTime: 60_000,
   });
   const chips = useMemo(() => (all.data ? filterChips(all.data.fields, all.data.things) : []), [all.data]);
-  const shown = chosen.length ? filtered : all;
-  const pick = (k: string) => { setKind(k); setChosen([]); setSort(null); };
+  const shown = narrowed ? filtered : all;
+  // the entities the rows the words found name (the server's, before its entity filters), else every row's
+  const named = (narrowed ? filtered.data?.chips : undefined) ?? all.data?.chips;
+  const pick = (k: string) => { setKind(k); setChosen([]); setSort(null); setTyped(''); setQ(''); setEntity(''); setEntityType(''); };
   return (
     <section aria-label="Tables">
       <div className="mb-2 flex flex-wrap gap-1.5" role="group" aria-label="Kinds">
         {kinds.map((k) => <FilterChip key={k.kind} selected={k.kind === kind} onClick={() => pick(k.kind)}>{k.header}</FilterChip>)}
       </div>
+      <form role="search" className="mb-2 flex flex-wrap items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); setQ(typed); }}>
+        <Input aria-label="Search the table" placeholder="words, all of them" value={typed}
+          onChange={(e) => { setTyped(e.target.value); if (!e.target.value) setQ(''); }} className="h-8 w-64 text-[0.8125rem]" />
+        <Button size="sm" variant="ghost" type="submit" className="text-[0.75rem]">search</Button>
+      </form>
+      {named && (named.entities.length || named.types.length) ? (
+        <div className="mb-2 flex flex-wrap gap-1.5" role="group" aria-label="Named in the posts">
+          {named.entities.map((e) => (
+            <FilterChip key={e.id} selected={entity === e.name} onClick={() => setEntity(entity === e.name ? '' : e.name)}>{e.name}</FilterChip>
+          ))}
+          {entity && !named.entities.some((e) => e.name === entity) ? (
+            <FilterChip selected onClick={() => setEntity('')}>{entity}</FilterChip>
+          ) : null}
+          {named.types.slice(0, 8).map((t) => (
+            <FilterChip key={`type:${t.type}`} selected={entityType === t.type}
+              onClick={() => setEntityType(entityType === t.type ? '' : t.type)}>any {t.type}</FilterChip>
+          ))}
+        </div>
+      ) : null}
       {chips.length ? (
         <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Filters">
           {chips.map((c) => (

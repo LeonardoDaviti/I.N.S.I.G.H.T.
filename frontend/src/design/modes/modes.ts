@@ -1,9 +1,5 @@
-/**
- * The studio's three modes (prototype verdict, 2026-10-11), in toggle order:
- * Handbook reads the docs, Wall shows the whole site at once, Bench compares
- * a page with a prototype. `?mode=` holds it; Handbook is the default and
- * leaves the URL clean.
- */
+/** The studio's three modes, in toggle order: Handbook reads the docs, Wall shows the whole site, Bench compares a
+ *  page with a prototype. `?mode=` holds it; Handbook is the default and leaves the URL clean. */
 export const MODES = ['handbook', 'wall', 'bench'] as const;
 
 export type StudioMode = (typeof MODES)[number];

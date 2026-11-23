@@ -16,18 +16,19 @@ import { useSearch } from '../hooks/useSearch';
 import { middleTruncate } from '../lib/format';
 import { SEARCH_DAYS, isNarrowed, parseSearch, searchHref, searchOrder, type SearchState } from '../lib/search';
 import SearchEntities from '../components/reader/SearchEntities';
+import SearchAnswer from '../components/reader/SearchAnswer';
 import { useMarkxOn } from '../hooks/useMarkxOn';
 import TextLink from '../components/ui/TextLink';
 
 const ShortcutHelp = lazy(() => import('../components/reader/ShortcutHelp'));
 const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
 
-/** The chips that narrow to a list, one at a time (issue 0056 adds News and Classics). */
+/** The chips that narrow to a list, one at a time. */
 const LISTS: ReadonlyArray<{ value: SearchFilter; label: string }> = [
   { value: 'later', label: 'Later' },
   { value: 'starred', label: 'Kept' },
-  { value: 'history', label: 'History' },   // what you opened, last open first (issue 0139)
-  { value: 'news', label: 'News, last 30 days' },   // the stories job's window, not any date (issue 0070)
+  { value: 'history', label: 'History' },  // what you opened, last open first
+  { value: 'news', label: 'News, last 30 days' },  // the stories job's window, not any date
   { value: 'classics', label: 'Classics' },
 ];
 
@@ -37,16 +38,10 @@ const ORDERS: ReadonlyArray<{ value: SearchOrder; label: string }> = [
 ];
 
 /**
- * Search across every post (issue 0040), the reader's one results view: `/search?q=…`.
- * The rail and the toolbar are the reader's; the field holds the words, the chips beside
- * it narrow them (the scope searched from first, then Later, Kept, News or Classics, and a
- * date), and a rail link narrows the search to that track or source. The results are the
- * reader's rows with their matching line, so read, Later and Keep work on them as anywhere
- * else; a story shows once, at its best-matching post, with its "covered by" line, as the Main
- * feed folds it (issue 0056). History searches what you opened, last open first (issue 0139); while Mark X is
- * on, a post also matches by Mark X's English reading of it, and up to 3 entity cards the words name lead the
- * results. With no order chosen, 2+ words list the best match first. News searches the News stories of the last 30 days (issue 0070); Classics, the classics'
- * titles and addresses, as their list shows them.
+ * Search across every post, `/search?q=…`, with the reader's rail and toolbar. The chips narrow it (the scope
+ * searched from first, then a list and a date). The results are the reader's rows with their matching line, a
+ * story once at its best-matching post. While Mark X is on, a post also matches by its English reading, and up
+ * to 3 entity cards lead the results.
  */
 export default function SearchPage() {
   const [params] = useSearchParams();
@@ -57,7 +52,7 @@ export default function SearchPage() {
   const counts = useUnreadCounts();
   const { folders, sourceNames } = useReaderDirectory();
   const results = useSearch(state);
-  const markxOn = useMarkxOn();   // 0162: Research this
+  const markxOn = useMarkxOn();  // Research this
 
   // New words are a new entry in the history (Back returns to the last search); a chip or the order replaces it.
   const go = useCallback((next: Partial<SearchState>, { push = false } = {}) => {
@@ -79,7 +74,7 @@ export default function SearchPage() {
   ].filter(Boolean).join(' · ');
   const searchEverything = useCallback(() => go({ scope: null, filter: 'all', days: null }), [go]);
   const emptyAction = useMemo(() => (narrowed ? { label: 'Search everything', onClick: searchEverything } : undefined), [narrowed, searchEverything]);
-  // No order chosen: best match for 2+ words, newest for one (issue 0139).
+  // No order chosen: best match for 2+ words, newest for one.
   const order = searchOrder(state);
   const classics = useMemo(() => ({ q: state.q, scope: state.scope, days: state.days, order, emptyAction }),
     [emptyAction, state.days, order, state.q, state.scope]);
@@ -151,6 +146,7 @@ export default function SearchPage() {
                   {' '}· its maker, channels, papers and who discusses it
                 </p>
               ) : null}
+              {markxOn ? <SearchAnswer q={state.q} /> : null}
               {results.entities.length ? <SearchEntities entities={results.entities} /> : null}
               <PostList
                 feed={results}

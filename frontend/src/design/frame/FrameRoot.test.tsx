@@ -7,9 +7,7 @@ import { normalSite } from '../fixtures/sites';
 import type { FixtureRoute } from './transport';
 import { bootFrame, type BootedFrame } from './boot';
 import FrameRoot from './FrameRoot';
-// The routes' pages are lazy chunks. Imported here, a frame's first render waits only for
-// React, not for the pages' first transform, which on a loaded machine took longer than
-// findBy's 1 s (the reader test, first in the file, paid it).
+// the routes' pages are lazy chunks: imported here, so a first render waits only for React, not past findBy's 1 s
 import '../../pages/ReaderPage';
 import '../../pages/PostDetailPage';
 import '../../pages/SourcesConfig';
@@ -42,8 +40,7 @@ describe('a frame', () => {
     const frame = boot('reader', 'normal', 'light');
     render(<FrameRoot booted={frame} />);
 
-    // The frame says when its page rendered and its queries settled; wait for that, not for a
-    // guess of how long a whole reader takes to render on a loaded machine.
+    // wait for the frame's own ready mark, not a guess of how long a page takes on a loaded machine
     await waitFor(() => expect(document.documentElement.dataset.frameReady).toBeDefined(), { timeout: 5_000 });
     expect(screen.getByRole('link', { name: /Prompt caching is now generally available/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'INSIGHT, go to feed' })).toBeInTheDocument();

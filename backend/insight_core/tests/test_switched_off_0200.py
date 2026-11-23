@@ -1,10 +1,7 @@
-"""Issue 0200 (v10.17.1): a source the owner switched off never feeds a suggestion. One rule (repo_stories:
-suggestable_sql, switched_off, SourceFacts.suggestable), asked by every list that proposes something: here Discover's
-sites (by links and by the stories that start there), its Pages and archive rows, and the voices' suggestions; the
-tracks, the scout, 0170's main source, Discover's citations and entity Pages have theirs in their own modules
-(test_markx_tracks.SwitchedOff, test_discover_main_source, test_entity_originals). Each time: the switched-off
-source's posts are no evidence, an enabled source's still are, and switching it on again brings the suggestion back.
-News and stories keep it (membership is no suggestion). Synthetic data only."""
+"""A source the owner switched off never feeds a suggestion (0200): one rule (repo_stories: suggestable_sql,
+switched_off, SourceFacts.suggestable) asked by every list that proposes something; here Discover's sites, Pages,
+archive rows and the voices' suggestions (other lists test it in their own modules). Switching it on again brings the
+suggestion back; News and stories keep it. Synthetic data only."""
 from __future__ import annotations
 
 import contextlib
@@ -155,8 +152,8 @@ class DiscoverLists(unittest.TestCase):
 
 @requires_test_db
 class Voices(unittest.TestCase):
-    """The voices' suggestions as the page reads them: a switched-off source is in none, at once (the kept verdicts
-    stay, so switching it on brings them back)."""
+    """The voices' suggestions as the page reads them: a switched-off source is in none, at once; switching it on
+    brings them back."""
 
     def setUp(self):
         from insight_core.services.voices_service import VoicesService

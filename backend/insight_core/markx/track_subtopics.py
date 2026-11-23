@@ -1,49 +1,13 @@
-"""A topic track's sub-topics, found from its posts and kept as the topic moves (issue 0207, Stealth v10.18).
+"""A topic track's sub-topics, found from its posts and kept as the topic moves (issue 0207).
 
-This module owns a track's sub-topics: which exist, which posts are in each, their names, their digests, the reader's
-looks and the owner's edits. tracks.py places a track's posts (in the track, joined, Discover, out); this module groups
-the posts in the track (places `track` and `joined`) and nothing else.
-
-**Found from the data** (`refresh`, the jobs process's "tracks" job, before the pages are kept; never the API). The
-posts' BGE-M3 vectors (mx_embeddings; tracks.plan_member_vectors embeds the posts in a track whatever the reading
-window) propose the sub-topics; every distance is computed by Postgres (pgvector), Python holds only ids:
-  1. Kept as they are: the owner's pins (a merge or split, `by` owner), Haiku's placements (`by` haiku, below) while
-     their sub-topic stands, and a post Haiku placed in none of them until a sub-topic newer than that answer exists;
-     a post whose judge string is one of a locked sub-topic's `keys` goes there (the owner's rename, split and add).
-  2. **The same sub-topic keeps its id**: the current centroids are the start; Lloyd's rounds (ROUNDS at most) put
-     each other post at its nearest centroid and each centroid at the mean of its posts, so a rebuild moves few posts.
-  3. **New ones appear**: while a track holds fewer than its target (about sqrt(posts / PER), K_MIN to K_MAX), a new
-     sub-topic is seeded by the post with the most neighbours (SEED) among the worst-served posts, with them (MIN_SIZE
-     at least); past the target, only from the posts no centroid serves (under STRAY) or Haiku found no home for. One
-     left with fewer than MIN_SIZE posts dissolves; a post further than FLOOR from every centroid is Other.
-  4. Two sub-topics whose centroids are MERGE or closer become one while the younger is still provisional (named by
-     its judge string); one left with no member is closed (`valid_to`). **Quiet ones fade**: a sub-topic whose newest
-     member is older than FADE_DAYS is `quiet` (shown last, folded) until a new post joins it.
-A track whose inputs (its posts in the track, how many have a vector, the owner's and Haiku's settings) are as at its
-last clustering (mx_tracks.subtopics_hash) is not read again.
-
-**Named by the worker** (`plan_names`, kind `subtopics`, guide subtopics-v2, one call a track): the provisional
-sub-topics and those whose members changed by NAME_DRIFT or more since Haiku named them, each shown by up to NAME_ITEMS
-member lines. A locked or owner-named one is never renamed.
-
-**Placed by the worker** (`plan_place`, kind `subtopic_place`, guide subtopic-place-v1, PLACE_ITEMS posts a question):
-the vectors alone put 59% of the posts in the right sub-topic (100 blind-labelled rows, 0207-built); Haiku reads each
-post and the named sub-topics and places it in one, or in none (Other). Its placements stay (step 1).
-
-**A digest per sub-topic** (`plan_digests`, kind `digest`, guide digest-v1): two to four sentences that synthesise its
-newest DIGEST_ITEMS members, each citing the posts it rests on ([n], checked against the question's posts). Asked
-again only when those members changed (the same members are the same question: repo.add_task's (kind, guide, input)
-is one task), at most once every DIGEST_EVERY a sub-topic. The page shows the newest valid digest, `stale` when its
-members changed since.
-
-**Shadow** (MEASURED): sub-topics and digests are shown, labelled with their blind-labelled measure, and act on
-nothing, until a sample passes BAR with a Wilson lower bound of LOWER.
-
-**New since you looked** (`seen` / `look`): the reader's last look at a track and at each sub-topic (mx_track_seen).
-The page carries, per section, when each member joined the track (`joined`, its verdict's time), so the reader counts
-what is new since its look without the kept page depending on the look.
-
-Only mx_* tables are written.
+Owns which sub-topics exist, which in-track posts are in each, their names, digests, the reader's looks and the
+owner's edits (tracks.py places the posts; this module only groups those in the track). `refresh` (the jobs process,
+never the API) clusters the posts' vectors in Postgres (pgvector; Python holds only ids): the owner's pins, keys and
+Haiku's placements are kept; the current centroids start Lloyd's rounds so a sub-topic keeps its id; new ones are
+seeded where the posts are served worst; close ones merge, small ones dissolve, old ones go quiet. A track whose
+inputs are unchanged (mx_tracks.subtopics_hash) is not read again. The worker names them (`plan_names`), places posts
+(`plan_place`) and writes digests (`plan_digests`); a locked or owner-named sub-topic is never renamed. Shown in
+Shadow (MEASURED) until a blind sample passes BAR. Only mx_* tables are written.
 """
 from __future__ import annotations
 
@@ -69,8 +33,7 @@ SEED = 0.62          # two posts at this cosine or more are neighbours when a ne
 FLOOR = 0.50         # a post further than this from every centroid is Other
 STRAY = 0.60         # past the target, a new sub-topic only from posts no centroid serves at this cosine
 MIN_SIZE = 4         # a new sub-topic has at least this many posts
-MERGE = 0.96         # two unlocked sub-topics whose centroids are this close become one (a mean of many posts sits
-                     # near 0.9 to a neighbouring mean: measured, 0207)
+MERGE = 0.96         # two unlocked sub-topics whose centroids are this close become one (measured: 0207)
 SEED_POOL = 600      # a new sub-topic is sought among this many posts at most (its neighbours are counted pairwise)
 FADE_DAYS = 30       # a sub-topic whose newest member is older than this is quiet
 NEW_DAYS = 7         # a sub-topic made this recently is shown as new
@@ -88,8 +51,7 @@ DIGEST_ITEMS = 8     # the newest members a digest reads
 DIGEST_TEXT = 500    # characters of each post a digest question shows
 DIGEST_EVERY = timedelta(hours=12)
 IN_TRACK = ("track", "joined")
-# 0207: Shadow (shown, labelled, never acted on) until a blind-labelled sample passes BAR with its Wilson lower bound at
-# LOWER: the sub-topics' members (two labellers, 200 rows, after Haiku's placement) and the digests' points (88)
+# Shadow (shown, labelled, never acted on) until a blind-labelled sample passes BAR with its Wilson lower bound at LOWER
 BAR, LOWER = 0.97, 0.90
 MEASURED = {"subtopics": {"what": "posts in the right sub-topic", "right": 157, "of": 200, "lower": 0.723},
             "digests": {"what": "digest points their posts support", "right": 73, "of": 88, "lower": 0.738}}
@@ -124,7 +86,6 @@ _SUB_COLS = ("id", "name", "definition", "keys", "locked", "made_by", "created_a
 
 
 def current(cur: Cursor, folder_id: Any) -> List[Dict[str, Any]]:
-    """The track's current sub-topics (oldest first)."""
     cur.execute("""SELECT id::text, name, definition, keys, locked, made_by, created_at, named_by, last_member_at,
                           named_members::text[]
                      FROM mx_track_subtopics WHERE track_id = %s AND valid_to IS NULL
@@ -221,9 +182,8 @@ def _edits_stamp(cur: Cursor, folder_id: str) -> str:
 
 def refresh_track(cur: Cursor, track: Dict[str, Any], items: Sequence[Dict[str, Any]], *,
                   now: Optional[datetime] = None) -> Dict[str, Any]:
-    """One track clustered (the module's rule, above): its members replaced, its sub-topics' centroids, hashes and
-    dates updated, new ones added, merged or emptied ones closed. Counts {posts, kept, moved, new, merged, closed,
-    other, unembedded}."""
+    """One track clustered: its members replaced, its sub-topics' centroids, hashes and dates updated, new ones
+    added, merged or emptied ones closed. Counts {posts, kept, moved, new, merged, closed, other, unembedded}."""
     now = now or datetime.now(timezone.utc)
     fid = track["folder_id"]
     by_id = {it["post_id"]: it for it in items}
@@ -256,7 +216,7 @@ def refresh_track(cur: Cursor, track: Dict[str, Any], items: Sequence[Dict[str, 
     for p, it in by_id.items():
         if p not in got and p not in none and fold_key(it["subtopic"]) in keyed:
             got[p] = (keyed[fold_key(it["subtopic"])], None, "cluster")
-    # 1b. a sub-topic with no centroid yet (made before 0207) holds its keys' posts, once: then it has a centroid
+        # 1b. a sub-topic with no centroid yet holds its keys' posts, once: then it has a centroid
     cur.execute("SELECT id::text FROM mx_track_subtopics WHERE track_id = %s AND valid_to IS NULL AND centroid IS NULL",
                 (fid,))
     bare_subs = {i for (i,) in cur.fetchall()}
@@ -268,18 +228,16 @@ def refresh_track(cur: Cursor, track: Dict[str, Any], items: Sequence[Dict[str, 
     cur.execute("SELECT count(*) FROM _ts_items WHERE v IS NOT NULL")
     n = cur.fetchone()[0]
     k = target(n)
-    # 2. the current centroids (each sub-topic keeps its id), the pinned posts' groups too (and a sub-topic made
-    #    before 0207 starts from its keys' posts)
+    # 2. the current centroids (each sub-topic keeps its id), the pinned posts' groups too
     _mark(cur, {**boot, **pinned})
     for sid in {g[0] for g in pinned.values()} | {g[0] for g in boot.values()}:
         _centroid(cur, sid)
     _mark(cur, pinned, reset=True)
     cur.execute("UPDATE _ts_items SET pinned = (post_id = ANY(%s::uuid[]))", (list(pinned),))
     live = _live(cur, fid)
-    # 3. new ones appear where the posts are served worst: while fewer than the target, the post with the most
-    #    neighbours (SEED) among the worst-served WORST share seeds a sub-topic of itself and those neighbours; past the
-    #    target (up to K_MAX), only a dense group among the posts no centroid serves (best cosine under STRAY): a topic
-    #    that is new, not a finer cut of an old one
+    # 3. new ones where the posts are served worst: while fewer than the target, the densest post (SEED) among the
+    #    worst-served WORST share seeds one; past the target (up to K_MAX), only a dense group no centroid serves
+    #    (best cosine under STRAY): a new topic, not a finer cut of an old one
     while k and len(live) < K_MAX:
         seed = _seed(cur, fid, live, below=None if len(live) < k else STRAY, among=None if len(live) < k else none)
         if seed is None:
@@ -297,7 +255,7 @@ def refresh_track(cur: Cursor, track: Dict[str, Any], items: Sequence[Dict[str, 
         none.difference_update(seed)   # posts Haiku found no home for, now a sub-topic of their own: placed again
         counts["new"] += 1
     # 4. Lloyd's rounds from those centroids: each post to its nearest, each centroid the mean of its posts; a
-    #    sub-topic left with fewer than MIN_SIZE posts (not locked, not the owner's) is dissolved and its posts go on
+    #    sub-topic left with fewer than MIN_SIZE posts (not locked, not the owner's) is dissolved
     got = dict(pinned)
     for _round in range(ROUNDS):
         moved = _nearest(cur, fid, {**pinned, **{q: None for q in none}}, got)
@@ -390,9 +348,8 @@ def _live(cur: Cursor, fid: str) -> List[str]:
 def _seed(cur: Cursor, fid: str, live: Sequence[str], below: Optional[float] = None,
           among: Optional[Iterable[str]] = None) -> Optional[List[str]]:
     """A new sub-topic's first posts: among the WORST share of posts by their cosine to the nearest centroid (every
-    post when there is none; `below`: the posts whose best cosine is under it, and the posts `among`: those Haiku
-    placed in none of the sub-topics), the one with the most neighbours
-    (SEED) there, with them; None when it has fewer than MIN_SIZE - 1."""
+    post when there is none; `below`: those whose best cosine is under it; `among`: those Haiku placed in none), the
+    one with the most neighbours (SEED), with them; None when it has fewer than MIN_SIZE - 1."""
     if live:
         cur.execute("""WITH s AS (SELECT i.post_id, (SELECT max(1 - (i.v <=> c.centroid)) FROM mx_track_subtopics c
                                                     WHERE c.track_id = %(t)s AND c.valid_to IS NULL
@@ -457,8 +414,8 @@ def _centroid(cur: Cursor, sid: str) -> None:
 
 
 def _merges(cur: Cursor, fid: str, subs: Dict[str, Dict[str, Any]]) -> List[Tuple[str, str]]:
-    """[(younger, older)]: current sub-topics whose centroids are MERGE or closer, the younger still named by its judge
-    string (not locked, not the owner's, not yet named and placed into by Haiku), each merged once."""
+    """[(younger, older)]: current sub-topics whose centroids are MERGE or closer, the younger still provisional (not
+    locked, not the owner's, not yet named and placed into by Haiku), each merged once."""
     cur.execute("""SELECT a.id::text, b.id::text FROM mx_track_subtopics a JOIN mx_track_subtopics b
                       ON b.track_id = a.track_id AND (b.created_at, b.id) < (a.created_at, a.id)
                    WHERE a.track_id = %s AND a.valid_to IS NULL AND b.valid_to IS NULL AND NOT a.locked
@@ -489,8 +446,7 @@ def _judge_name(raws: Sequence[Optional[str]]) -> str:
 
 def _lines(cur: Cursor, track: Dict[str, Any], ps: Sequence[str], n: int, sid: Optional[str] = None) -> List[str]:
     """Up to n member lines: the title (or the text) and the judge's why; the most typical first (nearest the
-    sub-topic's centroid, `sid`: a name read from the newest alone named a broad group by its latest corner), else the
-    newest."""
+    sub-topic's centroid `sid`: the newest alone named a broad group by its latest corner), else the newest."""
     cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, COALESCE(NULLIF(btrim(p.title), ''), left(p.content, 200)),
                            i.why, {_date()},
                            (SELECT 1 - (e.v <=> s.centroid) FROM mx_embeddings e, mx_track_subtopics s
@@ -524,7 +480,6 @@ def names_input(cur: Cursor, track: Dict[str, Any], subs: Sequence[Dict[str, Any
 
 
 def keys_of(input: str) -> List[str]:
-    """The group keys (g1..gK) of a naming question."""
     return _KEY.findall(input)
 
 
@@ -629,7 +584,6 @@ def digest_input(cur: Cursor, track: Dict[str, Any], sub: Dict[str, Any], ps: Se
 
 
 def numbered(input: str) -> int:
-    """How many posts a digest question shows."""
     return len(_POST.findall(input))
 
 
@@ -719,14 +673,13 @@ def place_input(cur: Cursor, track: Dict[str, Any], subs: Sequence[Dict[str, Any
 
 
 def place_keys(input: str) -> Tuple[List[str], List[str]]:
-    """(the sub-topic keys, the post keys) of a placement question."""
     return _SUB_KEY.findall(input), _POST_KEY.findall(input)
 
 
 def plan_place(cur: Cursor, **_kw: Any) -> int:
-    """`subtopic_place` tasks for each topic track: its posts in the track that neither Haiku nor the owner placed (a
-    post placed in none of them again once a newer sub-topic exists), newest first, PLACE_ITEMS a question, at most
-    PLACE_TASKS questions a track waiting at once: how many were added."""
+    """`subtopic_place` tasks for each topic track: its in-track posts neither Haiku nor the owner placed (a post
+    placed in none again once a newer sub-topic exists), newest first, PLACE_ITEMS a question, at most PLACE_TASKS
+    waiting a track: how many were added."""
     from insight_core.markx import repo, schemas, tracks
     schemas.ensure_guides(cur)
     added = 0
@@ -851,16 +804,44 @@ def joined_at(it: Dict[str, Any]) -> Optional[datetime]:
 
 # ---- seen: "new since you looked" ---------------------------------------------------------------------------
 
+ZERO = "00000000-0000-0000-0000-000000000000"   # the unique index's stand-in for a NULL track or sub-topic
+
+
 def seen(cur: Cursor, folder_id: Any) -> Dict[str, Any]:
-    """{track: the last look at the track (ISO) or None, subtopics: {id: ISO}}."""
-    cur.execute("SELECT subtopic_id::text, seen_at FROM mx_track_seen WHERE track_id = %s", (str(folder_id),))
+    """{track: the last look at the track (ISO) or None, subtopics: {id: ISO}}. The track's look is the later of its
+    own and the reader's look at everything."""
+    cur.execute("""SELECT subtopic_id::text, seen_at FROM mx_track_seen
+                    WHERE track_id = %s OR (track_id IS NULL AND subtopic_id IS NULL)""", (str(folder_id),))
     out: Dict[str, Any] = {"track": None, "subtopics": {}}
+    track: Optional[datetime] = None
     for sid, at in cur.fetchall():
         if sid is None:
-            out["track"] = at.isoformat()
+            track = at if track is None else max(track, at)
         else:
             out["subtopics"][sid] = at.isoformat()
+    out["track"] = track.isoformat() if track else None
     return out
+
+
+def _record(cur: Cursor, track: Optional[str], subtopic: Optional[str], now: datetime) -> None:
+    cur.execute(f"""INSERT INTO mx_track_seen (track_id, subtopic_id, seen_at) VALUES (%s, %s, %s)
+                    ON CONFLICT (COALESCE(track_id, '{ZERO}'::uuid), COALESCE(subtopic_id, '{ZERO}'::uuid))
+                    DO UPDATE SET seen_at = EXCLUDED.seen_at""", (track, subtopic, now))
+
+
+def reader_look(cur: Cursor) -> Optional[datetime]:
+    """The reader's last look at everything ("Since you looked"), or None (never opened)."""
+    cur.execute("SELECT seen_at FROM mx_track_seen WHERE track_id IS NULL AND subtopic_id IS NULL")
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def look_all(cur: Cursor, *, now: Optional[datetime] = None) -> Dict[str, Optional[str]]:
+    """The reader opened "Since you looked" now: {before (the look before this one, ISO or None), now}."""
+    now = now or datetime.now(timezone.utc)
+    before = reader_look(cur)
+    _record(cur, None, None, now)
+    return {"before": before.isoformat() if before else None, "now": now.isoformat()}
 
 
 def look(cur: Cursor, folder_id: Any, subtopic: Optional[str] = None, *, now: Optional[datetime] = None
@@ -876,9 +857,7 @@ def look(cur: Cursor, folder_id: Any, subtopic: Optional[str] = None, *, now: Op
         if cur.fetchone() is None:
             raise KeyError(subtopic)
     before = seen(cur, folder_id)
-    cur.execute("""INSERT INTO mx_track_seen (track_id, subtopic_id, seen_at) VALUES (%s, %s, %s)
-                   ON CONFLICT (track_id, COALESCE(subtopic_id, '00000000-0000-0000-0000-000000000000'::uuid))
-                   DO UPDATE SET seen_at = EXCLUDED.seen_at""", (str(folder_id), subtopic, now))
+    _record(cur, str(folder_id), subtopic, now)
     return {"before": before, "now": seen(cur, folder_id)}
 
 

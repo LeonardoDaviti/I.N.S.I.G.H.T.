@@ -25,7 +25,7 @@ test('a section of a site you follow names what you follow and the section', () 
 });
 
 test('a followed source missing its origins says how many are older than its first post', () => {
-  // Issue 0109: pages it lacks, not stories.
+  // Pages it lacks, not stories.
   assert.equal(missingReason(MISSING, NOW),
     "37 pages at openai.com/index where your stories started aren't in it, 36 from before its first post (Oct 23)");
   assert.equal(missingReason({ ...MISSING, older: 37 }, NOW),
@@ -44,7 +44,7 @@ test('an untitled line names its site and section, a tweet its account, never th
 
 test('a missing row follows its archive (issue 0080)', () => {
   assert.equal(archiveLine(MISSING), null, 'no archive yet');
-  // Issue 0109: the row's pages are those still missing; the stored ones have left it.
+  // The row's pages are those still missing; the stored ones have left it.
   assert.equal(archiveLine({ ...MISSING, stored: 3, archive: { state: 'running', found: 3 } }), 'Archive running · 3 found so far, 37 to go');
   assert.equal(archiveLine({ ...MISSING, stored: 3, archive: { state: 'finished', found: 3 } }), "Archive finished · 37 of these pages aren't in its archive");
 });

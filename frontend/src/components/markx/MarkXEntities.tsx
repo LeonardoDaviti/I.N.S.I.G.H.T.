@@ -3,7 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 
 import { useApi } from '../../services/ApiContext';
 import type {
-  MarkxEntityAccuracy, MarkxEntityAnswer, MarkxEntityPost, MarkxEntityQueue, MarkxEntityRef, MarkxEntityRow,
+  MarkxEntityAnswer, MarkxEntityPost, MarkxEntityQueue, MarkxEntityRef, MarkxEntityRow,
   MarkxQueueItem, MarkxQueueSide, MarkxQueueView, MarkxStoryThing, MarkxSurge,
 } from '../../services/markx';
 import { Button, Chip, TextLink } from '../ui';
@@ -19,23 +19,21 @@ const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 
 export const entityHref = (id: string) => `/markx/entities/${encodeURIComponent(id)}`;
 
-/** What an entity is: type, maker, its exact version (0119 A3). */
+/** What an entity is: type, maker, its exact version. */
 export function entityMeta(e: MarkxEntityRef): string {
   const version = [e.version, e.variant, e.size, e.build].filter(Boolean).join(' ');
   return [e.type, e.maker ? `by ${e.maker}` : null, version ? `version ${version}` : null,
     e.status === 'provisional' ? 'provisional' : null].filter(Boolean).join(' · ');
 }
 
-/** A story's thing's role, as a reader says it (0250). */
+/** A story's thing's role, as a reader says it. */
 const THING_ROLES: Record<string, string> = {
   subject: 'what it is about', actor: 'acts in it', compared: 'compared', predecessor: 'came before',
   venue: 'where', source: 'a source', recommended: 'recommended', mention: 'named',
 };
 
-/**
- * "Things in this story" (0250): the entities its members' readings name, the story's subject first, then by how
- * many members name them, each one click from its entity page. Shown only when there is one.
- */
+/** "Things in this story": the entities its members' readings name, the story's subject first, then by how many
+ *  members name them, each one click from its entity page. Shown only when there is one. */
 export function StoryThings({ things }: { things?: MarkxStoryThing[] | null }) {
   if (!things?.length) return null;
   return (
@@ -67,10 +65,8 @@ export function SurgeMark({ surges }: { surges: MarkxSurge[] }) {
   );
 }
 
-/** 0222: the sentences of a post around its mention of the entity, the mentions marked (the search snippet's style:
- *  weight and the full tone, never a fill). */
-/** 0222: the sentences around a post's mention. 0233 (0225 #28): a quote, one step in under the post's line (a left
- *  rule, the secondary colour), so it never reads as another source's line; the entity's name stays marked. */
+/** The sentences of a post around its mention of the entity, the mentions marked: a quote one step in under the
+ *  post's line (a left rule, the secondary colour), so it never reads as another source's line. */
 export function MentionContext({ parts }: { parts: NonNullable<MarkxEntityPost['context']> }) {
   return (
     <blockquote data-context className="ml-4 mt-0.5 border-l-2 border-line-strong pl-2">
@@ -83,8 +79,8 @@ export function MentionContext({ parts }: { parts: NonNullable<MarkxEntityPost['
   );
 }
 
-/** A post line: read posts stay, only dimmed (0115: reading never removes anything). 0222: under it, the sentences
- *  around its mention when the page sent them. */
+/** A post line: read posts stay, only dimmed (reading never removes anything); under it, the sentences around its
+ *  mention when the page sent them. */
 export function EntityPostLine({ post, now }: { post: MarkxEntityPost; now?: Date }) {
   const line = (
     <>
@@ -107,14 +103,6 @@ export function EntityPostLine({ post, now }: { post: MarkxEntityPost; now?: Dat
       <span className="block min-w-0 truncate">{line}</span>
       <MentionContext parts={post.context} />
     </li>
-  );
-}
-
-export function Accuracy({ accuracy }: { accuracy: MarkxEntityAccuracy }) {
-  return (
-    <p className="text-[0.75rem] leading-5 text-fg-3">
-      Experimental: {accuracy.merges}; {accuracy.surges}; {accuracy.collisions}. Claude reviews the decisions first; you are asked only what it flags.
-    </p>
   );
 }
 
@@ -150,20 +138,20 @@ const REASONS: Record<string, string> = {
   type: 'their types differ', haiku_unsure: 'Haiku is unsure where a name rule says same', chain: 'it would join two groups of names', handle_extra_word: 'a handle with an extra word',
   paren: '“X (Y)” written in one post', fields_parser: 'Haiku’s version fields agree, the parser’s don’t',
   maker_unstated: 'the maker in front is only guessed', collision: 'one name, maybe several things',
-  rename: 'one maker, the older name gone quiet as the newer came',   // 0165 B
-  // 0168: handles learned from "Name (@handle)" pairs
+  rename: 'one maker, the older name gone quiet as the newer came',
+  // handles learned from "Name (@handle)" pairs
   pairs: 'posts write this name beside this handle', second_handle: 'another handle paired with the same name',
   named_by_handle: 'named by its handle; the pairs give its name', handle_name: 'one is named by the other’s handle',
 };
 
-/** 0168: a handle item's answers: `same` = yes, this is their handle (any other answer is a no, never asked again). */
+/** A handle item's answers: `same` = yes, this is their handle (any other answer is a no, never asked again). */
 const HANDLE_ANSWERS: { answer: MarkxEntityAnswer; label: string }[] = [
   { answer: 'same', label: 'yes, theirs' }, { answer: 'different', label: 'no' },
 ];
 
 const PLATFORM_NAMES: Record<string, string> = { x: 'X', github: 'GitHub', telegram: 'Telegram', bluesky: 'Bluesky', hf: 'Hugging Face' };
 
-/** 0168: "12 posts write “Name (@h)” (12 of 12) · 2024-03 to 2026-11 · their other handle @old". */
+/** "12 posts write “Name (@h)” (12 of 12) · 2024-03 to 2026-11 · their other handle @old". */
 function handleLine(ev: MarkxQueueItem['evidence']): string | null {
   if (!ev.handle) return null;
   const range = ev.first && ev.last ? ` · ${ev.first.slice(0, 7)} to ${ev.last.slice(0, 7)}` : '';
@@ -172,21 +160,21 @@ function handleLine(ev: MarkxQueueItem['evidence']): string | null {
     + `${ev.total && ev.total !== ev.pairs ? ` (${ev.pairs} of ${ev.total})` : ''}${range}${other}`;
 }
 
-/** 0165 B: a rename item's answers: `same` is "same thing, renamed" (the older name becomes the newer's earlier name). */
+/** A rename item's answers: `same` is "same thing, renamed" (the older name becomes the newer's earlier name). */
 const RENAME_ANSWERS: { answer: MarkxEntityAnswer; label: string }[] = [
   { answer: 'same', label: 'same thing, renamed' }, { answer: 'different', label: 'different' },
   { answer: 'not_entity', label: 'not an entity' },
 ];
 
-/** v10.18: the name rules that propose a pair (a rule has no confidence of its own). */
+/** The name rules that propose a pair (a rule has no confidence of its own). */
 const RULES: Record<string, string> = {
   squash: 'the names match without spaces or punctuation', maker_prefix: 'one is the other with its maker in front',
   handle: 'one is the other’s handle', anchor: 'the same repository or model address',
   fields: 'the same version fields', family_version: 'the same version of one family',
 };
 
-/** v10.18: who proposes an alias item, truthfully: " · Haiku says different, 93%" or " · a name rule suggests same
- * (…) · Haiku not asked yet". Never a rule's constant shown as Haiku's confidence. */
+/** Who proposes an alias item, truthfully: " · Haiku says different, 93%" or " · a name rule suggests same (…) ·
+ *  Haiku not asked yet". Never a rule's constant shown as Haiku's confidence. */
 function opinionLine(item: MarkxQueueItem): string {
   const o = item.opinion;
   if (!o) return '';
@@ -199,18 +187,18 @@ function opinionLine(item: MarkxQueueItem): string {
   return ` · Haiku says ${(o.relation ?? '?').replace('_', ' ')}${pct}${rule}`;
 }
 
-/** 0130 A1-A2: what the queue item carries beyond 0119's: its band, every reason, the second opinion. */
+/** What the queue item carries beyond the base: its band, every reason, the second opinion. */
 type Opinion = { relation?: string; confidence?: number; evidence?: string } | null;
 type Item = MarkxQueueItem & {
   band?: string | null;
   evidence: MarkxQueueItem['evidence'] & { reasons?: string[] | null; second?: Opinion; disagree?: boolean | null; second_asked?: boolean | null };
 };
 
-/** The bands the queue is measured in (0130 A1); the owner's answers per band are the next labels. */
+/** The bands the queue is measured in; the owner's answers per band are the next labels. */
 export const BANDS = ['>=0.90', '0.85-0.90', '0.80-0.85', '<0.80'] as const;
 const bandLabel = (b: string) => b.replace('>=', '≥ ').replace('<', '< ').replace('-', '–');
 
-/** The second opinion (0130 A2): asked again with other posts; a disagreement is marked. */
+/** The second opinion: asked again with other posts; a disagreement is marked. */
 export function SecondOpinion({ item }: { item: Item }) {
   const second = item.evidence.second;
   if (second?.relation) {
@@ -225,7 +213,7 @@ export function SecondOpinion({ item }: { item: Item }) {
   return item.evidence.second_asked ? <p className="mt-1 text-[0.75rem] text-fg-3">Second opinion asked; the next worker run answers it.</p> : null;
 }
 
-/** 0164 A: the group a name is in, when it is not the name's own: "part of: Zentra AI (Zentra, Zentra Vela, …)". */
+/** The group a name is in, when it is not the name's own: "part of: Zentra AI (Zentra, Zentra Vela, …)". */
 export function groupLine(side: MarkxQueueSide): string | null {
   const g = side.group;
   if (!g || g.root === side.id) return null;
@@ -234,7 +222,7 @@ export function groupLine(side: MarkxQueueSide): string | null {
   return `part of: ${g.name ?? '—'}${names.length ? ` (${names.join(', ')}${more})` : ''}`;
 }
 
-/** 0164 A: what `same` does when it would put a product family and an org in one group. */
+/** What `same` does when it would put a product family and an org in one group. */
 export function joinLine(item: MarkxQueueItem): string | null {
   const join = item.join;
   if (!join?.mixes) return null;
@@ -278,7 +266,7 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
   });
   const chosen = answer.isPending ? answer.variables : item.answer;
   const judge = item.evidence.judge;
-  // 0164 A: what `same` would do to the two groups; an answer the API could not apply says why (the item stays open)
+  // what `same` would do to the two groups; an answer the API could not apply says why (the item stays open)
   const warning = item.kind === 'alias' ? joinLine(item) : null;
   const result = answer.data as { result?: string; message?: string } | undefined;
   const choice = result?.result === 'needs_choice' ? (result.message ?? 'it needs your choice') : null;
@@ -291,7 +279,7 @@ export function QueueItem({ item: base }: { item: MarkxQueueItem }) {
             : item.kind === 'handle'
               ? `Is @${item.evidence.handle ?? '?'} ${item.a.name}’s ${PLATFORM_NAMES[item.evidence.platform ?? 'x'] ?? item.evidence.platform} handle?`
               : `Proposed: ${item.proposal.replace('_', ' ')}`}
-        {/* 0222: a void answer's reasons came from it: not shown either */}
+        {/* a void answer's reasons came from it: not shown either */}
         {item.void ? ' · asked again' : <>{' · '}{REASONS[item.reason] ?? item.reason}</>}
         {item.void ? '' : (item.evidence.reasons ?? []).filter((r) => r !== item.reason).map((r) => ` · ${REASONS[r] ?? r}`).join('')}
         {item.kind === 'alias' ? opinionLine(item) : item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ''}
@@ -382,12 +370,12 @@ function Merges({ queue }: { queue: MarkxEntityQueue }) {
   );
 }
 
-/** The open items asked at once (issue 0195: the API pages the queue, 50 by default; it held 12k items). */
+/** The open items asked at once (the API pages the queue, 50 by default). */
 const QUEUE_PAGE = 50;
 /** The items listed at once; Show more lists the next ones, asking the API for more when they run out. */
 const QUEUE_SHOWN = 20;
 
-/** One view of the review queue's open items (0222: `flagged`, yours; `all`, the operator's), banded and paged. */
+/** One view of the review queue's open items (`flagged`, yours; `all`, the operator's), banded and paged. */
 function QueueList({ view }: { view: MarkxQueueView }) {
   const api = useApi();
   const [band, setBand] = useState<string | null>(null);
@@ -440,8 +428,8 @@ function QueueList({ view }: { view: MarkxQueueView }) {
   );
 }
 
-/** The review queue (0119 A3; 0222: the owner is asked only what Claude's review flagged): the flagged items, the
- *  whole queue as a collapsed operator's view (asked for only when opened), and the merges' history. */
+/** The review queue: the items Claude's review flagged for the owner, the whole queue as a collapsed operator's
+ *  view (asked for only when opened), and the merges' history. */
 export function EntityQueue() {
   const api = useApi();
   const [operator, setOperator] = useState(false);
@@ -467,7 +455,7 @@ export function EntityQueue() {
   );
 }
 
-/** The Entities tab (0119 A3, 0115): one list ranked like News, the review queue beside it. */
+/** The Entities tab: one list ranked like News, the review queue beside it. */
 export default function MarkXEntities() {
   const api = useApi();
   const query = useQuery({ queryKey: [...ENTITIES_KEY], queryFn: () => api.getMarkxEntities(), staleTime: 30_000 });
@@ -476,7 +464,6 @@ export default function MarkXEntities() {
   const data = query.data;
   return (
     <div className="space-y-8">
-      <Accuracy accuracy={data.accuracy} />
       <EntityQueue />
       <section aria-label="Entities">
         <h2 className={H2}>
