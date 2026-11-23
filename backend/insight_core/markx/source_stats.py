@@ -415,11 +415,20 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
             read_sources[pid] = sid
             if is_repost(s, title, author, reposted_by, fwd):
                 read_reposts.add(pid)
-        # v10.9.1: the current set (each post's newest valid entities answer, whatever the guide)
+        # v10.9.1: the current set (each post's newest valid entities answer, whatever the guide). v10.38: only the
+        # roles the role rule reads (R.official: SELF_ROLES; R.top_maker: MAKER_ROLES), each distinct mention one
+        # object, the rows read one at a time: every mention of every read post (1.75M on the server copy, 24% of them
+        # in those roles) as a list of tuples and an object each made the nightly run's 1.6 GB peak
+        roles = sorted(set(R.SELF_ROLES) | set(R.MAKER_ROLES))
         cur.execute("""SELECT m.post_id::text, m.name, m.maker, m.role, m.type FROM mx_mentions_now m
-                        WHERE m.post_id = ANY(%s::uuid[])""", (list(read_kinds),))
-        for pid, name, maker, role, typ in cur.fetchall():
-            mentions[pid].append(R.Mention(name, maker, role, typ))
+                        WHERE m.post_id = ANY(%s::uuid[]) AND m.role = ANY(%s)""", (list(read_kinds), roles))
+        one: Dict[Tuple[Any, ...], R.Mention] = {}
+        for pid, *m in cur:
+            key = tuple(m)
+            got = one.get(key)
+            if got is None:
+                got = one[key] = R.Mention(*key)
+            mentions[pid].append(got)
 
     cur.execute("SELECT target_url, post_id::text, COALESCE(title, ''), voices FROM classics")
     classics = [{"url": u, "post": p, "title": t, "voices": v} for u, p, t, v in cur.fetchall()]
