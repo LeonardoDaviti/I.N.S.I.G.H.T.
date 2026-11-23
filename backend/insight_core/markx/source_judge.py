@@ -405,7 +405,6 @@ def platform_of(key: str, resolved: Optional[Dict[str, Any]]) -> str:
 
 async def signals(cur: Cursor, http: Any, address: str, items: Sequence[Dict[str, Any]],
                   resolved: Dict[str, Any], now: datetime) -> Dict[str, Any]:
-    """Everything INSIGHT measures about the candidate."""
     key, site, _ = address_key(cur, address)
     h = scout_reads.health([dict(i, published_at=_dt(i.get("published_at"))) for i in items], now)
     rate = per_week(items)

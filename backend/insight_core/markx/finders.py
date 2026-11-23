@@ -562,7 +562,6 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
 
 
 def fire(d: Dict[str, Any], prep: Dict[str, Any]) -> List[str]:
-    """The finders that fire for one scored post (d["fired"])."""
     bar = prep["bar"]
     on = set(prep.get("on") or FINDERS)
     probe = d.get("probe")
@@ -610,7 +609,6 @@ def budget_bar(rows: Sequence[Dict[str, Any]], share: float, cap: float) -> floa
 
 
 def _other_hit(d: Dict[str, Any]) -> bool:
-    """A finder other than the probes fired."""
     return any(f in (d.get("fired") or []) for f in ("domain", "word", "tool") + ALWAYS)
 
 

@@ -410,20 +410,16 @@ class Book:
 
     # what a page asks of the book besides ids and keys, here so a page's book answers them by query
     def alias_keys(self, root: str) -> List[str]:
-        """The keys of the aliases that lead to `root`."""
         return [k for k, eid in self.alias.items() if self.root(eid) == root]
 
     def with_parent_in(self, root: str) -> List[str]:
-        """The entities whose parent leads to `root` (in the book's order)."""
         return [x for x, e in self.ents.items() if e.parent and self.root(e.parent) == root]
 
     def by_squashed_key(self, forms: Iterable[str]) -> List[str]:
-        """The entities whose key squashes (names.squash) to one of `forms` (in the book's order)."""
         forms = set(forms)
         return [x for x, e in self.ents.items() if e.sq in forms]
 
     def first_with_key(self, key: str) -> Optional[str]:
-        """The first entity (in the book's order) whose own key is `key`."""
         return next((x for x, e in self.ents.items() if e.key == key), None)
 
     def keys_around(self, key: str) -> List[str]:
@@ -603,7 +599,6 @@ class Book:
         return None if e is None else (e.shown_name or e.name)
 
     def shown_type(self, eid: Optional[str]) -> Optional[str]:
-        """The type an entity's cluster is shown under (as read)."""
         r = self.root(eid)
         e = self.ents.get(r) if r else None
         return None if e is None else schemas_type(e.shown_type or e.type)
@@ -632,7 +627,6 @@ class _One(dict):
 
 
 def _each(cur: Any, size: int = 5000) -> Iterable[Tuple]:
-    """A query's rows a page at a time."""
     while True:
         rows = cur.fetchmany(size)
         if not rows:
@@ -1755,7 +1749,6 @@ def maker_fits(book: Book, x: Optional[str], y: Optional[str], family: Optional[
 
 
 def family_members(book: Book, root: str) -> List[str]:
-    """The versions, variants and checkpoints naming one of a family cluster's names as their parent."""
     kids = book.kids()
     return [k for m in book.cluster(root) for k in kids.get(m, ()) if k in book.ents]
 
@@ -3822,7 +3815,6 @@ def valid_answers(cur: Any, task_ids: Sequence[str]) -> Dict[str, List[Tuple[str
 
 
 def _book_reading(book: Any) -> float:
-    """The seconds a run's book spent on its once-a-run reads (RunBook.reading: the pool's indexes), else 0."""
     return getattr(book, "reading", 0.0) or 0.0
 
 

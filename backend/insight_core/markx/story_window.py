@@ -179,7 +179,6 @@ def advance(cur: Any, now: datetime, *, waiting_old: int, candidates_left: int,
 
 
 def view(cur: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
-    """What /markx shows beside the reading window."""
     now = now or datetime.now(timezone.utc)
     measured = precision(cur)
     fb = fallback(cur, measured)

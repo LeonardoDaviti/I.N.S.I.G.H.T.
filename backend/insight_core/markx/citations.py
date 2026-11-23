@@ -160,7 +160,6 @@ def merge(mentions: Sequence[Dict[str, Any]], hits: Sequence[Hit], name_key) -> 
 
 
 def post_links(cur: Any, post_id: Any) -> List[str]:
-    """The post's open, non-boilerplate post_refs addresses, in order."""
     cur.execute("""SELECT target_address FROM post_refs WHERE post_id = %s AND valid_to IS NULL AND NOT boilerplate
                     ORDER BY position""", (post_id,))
     return [r[0] for r in cur.fetchall()]

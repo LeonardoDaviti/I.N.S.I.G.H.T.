@@ -716,16 +716,15 @@ PHRASE_WORDS = frozenset({"in", "for", "on", "with", "vs", "versus", "and", "or"
 
 @dataclass(frozen=True)
 class Version:
-    """One version entity of a family, as the line reads it."""
     id: str
     name: str
     key: Optional[Tuple[Any, ...]]   # its version tuple (names.vt: "K3.1" -> ('k', 3, 1); a leading v dropped)
-    maker: Optional[str]             # its stated maker (same_maker compares)
-    posts: int                       # posts naming it
+    maker: Optional[str]
+    posts: int
     about: int                       # posts whose subject or actor it is
-    first: Optional[datetime]        # its first post about it
+    first: Optional[datetime]
     first_post: Optional[str]
-    variant: Optional[str] = None    # its variant field (the line word comes from it)
+    variant: Optional[str] = None
     maker_first: Optional[datetime] = None   # its maker's first post about it (origin maker, never a leak)
     maker_post: Optional[str] = None
     release_first: Optional[datetime] = None  # its first release report about it (release-typed, never a leak)

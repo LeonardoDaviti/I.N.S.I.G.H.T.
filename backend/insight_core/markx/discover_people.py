@@ -363,7 +363,6 @@ KEEP_FOR = timedelta(hours=1)      # a kept list this old is built again at the 
 
 
 def due(cur: Any, now: Optional[datetime] = None) -> bool:
-    """Whether the kept list is missing or KEEP_FOR old."""
     from insight_core.db.repo_operations import SystemSettingsRepository
     row = SystemSettingsRepository.get(cur, KEY)
     now = now or datetime.now(timezone.utc)

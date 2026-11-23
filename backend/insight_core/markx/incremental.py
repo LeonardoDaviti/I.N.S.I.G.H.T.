@@ -179,30 +179,28 @@ class State:
     key: str
     full: bool = True
     dry: bool = False
-    run_id: Optional[str] = None                                   # the run that left the kept state
+    run_id: Optional[str] = None
     stamps: Dict[str, Tuple] = field(default_factory=dict)         # table -> (rows, newest xmin, sum of xmin hashes)
-    news: Optional[Dict[str, Any]] = None                          # the last run's News inputs and rows
+    news: Optional[Dict[str, Any]] = None
     want: Optional[Dict[str, Dict[str, Tuple]]] = None             # the last run's memberships, by final story key
     surges: Optional[Tuple[Tuple, List[Any]]] = None               # (news_surges' stamp, the surges as news reads them)
-    report: Dict[str, Any] = field(default_factory=dict)           # this run's dirty set and reading, for counts.run
-    why_full: Optional[Dict[str, Any]] = None                      # why open_state found no warm state
-    # the judge tasks and their answers
+    report: Dict[str, Any] = field(default_factory=dict)
+    why_full: Optional[Dict[str, Any]] = None
     tasks: Dict[Tuple[str, str], Tuple[str, str, int, bool]] = field(default_factory=dict)   # (kind, hash) -> (id,
     # status, n, whether it is under an earlier guide)
-    keys: Dict[str, Tuple[str, str]] = field(default_factory=dict)  # task id -> (kind, input hash)
+    keys: Dict[str, Tuple[str, str]] = field(default_factory=dict)
     was: Dict[str, Tuple[str, int]] = field(default_factory=dict)  # task id -> (status, n) as the last run saw it
-    calls: Dict[str, List[Tuple[Dict[str, Any], str]]] = field(default_factory=dict)  # task id -> valid calls, oldest first
-    call_task: Dict[str, str] = field(default_factory=dict)        # call id -> its task
-    # the posts
-    rules: Dict[str, Any] = field(default_factory=dict)            # post -> decide.Post (the world's)
+    calls: Dict[str, List[Tuple[Dict[str, Any], str]]] = field(default_factory=dict)
+    call_task: Dict[str, str] = field(default_factory=dict)
+    rules: Dict[str, Any] = field(default_factory=dict)
     stamp: Dict[str, str] = field(default_factory=dict)            # post -> its text stamp (plan_marks.STAMP)
     fresh_posts: Dict[str, Tuple] = field(default_factory=dict)    # post -> its mx_inc_posts row, to write
-    read_stamp: Dict[str, str] = field(default_factory=dict)       # post -> its reading's row version
-    kinds: Dict[str, Any] = field(default_factory=dict)            # post -> its reading's kind (read posts only)
-    events: Dict[str, Any] = field(default_factory=dict)           # post -> its reading's events
-    texts: Dict[str, Any] = field(default_factory=dict)            # post -> tasks.Post, as read this run
+    read_stamp: Dict[str, str] = field(default_factory=dict)
+    kinds: Dict[str, Any] = field(default_factory=dict)
+    events: Dict[str, Any] = field(default_factory=dict)
+    texts: Dict[str, Any] = field(default_factory=dict)
     stale: Set[str] = field(default_factory=set)                   # the posts read again this run (their texts next)
-    readings: Dict[str, dict] = field(default_factory=dict)        # post -> its reading, as read this run
+    readings: Dict[str, dict] = field(default_factory=dict)
     # the kept results, by the content they were made from
     inputs_kept: Dict[str, str] = field(default_factory=dict)      # render key -> input hash (the last run's)
     inputs: Dict[str, Tuple[str, str]] = field(default_factory=dict)   # render key -> (kind, input hash) (this run's)

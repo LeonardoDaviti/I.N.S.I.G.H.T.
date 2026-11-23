@@ -735,34 +735,34 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("alias4", "alias-v2", "entity_entity", ALIAS_V2_SCHEMA),    # the same, for a class asked with its own model
     Kind("collide", "collide-v1", "entity", COLLIDE_SCHEMA),         # one name, several things?
     Kind("rename", "rename-v1", "entity_entity", RENAME_SCHEMA),     # one thing under an earlier name?
-    Kind("stop", "stop-v1", "story", STOP_SCHEMA),                   # a thing's stop in a story (stops.py)
+    Kind("stop", "stop-v1", "story", STOP_SCHEMA),
     Kind("embed_name", "embed-name-v1", "entity", EMBED_SCHEMA),     # a name's vector (the alias candidates)
     Kind("perspective", "persp-v1", "story", PERSPECTIVE_SCHEMA),    # what each member of a story adds
     Kind("sheet", "persp-merge-v1", "story", SHEET_SCHEMA),          # the story sheet's facts, merged
-    Kind("dispute", "dispute-v1", "story", DISPUTE_SCHEMA),          # where the story's sources differ
+    Kind("dispute", "dispute-v1", "story", DISPUTE_SCHEMA),
     Kind("read3", "read-v3", "post", READ3_SCHEMA),                  # event type and origin (the fold)
     Kind("relate", "relate-v1", "post_post", RELATE_SCHEMA),         # a newer post and an older one
     Kind("chain", "chain-v4", "story_story", CHAIN_SCHEMA),          # a later story and an earlier one, one thing
     Kind("derive", "derive-v1", "entity_entity", DERIVE_SCHEMA),     # is a thing made from its predecessor?
-    Kind("stance", "stance-v1", "source", STANCE_SCHEMA),            # a source's stance and framing
+    Kind("stance", "stance-v1", "source", STANCE_SCHEMA),
     Kind("back", "back-v1", "story", BACK_SCHEMA),                   # an old story back in the news
     Kind("cite", "cite-v1", "post", CITE_SCHEMA),                    # ent-v4.2's second question (ent42.py)
     Kind("track", "track-v3", "post_track", TRACK_SCHEMA_V3),        # does a post belong in a track (tracks.py)
-    Kind("subtopics", "subtopics-v2", "track", SUBTOPIC_NAMES_SCHEMA),   # the sub-topics found, named
-    Kind("digest", "digest-v1", "track", DIGEST_SCHEMA),             # a sub-topic's digest with citations
-    Kind("subtopic_place", "subtopic-place-v1", "track", SUBTOPIC_PLACE_SCHEMA),   # posts into the sub-topics
+    Kind("subtopics", "subtopics-v2", "track", SUBTOPIC_NAMES_SCHEMA),
+    Kind("digest", "digest-v1", "track", DIGEST_SCHEMA),
+    Kind("subtopic_place", "subtopic-place-v1", "track", SUBTOPIC_PLACE_SCHEMA),
     Kind("probes", "probes-v1", "track", PROBES_SCHEMA),             # a track's example posts (track recall)
-    Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),                # sources for a track's sphere (scout.py)
+    Kind("scout", "scout-v1", "track", SCOUT_SCHEMA),
     Kind("identity", "identity-v1", "research_pair", IDENTITY_SCHEMA),   # two accounts, one maker? (research.py)
-    Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),   # a maker's accounts, by web search
+    Kind("websearch", "websearch-v1", "research_run", WEBSEARCH_SCHEMA),
     Kind("source_judge", "source-judge-v2", "source_candidate", SOURCE_JUDGE_V2_SCHEMA),   # + an item filter
-    Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),   # News in titled sections
-    Kind("news_place", "news-place-v1", "news_run", NEWS_PLACE_SCHEMA),   # new rows into those sections
+    Kind("news_sections", "news-sections-v1", "news_run", NEWS_SECTIONS_SCHEMA),
+    Kind("news_place", "news-place-v1", "news_run", NEWS_PLACE_SCHEMA),
     Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # a round-up's items: type, headline
     Kind("significance", "significance-v2", "story", SIGNIFICANCE_V2_SCHEMA),   # a News row's significance and
                                                                                 # its breakdowns
     Kind("reading", "ent-v5", "post", READING_V5_SCHEMA),           # read, read3 and entities in one reading
-    Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),   # a track's kinds and fields
+    Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),
     Kind("track_things", "track-things-v3", "post_track", TRACK_THINGS_SCHEMA),   # a catalog is one row
     Kind("track_same", "track-same-v2", "thing_thing", TRACK_SAME_SCHEMA),   # two rows, one thing?
     Kind("question", "question-v1", "question", QUESTION_SCHEMA),   # the reader's question, from their posts
