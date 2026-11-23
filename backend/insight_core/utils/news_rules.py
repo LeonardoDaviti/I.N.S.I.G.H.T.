@@ -32,7 +32,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils import voice
-from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, background, roles, story_times
+from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, background, lead_order, roles, story_start, story_times
 from insight_core.utils.titles import comparable
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
@@ -329,9 +329,7 @@ def _first(story: Story) -> Optional[str]:
     they were handed in (the incremental job reads a story's posts in no time order: 0205)."""
     if not story.posts:
         return None
-    times = story_times(story.posts)
-    bg = background(story.posts, times)   # 0263: a background page is never a story's first post
-    return min(story.posts, key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.id)).id
+    return lead_order(story.posts, story_times(story.posts))[0].id   # 0263, v10.39: never a background page nor a non-report
 
 
 def core_names(story: Story, found: Sequence[Surge]) -> Set[str]:
@@ -496,9 +494,9 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     for group in groups.values():
         # A date alone counts as that day's earliest timed post (issue 0072 D): its start, its order, the window.
         # 0263: a background page (story_rules.background) is never its first post, nor its start
+        # v10.39: its lead (`lead_order`) the earliest report, its start still its earliest post
         times = story_times(group)
-        bg = background(group, times)
-        group = sorted(group, key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.id))
+        group = lead_order(group, times)
         if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
             continue
         voices = voice.count(group, voice.Policy.NEWS_IX)   # one owner's channels one voice (issue 0111)
@@ -510,7 +508,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
                       for pid in story.mentions} - ids
         reports, shares, mentions = tally(group, post_roles, [by_id[pid] for pid in mentioning if pid in by_id])
         out.append(NewsStory(
-            id=group[0].id, first_at=times[group[0].id], posts=group, voices=voices, roles=post_roles,
+            id=group[0].id, first_at=story_start(group, times), posts=group, voices=voices, roles=post_roles,
             names={p.id: joined_by[p.id] for p in group if p.id in joined_by},
             reports=reports, shares=shares, mentions=mentions,
         ))

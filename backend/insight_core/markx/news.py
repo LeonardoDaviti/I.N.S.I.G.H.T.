@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from insight_core.markx import pairing
@@ -68,7 +69,23 @@ def _story_posts(cur: Any, ids: Iterable[str], sources: Any = None) -> Dict[str,
     if not parsed:
         return {}
     sources = SourceFacts(cur) if sources is None else sources
-    return {row["id"]: StoriesService._story_post(row, sources) for row in StoriesRepository.load_posts(cur, sources, parsed)}
+    said = reports(cur, parsed)
+    return {row["id"]: replace(StoriesService._story_post(row, sources), report=said.get(row["id"]))
+            for row in StoriesRepository.load_posts(cur, sources, parsed)}
+
+
+def reports(cur: Any, ids: Iterable[str]) -> Dict[str, bool]:
+    """v10.39: {post: whether its preferred reading (reading5.rank_sql, as the post panel picks it) says it reports an
+    event: kind report, of no leak or rumour type} of the posts read (StoryPost.report: what leads a row)."""
+    from insight_core.markx import event_types, reading5
+    ids = sorted({str(p) for p in ids if p})
+    if not ids:
+        return {}
+    rank = reading5.rank_sql("guide")
+    cur.execute(f"""SELECT DISTINCT ON (post_id) post_id::text, kind,
+                           COALESCE(reading->>'event_type', reading->'reading'->>'event_type') FROM mx_readings
+                     WHERE post_id = ANY(%s::uuid[]) AND {rank} IS NOT NULL ORDER BY post_id, {rank}""", (ids,))
+    return {pid: kind == "report" and kind_type != event_types.LEAK for pid, kind, kind_type in cur.fetchall()}
 
 
 # ---- 0177: what each post's StoryPost is made of, kept by the run's state ------------------------------------------
@@ -100,7 +117,9 @@ def post_digests(cur: Any, memo: Any, ids: Iterable[str]) -> Dict[str, str]:
                                                            ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
                     WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[]) GROUP BY pl.post_id""", (ids,))
     links = dict(cur.fetchall())
-    return {i: hashlib.sha1(f"{stamps[i]}\x1f{links.get(i, '')}".encode()).hexdigest()[:16] for i in ids if i in stamps}
+    said = reports(cur, ids)   # v10.39: a reading that comes or changes may change a row's lead
+    return {i: hashlib.sha1(f"{stamps[i]}\x1f{links.get(i, '')}\x1f{said.get(i)}".encode()).hexdigest()[:16]
+            for i in ids if i in stamps}
 
 
 def surge_keys(found: Iterable[Any]) -> List[List[Any]]:
@@ -178,7 +197,7 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     are one story to News's code (its posts in date order, the lowest id its key), each post still naming its own; a
     group's story begun before `since` is no story of the group (`_window_stories`, v10.39)."""
     from insight_core.services.news_service import NewsService
-    from insight_core.utils.story_rules import Story, background, story_times
+    from insight_core.utils.story_rules import Story, lead_order, story_start, story_times
     in_story = {p for ms, _ in stories.values() for p in ms}
     every = (window_posts(cur, since) if window is None else set(window)) | in_story
     if only is not None:
@@ -206,9 +225,9 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
         if not ps or (len(ps) < 2 and not key.startswith("one:")):
             continue
         times = story_times(ps)
-        bg = background(ps, times)    # 0263: a background page is never the row's first post nor its start
-        ps.sort(key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.t, p.id))
-        built.append(Story(id=key, first_at=times[ps[0].id], posts=ps, voices=0, roles={}, reasons={},
+        ps = lead_order(ps, times)    # 0263, v10.39: never led by a background page nor a non-report; its start the earliest
+        start = story_start(ps, times)
+        built.append(Story(id=key, first_at=start, posts=ps, voices=0, roles={}, reasons={},
                            mentions=mentions - seen))
         made_of |= set(sids)
         if first is not None:

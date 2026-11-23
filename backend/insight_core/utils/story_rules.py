@@ -107,6 +107,9 @@ class StoryPost:
     # SourceFacts.owners), and the same for each of `other_sources`: News counts voices by owner.
     owner: Optional[str] = None
     other_owners: Tuple[Optional[str], ...] = ()
+    # v10.39: whether its reading says it reports an event (Mark X: kind report, never a leak or rumour); None: no
+    # reading (Mark IX reads none). A post its reading says is no report never leads a story with a report (`lead_order`).
+    report: Optional[bool] = None
 
     @property
     def other_sources(self) -> Tuple[str, ...]:
@@ -638,6 +641,38 @@ def background(posts: Sequence[Any], times: Mapping[str, datetime]) -> Set[str]:
         return set()
     edge = min(voiced) - BACKGROUND_BEFORE
     return {p.id for p in posts if p.kind in voice.NOT_VOICE and p.id in times and times[p.id] < edge}
+
+
+# v10.39: what a story or News row is led by (its first post: the row's id, its lead line). A post that says nothing of
+# its own (a page you saved with no text, a reply that is only a link) or whose reading says it is no report (a
+# preview, a rumour, an explainer) leads only when no post reports the event: the lead is the earliest report. The
+# story's start (`story_start`, the window's date) is still its earliest post.
+_NO_WORDS = re.compile(r"https?://\S+|\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/\S*)?|@\w+|\bR to\b|\bRT by\b", re.I)
+
+
+def says_nothing(post: Any) -> bool:
+    """Whether a post says nothing of its own: a saved page (voice.NOT_VOICE) with no text, or one whose title and
+    opening (when it has either) are only links and handles."""
+    if post.kind in voice.NOT_VOICE and not post.text_chars:
+        return True
+    own = " ".join(t for t in (post.title, post.opening) if t)
+    return bool(own.strip()) and not re.search(r"[^\W\d_]", _NO_WORDS.sub(" ", own))
+
+
+def lead_rank(post: Any) -> int:
+    """0: may lead; 1: its reading says it is no report; 2: it says nothing of its own (`says_nothing`)."""
+    return 2 if says_nothing(post) else 1 if post.report is False else 0
+
+
+def lead_order(posts: Sequence[Any], times: Mapping[str, datetime]) -> List[Any]:
+    """`posts` lead first: never a background post (0263), then by `lead_rank`, then by time (a date alone after a
+    timed post of its day), then id; the posts after the lead in that same time order."""
+    bg = background(posts, times)
+    ordered = sorted(posts, key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.id))
+    if not ordered:
+        return ordered
+    lead = min(ordered, key=lambda p: (p.id in bg, lead_rank(p), times[p.id], not p.date_only, p.id))
+    return [lead] + [p for p in ordered if p is not lead]
 
 
 def story_start(posts: Sequence[Any], times: Mapping[str, datetime]) -> Optional[datetime]:

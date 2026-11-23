@@ -62,6 +62,24 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(lead([("a", "share"), ("b", "share")]), "a")
         self.assertIsNone(lead([]))
 
+    def test_a_row_is_led_by_its_earliest_report_and_starts_at_its_earliest_post(self):
+        # v10.39: a preview its reading says is no report, a saved page with no text and a reply that is only a link
+        # never lead while a post reports the event; the row still starts at its earliest post
+        from insight_core.utils.story_rules import lead_order, story_times
+        preview = post("a", "seo", title="Acme Q3 earnings: what to expect", report=False)
+        saved = post("b", "me", kind="saved", hours=1, title="Acme")
+        link = post("c", "fan", hours=2, title="R to @acme: https://acme.example/q3")
+        report = post("d", "wire", hours=3, title="Acme reports Q3 revenue up 12%", report=True)
+        later = post("e", "blog", hours=4, title="Acme's Q3, read closely")
+        ps = [later, report, link, saved, preview]
+        times = story_times(ps)
+        self.assertEqual([p.id for p in lead_order(ps, times)], ["d", "a", "b", "c", "e"])
+        self.assertEqual([p.id for p in lead_order([preview, saved, link], times)], ["a", "b", "c"],
+                         "no report: the earliest that says something")
+        self.assertEqual(lead_order([later, preview], times)[0].id, "e", "an unread post may lead")
+        rows = news(ps, [Story(id="a", first_at=T0, posts=ps, voices=0, roles={}, reasons={}, mentions=set())], [])
+        self.assertEqual((rows[0].id, rows[0].first_at), ("d", T0))
+
     def test_a_roundup_leads_no_row_with_a_report_but_an_origin_always_leads(self):
         posts = [("digest", "report"), ("a", "share"), ("b", "report")]
         self.assertEqual(lead(posts, roundups=["digest"]), "b", "issue 0083: the weekly digest is passed over")
