@@ -483,6 +483,25 @@ def _stance(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+_COMMENT_ID = re.compile(r"^\s*\[(c[A-Za-z0-9]{1,24})\] ", re.M)
+
+
+def discussion_comments(input: str) -> set:
+    """The comment ids a discussion question shows ("c50562008")."""
+    return set(_COMMENT_ID.findall(input or ""))
+
+
+def _discussion(a: Dict[str, Any], input: str) -> Optional[str]:
+    """Every point and tool cites comments the question shows; an inexact quote is dropped at use (discussions)."""
+    shown = discussion_comments(input)
+    for what in ("points", "tools"):
+        for x in a.get(what) or []:
+            for c in x.get("comments") or []:
+                if c not in shown:
+                    return f"a {what[:-1]} cites {c}, not a comment the thread shows"
+    return None
+
+
 _BACK_NUMBERED = re.compile(r"^(\d+)\. \[", re.M)
 
 
@@ -1063,6 +1082,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
           "significance": _significance,
           "reading": _reading5,
           "track_schema": _track_schema, "track_same": _track_same,   # track_things: its salvage checks it
+          "discussion": _discussion,
           "embed": lambda answer, input: _EMBEDDED, "embed_name": lambda answer, input: _EMBEDDED}
 
 

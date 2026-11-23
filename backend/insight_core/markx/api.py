@@ -1014,3 +1014,4 @@ from insight_core.markx import research_api as _research_api; router.include_rou
 from insight_core.markx import source_judge_api as _source_judge_api; router.include_router(_source_judge_api.router)  # noqa: E402,E702  0173: is this worth it?
 from insight_core.markx import questions_api as _questions_api; router.include_router(_questions_api.router)  # noqa: E402,E702  0275: questions with citations
 from insight_core.markx import personal_api as _personal_api; router.include_router(_personal_api.router)  # noqa: E402,E702  v10.42: the reader's interest
+from insight_core.markx import discussions_api as _discussions_api; router.include_router(_discussions_api.router)  # noqa: E402,E702  0280: discussions

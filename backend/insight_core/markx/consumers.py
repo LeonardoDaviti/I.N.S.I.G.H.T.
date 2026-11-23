@@ -35,6 +35,7 @@ FEATURES: Dict[str, Feature] = {f.name: f for f in (
     Feature("embeddings", True, "the embedder's vectors (no model cost)"),
     Feature("briefing", True, "the day's briefing on /markx"),
     Feature("questions", True, "questions with citations on the search page (0275): asked only by the reader"),
+    Feature("discussions", True, "discussions (0280): what a post's Hacker News or Lobsters thread adds"),
     Feature("back", False, "Back in the news (0136): not shipped, its bar failed (68%); off since 0210"),
     Feature("perspectives", True, "perspectives and story sheets (0119 B): Shadow on /markx, kept for later use (the "
                                   "owner, 2026-11-16)"),
@@ -53,6 +54,7 @@ CONSUMER: Dict[str, str] = {
     "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news", "stop": "entities",
     "track_schema": "tracks", "track_things": "tracks", "track_same": "tracks",   # behind tracks.briefs too
     "question": "questions",   # the reader's questions on the search page (asked only by the reader)
+    "discussion": "discussions",   # what a post's comment thread adds (the post page, News rows)
     "reading": "news",   # ent-v5 (planned only while its own switch is shadow or on)
 }
 

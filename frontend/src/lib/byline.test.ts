@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { bylineName, bylineText, carried, carriedLine } from './byline.ts';
+import { bylineName, bylineText, carried, carriedLine, pageSite } from './byline.ts';
+
+test('pageSite: an aggregator\'s page names its site; a repost or a forward does not (0280)', () => {
+  const site = { author: 'curiousbits.nl', via: 'Hacker News', quoting: null };
+  assert.equal(pageSite({ byline: site }), 'curiousbits.nl');
+  assert.equal(pageSite({ byline: { author: '@acme', via: 'Example Feed', quoting: null } }), null);
+  assert.equal(pageSite({ byline: { author: 'Acme News', via: 'Example Channel', quoting: null } }), null);
+  assert.equal(pageSite({ byline: { author: null, via: 'Example Feed', quoting: null } }), null);
+});
 
 // One formatter for who wrote a post, via whom, quoting whom (0185). Synthetic names only.
 const own = { author: null, via: 'Example Feed', quoting: null };

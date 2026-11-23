@@ -1,9 +1,10 @@
 import { Fragment, Suspense, lazy, useCallback, useMemo, useState } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { useApi } from '../../services/ApiContext';
 import type { FeedItem, NewsMark, NewsOrder, NewsPage } from '../../services/api';
+import { discussionWords, rowPosts } from '../../lib/discussion';
 import { FEED_ROOT_KEY } from '../../hooks/useFeed';
 import { useReaderMutations, type UnreadChange } from '../../hooks/useReaderMutations';
 import type { ContextEntry } from '../../lib/feedContext';
@@ -47,6 +48,7 @@ function storyLine(item: FeedItem): string | undefined {
 }
 
 const RANKED = { name: 'News', sectionOf, storyLine };
+const DISCUSSION_POSTS = 200;   // the counts' query names at most this many posts (the API's cap)
 const ORDERS: NewsOrder[] = ['personal', 'ranked', 'coverage'];
 const ORDER_WORDS: Record<NewsOrder, string> = { personal: 'For you', ranked: 'Global only', coverage: 'By coverage' };
 
@@ -135,7 +137,23 @@ export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenCh
       toast.error(errorMessage(error));
     }
   }, [announce, mark, mutations, query.data, scope]);
-  const ranked = useMemo(() => ({ ...RANKED, rows: true, markAll: askMarkAll }), [askMarkAll]);
+  // 0280: one ask for every shown row's discussion points
+  const postIds = useMemo(() => [...new Set(derived.items.flatMap(rowPosts))].slice(0, DISCUSSION_POSTS), [derived.items]);
+  const discussions = useQuery({
+    queryKey: ['markx-discussion-counts', postIds.join(',')],
+    queryFn: () => api.getMarkxDiscussionCounts(postIds),
+    enabled: postIds.length > 0 && !older,
+    staleTime: 5 * 60_000,
+  });
+  const counts = discussions.data;
+  const ranked = useMemo(() => ({
+    ...RANKED, rows: true, markAll: askMarkAll,
+    storyLine: (item: FeedItem) => {
+      const line = storyLine(item);
+      const talk = discussionWords(item, counts);
+      return line && talk ? `${line} · ${talk}` : line;
+    },
+  }), [askMarkAll, counts]);
 
   return (
     <>

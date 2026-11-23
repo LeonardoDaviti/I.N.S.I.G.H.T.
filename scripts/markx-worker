@@ -78,9 +78,9 @@ from pathlib import Path
 EXECUTOR = "claude-code"
 # the order kinds are leased in: what a reader waits for first (question, source_judge); a kind the server
 # does not know yet is skipped
-DEFAULT_KINDS = "question,source_judge,read,read3,entities,reading,cite,alias,alias2,alias3,alias4,collide,rename,stop,check,join,pair,merge,perspective,sheet,dispute,connect,relate,chain,derive,back,card,headline,news_sections,news_place,significance,unit_types,briefing,translate,stance,probes,scout,identity,websearch,track,subtopics,subtopic_place,digest,track_schema,track_things,track_same"
+DEFAULT_KINDS = "question,source_judge,discussion,read,read3,entities,reading,cite,alias,alias2,alias3,alias4,collide,rename,stop,check,join,pair,merge,perspective,sheet,dispute,connect,relate,chain,derive,back,card,headline,news_sections,news_place,significance,unit_types,briefing,translate,stance,probes,scout,identity,websearch,track,subtopics,subtopic_place,digest,track_schema,track_things,track_same"
 # tasks per call by kind, under --batch (measured per kind: 0112, 0119, 0127, 0165, 0174, 0208); --per-call overrides
-PER_CALL = "question=1,track_schema=1,track_things=1,track_same=5,reading=20,merge=1,collide=6,rename=5,stop=10,chain=10,derive=10,perspective=1,sheet=1,dispute=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,subtopic_place=1,digest=1,probes=1,scout=1,identity=5,websearch=1,source_judge=1,news_sections=1,news_place=1,unit_types=1,significance=5"
+PER_CALL = "question=1,discussion=1,track_schema=1,track_things=1,track_same=5,reading=20,merge=1,collide=6,rename=5,stop=10,chain=10,derive=10,perspective=1,sheet=1,dispute=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,subtopic_place=1,digest=1,probes=1,scout=1,identity=5,websearch=1,source_judge=1,news_sections=1,news_place=1,unit_types=1,significance=5"
 # Claude Code's thinking effort by kind, set only where answers stayed within the noise of default runs
 # (plan/issues/0191-worker-cost.md); a kind not named keeps Claude Code's default; --effort overrides
 EFFORT = "entities=medium,cite=low,alias=low,alias2=low,reading=low,stop=low,chain=low,derive=low"

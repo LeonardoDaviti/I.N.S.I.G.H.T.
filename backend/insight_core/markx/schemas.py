@@ -632,6 +632,33 @@ QUESTION_SCHEMA = {
                        "properties": {"text": {"type": "string", "minLength": 1, "maxLength": QUESTION_SENTENCE_CHARS},
                                       "cites": {"type": "array", "items": {"type": "integer", "minimum": 1}}}}}},
 }
+# what a post's comment thread adds beyond the post (discussion-v1, markx/discussions.py): points, each citing the
+# comments it rests on ("c<id>") with an exact quote from one of them; the tools and links the comments name; one line
+# of overall stance. Checked by validate._discussion (cited ids in the thread); a quote not in its comments is dropped
+# at use (discussions.kept).
+DISCUSSION_POINT_KINDS = ["correction", "counterpoint", "experience", "data", "tool", "question", "context"]
+DISCUSSION_POINTS = 8
+DISCUSSION_TOOLS = 12
+_COMMENT_IDS = {"type": "array", "minItems": 1, "maxItems": 6,
+                "items": {"type": "string", "pattern": "^c[A-Za-z0-9]{1,24}$"}}
+DISCUSSION_SCHEMA = {
+    "type": "object",
+    "required": ["stance", "points", "tools"],
+    "properties": {
+        "stance": {"type": "string", "minLength": 1, "maxLength": 300},
+        "points": {"type": "array", "maxItems": DISCUSSION_POINTS, "items": {
+            "type": "object", "required": ["kind", "text", "comments", "quote"],
+            "properties": {"kind": {"enum": DISCUSSION_POINT_KINDS},
+                           "text": {"type": "string", "minLength": 1, "maxLength": 400},
+                           "comments": _COMMENT_IDS,
+                           "quote": {"type": "string", "minLength": 1, "maxLength": 400}}}},
+        "tools": {"type": "array", "maxItems": DISCUSSION_TOOLS, "items": {
+            "type": "object", "required": ["name", "comments"],
+            "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 120},
+                           "url": _STR_OR_NULL,
+                           "what": _STR_OR_NULL,
+                           "comments": _COMMENT_IDS}}}},
+}
 SOURCE_JUDGE_V2_SCHEMA = {**SOURCE_JUDGE_SCHEMA,
                           "properties": {**SOURCE_JUDGE_SCHEMA["properties"], "filter": SOURCE_FILTER_SCHEMA}}
 # who announces an event and where (websearch-official-v1, the websearch kind's second guide). Candidates only: the
@@ -791,6 +818,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("track_things", "track-things-v3", "post_track", TRACK_THINGS_SCHEMA),   # a catalog is one row
     Kind("track_same", "track-same-v2", "thing_thing", TRACK_SAME_SCHEMA),   # two rows, one thing?
     Kind("question", "question-v1", "question", QUESTION_SCHEMA),   # the reader's question, from their posts
+    Kind("discussion", "discussion-v1", "post", DISCUSSION_SCHEMA),   # what a post's comment thread adds
 )}
 
 

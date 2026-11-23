@@ -264,6 +264,10 @@ class TheRunner(_Api):
         patcher = mock.patch.object(jobs.Runner, "official_every", lambda self: None)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # nor the discussions pass (test_discussions_0280): it reads the web
+        patcher = mock.patch.object(jobs.Runner, "discussions_every", lambda self: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def runner(self, **kw):
         return jobs.Runner(db_url(), spawn=False, **{"plan_every": None, **kw})   # the plan job apart

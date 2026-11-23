@@ -45,3 +45,11 @@ export function carriedLine(post: HasByline & { repost?: Repost | null }): strin
   const quote = b.quoting ? `quoting ${b.quoting}` : null;
   return from && quote ? `${from}, ${quote}` : from ?? quote;
 }
+
+/** An aggregator's page (0280): the feed (Hacker News, a link blog) carried a page on another site, and the byline's
+ *  author is that site's host ("curiousbits.nl"). The header then names the site and the feed as "via". */
+const HOST = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i;
+export function pageSite(post: HasByline): string | null {
+  const author = post.byline?.author;
+  return author && !author.startsWith('@') && HOST.test(author) ? author : null;
+}

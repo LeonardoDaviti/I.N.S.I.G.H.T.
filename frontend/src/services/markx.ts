@@ -190,6 +190,26 @@ export interface MarkxRelated {
     cosine: number; guide: boolean; about?: boolean; loose?: boolean }[];
 }
 
+/** GET /api/markx/posts/{id}/discussion (0280): what the post's Hacker News or Lobsters thread adds. */
+export interface MarkxDiscussionComment {
+  id: string; parent: string | null; author: string | null; score: number | null; at: string | null; text: string;
+  url: string;
+}
+export interface MarkxDiscussion {
+  thread: { host: string; name: string; url: string; total: number | null; kept: number | null;
+    fetched_at: string | null; next_at: string | null; failed: string | null } | null;
+  status: 'none' | 'waiting' | 'fetched' | 'answered';
+  wanted: boolean;
+  stance: string | null;
+  points: { kind: string; text: string; quote: string; comments: string[] }[];
+  tools: { name: string; url: string | null; what: string | null; comments: string[] }[];
+  comments: Record<string, MarkxDiscussionComment>;
+  dropped: number;
+  answered_at?: string | null;
+}
+/** GET /api/markx/discussions?posts=: {post id: {points, total, name}} for the posts with an answered thread. */
+export type MarkxDiscussionCounts = Record<string, { points: number; total: number | null; name: string }>;
+
 /** One older post a post connects to. `uncertain`: the judge's alone (label it). */
 export interface MarkxBefore {
   post_id: string;

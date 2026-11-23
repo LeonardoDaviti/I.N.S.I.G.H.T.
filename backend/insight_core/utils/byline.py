@@ -110,18 +110,55 @@ def page_owner(url: Optional[str], platform: Optional[str], handle: Optional[str
     return next(iter(names)) if len(names) == 1 else None
 
 
+# An aggregator: a website feed whose items are other sites' pages (Hacker News, Lobsters, a link blog's feed). Told
+# from its newest AGGREGATOR_POSTS posts: pages on at least AGGREGATOR_SITES hosts, none holding half of them (a feed
+# re-hosted elsewhere, feedburner's or a newsroom's, has its pages on one or two hosts: not an aggregator).
+AGGREGATOR_POSTS = 30
+AGGREGATOR_SITES = 3
+
+
+def aggregators(cur: Any, source_ids: Iterable[Any]) -> set:
+    """The aggregators among `source_ids` (ids as text): one query, the newest AGGREGATOR_POSTS posts of each read
+    through the feed-order index."""
+    ids = sorted({str(i) for i in source_ids if i})
+    if not ids:
+        return set()
+    cur.execute("""SELECT s.id::text FROM unnest(%s::uuid[]) AS s(id) CROSS JOIN LATERAL (
+                     SELECT count(*) AS hosts, max(n) AS top, sum(n) AS posts FROM (
+                       SELECT h, count(*) AS n FROM (
+                         SELECT regexp_replace(lower(COALESCE(p.url_host, '')), '^www\\.', '') AS h FROM posts p
+                          WHERE p.source_id = s.id
+                          ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                          LIMIT %s) newest GROUP BY h) by_host) z
+                   WHERE z.hosts >= %s AND z.top * 2 < z.posts""", (ids, AGGREGATOR_POSTS, AGGREGATOR_SITES))
+    return {r[0] for r in cur.fetchall()}
+
+
+def page_name(url: Optional[str]) -> Optional[str]:
+    """The site a page is on, as a byline names it ("curiousbits.nl"), else None."""
+    from insight_core.utils.addresses import host_of
+    host = host_of(url or "")
+    host = host[4:] if host.startswith("www.") else host
+    return host or None
+
+
 def byline(source: Optional[str], platform: Optional[str], handle: Optional[str], author: Optional[str] = None,
            forwarded: Optional[str] = None, quoted: Optional[str] = None, *, kind: Optional[str] = None,
            owns: Optional[Dict[Tuple[Any, Any], str]] = None, url: Optional[str] = None,
-           sites: Optional[Dict[str, List[Owner]]] = None) -> Dict[str, Optional[str]]:
+           sites: Optional[Dict[str, List[Owner]]] = None, aggregator: bool = False) -> Dict[str, Optional[str]]:
     """{author, via, quoting} of a post from its stored fields (see the module). With its `url` and `site_owners`
-    (`sites`), a page its feed carried from another followed site names that site's source as `author`."""
+    (`sites`), a page its feed carried from another followed site names that site's source as `author`; an
+    `aggregator`'s page on a site no source follows names that site ("curiousbits.nl via Hacker News")."""
+    from insight_core.utils import own_pages
     from insight_core.utils.post_links import source_kind
     kind = kind or source_kind(platform, handle)
     by = original_author(kind, platform, handle, author, forwarded, owns)
     if by is None and sites:
         maker = page_owner(url, platform, handle, sites, kind)
         by = maker if maker and maker != source else None
+    if (by is None and aggregator and url and kind not in _PLATFORM_KINDS
+            and not own_pages.owns(platform, handle, url) and own_pages.page_site(url) != own_pages.page_site(handle)):
+        by = page_name(url)
     own = own_account(platform, handle) if kind == "x" else ""
     return {"author": by, "via": source or "", "quoting": quoting(quoted, besides=(by, own, author if not by else None))}
 
@@ -129,9 +166,10 @@ def byline(source: Optional[str], platform: Optional[str], handle: Optional[str]
 def of_row(source: Optional[str], platform: Optional[str], handle: Optional[str], author: Optional[str],
            forwarded: Optional[str], quoted: Optional[str],
            owns: Optional[Dict[Tuple[Any, Any], str]] = None, url: Optional[str] = None,
-           sites: Optional[Dict[str, List[Owner]]] = None) -> Dict[str, Optional[str]]:
-    """The byline of a row read with SOURCE_NAME, COLUMNS (and its url, with `sites`)."""
-    return byline(source, platform, handle, author, forwarded, quoted, owns=owns, url=url, sites=sites)
+           sites: Optional[Dict[str, List[Owner]]] = None, aggregator: bool = False) -> Dict[str, Optional[str]]:
+    """The byline of a row read with SOURCE_NAME, COLUMNS (and its url, with `sites`; `aggregator`: its feed is one)."""
+    return byline(source, platform, handle, author, forwarded, quoted, owns=owns, url=url, sites=sites,
+                  aggregator=aggregator)
 
 
 def who(b: Dict[str, Optional[str]]) -> str:
@@ -140,17 +178,19 @@ def who(b: Dict[str, Optional[str]]) -> str:
 
 
 def bylines(cur: Any, ids: Iterable[Any]) -> Dict[str, Dict[str, Optional[str]]]:
-    """{post id: byline} for the posts that exist: one query over stored fields."""
+    """{post id: byline} for the posts that exist: one query over stored fields, one for the followed sites, one for
+    the aggregators among their feeds."""
     ids = sorted({str(i) for i in ids})
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, p.url, {SOURCE_NAME}, {COLUMNS}
+    cur.execute(f"""SELECT p.id::text, p.url, p.source_id::text, {SOURCE_NAME}, {COLUMNS}
                       FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                      WHERE p.id = ANY(%s::uuid[])""", (ids,))
     rows = cur.fetchall()
     owns: Dict[Tuple[Any, Any], str] = {}
     sites = site_owners(cur)
-    return {pid: of_row(*row, owns=owns, url=url, sites=sites) for pid, url, *row in rows}
+    many = aggregators(cur, {r[2] for r in rows})
+    return {pid: of_row(*row, owns=owns, url=url, sites=sites, aggregator=sid in many) for pid, url, sid, *row in rows}
 
 
 # ---- who wrote it, as the other modules ask -------------------------------------------------------

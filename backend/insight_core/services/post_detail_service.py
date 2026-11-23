@@ -15,7 +15,8 @@ from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
 from insight_core.db.repo_post_refs import PostRefsRepository
 from insight_core.db.repo_reader import ReaderRepository, voice_sources
-from insight_core.utils.byline import repost_of
+from insight_core.utils.byline import aggregators, repost_of
+from insight_core.markx.discussions import header as discussion_header
 from insight_core.utils.byline import of_row as byline_of
 from insight_core.services.news_service import NewsService
 from insight_core.db.repo_post_parts import body, shown_title
@@ -91,6 +92,9 @@ class PostDetailService:
                 internal = self.internal_links(cur, post_id, row[2], _with_quoted(row[8], row[36]), row[7]) if row else {}
                 link = self.link(cur, row[40], story, row[2]) if row else None
                 news = self.news.row_of(cur, post_id, str(row[1])) if row else None
+                # an aggregator's page names its own site (byline.aggregators), and its thread is linked (0280)
+                aggregator = bool(row) and str(row[1]) in aggregators(cur, [row[1]])
+                thread = discussion_header(cur, post_id, row[2], row[11]) if row else None
 
         if not row:
             return None
@@ -141,7 +145,9 @@ class PostDetailService:
             "story": story,
             "repost": repost_of(row[21], row[22], row[24], row[25]),
             "byline": byline_of(source_settings.get("display_name") or row[22], row[21], row[22], row[24],
-                                ((row[11] or {}).get("forwarded_from") or {}).get("name"), row[36]),
+                                ((row[11] or {}).get("forwarded_from") or {}).get("name"), row[36], url=row[2],
+                                aggregator=aggregator),
+            "discussion": thread,   # {name, url, total}: the post's thread on a discussion site, or None
             "internal_links": internal,
             "link": link,
             "news": news,

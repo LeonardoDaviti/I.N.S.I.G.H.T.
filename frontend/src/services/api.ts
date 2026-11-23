@@ -3,7 +3,7 @@ import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
 import type { Byline } from '../lib/byline';
-import type { MarkxFlag, MarkxNews, MarkxOverview, MarkxPostPanel, MarkxRelated, MarkxSettings } from './markx';
+import type { MarkxDiscussion, MarkxDiscussionCounts, MarkxFlag, MarkxNews, MarkxOverview, MarkxPostPanel, MarkxRelated, MarkxSettings } from './markx';
 import type { MarkxEntityAnswer, MarkxEntityLimits, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue, MarkxQueueView } from './markx';
 import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
 import type { MarkxFold, MarkxFoldAnswer } from './markx';
@@ -75,6 +75,8 @@ export interface Post {
   news?: { id: string; title: string; voices: number; lead_id: string; scope: string } | null;
   /** Why it shows its feed's summary only; null when read in full. */
   teaser_reason?: string | null;
+  /** Its thread on a discussion site (0280): total is the site's count at the last fetch, null before one. */
+  discussion?: { name: string; url: string; total: number | null } | null;
 }
 export interface Repost { by: string[]; author: string; }
 export type { Byline };
@@ -1415,6 +1417,12 @@ export function createApi() {
     getMarkxPost: (postId: string) => request<MarkxPostPanel>(`/api/markx/posts/${enc(postId)}`),
     /** Related reading, on request (~1.5 s: a scan of every stored vector). */
     getMarkxRelated: (postId: string) => request<MarkxRelated>(`/api/markx/posts/${enc(postId)}/related`),
+    /** 0280: what a post's discussion thread adds; the reader's want (the jobs process fetches); News rows' counts. */
+    getMarkxDiscussion: (postId: string) => request<MarkxDiscussion>(`/api/markx/posts/${enc(postId)}/discussion`),
+    wantMarkxDiscussion: (postId: string) =>
+      request<{ wanted: boolean }>(`/api/markx/posts/${enc(postId)}/discussion/want`, { method: 'POST' }),
+    getMarkxDiscussionCounts: (postIds: string[]) =>
+      request<MarkxDiscussionCounts>(`/api/markx/discussions?posts=${postIds.map(enc).join(',')}`),
     // v10.42: the reader's interest: one tap (kept; News orders by it at once), and a post page's teach panel
     teachInterest: (body: { dim: InterestDim; key: string; answer: InterestAnswer; name?: string | null; row?: string | null; post?: string | null }) =>
       request<{ id: string; dim: InterestDim; key: string; answer: InterestAnswer }>('/api/markx/interests', { method: 'POST', body }),

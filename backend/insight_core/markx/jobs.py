@@ -42,7 +42,8 @@ WAIT_PAGE = 1000                 # waiting posts a candidates run reads (the res
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
 JOBS = ("candidates", "decide", "plan", "news", "tracks", "unread", "main_source", "discover", "official",
-        "stories", "entities")
+        "stories", "entities", "discussions")
+DISCUSSIONS_EVERY = 600.0        # the discussions pass (markx/discussions.run): its planner and due fetches, this often
 STORIES_GAP = 120.0              # a rebuild's next slice starts this long after the last ended
 ORIGINALS_GAP = 1800.0           # the originals follow a wanted story run at most this often
 STARVE_AFTER = 900.0             # candidates or official due this long go before the kept views
@@ -521,6 +522,22 @@ class Jobs:
         self._finish("official", {"ok": ok, "seconds": round(time.monotonic() - t0, 1), **out})
         return out
 
+    def discussions(self) -> Optional[Dict[str, Any]]:
+        """One discussions pass (markx/discussions.run): young threads wanted, due threads fetched and asked."""
+        from insight_core.markx import discussions as mx_discussions
+        t0 = time.monotonic()
+        self._begin("discussions", "running")
+        try:
+            out = mx_discussions.run(self.db_url, now=self.clock())
+        except Exception as exc:
+            log.exception("Mark X discussions: the pass failed")
+            self._finish("discussions", {"ok": False, "error": str(exc)[:500],
+                                         "seconds": round(time.monotonic() - t0, 1)})
+            return None
+        self._finish("discussions", {"ok": True, "seconds": round(time.monotonic() - t0, 1), "peak_mb": peak.mb(),
+                                     **out})
+        return out
+
     def news(self) -> Optional[Dict[str, Any]]:
         """Mark X News' views not kept for their inputs, built and kept (news.keep_pages)."""
         from insight_core.markx import news as mx_news
@@ -772,13 +789,14 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
         gap: float = GAP, busy: Optional[str] = None, plan_every: Optional[float] = None,
         kept_missing: Iterable[str] = (), run_gap: float = RUN_GAP, markx: bool = True,
         official_every: Optional[float] = None, rebuild: bool = False,
-        starve_after: float = STARVE_AFTER) -> Optional[str]:
+        starve_after: float = STARVE_AFTER, discussions_every: Optional[float] = None) -> Optional[str]:
     """The job to run now, or None, in this order: the background planners ("plan") every `plan_every`; a wanted
     story run (new posts are grouped before they are decided); a decision run SETTLE after work arrived or EVERY
     after the last start, never within RUN_GAP of it, never while Mark IX holds it (`busy`) or the candidate finder
     runs; a rebuild's slice (`stories_due`); the candidate finder or official pass due for `starve_after`; a kept
-    view missing and let start (`_kept_may`); then candidates, then official. A job in backoff (`held`) waits,
-    whatever makes it due. `markx` False: only the rebuild's slice and the reader's kept views."""
+    view missing and let start (`_kept_may`); then candidates, then official, then the discussions pass every
+    `discussions_every` (wanted by a reader: before the candidates). A job in backoff (`held`) waits, whatever makes
+    it due. `markx` False: only the rebuild's slice and the reader's kept views."""
     s = states.get("stories") or {}
     slice_due = stories_due(s, now, rebuild=rebuild, gap=gap)
     if not markx:
@@ -802,6 +820,10 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
             return "decide"
     if slice_due:
         return "stories"
+    g = states.get("discussions") or {}
+    talk = discussions_every is not None and g.get("stage") is None and not held(g, now, gap)
+    if talk and g.get("wanted_at") is not None:
+        return "discussions"
     c = states["candidates"]
     candidates = c["wanted_at"] is not None and not held(c, now, gap)
     o = states.get("official") or {}
@@ -823,6 +845,8 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
         return "candidates"
     if official_at is not None:
         return "official"
+    if talk and (g.get("started_at") is None or (now - g["started_at"]).total_seconds() >= discussions_every):
+        return "discussions"
     return None
 
 
@@ -989,7 +1013,7 @@ class Runner:
             held_by, ahead = decision_hold(self._ix) if markx else (None, None)
             job = due(states, self._db_now, settle=self.settle, every=self.every, gap=self.gap, busy=held_by,
                       plan_every=self.plan_every, kept_missing=self._kept_missing, run_gap=self.run_gap, markx=markx,
-                      official_every=self.official_every(),
+                      official_every=self.official_every(), discussions_every=self.discussions_every(),
                       rebuild=bool(self._ix.get("rebuild")) and not self._ix.get("locked"))
             told = held_by.split(" (")[0] if held_by else None
             if told != getattr(self, "_told", None):
@@ -1023,6 +1047,11 @@ class Runner:
         """The official channels' pass's period, None while INSIGHT_OFFICIAL is off."""
         from insight_core.markx import official
         return None if official.mode() == "off" else OFFICIAL_EVERY
+
+    def discussions_every(self) -> Optional[float]:
+        """The discussions pass's period, None while INSIGHT_DISCUSSIONS is off (on by default)."""
+        import os
+        return None if os.environ.get("INSIGHT_DISCUSSIONS", "on").strip().lower() == "off" else DISCUSSIONS_EVERY
 
     def _run(self, *names: str) -> None:
         if not names:

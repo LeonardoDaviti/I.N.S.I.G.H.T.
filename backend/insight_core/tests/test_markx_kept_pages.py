@@ -217,6 +217,7 @@ class TheJobsKeepNews(_World):
     def runner(self):
         runner = jobs.Runner(self._db(), spawn=False, plan_every=None)
         runner.official_every = lambda: None   # official channels (never run here) would go first, overdue
+        runner.discussions_every = lambda: None   # nor the discussions pass (it reads the web)
         return runner
 
     def _db(self):

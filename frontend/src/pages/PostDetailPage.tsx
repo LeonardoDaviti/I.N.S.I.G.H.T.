@@ -34,7 +34,7 @@ import {
   coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, storyTree,
 } from '../lib/story';
 import { postSourceName, sourceLabel } from '../lib/sourceLabel';
-import { bylineName, carried, carriedLine } from '../lib/byline';
+import { bylineName, carried, carriedLine, pageSite } from '../lib/byline';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
 import { countsLabel, middleTruncate, plural } from '../lib/format';
@@ -59,6 +59,7 @@ import { useMarkxOn } from '../hooks/useMarkxOn';
 
 const MarkXPanel = lazy(() => import('../components/markx/MarkXPanel'));
 const MarkXRelated = lazy(() => import('../components/markx/MarkXRelated'));
+const MarkXDiscussion = lazy(() => import('../components/markx/MarkXDiscussion'));   // 0280
 const PostTeach = lazy(() => import('../components/post/PostTeach'));   // v10.42: More / Less like this
 const Connected = lazy(() => import('../components/post/Connected'));
 const MarkXTranslation = lazy(() => import('../components/markx/MarkXTranslation'));
@@ -957,6 +958,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     return body.slice(0, 24);
   };
   const sourceName = postSourceName(post);
+  const site = pageSite(post);
   // The API's title is already the short one; a post whose whole text is that title shows it once.
   const displayTitle = post.title || 'Untitled post';
   const bodyIsTitle = useMemo(() => postPlainText(post).replace(/\s+/g, ' ') === displayTitle, [post, displayTitle]);
@@ -1052,6 +1054,9 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       <header className="mb-8">
         <div className="flex min-h-[2.25rem] items-start">
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
+            {/* An aggregator's page names its site first, the feed as "via" (0280). */}
+            {site ? <span data-page-site className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]">{middleTruncate(site, 40)}</span> : null}
+            {site ? <span>via</span> : null}
             {/* The source name reads the source; a source is managed in Sources, not here. */}
             {post.source_id ? (
               <>
@@ -1068,7 +1073,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
                 {middleTruncate(sourceName, 40)}
               </span>
             )}
-            {carriedLine(post) ? <span>{carriedLine(post)}</span> : null}
+            {!site && carriedLine(post) ? <span>{carriedLine(post)}</span> : null}
+            {post.discussion ? <DiscussionLink discussion={post.discussion} /> : null}
             {post.metadata?.saved_by_owner && post.platform !== 'saved' ? <span className="whitespace-nowrap">· saved by you</span> : null}
             {post.metadata?.collected_original ? (
               <span className="whitespace-nowrap">
@@ -1330,6 +1336,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
 
       {markxOn && !fixture ? <Suspense fallback={null}><MarkXPanel postId={postId} url={post.url} /></Suspense> : null}
       {markxOn && !fixture ? <Suspense fallback={null}><MarkXRelated postId={postId} /></Suspense> : null}
+      {markxOn && !fixture && post.discussion ? <Suspense fallback={null}><MarkXDiscussion postId={postId} /></Suspense> : null}
       {/* v10.42: teach INSIGHT More / Less of this post's things, its kind of news, its source */}
       {markxOn && !fixture ? <Suspense fallback={null}><PostTeach postId={postId} /></Suspense> : null}
 
@@ -1370,5 +1377,17 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       )}
       <div ref={endRef} data-post-end={postId} aria-hidden="true" />
     </>
+  );
+}
+
+/** The header's link to the post's thread on a discussion site (0280), shown before any fetch. */
+export function DiscussionLink({ discussion }: { discussion: { name: string; url: string; total: number | null } }) {
+  return (
+    <span data-discussion-link className="whitespace-nowrap">
+      <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
+      <a href={discussion.url} target="_blank" rel="noopener noreferrer" className="text-link">
+        Discussion on {discussion.name}{discussion.total != null ? ` · ${plural(discussion.total, 'comment')}` : ''}
+      </a>
+    </span>
   );
 }
