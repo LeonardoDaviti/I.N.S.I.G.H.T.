@@ -351,6 +351,7 @@ class FreshLaneApi(_Api):
         super().setUp()
         self.addCleanup(setattr, api, "FRESH_REST_SECONDS", api.FRESH_REST_SECONDS)
         api.FRESH_REST_SECONDS = 0.0
+        api._PLAN_REST.clear()   # a planner rest an earlier module's lease left in this process
 
     def test_a_lease_plans_new_posts_even_when_the_queue_is_full(self):
         for k in range(25):                                         # a full queue: the general planner rests
