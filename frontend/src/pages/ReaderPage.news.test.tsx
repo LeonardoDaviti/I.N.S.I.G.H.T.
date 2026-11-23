@@ -153,6 +153,11 @@ describe('News (issue 0051)', () => {
       .map((row) => within(row).getByRole('heading').textContent)).toEqual(['The loud launch', 'The quiet method']);
     await user.click(screen.getByRole('button', { name: 'Global only' }));
     expect(await screen.findByText('Notable for you')).toBeInTheDocument();
+    // v10.43: "Your interests" opens under the order line (Mark X's News only)
+    const { interestsApi } = await import('../services/interests');
+    vi.spyOn(interestsApi, 'list').mockResolvedValue({ taught: [] });
+    await user.click(screen.getByRole('button', { name: 'Your interests' }));
+    expect(await screen.findByRole('region', { name: 'Your interests' })).toBeInTheDocument();
   });
 
   it("a row shows its expert breakdowns as Analysis, each with its author, when the API sends them (issue 0208)", async () => {

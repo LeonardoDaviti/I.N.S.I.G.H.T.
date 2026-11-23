@@ -20,6 +20,7 @@ import IngestionJobs from './IngestionJobs';
 import IngestionArchive from './IngestionArchive';
 import IngestionLogs from './IngestionLogs';
 import BackgroundWork from './BackgroundWork';
+import DataRepairs from './DataRepairs';
 import { LoadingState, Notice } from '../states';
 
 // source anatomy: its own chunk, loaded when the view opens
@@ -131,6 +132,7 @@ export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: st
             )}
           </section>
           <BackgroundWork titleClass={sectionTitle} />
+          <DataRepairs titleClass={sectionTitle} />
           {hostLimits.length ? (
             <section aria-labelledby="ingestion-site-limits" className="space-y-3">
               <h2 id="ingestion-site-limits" className={sectionTitle}>Site limits</h2>

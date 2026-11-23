@@ -15,6 +15,7 @@ import { useAnnounce } from './LiveRegion';
 import { PostList } from './FeedList';
 
 const ConfirmDialog = lazy(() => import('../ops/ConfirmDialog'));
+const YourInterests = lazy(() => import('./YourInterests'));
 const UNDO_MS = 5_000;
 
 /** Under the feed's root key: read, Later and Keep patch News like any cached feed. */
@@ -72,6 +73,7 @@ export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenCh
   const [order, setOrder] = useState<NewsOrder | undefined>(undefined);   // undefined: the order the API's switch says
   const [confirm, setConfirm] = useState(false);
   const [confirmUsed, setConfirmUsed] = useState(false);
+  const [interestsOpen, setInterestsOpen] = useState(false);   // v10.43: "Your interests"
   if (confirm && !confirmUsed) setConfirmUsed(true);
   const query = useInfiniteQuery({
     queryKey: newsKey(scope, mark, order, unread),
@@ -174,8 +176,18 @@ export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenCh
               ))}
             </>
           ) : null}
+          {shownOrder ? (
+            <>
+              {' · '}
+              <button type="button" aria-expanded={interestsOpen} className="underline underline-offset-2 hover:text-fg-1"
+                onClick={() => setInterestsOpen(!interestsOpen)}>
+                Your interests
+              </button>
+            </>
+          ) : null}
         </p>
       ) : null}
+      {interestsOpen && shownOrder ? <Suspense fallback={null}><YourInterests /></Suspense> : null}
     <PostList
       feed={{ ...query, ...derived }}
       scope={scope}

@@ -2004,3 +2004,5 @@ from insight_core.routers.discover_main_source import router as discover_main_so
 app.include_router(discover_main_source_router)
 from insight_core.routers.official import router as official_router  # noqa: E402
 app.include_router(official_router)
+from insight_core.routers.data_repairs import router as data_repairs_router  # noqa: E402
+app.include_router(data_repairs_router)

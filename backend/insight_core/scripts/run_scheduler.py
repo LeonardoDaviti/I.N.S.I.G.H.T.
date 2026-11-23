@@ -6,7 +6,8 @@ Its loop runs: the ingestion tick (every scheduler_config.ingest_tick_minutes, f
 cadence decides which sources are due); daily work (prune job_runs, spend answered Mark X inputs, refresh
 cadence; gated on system_settings.scheduler_state.last_daily_work_at); waiting and queued archives, continued
 in this process so their pages share the host limiter with the hourly fetches; channel profiles after each
-tick. In threads of their own: the API watchdog (INSIGHT_API_WATCHDOG), Mark X's job runner (candidate finder,
+tick; the Operations page's data repair asks (services/data_repairs.py), looked for with the archives. In
+threads of their own: the API watchdog (INSIGHT_API_WATCHDOG), Mark X's job runner (candidate finder,
 decision runs, kept views; with Mark X off, the reader's kept views only) and the source stats job.
 
 tick() is the testable unit: it takes its collaborators as arguments.
@@ -234,7 +235,9 @@ def startup_repairs(db_url: str) -> None:
     setup_logging(debug_mode=False)
     from insight_core.scripts import repair_0135, repair_0137, repair_full_text, rerun_archives_0143
     from insight_core.scripts.repair_normalized_urls import repair_safely
+    from insight_core.services import data_repairs
     threads = [threading.Thread(target=job, args=(db_url,)) for job in (
+        data_repairs.run_safely,             # the registered repairs, once per version (the Operations page)
         repair_safely,                       # posts stored without a normalized address
         repair_0135.repair_safely,           # Telegram dates, transcripts
         repair_0137.repair_safely,           # collapsed feeds, author lines, bridge dates
@@ -244,6 +247,24 @@ def startup_repairs(db_url: str) -> None:
         t.start()
     for t in threads:
         t.join()
+
+
+def repair_asks(db_url: str, running: Optional[Any]) -> Optional[Any]:
+    """The Operations page's data repair asks (services/data_repairs.py): when one waits and none is being run,
+    `data_repairs.job` in a process of its own; returns the run's future (or the one still running). Never raises."""
+    if running is not None and not running.done():
+        return running
+    try:
+        from insight_core.db import database
+        from insight_core.services import data_repairs
+        with database.transaction(db_url) as cur:
+            if not data_repairs.has_requests(cur):
+                return None
+        from insight_core.services.stories_service import in_own_process
+        return asyncio.get_running_loop().run_in_executor(None, in_own_process, data_repairs.job, db_url)
+    except Exception:  # noqa: BLE001 - the repairs never stop ingestion
+        logger.exception("Could not look for data repair asks")
+        return None
 
 
 async def main() -> None:
@@ -320,6 +341,7 @@ async def main() -> None:
 
     archives = ArchiveJobs(operations_service, archive_service(db_url), trigger="scheduler")
     last_archive_poll = 0.0
+    repairs_running = None   # the page's data repair asks, run in a process of their own
     loop = asyncio.get_running_loop()
     beating = loop.create_task(_heartbeat())   # what the container's healthcheck reads
     from insight_core.utils.idle_trim import libc_trim
@@ -329,6 +351,7 @@ async def main() -> None:
         now = datetime.now(timezone.utc)
         if loop.time() - last_archive_poll >= ARCHIVE_POLL_SECONDS:
             last_archive_poll = loop.time()
+            repairs_running = repair_asks(db_url, repairs_running)
             try:
                 for job_id in await archives.continue_due():
                     logger.info("Continuing archive job %s after its wait", job_id)

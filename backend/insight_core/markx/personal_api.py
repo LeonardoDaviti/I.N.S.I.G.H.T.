@@ -4,7 +4,8 @@ POST /api/markx/interests                {dim: thing | kind | source, key, answe
                                          row?, post?}: one tap, kept (mx_interests) -> the tap; News orders by it at
                                          once (the API reads the taps on every News answer)
 GET  /api/markx/interests                the taps in force, newest first, and the learned weights, largest first
-GET  /api/markx/posts/{id}/interest      the post page's teach panel: its things, its News row's kind, its source
+GET  /api/markx/interests/find?q=      the "Your interests" add box's picker: things by name (v10.43)
+GET  /api/markx/posts/{id}/interest     the post page's teach panel: its things, its News row's kind, its source
 
 Included into markx/api.py's router (its prefix and its switch).
 """
@@ -52,6 +53,15 @@ def mx_interests():
         learned = [{"dim": d, "key": k, "weight": w, "name": n, "why": why} for d, k, w, n, why in cur.fetchall()]
     return {"taught": [{"dim": d, "key": k, **{**t, "at": t["at"].isoformat()}} for (d, k), t in taps],
             "learned": learned}
+
+
+@router.get("/interests/find")
+def mx_interests_find(q: str = ""):
+    """v10.43: the "Your interests" add box's picker (the stack picker's search)."""
+    from insight_core.markx import track_subtracks
+    from insight_core.markx.api import transaction
+    with transaction() as cur:
+        return track_subtracks.find_things(cur, q)
 
 
 @router.get("/posts/{post_id}/interest")
