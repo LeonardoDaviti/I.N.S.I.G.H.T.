@@ -1,18 +1,12 @@
-"""A track's suggested fields (Stealth v10.41, FIX 6; owner 2026-11-23: fields are the owner's decision).
+"""A track's suggested fields (fields are the owner's decision).
 
-The schema (markx/track_things.py) is proposed once from the track's words, before any post is read; what its posts
-keep saying that no field holds shows only later. So, once a schema version has rows, INSIGHT asks Haiku which
-fields the track's records miss: the schema planner's kind (`track_schema`), its second guide FIELDS_GUIDE
-(track-fields-v1, schemas.GUIDE_VARIANTS: its own answer schema and check). The question shows the track's words, its
-kinds and fields, a sample of its rows (the newest ROWS_SAMPLE) and of their posts (the newest POSTS_SAMPLE, title and
-opening); one question a track and schema version (its input's first line names both).
-
-The answer is never applied: it is a list of suggestions the track page shows ("Suggested fields", `suggestions`):
-Add is the owner's schema edit (PUT .../schema, track_things.set_schema: a version of their own, its posts read again
-under it); Dismiss (`dismiss`) keeps the field from being suggested again (mx_track_field_dismissals). A field the
-schema has now (any version) is not suggested. Nothing here names a track, a kind or a field.
-
-Behind entity_bands.json `tracks.briefs` (track_things.on), as the schema is.
+The schema (markx/track_things.py) is proposed from the track's words before any post is read, so once a schema
+version has rows, Haiku is asked which fields the track's records miss: the `track_schema` kind's second guide
+FIELDS_GUIDE (schemas.GUIDE_VARIANTS), one question a track and schema version, showing the track's words, kinds and
+fields and samples of its rows and posts. The answer is never applied: the track page shows it as suggestions
+(`suggestions`); Add is the owner's schema edit (track_things.set_schema), Dismiss (`dismiss`) keeps a field from
+being suggested again (mx_track_field_dismissals). Nothing here names a track, a kind or a field. Behind
+entity_bands.json `tracks.briefs` (track_things.on).
 """
 from __future__ import annotations
 

@@ -1,20 +1,15 @@
-"""The citation rule (issue 0133 part 3): the documents a post cites, found with no model, merged with the entities
-answer's own. It runs when an entities answer under an arm with the rule (schemas.ENTITY_ARMS: ent-v4 and its
-fallback, never ent-v3) is recorded, over the post's full stored text (not the task's cut) and its post_refs links.
-Each hit is a mention: type `document`, role `source`, rule `citation`.
+"""The citation rule: the documents a post cites, found with no model, merged with the entities answer's own. It runs
+when an entities answer under an arm with the rule (schemas.ENTITY_ARMS) is recorded, over the post's full stored text
+and its post_refs links. Each hit is a mention: type `document`, role `source`, rule `citation`.
 
-  - **In-text citations** ("Author et al. (YYYY)", "Author (YYYY)", "Author & Author (YYYY)", "Author and Author,
-    YYYY"; English and Russian). FIRST SET: these patterns are the spec's listed shapes, written before the lab's
-    frozen report (plan/research/lab/markx/proto/out/entv41_v1/REPORT.md); the report's patterns replace
-    IN_TEXT (and PATTERNS_VERSION) when it passes. Nothing else here waits for it.
-  - **Identifiers** (final): arXiv ids and links (arXiv:2401.01234, arxiv.org/abs|pdf|html/..., the arXiv DOI), DOIs.
-  - **Links to documents** (final): every open, non-boilerplate post_refs link whose pairing.document_key is a
-    document (a paper by its id; a record or a filing by 0109's address shapes).
+  - **In-text citations** ("Author et al. (YYYY)", "Author (YYYY)", "Author & Author (YYYY)", English and Russian):
+    a first set of shapes (PATTERNS_VERSION), to be replaced by the lab's frozen patterns.
+  - **Identifiers**: arXiv ids and links, DOIs.
+  - **Links to documents**: every open, non-boilerplate post_refs link whose pairing.document_key is a document.
 
-Merged with the answer's mentions (`merge`): a hit and a model document naming the same thing (the same DOI or arXiv
-id in its span or name, or the same name key) are one mention: the rule's span is kept, the model's role and name
-win, and it carries rule 'citation' and the identifier (`ref`, which identity joins across posts). The rest of the
-hits are mentions of their own after the model's, at most MAX_HITS.
+`merge`: a hit and a model document naming the same thing (the same DOI or arXiv id, or the same name key) are one
+mention: the rule's span is kept, the model's role and name win, and it carries rule 'citation' and the identifier
+(`ref`, which identity joins across posts). The other hits follow the model's mentions, at most MAX_HITS.
 """
 from __future__ import annotations
 
@@ -24,7 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 RULE = "citation"
 TYPE, ROLE = "document", "source"
-MAX_HITS = 60                  # a post's hits kept (the lab's reference lists held up to ~30 items a post)
+MAX_HITS = 60                  # a post's hits kept
 PATTERNS_VERSION = "0133-first-set"   # replaced with the frozen report's patterns
 
 _YEAR = r"(?:19|20)\d{2}[a-z]?"
@@ -34,8 +29,7 @@ _NAME = rf"(?:{_LAT}|{_CYR})"
 _AND = r"(?:&|and|и)"
 _ETAL = r"(?:et\s+al\.?|и\s+др\.?|и\s+соавт\.?)"
 
-# FIRST SET (0133): the spec's shapes; the frozen lab report's patterns replace these. Order matters: a longer shape
-# first, and a span a hit took is not read again.
+# the first set of shapes. Order matters: a longer shape first, and a span a hit took is not read again.
 IN_TEXT: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
     ("etal", re.compile(rf"\b(?P<a>{_NAME})\s+{_ETAL},?\s*\(?(?P<y>{_YEAR})\)?")),
     ("two_paren", re.compile(rf"\b(?P<a>{_NAME})\s+{_AND}\s+(?P<b>{_NAME}),?\s*\((?P<y>{_YEAR})\)")),
@@ -166,7 +160,7 @@ def merge(mentions: Sequence[Dict[str, Any]], hits: Sequence[Hit], name_key) -> 
 
 
 def post_links(cur: Any, post_id: Any) -> List[str]:
-    """The post's open, non-boilerplate post_refs addresses, in order (0125)."""
+    """The post's open, non-boilerplate post_refs addresses, in order."""
     cur.execute("""SELECT target_address FROM post_refs WHERE post_id = %s AND valid_to IS NULL AND NOT boilerplate
                     ORDER BY position""", (post_id,))
     return [r[0] for r in cur.fetchall()]

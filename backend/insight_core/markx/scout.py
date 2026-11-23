@@ -1,53 +1,28 @@
-"""Track scout (issue 0148, Stealth v10.14): a track finds sources in a sphere INSIGHT doesn't read yet.
+"""Track scout: a track finds sources in a sphere INSIGHT doesn't read yet.
 
-A track (0145) can only judge the posts INSIGHT already fetched. The scout is 0135/0137's "new sphere" move made
-automatic: the track names a sphere, the scout finds candidate sources for it, test-reads each through the add path
-(the feed finder, then page watching) into a scratch area, the track's judge rates what it read, and the owner sees
-"<source> (<platform>): 14 of its last 20 posts fit · 3 a week · reads well" with Follow as active / passive / Not this
-one. Nothing is followed without the owner's tap; nothing read is a post.
+A run finds candidate sources for a track's sphere, test-reads each through the add path (the feed finder, then page
+watching) into a scratch area (mx_scout_items), has the track's judge rate what it read, and shows the owner "<source>
+(<platform>): 14 of its last 20 posts fit · 3 a week · reads well" with Follow active / passive / Not this one.
+Nothing is followed without the owner's tap; nothing read is a post.
 
-**When** (`start`): the owner's tap on the Topic view; and `weekly` (`due_weekly`, run by insight-ingestion's hook):
-every described track once a week (0235: before, only one with fewer than WEEKLY_MIN items in or ✓ in 7 days, so a
-healthy track was never scouted for better sources); a starving one (fewer than WEEKLY_MIN) goes first. One weekly run
-is started a tick, none while another weekly run is open, so the tracks' runs follow each other.
+**When** (`start`): the owner's tap, and weekly (`due_weekly`, insight-ingestion's hook): every described track once
+a week, starving ones (fewer than WEEKLY_MIN items in) first, one weekly run open at a time.
 
-**Candidates, three finders** (no request):
-  1. `match`: the link targets of the track's in and ✓ posts (quoted accounts are links too: a tweet's address is its
-     author's; 0235: so are the accounts an X or Bluesky post @mentions, post_links kind 'mention'), by Discover's
-     address key (0050): a site, a platform account, a code host's or model hub's owner
-     (entity_originals.platform_thing); never one you follow, never a reference, app, archive, document or paper
-     address (discover_rules.place_kind), never a key you answered "Not this one" for this track.
-  2. `shape`: for the platform classes INSIGHT reads, addresses built from the track's words (0147's learned lexicon
-     when 2+ items are in, else the description's words) and the names in its in-items: a platform's search feed for
-     the words where the platform offers one (Reddit's, the Hacker News class's feed service, the configured X bridge's
-     search), a subreddit named by a word, an account named by a name (a video channel, an X account through the
-     bridge). Platform classes only: no site is named here.
-  3. `haiku`: one `scout` task (guide scout-v1): the description, the excludes and the 10 best items; 20-30 sources
-     with platform, address and why. Never trusted as is: each is test-read like the others.
+**Candidates, three finders** (no request): 1. `match`: the link targets (and @mentions) of the track's in and ✓
+posts, by Discover's address key; never one you follow, never a reference, app, archive, document or paper address,
+never a key answered "Not this one"; 2. `shape`: platform-class addresses built from the track's words and names
+(search feeds, subreddits, accounts; no site is named here); 3. `haiku`: one `scout` task, each source test-read like
+the others, never trusted as is.
 
-**The test read** (scout_reads.Reader, the server's fetcher): at most MAX_READS candidates a run, in finder order with
-each finder's share (READ_SHARE, the rest refilled from the others), up to 20 newest items each into mx_scout_items.
-Its health (scout_reads.health): a candidate that reads empty, undated, titles only or stopped is "can't read well:
-<why>", never suggested. 0240: the read scrapes regardless of a feed (the site's list pages when it has none; a feed's
-undated or titles-only items read from their own pages), so this is only what scraping also fails on.
+**The test read** (scout_reads.Reader): at most MAX_READS candidates a run, by each finder's share (READ_SHARE), up to
+20 newest items each; one that reads badly (scout_reads.health) is never suggested. **The judge**: each item a `track`
+task (subject 'scout_item'), at most MAX_JUDGEMENTS a run; precision = in / judged. **Suggested** (`suggestions`): read
+well, MIN_JUDGED+ judged, precision FLOOR+, ranked by precision then cadence. Following adds the source as POST
+/api/sources does and records its provenance (mx_source_provenance).
 
-**The judge**: each item a `track` task (0145's guide track-v1, subject 'scout_item', a = the item), at most
-MAX_JUDGEMENTS a run; an answer is copied to the item (`after_judge`). Precision = in / judged.
-
-**Suggested** (`suggestions`): read well, at least MIN_JUDGED judged, precision FLOOR or more; ranked by precision, then
-cadence. Following goes through the add path: the address the finder resolved (a feed, a watched page, or a kind's),
-added as POST /api/sources adds one; active joins the track's folder. A followed source records its provenance
-(mx_source_provenance), so its later precision in the track is shown (`followed`).
-
-**Cost guard** (per run): MAX_READS test reads, MAX_JUDGEMENTS judgements, one `scout` call, MAX_REQUESTS requests (the
-test reads' own budget, logged in mx_scout_runs.requests and stats).
-
-**Who advances a run** (`advance`): the API's background task after the tap, and insight-ingestion's hook after a
-scheduled run (`hook`), each claiming the run (busy_until) so two never read at once. A run waits while its `scout`
-question or its judgements are unanswered (the worker runs by hand), and reads the Haiku candidates once answered.
-With INSIGHT_DISCOVER_READS=0 (a machine that must not fetch) nothing is read.
-
-Only mx_* tables are written, except the owner's own Follow (a source added as the Add source dialog adds one).
+`advance` is called by the API after the tap and by insight-ingestion's hook (`hook`), each claiming the run
+(busy_until) so two never read at once. With INSIGHT_DISCOVER_READS=0 nothing is read. Only mx_* tables are written,
+except the owner's own Follow.
 """
 from __future__ import annotations
 
@@ -162,8 +137,8 @@ def address_of_key(key: str) -> str:
 # ---- the track's posts -------------------------------------------------------------------------------------
 
 def in_posts(cur: Cursor, folder_id: str, *, limit: int = MATCH_POSTS, since: Optional[datetime] = None) -> List[str]:
-    """The track's posts judged in or labelled ✓ (not ✗), newest first. Haiku's in from a source the owner switched
-    off is none (issue 0200: it feeds no suggestion); the owner's ✓ is the owner's."""
+    """The track's posts judged in or labelled ✓ (not ✗), newest first. Haiku's in from a source the owner switched off
+    is none (it feeds no suggestion); the owner's ✓ is the owner's."""
     from insight_core.db.repo_stories import suggestable_sql
     from insight_core.markx import tracks
     labels = tracks.labels(cur, folder_id)
@@ -304,7 +279,7 @@ def description_terms(track: Dict[str, Any], n: int = 6) -> List[str]:
 
 
 def track_terms(cur: Cursor, track: Dict[str, Any], pos: Sequence[str]) -> List[str]:
-    """0147's learned terms when 2+ items are in (its lexicon over the in items), else the description's words."""
+    """The learned terms when 2+ items are in (finders' lexicon over the in items), else the description's words."""
     if len(pos) >= 2:
         try:
             from insight_core.markx import finders
@@ -488,8 +463,8 @@ def _stats(cur: Cursor, run_id: str, **more: Any) -> None:
 
 
 def due_weekly(cur: Cursor, now: Optional[datetime] = None) -> List[str]:
-    """The described tracks with no scout in the last WEEK (0235: every one, MAX_READS and the budgets a run as
-    before), those with fewer than WEEKLY_MIN items in or ✓ in 7 days (starving) first, then the longest unscouted."""
+    """The described tracks with no scout in the last WEEK, those with fewer than WEEKLY_MIN items in or ✓ in 7 days
+    (starving) first, then the longest unscouted."""
     from insight_core.markx import tracks
     now = now or _now()
     out = []
@@ -504,8 +479,8 @@ def due_weekly(cur: Cursor, now: Optional[datetime] = None) -> List[str]:
 
 
 def weekly_open(cur: Cursor, now: datetime) -> bool:
-    """0235: whether a weekly run started in the last WEEK is still open (running or waiting): the next track's waits
-    for it (an older one never holds the others)."""
+    """Whether a weekly run started in the last WEEK is still open (running or waiting): the next track's waits for it
+    (an older one never holds the others)."""
     cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_scout_runs WHERE trigger = 'weekly' AND status IN ('running', 'waiting')
                                      AND started_at > %s)""", (now - WEEK,))
     return bool(cur.fetchone()[0])
@@ -711,7 +686,7 @@ async def tick(db_url: str, *, reader: Optional[Any] = None, now: Optional[Calla
     out: Dict[str, Any] = {"started": [], "advanced": []}
     try:
         with database.transaction(db_url) as cur:
-            due = [] if weekly_open(cur, clock()) else due_weekly(cur, clock())   # 0235: one weekly run at a time
+            due = [] if weekly_open(cur, clock()) else due_weekly(cur, clock())   # one weekly run at a time
             for folder_id in due[:1]:
                 out["started"].append(start(cur, folder_id, trigger="weekly", now=clock())["id"])
         with database.transaction(db_url) as cur:
@@ -922,9 +897,8 @@ __all__ = ["add_candidates", "advance", "after_answer", "after_judge", "due_week
 
 
 def with_scouts(hook: Optional[Callable[[], Awaitable[Any]]], db_url: str) -> Callable[[], Awaitable[Any]]:
-    """insight-ingestion's after-the-story-job hook (0216: markx/jobs.Jobs.after_stories), then the scouts' tick
-    (0148: the weekly scouts, the open runs advanced) and the research runs' (0162). Each guarded: none fails the
-    others or the run."""
+    """insight-ingestion's after-the-story-job hook (markx/jobs.Jobs.after_stories), then the scouts' tick (the weekly
+    scouts, the open runs advanced) and the research runs'. Each guarded: none fails the others or the run."""
     async def run() -> Any:
         out = None
         if hook is not None:

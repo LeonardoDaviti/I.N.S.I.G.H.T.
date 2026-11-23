@@ -1,41 +1,23 @@
-"""Mark X's incremental decision runs (issue 0116), their state kept in Postgres (issue 0169).
+"""Mark X's incremental decision runs, their state kept in Postgres (mx_inc_*), so a run in a fresh process reads only
+what changed since the last run.
 
-0116 kept what the last run read in the process (a memo) and re-read only what changed. Since the jobs left the API
-(0112 Decided 10) every decision run is a process of its own, so no run found a memo and every run was full: on the
-server 137 s, 28,902 texts read, 2.8 GiB in "questions and decisions". 0169 keeps the state in tables instead
-(migration 0113), so a run in a fresh process reads only what changed since the last run:
+  - A post's rules' view (decide.Post: voice, kind, time, word count) is kept in `mx_inc_posts` by its **stamp**
+    (plan_marks.STAMP); its text is read only when the stamp changed, or when a render that misses needs it.
+  - A question's input is kept by what it shows: `mx_inc_inputs` maps a render key (its kind, the stamps of the posts
+    it shows, their readings' row versions, any answer it shows) to the input's sha256; a key that misses is rendered
+    from the texts (`Lazy*`). Near-copies are kept the same way (`mx_inc_copies`).
+  - The answers are read for the tasks a run asks, never every call of every task. The dirty set is every judge task
+    whose (status, valid calls) changed since the last run (`mx_inc_tasks`), reported with its closure.
+  - News keeps the last run's inputs and rows (`mx_inc_state.news`) and is made again only for the rows the changed
+    stories, posts or surges reach.
 
-  - **What a run needs of a post is small.** The rules read a post's voice (a repost's author when a source follows
-    that author, else its source), kind, time and word count (decide.Post);
-    the reading's kind and events; whether it was read. Those come from `mx_inc_posts` (kept by the post's **stamp**,
-    plan_marks.STAMP: the row versions of what tasks.load_posts reads) and from mx_readings' own columns. A post's
-    text is read only when its stamp changed (or it is new), and when a render that misses needs it (below).
-  - **A question's input is kept by what it shows.** Each render (check, join, pair, merge, card, connect, headline,
-    a News row's headline) is keyed by its kind, the stamps of the posts it shows (and their readings' row versions
-    where it shows a reading) and any answer it shows (a merge's cards): `mx_inc_inputs` holds key -> the input's
-    sha256, which is all a run needs to find the question's task and its answer. A key that misses is rendered from
-    the texts, read then (`Lazy*`). Near-copies (0112 bug 3) are kept the same way by their members' stamps
-    (`mx_inc_copies`).
-  - **The answers** are read for the tasks a run asks (the ones its kept inputs name, in one query, then any other on
-    first use), never every call of every task.
-  - **The dirty set** is still every judge task whose (status, valid calls) changed since the last run, now against
-    `mx_inc_tasks` (what the last run saw); it is reported with its closure (`counts.run`), as 0116 did.
-  - **News** keeps the last run's inputs and rows (`mx_inc_state.news`), so it is made again only for the rows the
-    changed stories reach (0116's `news.write`). 0177: and the rows of the posts whose StoryPost inputs changed (their
-    text stamp, their links' resolution) or whose Mark IX surge did, by digests kept with them; in full only when the
-    source facts a StoryPost reads changed (or no digests were kept).
+**The rules still run over the whole world** (they cost little next to reading); only the reading is incremental,
+and every kept result is keyed by the content it was made from, so a matching key gives what a render would.
 
-**The rules still run over the whole world**: the plan, glue, merges, the second pass and the matching of stories are
-global and cost little next to reading (0116: 50 ms on 6,606 posts); running them in full is what keeps the result a
-full run's. Only the reading is incremental, and every kept result is keyed by the content it was made from, so a key
-that matches can only give what a render would.
-
-**When a run is full** (nothing kept is trusted, everything is read and the state written again): no state, or not
-the last finished run's (a run that failed rolls its state back with it, so the state stays the last finished run's
-and the next run is incremental), the code (`reading_stamp`: the modules whose code makes what is kept), config or a
-guide changed, nightly (the first run after NIGHTLY_HOUR), and with `run(full=True)`. A full run with a state first
-reads the snapshot as an incremental run would (writing nothing), then in full; any difference is logged as an
-incremental-run bug (`counts.check`). The first run after deploying 0169 is full: it writes the state.
+**A run is full** (nothing kept trusted, the state written again) when there is no state, or not the last finished
+run's, when the code (`reading_stamp`), config or a guide changed, nightly (the first run after NIGHTLY_HOUR), and
+with `run(full=True)`. A full run with a state first reads the snapshot incrementally (writing nothing) and logs any
+difference as an incremental-run bug (`counts.check`): the incremental and full readings must agree.
 """
 from __future__ import annotations
 
@@ -52,7 +34,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequ
 from uuid import UUID
 
 from insight_core.markx import schemas
-from insight_core.markx.unchanged import table_stamps   # 0183: one table stamp for every pass
+from insight_core.markx.unchanged import table_stamps   # one table stamp for every pass
 
 log = logging.getLogger(__name__)
 
@@ -63,15 +45,12 @@ NIGHTLY_HOUR = 4                                                   # server time
 HUB, HUB_MIN = 0.25, 40                                            # a closure over this share of 40+ stories: flagged
 GUIDE = "read-v2"                                                  # the readings the decisions read (tasks.readings)
 NAME = "decide"                                                    # mx_inc_state's row
-TEXT_PAGE = 2000                                                   # 0204: the posts whose texts a reading reads at once
-# v10.25 (0227): a reading holds at most TEXT_KEEP texts (and as many readings) at once, the least recently used let
-# go (read again from the run's one snapshot when used again). The posts read again (State.stale) are read ahead in the
-# order the questions show them (`prefetch`), TEXT_PAGE at a time; all at once when they fit in a page (an incremental
-# run). Before, a full reading kept every text and reading it rendered: the first full run after a deploy peaked at
-# ~1.1 GB on the server in "questions and decisions" (787 MB on the server-shaped clone, 321 MB before the questions).
+TEXT_PAGE = 2000                                                   # the posts whose texts a reading reads at once
+# a reading holds at most TEXT_KEEP texts (and as many readings) at once, the least recently used let go (read again
+# from the run's one snapshot when used again). The posts read again (State.stale) are read ahead in the order the
+# questions show them (`prefetch`), TEXT_PAGE at a time (memory, 0227).
 TEXT_KEEP = 3 * TEXT_PAGE
-# The modules whose code makes what the state keeps, by the part of it they make (0215; before, one stamp of all of
-# them: any change made the next run full, a full reading of the window: 92-93 s on the server after each deploy):
+# The modules whose code makes what the state keeps, by the part of it they make:
 #   - the reading's (the rules' posts, the renders, near-copies): a change makes the next run full (`reading_stamp`,
 #     in the state's key). decide.run and decide.snapshot are left out: they run the stages, they make nothing kept;
 #   - News' rows (`news_stamp`, kept with them): a change makes the next run's News full, its reading incremental.
@@ -83,20 +62,19 @@ NEWS_MODULES = ("insight_core.markx.news", "insight_core.utils.news_rules", "ins
                 "insight_core.db.repo_stories", "insight_core.db.repo_news")
 NOT_KEPT = {"insight_core.markx.decide": ("run", "snapshot")}   # the reading's code that makes nothing kept
 
-# The state's own version, in the key with reading_stamp: v2 keeps each post's voice (a followed author's repost counts
-# as that author), so the first run after it is full and writes every post again.
-STATE_VERSION = "inc-v2-voices"   # v10.15: the voice a post counts as (voice.counted_source, then pairing's)
+# The state's own version, in the key with reading_stamp: a change makes the next run full.
+STATE_VERSION = "inc-v2-voices"   # the voice a post counts as (voice.counted_source, then pairing's)
 
 
 def reading_stamp() -> str:
-    """0215: the sha256 of the reading's code (READING_MODULES, NOT_KEPT's functions left out): in the state's key."""
+    """The sha256 of the reading's code (READING_MODULES, NOT_KEPT's functions left out): in the state's key."""
     if "reading" not in _stamps:
         _stamps["reading"] = _stamp(READING_MODULES, skip=NOT_KEPT)
     return _stamps["reading"]
 
 
 def news_stamp() -> str:
-    """0215: the sha256 of the code that makes News' rows (NEWS_MODULES): kept with them (`State.news["code"]`)."""
+    """The sha256 of the code that makes News' rows (NEWS_MODULES): kept with them (`State.news["code"]`)."""
     if "news" not in _stamps:
         _stamps["news"] = _stamp(NEWS_MODULES, skip={})
     return _stamps["news"]
@@ -207,10 +185,10 @@ class State:
     want: Optional[Dict[str, Dict[str, Tuple]]] = None             # the last run's memberships, by final story key
     surges: Optional[Tuple[Tuple, List[Any]]] = None               # (news_surges' stamp, the surges as news reads them)
     report: Dict[str, Any] = field(default_factory=dict)           # this run's dirty set and reading, for counts.run
-    why_full: Optional[Dict[str, Any]] = None                      # v10.22.2: why open_state found no warm state
+    why_full: Optional[Dict[str, Any]] = None                      # why open_state found no warm state
     # the judge tasks and their answers
     tasks: Dict[Tuple[str, str], Tuple[str, str, int, bool]] = field(default_factory=dict)   # (kind, hash) -> (id,
-    # status, n, whether it is under an earlier guide: v10.34)
+    # status, n, whether it is under an earlier guide)
     keys: Dict[str, Tuple[str, str]] = field(default_factory=dict)  # task id -> (kind, input hash)
     was: Dict[str, Tuple[str, int]] = field(default_factory=dict)  # task id -> (status, n) as the last run saw it
     calls: Dict[str, List[Tuple[Dict[str, Any], str]]] = field(default_factory=dict)  # task id -> valid calls, oldest first
@@ -223,7 +201,7 @@ class State:
     kinds: Dict[str, Any] = field(default_factory=dict)            # post -> its reading's kind (read posts only)
     events: Dict[str, Any] = field(default_factory=dict)           # post -> its reading's events
     texts: Dict[str, Any] = field(default_factory=dict)            # post -> tasks.Post, as read this run
-    stale: Set[str] = field(default_factory=set)                   # v10.22: the posts read again this run (their texts next)
+    stale: Set[str] = field(default_factory=set)                   # the posts read again this run (their texts next)
     readings: Dict[str, dict] = field(default_factory=dict)        # post -> its reading, as read this run
     # the kept results, by the content they were made from
     inputs_kept: Dict[str, str] = field(default_factory=dict)      # render key -> input hash (the last run's)
@@ -242,8 +220,8 @@ def _db(cur: Any) -> str:
 
 
 def _last_run(cur: Any) -> Optional[str]:
-    # v10.11: runs started in one transaction (the tests') share started_at; finished_at (clock_timestamp) tells them
-    # apart, where ctid alone did not once a run's row grew (0145's two kinds in its config) and moved on its page.
+    # runs started in one transaction (the tests') share started_at; finished_at (clock_timestamp) tells them apart
+    # (ctid does not once a row moves on its page).
     cur.execute("""SELECT id::text FROM mx_runs WHERE finished_at IS NOT NULL
                     ORDER BY started_at DESC, finished_at DESC, ctid DESC LIMIT 1""")
     row = cur.fetchone()
@@ -264,7 +242,7 @@ def open_state(cur: Any, key: str) -> Tuple[State, bool]:
     stamps, news, want = cur.fetchone()
     news = decode(news)
     if isinstance(news, dict) and news.get("code") != news_stamp():
-        news = None   # 0215: News' rows made by other code: this run makes them in full, its reading incremental
+        news = None   # News' rows made by other code: this run makes them in full, its reading incremental
     return State(db=db, key=key, full=False, run_id=row[0], stamps=decode(stamps) or {}, news=news,
                  want=decode(want)), True
 
@@ -273,8 +251,8 @@ KEY_PARTS = ("code", "reading", "accounts", "config", "guides")   # decide.run's
 
 
 def _why_full(row: Any, key: str, last: Optional[str]) -> Dict[str, Any]:
-    """v10.22.2, diagnostics: why the kept state is not warm: none kept, the key's parts that differ (a config's or
-    guides' own keys named), or the run that left it not the last finished one."""
+    """Diagnostics: why the kept state is not warm: none kept, the key's parts that differ, or the run that left it not
+    the last finished one."""
     if row is None:
         return {"state": "none"}
     if row[1] != key:
@@ -319,11 +297,8 @@ def nightly_due(cur: Any, now: datetime) -> bool:
 def refresh(cur: Any, state: State) -> Dict[str, Any]:
     """Every judge task's (status, valid calls) in one query, against what the last run saw (mx_inc_tasks): those that
     changed are the dirty tasks (reported only when the state is trusted). The table stamps say which of Mark IX's
-    tables changed. Then the kept inputs and near-copies (a trusted state only) and the answers of the tasks they
-    name, in one query (a full reading: every answer).
-
-    v10.17.2 (0204): each task's calls are counted by its own (mx_calls_task_idx), not by grouping every valid call
-    of every kind (~1M on the server, mostly reads and entities: 0.84 s a run at server scale, now 0.03 s)."""
+    tables changed. Then the kept inputs and near-copies (a trusted state only) and the answers of the tasks they name,
+    in one query (a full reading: every answer). Each task's calls are counted by its own index (mx_calls_task_idx)."""
     cur.execute("""SELECT t.id::text, t.kind, t.input_hash, t.status, c.n, t.a::text, t.b::text, s.status, s.n, t.guide
                      FROM mx_tasks t
                      CROSS JOIN LATERAL (SELECT count(*) n FROM mx_calls c WHERE c.task_id = t.id AND c.valid) c
@@ -333,8 +308,8 @@ def refresh(cur: Any, state: State) -> Dict[str, Any]:
     order = {k: schemas.answer_guides(k) for k in KINDS}
     rank: Dict[Tuple[str, str], Tuple[bool, int]] = {}
     for tid, kind, h, status, n, a, b, s_status, s_n, guide in cur.fetchall():
-        # 0258: a question is its task under the kind's current guide, else under an earlier one (decide.Ask.answer);
-        # v10.34: an answered task first (one asked again under the current guide keeps the earlier answer meanwhile)
+        # a question is its task under the kind's current guide, else under an earlier one (decide.Ask.answer); an
+        # answered task first (one asked again under the current guide keeps the earlier answer meanwhile)
         r = (status != "answered", order[kind].index(guide) if guide in order[kind] else len(order[kind]))
         if r <= rank.get((kind, h), r):
             index[(kind, h)] = (tid, status, int(n), r[1] > 0)
@@ -404,9 +379,9 @@ def stamps_of(cur: Any, state: State, ids: Iterable[str]) -> Dict[str, str]:
 
 
 def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict[str, Any], "LazyReadings"]:
-    """The world's posts as the rules read them (decide.Post), their texts and their readings, both read on use. A
-    post's rules' Post is kept by its stamp: read again (its text) only when the stamp changed or it is new (a full
-    reading: every post's), a page at a time; none of those texts is kept (v10.17.2, 0204)."""
+    """The world's posts as the rules read them (decide.Post), their texts and readings both read on use. A post's
+    decide.Post is kept by its stamp: read again only when the stamp changed or it is new (a full reading: every
+    post's), a page at a time; none of those texts is kept."""
     from insight_core.markx import decide, tasks
     from insight_core.markx.plan_marks import execute
     ids = sorted(set(ids))
@@ -437,30 +412,29 @@ def world(cur: Any, state: State, ids: Iterable[str]) -> Tuple["LazyTexts", Dict
     else:
         stamps_of(cur, state, ids)
         stale = [i for i in ids if i in state.stamp]
-    for k in range(0, len(stale), TEXT_PAGE):   # v10.17.2 (0204): a page of texts at a time, none kept (below)
+    for k in range(0, len(stale), TEXT_PAGE):   # a page of texts at a time, none kept (below)
         part = stale[k:k + TEXT_PAGE]
         got = tasks.load_posts(cur, part)
         for pid in part:
             p = got.get(pid)
             if p is None:
                 continue
-            rules[pid] = decide.Post(pid, p.voice, p.kind, p.at, tasks.words(p))   # 0168 E: the voice it counts as
+            rules[pid] = decide.Post(pid, p.voice, p.kind, p.at, tasks.words(p))   # the voice it counts as
             state.fresh_posts[pid] = (state.stamp[pid], p.source_id, p.voice, p.kind, p.at, rules[pid].words)
         state.report["texts_loaded"] += len(got)
     state.report["texts_read"] = len(stale)
     state.stale = {pid for pid in stale if pid in rules}
     state.rules = {pid: rules[pid] for pid in ids if pid in rules}
     from insight_core.markx import reading5
-    order = reading5.guides(cur, GUIDE)   # 0212: as tasks.readings(ids): ent-v5's first while its switch is on
+    order = reading5.guides(cur, GUIDE)   # as tasks.readings(ids): ent-v5's first while its switch is on
     cur.execute("""SELECT DISTINCT ON (post_id) post_id::text, guide || xmin::text || ctid::text, reading->'kind',
                           reading->'events' FROM mx_readings
                     WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[])
                     ORDER BY post_id, array_position(%s::text[], guide)""", (order, ids, order))
     for pid, stamp, kind, events in cur.fetchall():
         state.read_stamp[pid], state.kinds[pid], state.events[pid] = stamp, kind, events
-    # v10.17.2 (0204): the texts and readings are read when a render shows them (`rendered`: its posts' in one query),
-    # on a full reading too: it held every post's text and reading for the whole reading (130k posts, ~2.7 GB at
-    # server scale, the full run's peak), of which the questions show a few thousand
+    # the texts and readings are read when a render shows them (`rendered`), on a full reading too: the questions show
+    # only a few thousand posts of the world (memory, 0204)
     return LazyTexts(cur, state), state.rules, LazyReadings(cur, state)
 
 
@@ -477,10 +451,8 @@ class LazyTexts(Mapping):
         self.cur, self.state = cur, state
 
     def load(self, ids: Iterable[str]) -> Dict[str, Any]:
-        """The texts of `ids`, read when first used (those not held, in one query), held as the most recently used.
-        v10.22: the reading's renders read their texts a page at a time, not a render at a time (the server: ~62k
-        loads of ~8 posts in 104 minutes, each its own planned statements); v10.25 (0227): read ahead by `prefetch`,
-        in the order the questions show them, and at most TEXT_KEEP held (`_hold`)."""
+        """The texts of `ids`, read when first used (those not held, in one query), held as the most recently used (at
+        most TEXT_KEEP, `_hold`); `prefetch` reads them ahead in the order the questions show them."""
         from insight_core.markx import tasks
         s = self.state
         ids = list(dict.fromkeys(ids))
@@ -506,15 +478,15 @@ class LazyTexts(Mapping):
     def __len__(self) -> int:
         return len(self.state.rules)
 
-    def items(self):   # every text, a page at a time (v10.25: never all of them held at once)
+    def items(self):   # every text, a page at a time (never all of them held at once)
         ids = list(self.state.rules)
         for k in range(0, len(ids), TEXT_PAGE):
             yield from self.load(ids[k:k + TEXT_PAGE]).items()
 
 
 def _hold(cache: Dict[str, Any], ids: Sequence[str]) -> None:
-    """v10.25 (0227): `ids` of the cache (a reading's texts or readings) made its most recently used (its end); past
-    TEXT_KEEP, the least recently used let go, never one of `ids`."""
+    """`ids` of the cache (a reading's texts or readings) made its most recently used (its end); past TEXT_KEEP, the
+    least recently used let go, never one of `ids`."""
     for i in ids:
         if i in cache:
             cache[i] = cache.pop(i)
@@ -526,14 +498,11 @@ def _hold(cache: Dict[str, Any], ids: Sequence[str]) -> None:
 
 
 def prefetch(texts: "LazyTexts", readings: Optional["LazyReadings"], groups: Iterable[Sequence[str]]) -> None:
-    """v10.25 (0227): of `groups` (the posts each of the next questions shows, in the order they are asked), the
-    texts (and with `readings`, the readings) a render will need read in one query each when not held, and the held
-    ones kept: the renders that follow find them. A render needs them when it misses its kept input, and it misses
-    when it shows a post the reading read again (State.stale: the post's stamp, so the input's key, changed): then all
-    the posts it shows. v10.34: was only the stale posts themselves, so in an incremental run each such render (a new
-    post's join question shows every member of the story) read its unchanged posts in a query of its own (production:
-    ~4,500 load_posts calls in 30 minutes). When the posts read again fit in a page (an incremental run), all of them
-    at once, as the first render did before."""
+    """Of `groups` (the posts each of the next questions shows, in the order they are asked), the texts (and with
+    `readings`, the readings) a render will need, read in one query each when not held, the held ones kept. A render
+    needs them when it misses its kept input, which it does when it shows a post read again (State.stale): then all the
+    posts it shows, not only the stale ones (else each render reads its unchanged posts in a query of its own). When the
+    posts read again fit in a page (an incremental run), all of them at once."""
     s = texts.state
     shown: List[str] = []
     missing: Set[str] = set()   # the posts of the renders that will miss
@@ -549,12 +518,10 @@ def prefetch(texts: "LazyTexts", readings: Optional["LazyReadings"], groups: Ite
 
 
 def release(state: State) -> None:
-    """0183: the texts and readings this run read, let go once the reading is done (the decision run's stages after
-    News read neither; were held to the run's end, beside the entity book: a full run's every text). A text or reading
-    used after is read again, from the run's one snapshot. v10.23 (0218): and the answers it read (every kept question's
-    calls: ~63k answers a run on the server), read again on use (`calls_of`; Ask.later reads them by query); and what
-    only the renders read of each post (its text and reading stamps, its reading's kind and events: no render follows
-    News, the briefing's input is its own text); of the world's posts, `save` reads only which they are."""
+    """The texts, readings and answers this run read, let go once the reading is done (the stages after News read
+    neither); a text, reading or answer used after is read again from the run's one snapshot (`calls_of`; Ask.later
+    reads them by query). Also what only the renders read of each post (its stamps, its reading's kind and events); of
+    the world's posts, `save` reads only which they are."""
     state.texts.clear()
     state.readings.clear()
     state.calls.clear()
@@ -574,14 +541,14 @@ class LazyReadings(Mapping):
         self.cur, self.state = cur, state
 
     def prefetch(self, ids: Iterable[str]) -> None:
-        """The readings of `ids` read when not held (one query), held as the most recently used (v10.25: at most
-        TEXT_KEEP, `_hold`)."""
+        """The readings of `ids` read when not held (one query), held as the most recently used (at most TEXT_KEEP,
+        `_hold`)."""
         from insight_core.markx import tasks
         s = self.state
         ids = [i for i in dict.fromkeys(ids) if i in s.kinds]
         missing = sorted(i for i in ids if i not in s.readings)
         if missing:
-            s.readings.update(tasks.readings(self.cur, missing))   # 0212: the preferred reading
+            s.readings.update(tasks.readings(self.cur, missing))   # the preferred reading
         _hold(s.readings, ids)
 
     def __getitem__(self, pid: str) -> dict:
@@ -645,9 +612,8 @@ def _fingerprint(state: State, ids: Sequence[str], reads: bool) -> str:
 
 
 def ahead(state: State, ids: Iterable[str]) -> None:
-    """v10.22: of the posts read again (State.stale), only those a question can show (`ids`: decide.load's) are read
-    ahead with a render's miss; a post no question shows is read only if something asks for it (no text more is kept
-    than before: a full run on the mxreal copy 164 MB either way)."""
+    """Of the posts read again (State.stale), only those a question can show (`ids`: decide.load's) are read ahead with
+    a render's miss; a post no question shows is read only if something asks for it."""
     keep = set(ids)
     state.stale = {pid for pid in state.stale if pid in keep}
 

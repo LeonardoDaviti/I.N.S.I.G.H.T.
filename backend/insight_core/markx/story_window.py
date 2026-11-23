@@ -1,24 +1,15 @@
-"""The story window (issue 0144 A, C): how far back Mark X makes its own stories, as the owner sets it on /markx.
+"""The story window: how far back Mark X makes its own stories, as the owner sets it on /markx.
 
-  - **The setting** (`story_window_days` in mx_settings, beside the reading window): a number of days, or null for
-    every post ("everything"); 30 when never set (corrections 8's window, as before). Read on every run: the decision
-    run's window (`decide.Config.days`), the candidate finder's backfill and `tasks.plan_checks` use it. News keeps
-    its own window (`NEWS_DAYS`, `news.NEWS_KEEP`): an old story never enters News.
-  - **The backfill is newest first and resumable** (`story_backfill` in mx_settings: the oldest day reached). Past
-    RECENT days the decision window grows backwards STEP_DAYS at a time, from the newest day: the candidate finder
-    first finds the candidates of the next step's posts (CANDIDATE_PAGE a run, newest first, the same four sources and
-    rules), and the window steps back only once they are found and the run left no old question waiting. A stopped
-    or failed run resumes from the day reached. v10.13.9: a step also needs room (`room`): the run that just finished
-    used under ROOM_SHARE of its limit and its entities stage stayed within ENTITY_SLACK times its budget; else the
-    window holds and says why (each step makes every later run bigger).
-  - **Questions in pages**: while the window reaches past RECENT days, a run adds at most BACKFILL_PAGE new questions
-    a kind about posts older than RECENT days (newest first), at priority BACKFILL_PRIORITY, so a worker's lease mixes
-    them with today's instead of queueing them behind every new one.
-  - **Old Mark IX stories are inputs, not answers**: their pairs are checked as today (`check`), so the stories Mark X
-    makes over history are its own.
-  - **The fallback** (0144 C): with the window at everything, once MIN_LABELS old stories (first post older than
-    RECENT days) are labelled on the entity pages and their precision is under KEEP_PRECISION, the window falls back
-    to the last window the owner set before everything (else RECENT), and says why.
+  - **The setting** (mx_settings KEY): days, or null for every post; RECENT when never set. Read by the decision run
+    (`decide.Config.days`), the candidate finder's backfill and `tasks.plan_checks`. News keeps its own window.
+  - **The backfill is newest first and resumable** (mx_settings BACKFILL: the oldest day reached): past RECENT days the
+    window grows back STEP_DAYS at a time, once the candidate finder found the next step's candidates and no old
+    question waits, and only with room (`room`: each step makes every later run bigger).
+  - **Questions in pages**: at most BACKFILL_PAGE new questions a kind a run about posts older than RECENT, at
+    BACKFILL_PRIORITY, so a lease mixes them with today's.
+  - **Old Mark IX stories are inputs, not answers**: their pairs are checked as today's.
+  - **The fallback**: with the window at everything, once MIN_LABELS old stories are labelled and their precision is
+    under KEEP_PRECISION, the window falls back to the last one set before (else RECENT), and says why.
 """
 from __future__ import annotations
 
@@ -30,14 +21,14 @@ from insight_core.markx import pairing, repo
 KEY = "story_window_days"            # mx_settings: the owner's story window (int days, or null: every post)
 PREVIOUS = "story_window_previous"   # mx_settings: the window set before "everything" (the fallback's)
 BACKFILL = "story_backfill"          # mx_settings: {"reached": the oldest day the decision window reaches, ISO date}
-RECENT = 30                          # the decision window before 0144 (tasks.PLAN_DAYS); never a backfill inside it
+RECENT = 30                          # the decision window by default (tasks.PLAN_DAYS); never a backfill inside it
 STEP_DAYS = 7                        # the backfill reaches this many days further back a step
 BACKFILL_PAGE = 200                  # new questions a kind a run may add about posts older than RECENT days
 BACKFILL_PRIORITY = 1                # their priority: after today's (0), with yesterday's
-CANDIDATE_PAGE = 1000                # posts the candidate finder's backfill reads a run, newest first (about 11 s: 10.7 ms a post measured)
-KEEP_PRECISION = 0.97                # old stories' precision to keep the window at everything (0144 C)
+CANDIDATE_PAGE = 1000                # posts the candidate finder's backfill reads a run, newest first
+KEEP_PRECISION = 0.97                # old stories' precision to keep the window at everything
 MIN_LABELS = 20                      # labelled old stories before the precision counts
-ROOM_SHARE = 0.5                     # v10.13.9: a step back only after a run under this share of its limit (`room`)
+ROOM_SHARE = 0.5                     # a step back only after a run under this share of its limit (`room`)
 ENTITY_SLACK = 2.0                   # ... whose entities stage stayed within this many times its budget
 
 
@@ -143,10 +134,9 @@ def oldest_post(cur: Any) -> Optional[datetime]:
 
 def room(seconds: float, limit: float, *, entities: Optional[float] = None,
          entity_budget: Optional[float] = None) -> Optional[str]:
-    """v10.13.9: why the window must hold, or None when the run that just finished left room for a bigger one: it used
-    under ROOM_SHARE of the limit (`seconds`: what the limit counts, the entities stage apart) and its entities stage
-    stayed within ENTITY_SLACK times its budget. Every step makes the next run bigger (on the server the backfill
-    reached February and the runs were killed or stopped for hours), so a step needs room, not only a success."""
+    """Why the window must hold, or None when the run that just finished left room for a bigger one: it used under
+    ROOM_SHARE of the limit (`seconds`, the entities stage apart) and its entities stage stayed within ENTITY_SLACK
+    times its budget. Every step makes the next run bigger, so a step needs room, not only a success."""
     if seconds >= ROOM_SHARE * limit:
         return f"held: run took {seconds:.0f} s (steps back under {ROOM_SHARE * limit:.0f} s, {ROOM_SHARE:.0%} of {limit:.0f} s)"
     if entities is not None and entity_budget is not None and entities > ENTITY_SLACK * entity_budget:
@@ -157,11 +147,10 @@ def room(seconds: float, limit: float, *, entities: Optional[float] = None,
 
 def advance(cur: Any, now: datetime, *, waiting_old: int, candidates_left: int,
             held: Optional[str] = None) -> Dict[str, Any]:
-    """After a decision run: the backfill steps STEP_DAYS further back when the run left no old question waiting and
-    the candidate finder found every post of the next step, never past the window or the oldest post; a step with no
-    post goes on to the week of the next older post (a misdated post years back costs one step, not hundreds). The state as
-    the page shows it: {"reached", "done", "stepped"}. v10.13.9: `held` (room's why) keeps it where it is, and says so
-    ({"held": why})."""
+    """After a decision run: the backfill steps STEP_DAYS further back when the run left no old question waiting and the
+    candidate finder found every post of the next step, never past the window or the oldest post; a step with no post
+    goes on to the week of the next older post. `held` (room's why) keeps it where it is. The state as the page shows
+    it: {"reached", "done", "stepped"} or {"held": why}."""
     state = dict(repo.get_setting(cur, BACKFILL, default=None) or {})
     if not backfilling(cur):
         return {"reached": state.get("reached"), "done": False, "stepped": False}

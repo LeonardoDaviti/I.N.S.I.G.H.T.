@@ -1,50 +1,19 @@
-"""Is this worth it? (issue 0173, Stealth v10.15): a candidate source judged by the worker, on the owner's tap, and
-(0235) every day for the Discover suggestions growing fastest (`daily`).
+"""Is this worth it?: a candidate source judged by the worker, on the owner's tap, and every day for the Discover
+suggestions growing fastest (`daily`). The owner still decides: Follow goes through the Add source dialog.
 
-Owner decision 2026-11-12: no trial follow and no spend cap for a new source; instead the worker says, on request,
-whether the reader would care about it. Asked from Discover's rows (every section, its other channels and "The main
-source is missing") and from the Add source dialog once the finder found a feed or a page. The owner still decides:
-Follow goes through the Add source dialog, as every add.
+    got = ask(cur, address)                  # the cached judgement (CACHE_DAYS), or a new one to read: {.., needs_read}
+    await read_and_ask(db_url, got["id"])    # the test read, the measured signals and the `source_judge` question
+    view(row)                                # what the page shows
 
-    got = ask(cur, address)             # the cached judgement (30 days), or a new one to read: {.., needs_read}
-    await read_and_ask(db_url, got["id"])   # the test read, the measured signals and the `source_judge` question
-    view(row)                           # what the page shows
-
-**The test read** (scout_reads.Reader, 0148's, the add path's own: a source kind's account through its kind, anything
-else through the feed finder, then page watching): up to ITEMS newest items, kept on the judgement row (never a post,
-never in a feed, nothing followed). Nothing is written but mx_source_judgements and the question (mx_tasks).
-
-**What INSIGHT measures** (`signals`, from code, never from the model):
-  - linked: how many of your (on) sources' posts link its address, and which sources;
-  - stories: your stories that started at its pages (Mark IX's origin pages, 2+ voices), and in the last 90 days;
-  - its items in your stories: of the items read, how many your sources link, how many started a story;
-  - rate and the newest item (the test read's health); its languages;
-  - reads (0149 E8: the model fails at it): full text in the feed, else up to PAGE_CHECKS item pages read as the
-    fetcher reads them (full_text.read_page): full from its pages, teasers, or a paywall the page states;
-  - repeats: its items you already have (the same address, or the same title in the last REPEAT_DAYS), from which
-    sources; the sources you follow on the same site;
-  - rewriter marks (very high rate, many languages, never first, rarely cited): each said, the pattern when the
-    rate is high and two more hold;
-  - followed before: a source at this address you turned off (its posts, opens, the stories it was first in).
-**The reader** (`interests`): the described tracks, the sources read most in 90 days (opens), what those reads are
-about (Mark X's subjects), the folders; ordered by what is read most.
-
-**The question**: kind `source_judge`, guide source-judge-v2, one candidate a call; the answer {verdict, reasons,
-examples, fits, original, filter} checked by the schema and validate._source_judge (each example an item the question
-shows). 0196: v2 adds the item filter (utils/item_filter.py): for a feed whose items mix releases and automatic builds,
-the rule that hides the builds (a release's tag is shown after its title; a releases feed is read up to FILTER_ITEMS
-items, the ones after ITEMS listed as OLDER TITLES for the filter only). Official channels (markx/official.py) ask it
-from the jobs process (`ask`, `read_and_ask`) and read the answer's `fits`, `verdict` and `filter`.
-
-**Every day** (0235, `daily`: the jobs process's official pass calls it, every OFFICIAL_EVERY): up to JUDGE_DAILY
-Discover suggestions not judged within CACHE_DAYS, the fastest growing first (discover_rules.growth: their linking
-sources mostly new), JUDGE_PASS a pass, through `ask` + `read_and_ask` as a tap, at DAILY_PRIORITY (a tap's PRIORITY
-still comes first). Before, the official pass checked 10 a day among the first 300 rows of Discover's order (link
-volume): a voice six of your sources had started linking sat at #4,000 of 4,349 and was never judged.
-
-**The cache**: an answered judgement is shown again for CACHE_DAYS (asking is free); one that could not be read, or
-whose question failed, is read again on the next tap (requests, no question). "Ask again" reads again; when the items
-read are the ones the last answer judged (`items_sig`), that answer stands (no question), else a new question.
+The test read (scout_reads.Reader, the add path's own) keeps up to ITEMS newest items on the judgement row (never a
+post, nothing followed). What INSIGHT measures (`signals`) comes from code, never the model: who links it, the stories
+it started, its items in your stories, rate and languages, how it reads (full, teasers, a paywall: the model fails at
+it), repeats, rewriter marks, whether you followed it before. The reader (`interests`): tracks, the sources read most,
+what those reads are about, the folders. The question (kind `source_judge`, guide source-judge-v2) answers {verdict,
+reasons, examples, fits, original, filter}; `filter` is the item filter for a feed mixing releases and automatic builds
+(utils/item_filter.py), read by markx/official.py. The cache: an answered judgement stands CACHE_DAYS; "Ask again"
+reads again and keeps the answer when the items read are the same (`items_sig`). Writes mx_source_judgements and
+mx_tasks only.
 """
 from __future__ import annotations
 
@@ -67,7 +36,7 @@ log = logging.getLogger(__name__)
 KIND = "source_judge"
 SUBJECT = "source_candidate"
 ITEMS = 10                    # the newest items a judgement reads and shows
-FILTER_ITEMS = 30             # 0196: a releases feed's items read for its item filter (the rest as OLDER TITLES)
+FILTER_ITEMS = 30             # a releases feed's items read for its item filter (the rest as OLDER TITLES)
 ITEM_CHARS = 500              # an item's text the question shows
 TITLE_CHARS = 200             # an item's title the question shows (a post's title may be its whole text)
 CACHE_DAYS = 30
@@ -75,13 +44,13 @@ PAGE_CHECKS = 2               # item pages read to tell full text from teasers (
 REPEAT_DAYS = 60
 LINK_DAYS = 90
 PRIORITY = -5                 # the owner is waiting: leased before the planners' questions
-JUDGE_DAILY = 15              # 0235: Discover's suggestions the worker judges a day (`daily`)
-JUDGE_PASS = 5                # 0235: of those, at most this many a pass (each a test read, in the pass's process)
-DAILY_PRIORITY = -2           # 0235: after the owner's taps (-5), with the official channels' (-2), before planners (0)
+JUDGE_DAILY = 15              # Discover's suggestions the worker judges a day (`daily`)
+JUDGE_PASS = 5                # of those, at most this many a pass (each a test read, in the pass's process)
+DAILY_PRIORITY = -2           # after the owner's taps (-5), with the official channels' (-2), before planners (0)
 CLAIM = timedelta(minutes=10)
 STUCK = timedelta(minutes=30)  # a read that never finished (a restart): read again on the next ask
 
-# Rewriter marks (0173, measured on the labelled set: plan/issues/0173-source-judge-on-request.md "Measured").
+# Rewriter marks (measured: plan/issues/0173).
 RATE_HIGH = 140.0             # items a week: 20 a day
 MANY_LANGUAGES = 3            # distinct languages among the items read
 RARELY_CITED = 1              # linked by at most this many of your sources
@@ -171,9 +140,9 @@ def _stuck(row: Dict[str, Any], now: datetime) -> bool:
 def ask(cur: Cursor, address: str, *, again: bool = False, now: Optional[datetime] = None,
         by: Optional[str] = None) -> Dict[str, Any]:
     """The owner's tap: the judgement of this address shown again while it is CACHE_DAYS fresh (or still being made),
-    else a new one to read (`needs_read`). `again`: read again even when fresh (the earlier answer stands when the
-    items read are the same). `by`: who asked a new one (0235: "daily"; None, the owner or the official channels).
-    ValueError: no address."""
+    else a new one to read (`needs_read`). `again`: read again even when fresh (the earlier answer stands when the items
+    read are the same). `by`: who asked a new one ("daily"; None: the owner or the official channels). ValueError: no
+    address."""
     now = now or _now()
     address = (address or "").strip()
     if not address.startswith(("http://", "https://")):
@@ -220,7 +189,7 @@ def _on_key(col: str) -> str:
 
 
 def linked(cur: Cursor, key: str, site: str, now: datetime) -> Dict[str, Any]:
-    """How many of your (on) sources' posts link (0235: or @mention) the key's addresses: {sources, posts, recent, names}."""
+    """How many of your (on) sources' posts link (or @mention) the key's addresses: {sources, posts, recent, names}."""
     cur.execute(f"""SELECT p.source_id::text, COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
                            count(DISTINCT pl.post_id),
                            count(DISTINCT pl.post_id) FILTER (WHERE {pairing.ix_date('p')} > %(since)s)
@@ -344,9 +313,8 @@ def followed_before(cur: Cursor, key: str, resolved: Optional[Dict[str, Any]]) -
 
 async def reads_of(http: Any, items: Sequence[Dict[str, Any]], resolved: Dict[str, Any], platform: str
                    ) -> Dict[str, Any]:
-    """How its items read, by code (0149 E8): {mode, median, evidence, checked}. mode: full (in the feed), full_page
-    (teasers in the feed, the article on its pages: INSIGHT reads it in full), teaser, paywalled, short (posts
-    complete as posted: a platform's), video, none."""
+    """How its items read, by code: {mode, median, evidence, checked}. mode: full (in the feed), full_page (teasers in
+    the feed, the article on its pages), teaser, paywalled, short (complete as posted: a platform's), video, none."""
     from insight_core.ingestion import full_text
     from insight_core.utils.addresses import host_of, site_of
     chars = [int(i.get("chars") or 0) for i in items]
@@ -392,9 +360,8 @@ async def reads_of(http: Any, items: Sequence[Dict[str, Any]], resolved: Dict[st
 
 
 def per_week(items: Sequence[Dict[str, Any]]) -> Optional[float]:
-    """Its items a week, from the span of the dated items read, in hours (at least one): 10 items in an hour is a
-    rate the read's day-floored cadence (scout_reads.health, at most 63 a week from 10 items) can't show. None: under
-    two dated items."""
+    """Its items a week, from the span of the dated items read, in hours (at least one), a rate the read's day-floored
+    cadence (scout_reads.health) can't show. None: under two dated items."""
     dates = sorted(d for d in (_dt(i.get("published_at")) for i in items) if d is not None)
     if len(dates) < 2:
         return None
@@ -438,7 +405,7 @@ def platform_of(key: str, resolved: Optional[Dict[str, Any]]) -> str:
 
 async def signals(cur: Cursor, http: Any, address: str, items: Sequence[Dict[str, Any]],
                   resolved: Dict[str, Any], now: datetime) -> Dict[str, Any]:
-    """Everything INSIGHT measures about the candidate (the module docstring)."""
+    """Everything INSIGHT measures about the candidate."""
     key, site, _ = address_key(cur, address)
     h = scout_reads.health([dict(i, published_at=_dt(i.get("published_at"))) for i in items], now)
     rate = per_week(items)
@@ -577,7 +544,7 @@ def question(address: str, resolved: Dict[str, Any], items: Sequence[Dict[str, A
 
 
 def read_limit(address: str) -> int:
-    """How many items a judgement reads: ITEMS, a releases feed FILTER_ITEMS (its item filter, 0196)."""
+    """How many items a judgement reads: ITEMS, a releases feed FILTER_ITEMS (its item filter)."""
     return FILTER_ITEMS if re.search(r"/releases(\.atom)?/?$", (address or "").split("?")[0]) else ITEMS
 
 
@@ -652,9 +619,9 @@ def reads_allowed() -> bool:
 
 async def read_and_ask(db_url: str, judgement_id: str, *, reader: Optional[Any] = None, http: Any = None,
                        now: Optional[Callable[[], datetime]] = None, priority: int = PRIORITY) -> Dict[str, Any]:
-    """The judgement's test read, its signals and its question (the API's background task; 0196: the official
-    channels' job, at its own `priority`). Claimed first; never raises for a site's failure; nothing written but the
-    judgement and the question."""
+    """The judgement's test read, its signals and its question (the API's background task, or the official channels'
+    job at its own `priority`). Claimed first; never raises for a site's failure; writes only the judgement and the
+    question."""
     from insight_core.db import database
     clock = now or _now
     with database.transaction(db_url) as cur:
@@ -697,13 +664,12 @@ def after_answer(cur: Cursor, task: Dict[str, Any], answer: Dict[str, Any]) -> i
     return cur.rowcount
 
 
-# ---- every day (0235) ----------------------------------------------------------------------------------------------
+# ---- every day ----------------------------------------------------------------------------------------------------
 
 def to_judge(suggestions: Sequence[Dict[str, Any]], judged: Sequence[str], limit: int) -> List[str]:
     """The Discover suggestions to judge next: every one not judged lately (`judged`: cache keys) whose follow test does
-    not say it can't be followed (0240: that test scrapes regardless of a feed, its list pages too, so the section
-    skipped is only what scraping also failed on), the fastest growing first (its `growth`, discover_rules.growth), then by
-    Discover's score, then its place in the list. Pure."""
+    not say it can't be followed, the fastest growing first (discover_rules.growth), then by Discover's score, then its
+    place in the list. Pure."""
     from insight_core.utils.discover_rules import section
     done = set(judged)
     pool = []
@@ -717,8 +683,8 @@ def to_judge(suggestions: Sequence[Dict[str, Any]], judged: Sequence[str], limit
 
 def daily(db_url: str, now: Optional[datetime] = None, *, reader: Optional[Any] = None,
           per_day: int = JUDGE_DAILY, per_pass: int = JUDGE_PASS) -> int:
-    """0235: up to `per_day` Discover suggestions judged a day (the judgements `by` "daily" asked in the last 24 hours
-    count), `per_pass` a call, picked by `to_judge` from the list Discover kept last; each `ask` then `read_and_ask` at
+    """Up to `per_day` Discover suggestions judged a day (the judgements `by` "daily" in the last 24 hours count),
+    `per_pass` a call, picked by `to_judge` from the list Discover kept last; each `ask` then `read_and_ask` at
     DAILY_PRIORITY, as a tap is. Returns how many were asked. A judgement's failure is its own (it says why)."""
     import asyncio
     from insight_core.db import database

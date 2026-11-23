@@ -1,20 +1,15 @@
-"""ent-v4.2 in Shadow (issue 0133, the handoff of 2026-11-08): the second question, its cue rule, the merge, and the
-owner's labels on the new entities. The lab's code (plan/research/lab/markx/proto: entv42_run.cue, entv4_sets.CUES,
-entv42_rule.shape / cite_fix / merge_cite / name_span / finish with the rule off, entv41_rule's text forms and
-own_title), ported with its tests (tests/test_markx_ent_v42.py).
+"""ent-v4.2: the second question (kind `cite`), its cue rule, the merge, and the owner's labels on the new entities.
+Ported from the lab's code with its tests (tests/test_markx_ent_v42.py).
 
-  - **The arm** (schemas.ENTITY_ARMS["ent-v4.2"]): the main question, guides/ent-v4.2.md at 6,000 characters with
-    ENTITIES_V4_SCHEMA. **The citation rule is off** for it (markx/citations.py is never called): it was 66-73%
-    right in the lab; it comes back with ent-v4.3's own-paper guard.
-  - **The second question** (kind `cite`, guides/cite-v1.md): every document and cited organisation or person, and
-    nothing else; at 6,000 characters plus the post's first 12 links; at most 30. Planned only while the switch is on
-    ent-v4.2, only for posts the cue rule picks (`cue`, about 15% of posts) and that have an ent-v4.2 entities task.
-  - **The merge** (`finish`): the post's own title dropped as a document (main and cite); the cite answer's
-    author-year people and orgs made documents (`cite_fix`); then `merge_cite` adds what the main answer lacks,
-    marked q2 (mx_mentions.rule = 'q2'). Whichever answer comes second does it: a main answer merges the post's
-    answered cite answer at once; a cite answer after the main one appends its new entities to the ent-v4.2 set.
-  - **Labels**: right / wrong on each new entity (a document, a `source`, a `recommended`, every q2 one), mx_labels
-    item kind `mention` (migration 0087), and the running precision with its Wilson interval.
+  - **The arm** (schemas.ENTITY_ARMS["ent-v4.2"]): the main question at 6,000 characters; the citation rule
+    (markx/citations.py) is off for it.
+  - **The second question** (guides/cite-v1.md): every document and cited organisation or person, at most 30.
+    Planned only while the switch is on ent-v4.2, for posts the cue rule picks (`cue`) that have an ent-v4.2 task.
+  - **The merge** (`finish`): the post's own title dropped as a document; the cite answer's author-year people and
+    orgs made documents (`cite_fix`); then `merge_cite` adds what the main answer lacks, marked q2. Whichever answer
+    comes second does it.
+  - **Labels**: right / wrong on each new entity (mx_labels item kind `mention`), and the running precision with its
+    Wilson interval.
 """
 from __future__ import annotations
 
@@ -26,7 +21,7 @@ from insight_core.markx import pairing, plan_marks, repo, schemas, tasks
 
 GUIDE = "ent-v4.2"
 CITE_KIND, CITE_GUIDE = "cite", "cite-v1"
-V5_GUIDE = "ent-v5"                         # 0212: ent-v5 keeps cite as its own question; its answer merges into both sets
+V5_GUIDE = "ent-v5"                         # ent-v5 keeps cite as its own question; its answer merges into both sets
 CITE_CHARS, CITE_LINKS = 6000, 12
 CITE_MAX = 30
 Q2 = "q2"                                  # mx_mentions.rule of an entity the second question added
@@ -159,9 +154,9 @@ def shape(url: Optional[str]):
 
 
 def cue(p: tasks.Post) -> bool:
-    """The second question's cue rule (the lab's population share 15.1%): a text of >= 800 characters with >= 2
-    distinct citation cues, or an in-text citation (author-year, arXiv id, DOI) in the first 6,000 characters, or one
-    of the first 12 links with a document shape."""
+    """The second question's cue rule: a text of >= 800 characters with >= 2 distinct citation cues, or an in-text
+    citation (author-year, arXiv id, DOI) in the first 6,000 characters, or one of the first 12 links with a document
+    shape."""
     t = (p.title or "") + " " + (p.text or "")
     if len(p.text or "") >= 800 and len(cues(t)) >= 2:
         return True
@@ -312,7 +307,7 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
              "at": after[0] if after else None, "id": after[1] if after else None})
         todo = [r for r in rows if str(r[0]) not in _not_cue]
         posts = tasks.load_posts(cur, [r[0] for r in todo])
-        passed = []   # v10.14: marked (plan_marks), so a fresh process doesn't read them again (84 s on the server)
+        passed = []   # marked (plan_marks), so a fresh process doesn't read them again
         for pid, age, _at, stamp in todo:
             if added >= limit:
                 break
@@ -359,15 +354,15 @@ def _cite_answer(cur: Any, post_id: Any) -> Optional[List[Dict[str, Any]]]:
 
 
 def main_mentions(cur: Any, post_id: Any, entities: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """An ent-v4.2 entities answer's mentions: its own title dropped, the post's cite answer merged when it came
-    first (tasks.record, `# 0133 v4.2`)."""
+    """An ent-v4.2 entities answer's mentions: its own title dropped, the post's cite answer merged when it came first
+    (tasks.record)."""
     _lock(cur, post_id)
     return [_mention(e) for e in finish(entities, _title(cur, post_id), _cite_answer(cur, post_id))]
 
 
 def window_mentions(cur: Any, post_id: Any, entities: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """0176: a later window's ent-v4.2 answer's mentions: its own title dropped (the cite answer is merged into the
-    first window's only)."""
+    """A later window's ent-v4.2 answer's mentions: its own title dropped (the cite answer is merged into the first
+    window's only)."""
     return [_mention(e) for e in finish(entities, _title(cur, post_id))]
 
 
@@ -379,10 +374,10 @@ def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, A
     title = _title(cur, pid)
     cite = [e for e in answer.get("entities") or [] if not own_title(e, title)]
     added = 0
-    # 0212: the cite answer is merged into each set whose first window is answered: ent-v4.2's (kind entities) and
-    # ent-v5's (kind reading, which keeps `cite` as its own question)
+    # the cite answer is merged into each set whose first window is answered: ent-v4.2's (kind entities) and ent-v5's
+    # (kind reading, which keeps `cite` as its own question)
     for kind, guide in (("entities", GUIDE), ("reading", V5_GUIDE)):
-        # 0176: window 1 (0233: a spent input is a first window's: tasks.spend keeps the later windows')
+        # window 1 (a spent input is a first window's: tasks.spend keeps the later windows')
         cur.execute("""SELECT 1 FROM mx_tasks WHERE kind = %s AND guide = %s AND a = %s AND status = 'answered'
                           AND (input IS NULL OR input !~ %s) LIMIT 1""", (kind, guide, pid, tasks.WINDOW_RE))
         if cur.fetchone() is None:
@@ -391,7 +386,7 @@ def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, A
         new = [e for e in merge_cite(have, cite)[len(have):]]
         if not new:
             continue
-        start = max((m["n"] for m in have if m["n"] < tasks.WINDOW_N), default=-1) + 1   # 0176: window 1's numbers
+        start = max((m["n"] for m in have if m["n"] < tasks.WINDOW_N), default=-1) + 1   # window 1's numbers
         fields = repo.MENTION_FIELDS + repo.MENTION_FIELDS_0133
         cur.executemany(f"INSERT INTO mx_mentions (post_id, guide, n, call_id, {', '.join(fields)}) "
                         f"VALUES ({', '.join(['%s'] * (4 + len(fields)))}) ON CONFLICT DO NOTHING",

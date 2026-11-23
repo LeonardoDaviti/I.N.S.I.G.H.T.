@@ -1,80 +1,28 @@
-"""Mark X entity identity (issue 0119 A1, 0090 C): one entity per thing, its versions, merges, the review queue.
+"""Entity identity: one entity per thing, its versions, merges and the review queue.
 
-The decision run's `entities` stage (`stage`), in the run's one snapshot, writing mx_entity* rows and mx_mentions'
-entity_id only:
+The decision run's `entities` stage (`stage`) writes mx_entity* rows and mx_mentions.entity_id only:
 
-  1. **Linking** (incremental: the mentions not linked yet, LINK_LIMIT a run, newest first; the nightly full pass
-     relinks every mention and must match, `counts.check`):
-       - an exact key in the aliases links (`names.key`: the name key with '@' and 'the ' dropped);
-       - a known family with a new version or variant creates a provisional child of it;
-       - an unknown family creates a provisional family (and its child);
-       - the mention's entity_id is the most specific level the post states (the entity of its own key); a merge
-         is a redirect read through (`Book.root`), and an owner's split a pin (mx_entity_pins) the run applies.
-  2. **Candidates** (experiment 2's pool; 0/80 missed aliases outside it) for the entities new this run, those whose
-     name vector arrived, and the posts linked this run: the same family key; a name vector's 10 nearest at cosine
-     >= 0.80; squashed equality, word containment at word boundaries, trigram Jaccard >= 0.5; a handle's forms; the
-     maker-prefix forms; a shared repository or model address; "X (Y)" inside one post.
-  3. **Merging, conservatively** (experiment 2's v2 settings, 0119 A1 as written on 2026-11-06), `decide_pair`:
-       - automatic: a rule (squashed equal; the same address; a person's handle or a handle with no extra word; the
-         maker prefix when the bare name's maker is stated in a post; the same family, version tuple, variant, size
-         and build in Haiku's fields with the parser agreeing and the same maker or one side none), or Haiku `same`
-         at >= 0.9; and the guards: version (both parse to one version and variant, an edition year on one side is a
-         conflict), type (equal, product~software, or one side `other`), chain (no merge joins two clusters of 2 or
-         more names; at most 6 names a cluster);
-       - the queue (mx_entity_queue): every other `same`: below 0.9, a one-sided version, a type mismatch, a chain,
-         an org's handle with an extra word, "X (Y)", Haiku's fields agreeing but not the parser's, the maker prefix
-         with the maker only guessed, a Haiku-parser disagreement on the version; and the collision judge's splits;
-       - never automatic: different parsed versions or variants; a bare family and one of its versions.
-     0130 A1-A3: which band and guard is automatic is config (entity_bands.json, the measured table, `bands`). The
-     version guard is narrowed (`soft_reason`): a one-sided field is held only when the family has several of it;
-     an edition year on one side, or a field the family has one of, goes to the second opinion. The second opinion
-     (`alias2`: alias-v1 asked again with two other example posts per name) is asked for every held-back `same`
-     whose reasons the config allows; two `same` at >= 0.85 merge ('second', a redirect like any other, undoable)
-     and close the pair's open queue item; a disagreement stays queued, marked (`evidence.disagree`).
-     Every merge is a redirect (by its rule, Haiku or the owner) and can be undone (`undo`). A pair the owner
-     answered, or a merge the owner undid, is never merged again by a rule or Haiku.
-  4. **Collisions:** a key whose mentions differ in type or (stated) maker gets the collision judge (`collide`),
-     asked COLLIDE_RUNS times; a split two of the runs make is queued as a proposal, never applied. 0230: its sample
-     shows the mentions that may be another maker's namesake and the oldest post first, and a name whose posts now go
-     back before the oldest its question showed is asked again.
+  1. **Linking**: an exact alias key (`names.key`) links; a known family with a new version or variant gets a
+     provisional child; an unknown family a provisional family. A mention links to the most specific level its post
+     states; a merge is a redirect read through (`Book.root`), an owner's split a pin (mx_entity_pins). The
+     incremental pass links LINK_LIMIT a run; the nightly full pass relinks every mention and must agree.
+  2. **Candidates** for the entities new or changed this run: the family key, a name vector's nearest, string forms,
+     a handle's forms, the maker-prefix forms, a shared address, "X (Y)" inside one post.
+  3. **Merging, conservatively** (`decide_pair`): a rule or Haiku's `same` within entity_bands.json's bands, behind
+     the version, type and chain guards; every other `same` goes to mx_entity_queue, or to a second opinion
+     (`alias2`) where the config allows. Different parsed versions, or a bare family and one of its versions, are
+     never merged automatically. A rule's cross-type `same` is decided by Haiku (`rule_apart`); the backlog
+     (`backlog`) decides open items again under the current rule set.
+  4. **Collisions**: a key whose mentions differ in type or maker gets the collision judge (`collide`); a split is
+     queued as a proposal, never applied.
 
-0230 (switched off: entity_bands.json `families`): a version's family is its maker's (`other_maker`: another maker's
-thing is a thing of its own maker, `based_on` the family) and its stem (`family_stem`: a member's name is never a
-family); a relation never crosses two makers' namesakes (`namesakes`, read by markx/graph.py).
-
-v10.18 (issue 0201): **Haiku decides the queue.** A name rule's `same` across two types (or an org and a product
-family) is no longer queued on the rule alone (right ~30% on the server): Haiku is asked as for any pair; `different`
-at >= the config's bar keeps it apart (`rule_apart`, entity_bands.json `rule_type`), `same` goes the way of any `same`
-held for its types (the second opinion, on since measured), anything else stays queued (`haiku_unsure`). A rule has no
-confidence of its own: a queued item's confidence is Haiku's. **The backlog** (`backlog`): each run decides again up
-to REDECIDE_CAP open alias items not yet decided by this rule set (stamped `evidence.redecided`); a pair merged, kept
-apart or already one cluster closes its open item (kept, with `closed_by`), one still queued says what was decided now
-(`refresh_queued`, the earlier reason and confidence in `evidence.before`).
-
-v10.24 (issue 0222): **an opinion holds only for what it was asked on.** A pair question records what it showed of
-each side (mx_opinion_inputs: name, type, maker, the example posts; `record_input`; a question asked before is read
-back from its input, `derive_inputs`). Before an answer decides anything, `void_opinions` checks that each side still
-holds the posts it was shown (a relink, a post read again under a new guide or a split moves them): a void answer
-merges nothing and is never shown; its open item is closed (closed_by 'void', kept) and the pair asked again. A
-question's identity is still its pair: a pair asked whose answer holds is never asked again.
-
-The owner's answers (`answer`, the API's, in the request's own transaction: mx_entity* and mx_labels only) apply at
-once for the pages, which read through redirects and pins; the next run's snapshot sees them.
-
-0164 (entity identity fixes; the repairs of data already made are markx/entity_repair.py's, run first in the stage):
-  - the type guard reads clusters too (`org_family`): a cluster holding a product family (Book.sides) and one holding
-    an org or person are never merged automatically, whatever the two names' own types (a family's name typed an
-    org by Haiku, "Zentra Vela", was the way in); such a merge is queued ('type', reasons org_family);
-  - a version's family is never an org (`family_under`): when its family key aliases an org-like cluster ("Zentra 5"
-    by Zentra), its family is a `family` entity of that name under the org;
-  - two versions of one family cluster stating the same version, variant, size and build merge by the rule
-    `family_version` (the families "Vela" and "Zentra Vela" once one: "Vela 5" = "Zentra Vela 5");
-  - the name and type a cluster is shown under are its root's shown_name / shown_type (Book.label, shown_type),
-    chosen by evidence; `name` and `type` stay what it was made as and decide identity.
-  - a product account is not an org (`Book.product_of`): a name typed an org that is its family's maker (or a name of
-    the maker's cluster) in front of a known family ("Zentra Vela", the account of the family Vela by Zentra) is made
-    with the family's type and merged into the family (rule `product_account`), never the org; Book.sides counts it on
-    the family side wherever it is, so the org-family guard and the repair keep it out of the maker's cluster.
+An opinion holds only for what it was asked on (mx_opinion_inputs, `void_opinions`): an answer whose sides no longer
+hold the posts they were shown merges nothing and the pair is asked again. Every merge is a redirect and can be
+undone (`undo`); a pair the owner answered, or a merge the owner undid, is never merged again. The owner's answers
+(`answer`, in the request's transaction) write mx_entity* and mx_labels only. Type guards read clusters
+(`org_family`, `Book.sides`): a product family is never merged with an org or person, and a product account
+("<maker> <family>", `Book.product_of`) sits on the family side. The name and type shown are the root's
+shown_name / shown_type; `name` and `type` decide identity.
 """
 from __future__ import annotations
 
@@ -98,18 +46,16 @@ from insight_core.markx import pairing
 
 log = logging.getLogger(__name__)
 
-LINK_LIMIT = 6000           # mentions linked a run (the rest wait: the 120 s run limit)
-PAIR_LIMIT = 200000         # pool pairs decided a run (a safety cap: the 120-day full pass pools about 29,000)
-SEED_CHUNK = 1000           # 0128: the full pass's entities pooled and decided at once (its budget is checked between)
-MENTION_CHUNK = 500         # v10.13.9: the mentions an incremental pass links, pools and decides at once (likewise)
-RELINK_PAGE = 2000          # v10.13.9: the posts whose mentions the full pass relinks at once (likewise)
-SEED_RATE = 40.0            # v10.24 (0221): the full pass's seeds a second before a run measures its own (the server:
-                            # ~1,000 seeds in ~25 s, its nearest names read from a cold disk)
-SEED_MIN = 100              # v10.24: the smallest full-pass chunk worth starting (less time left: the next run's)
-PACE_MARGIN = 0.8           # v10.24: a chunk is sized to this share of the time left at the pace measured (it varies)
-PART_GUESS = 5.0            # v10.25 (0226): a plain linking part's seconds before a run measures one (`part_took`)
-COLLIDE_RATE = 0.002        # v10.24: the collisions' seconds a linked mention before a run measures its own (the
-                            # server, v10.23: 0.91 s for 496 mentions)
+LINK_LIMIT = 6000           # mentions linked a run (the run's time limit)
+PAIR_LIMIT = 200000         # pool pairs decided a run (a safety cap)
+SEED_CHUNK = 1000           # the full pass's entities pooled and decided at once (its budget is checked between)
+MENTION_CHUNK = 500         # the mentions an incremental pass links, pools and decides at once
+RELINK_PAGE = 2000          # the posts whose mentions the full pass relinks at once
+SEED_RATE = 40.0            # the full pass's seeds a second before a run measures its own
+SEED_MIN = 100              # the smallest full-pass chunk worth starting
+PACE_MARGIN = 0.8           # a chunk is sized to this share of the time left at the measured pace
+PART_GUESS = 5.0            # a plain linking part's seconds before a run measures one (`part_took`)
+COLLIDE_RATE = 0.002        # the collisions' seconds a linked mention before a run measures its own
 EMB_BAR, EMB_TOPK = 0.80, 10
 JAC_BAR = 0.50
 GRAM_CAP, GRAM_TOP = 400, 60
@@ -118,25 +64,21 @@ MAX_CLUSTER = 6
 ALIAS_CAP, COLLIDE_CAP = 10000, 1000   # new questions a run adds of each (a pair over it waits for the nightly pass)
 COLLIDE_RUNS = 3
 COLLIDE_MENTIONS = 8
-COLLIDE_SPAN_DAYS = 365   # 0220: a name whose posts span a year or more is asked whether it is one thing
+COLLIDE_SPAN_DAYS = 365   # a name whose posts span a year or more is asked whether it is one thing (0220)
 TYPES_VERSIONED = {"model", "product", "software", "project", "dataset"}
 ANCHOR_RE = re.compile(r"(github\.com|huggingface\.co)/([\w.-]+)/([\w.-]+)", re.I)
 ANSWERS = ("same", "other_version", "different", "not_entity")
-ALIAS2_CAP = 2000           # 0130 A2: second-opinion questions a run adds
-ALIAS3_CAP = 2000           # 0201: the unsure queue's questions (alias-v2) a run adds
-REDECIDE = "v10.24"         # the queue's open alias items decided again by this rule set (evidence.redecided);
-                            # v10.24 (0222): every open item's answer checked against what it was asked on
-REDECIDE_CAP = 2000         # v10.18: open alias items a run decides again (the backlog, oldest first)
+ALIAS2_CAP = 2000           # second-opinion questions a run adds
+ALIAS3_CAP = 2000           # the unsure queue's questions (alias-v2) a run adds
+REDECIDE = "v10.24"         # open alias items not yet decided by this rule set are decided again (evidence.redecided)
+REDECIDE_CAP = 2000         # open alias items a run decides again (the backlog, oldest first)
 
 
-# ---- 0130 A1-A2: the bands, as config (markx/entity_bands.json), measured on labels ----------------------------
+# ---- the bands, as config (markx/entity_bands.json) ------------------------------------------------------------
 
 BANDS_FILE = Path(__file__).with_name("entity_bands.json")
 _BANDS: Dict[str, Any] = {}
-# The reasons a Haiku `same` is held back (decide_pair, the first is the one the queue shows): the rules that only
-# queue (paren, handle_extra_word, maker_unstated, fields_parser), the version guard (version: held, the family has
-# several; version_year: an edition year on one side; version_one_side: a field the family has one of), below_bar
-# (the first opinion's bands), type.
+# The reasons a Haiku `same` is held back (decide_pair; the first is the one the queue shows).
 
 
 def bands() -> Dict[str, Any]:
@@ -147,9 +89,8 @@ def bands() -> Dict[str, Any]:
 
 
 def model_for(kind: str) -> Optional[str]:
-    """v10.18: the model a kind's tasks are asked with when it is not the worker's own (entity_bands.json `models`,
-    measured per kind); the worker's --model otherwise. Owner 2026-11-16 (v10.19.1): the worker only ever uses Haiku:
-    a configured model that is not a Haiku is refused (logged; the task goes with the worker's own Haiku)."""
+    """The model a kind's tasks are asked with (entity_bands.json `models`), else the worker's --model. Haiku only: a
+    configured model that is not a Haiku is refused (logged; the task goes with the worker's own Haiku)."""
     m = (bands().get("models") or {}).get(kind)
     if not isinstance(m, str):
         return None
@@ -160,7 +101,6 @@ def model_for(kind: str) -> Optional[str]:
 
 
 def haiku(model: str) -> bool:
-    """Whether `model` names a Haiku ("haiku", "claude-haiku-4-5", ...): the only models the server names for a task."""
     return "haiku" in model.strip().lower()
 
 
@@ -182,7 +122,7 @@ def _row(opinion: str, guard: str, band: Optional[str]) -> Optional[Dict[str, An
 
 
 def first_auto(conf: float) -> bool:
-    """One Haiku `same` with nothing held back: automatic in the bands the config marks (>= 0.9: 86/87)."""
+    """One Haiku `same` with nothing held back: automatic in the bands the config marks."""
     r = _row("first", "none", band_of(conf))
     return bool(r and r.get("auto"))
 
@@ -204,7 +144,7 @@ def second_agrees(second: Optional[Dict[str, Any]]) -> bool:
 
 # ---- what identity knows: entities, aliases, redirects, pins ------------------------------------------
 
-@dataclass(slots=True)   # v10.17.2 (0204): no __dict__ an entity (below)
+@dataclass(slots=True)   # slots: no __dict__ an entity (memory)
 class Ent:
     id: str
     type: Optional[str]
@@ -222,11 +162,10 @@ class Ent:
     status: str = "provisional"
     first_seen: Optional[datetime] = None
     haiku: Dict[str, Any] = field(default_factory=dict)       # the fields as Haiku gave them (majority mention)
-    shown_name: Optional[str] = None     # 0164: the name and type it is shown under (a root's, chosen by evidence;
-    shown_type: Optional[str] = None     # entity_repair.shown); None: `name` / `type`. Never decide identity.
-    # v10.13.9: worked out once an entity (its name, type, maker and fields never change once made); a pair's rules
-    # read them many times (the decisions spent most of their time parsing the same names again). v10.17.2 (0204):
-    # kept in slots: a cached_property gave each entity a __dict__ of its own (~730 B: 75 MB of a 103k-entity book)
+    shown_name: Optional[str] = None     # the name and type it is shown under (a root's, chosen by evidence;
+    shown_type: Optional[str] = None     # None: `name` / `type`). Never decide identity.
+    # worked out once an entity (its name, type, maker and fields never change once made): a pair's rules read them
+    # many times. Slots, not cached_property: no __dict__ an entity
     _hk: Optional[Tuple] = field(default=None, init=False, repr=False, compare=False)
     _pk: Optional[Tuple] = field(default=None, init=False, repr=False, compare=False)
     _sq: Optional[str] = field(default=None, init=False, repr=False, compare=False)
@@ -235,15 +174,13 @@ class Ent:
     @property
     def hk(self) -> Tuple:
         if self._hk is None:
-            self._hk = _shared_key(N.fields_key(N.clean(self.haiku, self.name), self.maker))   # v10.30: clean
+            self._hk = _shared_key(N.fields_key(N.clean(self.haiku, self.name), self.maker))
         return self._hk
 
     @property
     def pk(self) -> Tuple:
         if self._pk is None:
-            # v10.24 (0221): a type the parser reads no version of states none (names.parse: NONE), worked out at once:
-            # the run's book reads every entity's once a run (the pool's family values), most of them an org, a
-            # person, a place
+            # a type the parser reads no version of states none (names.parse: NONE), worked out at once
             self._pk = _NO_FIELDS if self.type not in N.VERSIONED else \
                 _shared_key(N.fields_key(N.parse(self.name, self.type, self.maker), self.maker))
         return self._pk
@@ -265,13 +202,12 @@ _NO_FIELDS = N.fields_key({})   # (None, None, None, None, None): no family, ver
 
 
 def _shared_key(k: Tuple) -> Tuple:
-    """v10.22 (0216): a fields key that states nothing is the one shared tuple (most names: an org, a person, a place;
-    each entity kept two of its own, ~50 MB of the server's book once every entity's keys were worked out)."""
+    """A fields key that states nothing is one shared tuple (most names; memory, 0216)."""
     return _NO_FIELDS if k == _NO_FIELDS else k
 
 
 class Redirects(dict):
-    """from -> (to, automatic), counting its changes (0164: the clusters read through it are kept until it changes)."""
+    """from -> (to, automatic), counting its changes (the clusters read through it are kept until it changes)."""
     rev = 0
 
     def __setitem__(self, k: Any, v: Any) -> None:
@@ -307,19 +243,18 @@ class Book:
         self.ents: Dict[str, Ent] = {}
         self.alias: Dict[str, str] = {}
         self.redirect: Dict[str, Tuple[str, bool]] = Redirects()   # from -> (to, automatic)
-        self.types: Dict[str, Any] = {}                      # 0164: entity -> its current mentions' types, counted
-                                                             # (`.items()`: a whole book's TypeCounts, a page's Counter)
+        self.types: Dict[str, Any] = {}                      # entity -> its current mentions' types, counted
         self.pins: Dict[Tuple[str, str, int], str] = {}
-        self.pin_keys: Dict[Tuple[str, str], Tuple[str, str]] = {}   # 0133: (post, name key): (guide, its pin)
+        self.pin_keys: Dict[Tuple[str, str], Tuple[str, str]] = {}   # (post, name key): (guide, its pin)
         self.never: Set[Tuple[str, str]] = set()             # pairs the owner kept apart or whose merge was undone
         self.mentioned: Set[str] = set()                     # the entities a mention names (a maker or family made
                                                              # for the hierarchy alone is never a candidate)
-        self.subject: Dict[str, int] = {}                    # 0164 B: entity -> its subject mentions typed a product
-        self.made: List[str] = []                            # v10.23: the entities made since it was read, in order
+        self.subject: Dict[str, int] = {}                    # entity -> its subject mentions typed a product
+        self.made: List[str] = []                            # the entities made since it was read, in order
 
     def added(self, e: "Ent") -> None:
-        """v10.23 (0218): an entity the Writer just made (its row written): the book holds it, and what the book keeps
-        of the others (the version parents, the versions under a parent, the families by key) says it."""
+        """An entity the Writer just made (its row written): the book holds it and updates what it keeps of the
+        others."""
         self.ents[e.id] = e
         self.made.append(e.id)
         if e.parent and e.level in VERSION_LEVELS:
@@ -329,23 +264,21 @@ class Book:
             self.families().setdefault(e.key, []).append(e.id)
 
     def walk(self, where: Optional[str] = None, params: Sequence[Any] = (), *, by_id: bool = False) -> Iterable["Ent"]:
-        """v10.23 (0218): every entity, in the book's order (as read, then as made) or by id: the walks over the whole
-        book (the repairs). `where` (SQL over mx_entities `e`, with `params`) is only a narrowing a book read by need
-        (RunBook) asks the database for; the caller keeps its own test, which decides. A whole book walks them all."""
+        """Every entity, in the book's order or by id (the repairs' walks). `where` (SQL over mx_entities `e`, with
+        `params`) is only a narrowing a book read by need (RunBook) asks the database for; the caller's own test
+        decides."""
         return sorted(self.ents.values(), key=lambda e: e.id) if by_id else list(self.ents.values())
 
     def ids(self, after: Optional[str] = None) -> List[str]:
-        """v10.23 (0218): every entity's id after `after` (None: all), in id order (the full pass's seeds)."""
+        """Every entity's id after `after` (None: all), in id order (the full pass's seeds)."""
         return sorted(e for e in self.ents if after is None or e > after)
 
     def index(self, name: str) -> Any:
-        """One of the pool's indexes (INDEXES) over the live entities, kept for the book (0128: the full pass's chunks
-        share it). v10.13.9: grown with the entities that became live since it was last read, never rebuilt: the live
-        set only grows within a run (a run's chunks link new mentions), and a merge changes roots, which no index holds.
-        v10.22 (0216): the live entities are listed once for all the indexes, in the order they became live (each index
-        remembers how far down it has read): each index kept a set of its own (three sets of every live id, ~48 MB at the
-        server's 330k entities). The three are always grown together (decide_chunk pools strings, families and makers one
-        after the other), so each still meets the entities in the order it did."""
+        """One of the pool's indexes (INDEXES) over the live entities, kept for the book and shared by the full pass's
+        chunks. Grown with the entities that became live since last read, never rebuilt: the live set only grows within
+        a run, and a merge changes roots, which no index holds. The live entities are listed once for all the indexes
+        (each remembers how far down it has read); the indexes are always grown together, so each meets them in the same
+        order."""
         empty, add = INDEXES[name]
         live = self.__dict__.get("_live_order")
         if live is None:
@@ -368,7 +301,7 @@ class Book:
 
     def family_values(self) -> Dict[str, List[Set[Any]]]:
         """{family key: [the versions, variants, sizes, builds its entities state]} (Haiku's fields and the parser's),
-        read once a book (the narrowed version guard's 'the family has several')."""
+        read once a book (the version guard's 'the family has several')."""
         got = self.__dict__.get("_family_values")
         if got is None:
             got = defaultdict(lambda: [set(), set(), set(), set()])
@@ -385,10 +318,8 @@ class Book:
         return eid
 
     def clusters(self) -> Dict[str, Set[str]]:
-        """v10.22 (0216): {root: its entities} for the clusters of two or more entities, from the redirects: every
-        other root is a cluster of one, itself. A walk of the redirects, not of every entity (the members() it replaces
-        made a set for each of the server's 330k entities, ~90 MB, for the repairs, the invariants and the shown
-        names, which skip one-name clusters or need only their own)."""
+        """{root: its entities} for the clusters of two or more entities, from the redirects (every other root is a
+        cluster of one). A walk of the redirects, not of every entity (memory, 0216)."""
         out: Dict[str, Set[str]] = defaultdict(set)
         for frm in self.redirect:
             if frm in self.ents:
@@ -402,29 +333,27 @@ class Book:
         return self.alias.get(k) if k else None
 
     def prime(self, ids: Iterable[Optional[str]] = (), keys: Iterable[Optional[str]] = ()) -> None:
-        """Read ahead the entities (by id) and aliases (by key) a reader is about to ask, in one read each: a whole
-        book holds them all already (a page's book, `lazy_book`, reads them now)."""
+        """Read ahead the entities (by id) and aliases (by key) a reader is about to ask, one read each (a whole book
+        holds them already)."""
 
     def prime_clusters(self, roots: Iterable[Optional[str]]) -> None:
-        """v10.23 (0218): read ahead what the clusters of `roots` are asked (their entities, mention types, version
-        parents): a whole book holds it (RunBook reads it now, in one go)."""
+        """Read ahead what the clusters of `roots` are asked (entities, mention types, version parents); a whole book
+        holds it."""
 
     def prime_products(self, ids: Iterable[str]) -> None:
-        """v10.23 (0218): read ahead what `product_of` asks of these entities' names (the aliases and families their
-        last words could be): a whole book holds it (RunBook reads it now, in one go)."""
+        """Read ahead what `product_of` asks of these entities' names; a whole book holds it."""
 
     def prime_names(self, keys: Iterable[str]) -> None:
-        """v10.24 (0221): read ahead what `product_of` asks of these names: a whole book holds it."""
+        """Read ahead what `product_of` asks of these names."""
 
     def prime_makers(self, roots: Iterable[Optional[str]]) -> None:
-        """v10.24 (0221): read ahead what `maker_keys` asks of these clusters: a whole book holds it."""
+        """Read ahead what `maker_keys` asks of these clusters."""
 
     def prime_sides(self, members: Iterable[str]) -> None:
-        """v10.24 (0221): read ahead what `sides` asks of these entities: a whole book holds it."""
+        """Read ahead what `sides` asks of these entities."""
 
     def names_of(self, roots: Iterable[Optional[str]]) -> Dict[str, Set[str]]:
-        """v10.23 (0218): {root: the name keys that name it: its members' own keys and every alias of them} of `roots`
-        (entity_addresses' names)."""
+        """{root: the name keys that name it (its members' keys and every alias of them)} of `roots`."""
         roots = set(roots)
         out: Dict[str, Set[str]] = defaultdict(set)
         for eid, e in self.ents.items():
@@ -438,23 +367,21 @@ class Book:
         return out
 
     def named_by(self, forms: Iterable[str]) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
-        """v10.23 (0218): ([(entity, its squashed key)], [(alias key, its entity)]) whose squashed key is one of `forms`
+        """([(entity, its squashed key)], [(alias key, its entity)]) whose squashed key is one of `forms`
         (names.squash), in the book's order."""
         forms = set(forms)
         return ([(eid, e.sq) for eid, e in self.ents.items() if e.sq in forms],
                 [(k, eid) for k, eid in self.alias.items() if N.squash(k) in forms])
 
     def forget(self, ids: Iterable[str]) -> None:
-        """v10.23 (0218): let go of entities read for one step (a whole book holds them all: nothing)."""
+        """Let go of entities read for one step (a whole book holds them all: nothing)."""
 
     def etypes(self, ents: Sequence["Ent"]) -> Dict[str, Optional[str]]:
-        """v10.23 (0218): {id: etype} of many entities at once (a book read by need reads them for one step, none
-        kept)."""
+        """{id: etype} of many entities at once (a book read by need keeps none)."""
         return {e.id: self.etype(e.id) for e in ents}
 
     def keys_of(self, ids: Iterable[str]) -> Dict[str, str]:
-        """v10.23 (0218): {id: its key} of `ids` (a seed's string candidates: up to GRAM_TOP each), for one step: a
-        book read by need reads the keys of those it does not hold, and keeps none of them."""
+        """{id: its key} of `ids`, for one step (a book read by need keeps none)."""
         return {i: e.key for i in ids if (e := self.ents.get(i)) is not None}
 
     def maker_roots(self) -> Set[str]:
@@ -479,9 +406,9 @@ class Book:
                 for f in fs:
                     if f:
                         by_form[f].add(r)
-        return NameForms(lambda r: by_root.get(r, set()), lambda f: by_form.get(f, set()))   # holds them all
+        return NameForms(lambda r: by_root.get(r, set()), lambda f: by_form.get(f, set()))
 
-    # v10.17 (0186): what a page asks of the book besides ids and keys, here so a page's book answers them by query
+    # what a page asks of the book besides ids and keys, here so a page's book answers them by query
     def alias_keys(self, root: str) -> List[str]:
         """The keys of the aliases that lead to `root`."""
         return [k for k, eid in self.alias.items() if self.root(eid) == root]
@@ -505,9 +432,8 @@ class Book:
         return [x for x, e in self.ents.items() if e.key and (e.key.startswith(key + " ") or key.startswith(e.key + " "))]
 
     def prefix_makers(self, key: str) -> Set[str]:
-        """v10.35: the makers (keys) of the names that are a bare name (its `key`) with their stated maker in front
-        ("suse linux" by SUSE, "amazon linux" by Amazon: {"suse", "amazon"} for "linux"). Kept while the book holds
-        as many entities (the Writer only adds)."""
+        """The makers (keys) of the names that are the bare name `key` with their stated maker in front ("suse linux"
+        by SUSE: {"suse"} for "linux"). Kept while the book holds as many entities (the Writer only adds)."""
         got = self.__dict__.get("_prefix_makers")
         if got is None or got[0] != len(self.ents):
             idx: Dict[str, Set[str]] = defaultdict(set)
@@ -520,13 +446,12 @@ class Book:
         return set(got[1].get(key, ()))
 
     def cluster_size(self, root: str) -> int:
-        """len(members()[root]) without walking every entity (v10.13.9: a merge asked it of the whole book each
-        time): the entities whose redirects lead to `root`, read from the current redirects (an undo or a merge in
+        """len(members()[root]) without walking every entity: read from the current redirects (an undo or merge in
         between is always seen)."""
         return len(self.cluster(root))
 
     def mentions(self, root: str) -> int:
-        """v10.35: the current mentions of a cluster's names (the book's type counts; none when read without them)."""
+        """The current mentions of a cluster's names (the book's type counts; none when read without them)."""
         ms = self.cluster(root)
         want = getattr(self.types, "want", None)
         if want is not None:
@@ -534,8 +459,8 @@ class Book:
         return sum(n for m in ms for _t, n in (self.types.get(m) or {}).items())
 
     def _into(self) -> Dict[str, List[str]]:
-        """{to: [from]} of the current redirects; kept while they don't change (0164: Redirects counts its changes;
-        a plain dict is read again each time)."""
+        """{to: [from]} of the current redirects; kept while they don't change (Redirects counts its changes; a plain
+        dict is read again each time)."""
         rev = (id(self.redirect), getattr(self.redirect, "rev", None), len(self.redirect))
         got = self.__dict__.get("_into_cache")
         if got is None or got[0] != rev or rev[1] is None:
@@ -561,7 +486,7 @@ class Book:
         return out
 
     def etype(self, eid: str) -> Optional[str]:
-        """0164: the type most of an entity's current mentions give (as read: schemas.entity_type), else its own."""
+        """The type most of an entity's current mentions give (schemas.entity_type), else its own."""
         got = self.types.get(eid)
         if got:
             return schemas_type(max(got.items(), key=lambda kv: (kv[1], str(kv[0])))[0])
@@ -569,7 +494,7 @@ class Book:
         return schemas_type(e.type) if e else None
 
     def version_parents(self) -> Set[str]:
-        """0164: the entities some version, variant or checkpoint names as its parent (kept; the Writer adds)."""
+        """The entities some version, variant or checkpoint names as its parent (kept; the Writer adds)."""
         got = self.__dict__.get("_version_parents")
         if got is None:
             got = {e.parent for e in self.ents.values() if e.parent and e.level in VERSION_LEVELS}
@@ -577,7 +502,7 @@ class Book:
         return got
 
     def kids(self) -> Dict[str, List[str]]:
-        """0164 B: {parent: the versions, variants and checkpoints naming it} (kept; the Writer adds)."""
+        """{parent: the versions, variants and checkpoints naming it} (kept; the Writer adds)."""
         got = self.__dict__.get("_kids")
         if got is None:
             got = defaultdict(list)
@@ -588,8 +513,8 @@ class Book:
         return got
 
     def family_like(self, eid: str) -> bool:
-        """0164 B: a product family: a `family` entity or one a version names as its parent, or a name its mentions
-        give as their subject typed a model, product or software; its mentions mostly not an org or person."""
+        """A product family: a `family` entity or one a version names as its parent, or a name its mentions give as
+        their subject typed a model, product or software; its mentions mostly not an org or person."""
         e = self.ents.get(eid)
         if e is None or e.status == "not_entity" or e.level in VERSION_LEVELS:
             return False
@@ -600,8 +525,8 @@ class Book:
             (t in PRODUCT_TYPES and self.subject.get(eid, 0) > 0)
 
     def maker_keys(self, root: str) -> Set[str]:
-        """0164 B: the names (keys) of a family cluster's maker: its members' and their versions' stated makers, its
-        members' parents' clusters, and each stated maker's cluster ("Zentra AI" stated, merged with Zentra: both)."""
+        """The names (keys) of a family cluster's maker: its members' and versions' stated makers, its members' parents'
+        clusters, and each stated maker's cluster."""
         out: Set[str] = set()
         stated: Set[str] = set()
         kids = self.kids()
@@ -622,10 +547,9 @@ class Book:
         return {k for k in out if k}
 
     def product_of(self, key: str) -> Optional[str]:
-        """0164 B: the family a product account's name names, "<maker> <family>" ("Zentra Vela": the maker Zentra in
-        front of the family Vela): <maker> one of the family's maker's names or the first words of one ("Zentra" of
-        "Zentra AI"), <family> a known product family (`family_like`). Its id, else None. A name ending in an org's
-        word ("Zentra Labs") is never one."""
+        """The family a product account's name names, "<maker> <family>" ("Zentra Vela": maker Zentra, family Vela):
+        <maker> one of the family's maker's names or the first words of one, <family> a known product family
+        (`family_like`). Its id, else None. A name ending in an org's word ("Zentra Labs") is never one."""
         words = (key or "").split()
         if len(words) < 2 or words[-1] in CORP_WORDS:
             return None
@@ -642,7 +566,7 @@ class Book:
         return None
 
     def families(self) -> Dict[str, List[str]]:
-        """0164: {key: the `family` entities made for it} (kept; the Writer adds)."""
+        """{key: the `family` entities made for it} (kept; the Writer adds)."""
         got = self.__dict__.get("_families")
         if got is None:
             got = {}
@@ -653,42 +577,41 @@ class Book:
         return got
 
     def sides(self, members: Iterable[str]) -> Tuple[Set[str], Set[str]]:
-        """0164: (a cluster's family side, its org side). The family side: a `family` entity, or one a version names
-        as its parent, whose mentions are mostly not an org or person; and a name that is a family name with words
-        in front ("Zentra Vela" beside the family "Vela"), whatever its mentions' type. The org side: an org or
-        person that is neither."""
+        """(a cluster's family side, its org side). The family side: a `family` entity, or one a version names as its
+        parent, whose mentions are mostly not an org or person, and a family name with words in front ("Zentra Vela"),
+        whatever its mentions' type. The org side: an org or person that is neither."""
         ms = [m for m in members if m in self.ents]
         vp = self.version_parents()
         fam = {m for m in ms if (self.ents[m].level == "family" or m in vp) and self.etype(m) not in ORGISH}
         keys = {self.ents[m].key for m in fam if len(self.ents[m].key) >= 3}
         fam |= {m for m in ms if any(self.ents[m].key.endswith(" " + k) for k in keys)}
-        # 0164 B: a product account ("Zentra Vela" typed an org) is on the family side wherever its family is
+        # a product account ("Zentra Vela" typed an org) is on the family side wherever its family is
         fam |= {m for m in ms if m not in fam and self.etype(m) == "org" and " " in self.ents[m].key
                 and self.product_of(self.ents[m].key)}
         org = {m for m in ms if m not in fam and self.etype(m) in ORGISH}
         return fam, org
 
     def org_like(self, root: str) -> bool:
-        """0164: a cluster that is an org (or person) and holds no family."""
+        """A cluster that is an org (or person) and holds no family."""
         fam, org = self.sides(self.cluster(root))
         return bool(org) and not fam
 
     def label(self, eid: Optional[str]) -> Optional[str]:
-        """0164: the name an entity's cluster is shown under (its root's shown name, else its name)."""
+        """The name an entity's cluster is shown under (its root's shown name, else its name)."""
         r = self.root(eid)
         e = self.ents.get(r) if r else None
         return None if e is None else (e.shown_name or e.name)
 
     def shown_type(self, eid: Optional[str]) -> Optional[str]:
-        """0164: the type an entity's cluster is shown under (as read)."""
+        """The type an entity's cluster is shown under (as read)."""
         r = self.root(eid)
         e = self.ents.get(r) if r else None
         return None if e is None else schemas_type(e.shown_type or e.type)
 
 
 class TypeCounts(tuple):
-    """v10.22 (0216): an entity's mention types counted, as load_book reads them: (type, n, type, n, ...) in the order
-    read, answering `items()` as the Counter it replaces did (a Counter an entity was ~210 B of the server's book)."""
+    """An entity's mention types counted: (type, n, type, n, ...) in the order read, answering `items()` like a
+    Counter (memory, 0216)."""
     __slots__ = ()
 
     def items(self) -> Iterable[Tuple[Any, int]]:
@@ -696,8 +619,8 @@ class TypeCounts(tuple):
 
 
 class _One(dict):
-    """v10.22 (0216): one object for each distinct value read (`one(x)`), so a book's ~330k entities don't each hold
-    their own copy of "org", "thing" or "provisional" (psycopg makes a new string for every value of every row)."""
+    """One object for each distinct value read (`one(x)`), so a book's entities don't each hold their own copy of
+    "org" or "provisional" (memory, 0216)."""
 
     def __call__(self, x: Any) -> Any:
         if x is None:
@@ -709,7 +632,7 @@ class _One(dict):
 
 
 def _each(cur: Any, size: int = 5000) -> Iterable[Tuple]:
-    """v10.22 (0216): a query's rows a page at a time (fetchall made every row's values at once)."""
+    """A query's rows a page at a time."""
     while True:
         rows = cur.fetchmany(size)
         if not rows:
@@ -718,7 +641,7 @@ def _each(cur: Any, size: int = 5000) -> Iterable[Tuple]:
 
 
 def _same_id(b: "Book", eid: Optional[str]) -> Optional[str]:
-    """v10.22 (0216): an entity id as the book's own string (the one its `ents` key holds), else as given."""
+    """An entity id as the book's own string (the one its `ents` key holds), else as given."""
     e = b.ents.get(eid) if eid is not None else None
     return e.id if e is not None else eid
 
@@ -728,8 +651,8 @@ ENT_COLUMNS = """e.id::text, e.type, e.name, e.key, e.level, e.parent::text, e.m
 
 
 class _EntRows:
-    """mx_entities rows (ENT_COLUMNS) made Ents, each repeated value one object (`_One`), one `haiku` dict for each
-    distinct set of fields (it is only ever read)."""
+    """mx_entities rows (ENT_COLUMNS) made Ents, each repeated value one object (`_One`), one read-only `haiku` dict
+    for each distinct set of fields."""
 
     def __init__(self) -> None:
         self.one: _One = _One()
@@ -751,9 +674,8 @@ class _EntRows:
 
 
 def read_ents(cur: Any, b: "Book", ids: Optional[Iterable[str]] = None) -> None:
-    """Read entities into the book: every one, or (v10.16) those of `ids`. v10.22 (0216): row by row (not every row
-    held at once), each repeated value one object (`_One`), one `haiku` dict for each distinct set of fields (it is
-    only ever read), a parent as the book's own id: the server's 330k-entity book was 438 MB of objects."""
+    """Read entities into the book: every one, or those of `ids`. Row by row, repeated values shared (`_One`), a
+    parent as the book's own id (memory, 0216)."""
     cur.execute(f"""SELECT {ENT_COLUMNS} FROM mx_entities e
                     {"WHERE e.id = ANY(%s::uuid[])" if ids is not None else ""}""",
                 (sorted(set(ids)),) if ids is not None else None)
@@ -770,7 +692,7 @@ def load_book(cur: Any, *, counts: bool = True) -> Book:
     b = Book()
     read_ents(cur, b)
     cur.execute("SELECT key, entity_id::text FROM mx_entity_aliases")
-    for k, eid in _each(cur):   # v10.22 (0216): the entity's own id and key strings, not a copy of each
+    for k, eid in _each(cur):   # the entity's own id and key strings, not a copy of each
         e = b.ents.get(eid)
         if e is not None:
             eid = e.id
@@ -782,26 +704,26 @@ def load_book(cur: Any, *, counts: bool = True) -> Book:
     b.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
     cur.execute("""SELECT p.post_id::text, m.name, p.guide, p.entity_id::text FROM mx_entity_pins p JOIN mx_mentions m
                      ON m.post_id = p.post_id AND m.guide = p.guide AND m.n = p.n WHERE p.undone_at IS NULL""")
-    b.pin_keys = {(pid, N.key(name)): (g, e) for pid, name, g, e in cur.fetchall()}   # 0133: a split carries to a new guide
+    b.pin_keys = {(pid, N.key(name)): (g, e) for pid, name, g, e in cur.fetchall()}   # a split carries to a new guide
     cur.execute("""SELECT least(a, b)::text, greatest(a, b)::text FROM mx_entity_queue
                     WHERE kind = 'alias' AND answer IN ('other_version', 'different', 'not_entity')
                    UNION SELECT least(from_id, to_id)::text, greatest(from_id, to_id)::text FROM mx_entity_redirects
                     WHERE undone_at IS NOT NULL AND undone_by = 'owner'""")
     b.never = {(x, y) for x, y in cur.fetchall()}
-    if not counts:   # v10.14: the caller reads no type count (types, subject, mentioned stay empty)
+    if not counts:   # the caller reads no type count (types, subject, mentioned stay empty)
         return b
     cur.execute("""SELECT entity_id::text, type, count(*), count(*) FILTER (WHERE role = 'subject') FROM mx_mentions_now
                     WHERE entity_id IS NOT NULL GROUP BY 1, 2""")
-    product: Dict[Optional[str], bool] = {}   # v10.14: a type read once
+    product: Dict[Optional[str], bool] = {}
     one: _One = _One()
-    for eid, type_, n, subj in _each(cur):   # 0164: each entity's mentions' types, counted (one read; a row a type)
+    for eid, type_, n, subj in _each(cur):   # each entity's mentions' types, counted (one read; a row a type)
         eid, type_ = _same_id(b, eid), one(type_)
         got = b.types.get(eid)
         b.types[eid] = TypeCounts((type_, n) if got is None else got + (type_, n))
         if subj:
             if type_ not in product:
                 product[type_] = schemas_type(type_) in PRODUCT_TYPES
-            if product[type_]:   # 0164 B: a product as the subject
+            if product[type_]:   # a product as the subject
                 b.subject[eid] = b.subject.get(eid, 0) + subj
     b.mentioned = set(b.types) | set(b.pins.values())
     return b
@@ -810,8 +732,7 @@ def load_book(cur: Any, *, counts: bool = True) -> Book:
 @dataclass(frozen=True)
 class NameForms:
     """`of(root)`: the cluster's squashed names; `roots(form)`: the admitted clusters one of whose names squashes to
-    `form` (Book.name_forms). `want_of(roots)` / `want_roots(forms)`: read many ahead in one go (v10.17, 0186: a
-    page's book asked them one query each, ~500 a News load; a whole book holds them all)."""
+    `form` (Book.name_forms). `want_of(roots)` / `want_roots(forms)`: read many ahead in one go."""
     of: Any
     roots: Any
     want_of: Any = lambda _roots: None
@@ -853,13 +774,11 @@ class _Reads(dict):
         dict.__setitem__(self, k, v)
 
     def setdefault(self, k: Any, v: Any = None) -> Any:
-        """v10.23 (0218): as a whole dict's: the value held (read first), else `v`."""
         self.want((k,))
         self._absent.discard(k)
         return dict.setdefault(self, k, v)
 
     def held(self, k: Any) -> bool:
-        """Whether `k` was read already (no read)."""
         return dict.__contains__(self, k)
 
     def _whole(self, *_a: Any, **_k: Any) -> Any:
@@ -888,7 +807,7 @@ class _Has:
         return self._got[x]
 
     def add(self, x: Any) -> None:
-        """v10.23 (0218): `x` is in it from now (a Writer's new version names its parent)."""
+        """`x` is in it from now (a Writer's new version names its parent)."""
         self._got[x] = True
         self._added.add(x)
 
@@ -899,13 +818,10 @@ class _Has:
 
 
 class LazyBook(Book):
-    """A page's book (v10.17, issue 0186): the merges and pins read whole (they are few), each entity and alias read
-    when first asked (`ents.get(id)`, `id in ents`, `alias.get(key)`; `prime` reads many in one go) and kept for the
-    request. It answers what a whole book answers by id and key (root, label, by_key, cluster, the maker's names, an
-    entity's mention counts, its versions and families, the entities under a cluster, those of a squashed key); it
-    cannot be walked (iterating `ents`, `alias`, `types` raises TypeError). A page's request reads
-    a few hundred entities, not the whole book (250k on the server, read in full by every News, post and entity page
-    before)."""
+    """A page's book: the merges and pins read whole (they are few), each entity and alias read when first asked
+    (`ents.get(id)`, `id in ents`, `alias.get(key)`; `prime` reads many in one go) and kept for the request. It answers
+    what a whole book answers by id and key; it cannot be walked (iterating `ents`, `alias`, `types` raises
+    TypeError)."""
 
     def __init__(self, cur: Any) -> None:
         super().__init__()
@@ -927,7 +843,7 @@ class LazyBook(Book):
 
     def _counted(self, ids: Sequence[str]) -> Tuple[Dict[str, Counter], Dict[str, int]]:
         todo = [i for i in ids if isinstance(i, str) and _UUID.match(i) and i not in self._counted_ids]
-        if todo:   # as load_book counts them, for these entities
+        if todo:
             self._cur.execute("""SELECT entity_id::text, type, count(*), count(*) FILTER (WHERE role = 'subject')
                                    FROM mx_mentions_now WHERE entity_id = ANY(%s::uuid[]) GROUP BY 1, 2""", (todo,))
             product: Dict[Optional[str], bool] = {}
@@ -1088,7 +1004,7 @@ class LazyBook(Book):
                     r = self.root(i)
                     if r:
                         got[f].add(r)
-            self.ents.want({r for rs in got.values() for r in rs})   # what keep() reads, in one go
+            self.ents.want({r for rs in got.values() for r in rs})
             roots_memo.update({f: {r for r in rs if keep(r)} for f, rs in got.items()})
 
         def of(root: Optional[str]) -> Set[str]:
@@ -1103,7 +1019,6 @@ class LazyBook(Book):
 
 
 def lazy_book(cur: Any) -> LazyBook:
-    """A page's book (LazyBook): what it is asked, read when asked."""
     return LazyBook(cur)
 
 
@@ -1140,7 +1055,7 @@ class _Mentioned:
 
     def __ior__(self, xs: Iterable[Any]) -> "_Mentioned":
         xs = list(xs)
-        self.want(xs)                         # one read for them all
+        self.want(xs)
         for x in xs:
             if x is not None and x not in self:
                 self.fresh[x] = None
@@ -1153,8 +1068,8 @@ class _Mentioned:
 
 
 class _Compact(dict):
-    """An index's {key: ids} as RunBook keeps it: a key of one id holds the id alone (most keys: a list each was ~90 B
-    of the server's ~330k), read as a tuple (`get`); asked for its list (`[key]`, the index's `add`), it becomes one."""
+    """An index's {key: ids} as RunBook keeps it: a key of one id holds the id alone (memory), read as a tuple
+    (`get`); asked for its list (`[key]`, the index's `add`), it becomes one."""
 
     def get(self, k: Any, default: Any = None) -> Any:
         v = dict.get(self, k, default)
@@ -1173,7 +1088,6 @@ class _Compact(dict):
 
 
 def _compact(index: Any) -> Any:
-    """An index (INDEXES: a dict of lists, or a tuple of them) as RunBook keeps it (_Compact)."""
     if isinstance(index, tuple):
         return tuple(_compact(x) for x in index)
     if len(index) < 1000:
@@ -1185,21 +1099,17 @@ def _compact(index: Any) -> Any:
 
 
 class RunBook(LazyBook):
-    """v10.23 (0218): the decision run's entities stage's book, read by need: the entities and aliases a run touches
-    (the seeds of the new mentions, their pool, the clusters they reach, what the questions show), not the whole book
-    (330k entities on the server: 198 MB of objects, 742 MB at the stage's end). It answers as the whole book does, as
-    of when it was read:
-      - each entity and alias read when first asked (LazyBook), the merges, pins and the owner's "never" read whole;
-      - the mention types (`types`, `subject`, `mentioned`) as they stood when it was read: a snapshot in a temporary
-        table (`pg_temp.mx_run_types`), read by need, as load_book's counts were (the run's own linking never moves
-        them: `mentioned` adds what it links);
-      - the order of the whole book (as read, then as made: the first family of a key, the versions under a parent):
-        each entity's place when it was read (`pg_temp.mx_run_order`), the entities made since after, in the order
-        made;
+    """The decision run's entities stage's book, read by need: the entities and aliases a run touches, not the whole
+    book (memory, 0218). It answers as the whole book does, as of when it was read:
+      - each entity and alias read when first asked (LazyBook); the merges, pins and the owner's "never" read whole;
+      - the mention types (`types`, `subject`, `mentioned`) as they stood when read: a snapshot in a temporary table
+        (`pg_temp.mx_run_types`), read by need (the run's own linking never moves them: `mentioned` adds what it links);
+      - the whole book's order (as read, then as made): each entity's place when read (`pg_temp.mx_run_order`), the
+        entities made since after, in the order made;
       - the pool's indexes over the live entities (Book.index): built from one read of every entity, row by row, none
-        of them kept but those asked; grown with the entities the run makes live, in the whole book's order;
-      - the walks over the whole book (`walk`, the repairs): read row by row, narrowed by the caller's SQL; an entity
-        the run holds is the one given (its changes are the run's).
+        kept but those asked; grown with the entities the run makes live;
+      - the walks over the whole book (`walk`): read row by row, narrowed by the caller's SQL; an entity the run holds
+        is the one given.
     The temporary tables go with the transaction (ON COMMIT DROP)."""
 
     def __init__(self, cur: Any) -> None:
@@ -1239,7 +1149,7 @@ class RunBook(LazyBook):
         self._fv_made = 0
         self._fresh_seen = 0
         self._walks = 0
-        self.reading = 0.0   # the seconds of the indexes' one read (_build): counted in the stage's budget, kept for diagnostics
+        self.reading = 0.0   # the seconds of the indexes' one read (_build), in the stage's budget
 
     # -- the mention counts, as they stood when the book was read -------------------------------------------------
     def _counted(self, ids: Sequence[str]) -> Tuple[Dict[str, Counter], Dict[str, int]]:
@@ -1330,10 +1240,8 @@ class RunBook(LazyBook):
         self.prime_names(keys)
 
     def prime_names(self, keys: Iterable[str]) -> None:
-        """v10.24 (0221): what `product_of` asks of these names, in one go: the aliases and families their last words
-        could be, those families' clusters and what `maker_keys` reads of them (prime_makers). One name at a time,
-        the repairs' walks asked the database ~30k times a run (the server: 17 s of the stage, v10.22's whole book
-        5.5 s)."""
+        """What `product_of` asks of these names, in one go: the aliases and families their last words could be, those
+        families' clusters and what `maker_keys` reads of them (prime_makers)."""
         rests = sorted({" ".join(k.split()[i:]) for k in keys if k for i in range(1, len(k.split()))})
         if rests:
             self.alias.want(rests)
@@ -1347,8 +1255,8 @@ class RunBook(LazyBook):
             self.prime_makers({self.root(c) for c in found})
 
     def prime_makers(self, roots: Iterable[Optional[str]]) -> None:
-        """v10.24 (0221): what `maker_keys` asks of these clusters, in one go: their members (prime_clusters), the
-        versions under them, their parents' clusters, and the clusters of the makers they and their versions state."""
+        """What `maker_keys` asks of these clusters, in one go: their members, the versions under them, their parents'
+        clusters, and the clusters of the makers they and their versions state."""
         roots = {r for r in roots if r}
         self.prime_clusters(roots)
         members = [e for r in roots for i in self._leading_to(r) if (e := dict.get(self.ents, i)) is not None]
@@ -1363,8 +1271,8 @@ class RunBook(LazyBook):
         self.prime_clusters(more - roots)
 
     def prime_sides(self, members: Iterable[str]) -> None:
-        """v10.24 (0221): what `sides` asks of these entities (held already: a cluster's members) besides their own
-        rows: the product test of the ones typed an org with a name of several words (prime_names)."""
+        """What `sides` asks of these entities besides their own rows: the product test of the ones typed an org with a
+        name of several words (prime_names)."""
         got = [e for i in members if (e := dict.get(self.ents, i)) is not None and " " in (e.key or "")]
         self.types.want([e.id for e in got])
         self.prime_names([e.key for e in got if self.etype(e.id) == "org"])
@@ -1561,7 +1469,6 @@ class RunBook(LazyBook):
 
 
 def run_book(cur: Any) -> RunBook:
-    """v10.23 (0218): the decision run's entities stage's book (RunBook): what the run touches, read when asked."""
     return RunBook(cur)
 
 
@@ -1571,7 +1478,7 @@ def pair(a: str, b: str) -> Tuple[str, str]:
 
 # ---- linking ---------------------------------------------------------------------------------------
 
-@dataclass(slots=True)   # v10.17.2 (0204): no __dict__ a mention (a full pass reads ~840k at the server's size)
+@dataclass(slots=True)   # slots: no __dict__ a mention (a full pass reads hundreds of thousands)
 class Mention:
     post_id: str
     guide: str
@@ -1584,8 +1491,8 @@ class Mention:
     fields: Dict[str, Any]
     entity_id: Optional[str]
     at: Optional[datetime]
-    ref: Optional[str] = None        # 0133: the citation rule's identifier (arXiv, DOI, a document link)
-    by_name: Optional[str] = None    # 0133: a document's publisher or author, as written
+    ref: Optional[str] = None        # the citation rule's identifier (arXiv, DOI, a document link)
+    by_name: Optional[str] = None    # a document's publisher or author, as written
     call_id: Optional[str] = None
     _key: Optional[str] = field(default=None, init=False, repr=False, compare=False)
 
@@ -1598,8 +1505,8 @@ class Mention:
 
 def _mentions(cur: Any, guide: Any, *, unlinked: bool, limit: Optional[int] = None,
               posts: Optional[Sequence[str]] = None) -> List[Mention]:
-    """The current mentions (0133: mx_mentions_now, each post's newest valid entities answer, of `guide`'s guides);
-    `posts`: only those posts' (v10.13.9: the full pass's pages)."""
+    """The current mentions (mx_mentions_now: each post's newest valid entities answer, of `guide`'s guides); `posts`:
+    only those posts'."""
     params: List[Any] = [guide] + ([list(posts)] if posts is not None else []) + ([limit] if limit else [])
     cur.execute(f"""SELECT m.post_id::text, m.guide, m.n, m.span, m.name, m.type, m.role, m.maker, m.family, m.version,
                            m.variant, m.size, m.build, m.entity_id::text,
@@ -1623,15 +1530,13 @@ def _majority(ms: Sequence[Mention]) -> Mention:
     return min(pick, key=lambda m: (-names[m.name], m.at or datetime.max.replace(tzinfo=timezone.utc), m.post_id, m.n))
 
 
-CHECKPOINT_TYPES = ("model", None)   # v10.35: the types a size or a build makes a checkpoint of
+CHECKPOINT_TYPES = ("model", None)   # the types a size or a build makes a checkpoint of
 
 
 def level_of(type_: Optional[str], hk: Tuple, pk: Tuple) -> str:
     """A versioned name's level: a checkpoint when it states a size or a build, a variant when a variant, else a
-    version. v10.35: a size or build is a model's only (its parameters, its weights' format): a product's, a
-    dataset's or software's "size" is a part of its name, a SKU ("Core Ultra 9 285K", "Radeon 780M", "AP-101B",
-    "goodbooks-10k", "Build 29695"), so it is a variant. Measured on the server copy: 476 non-model checkpoints,
-    every one of 25 sampled a SKU, a name or a row count, none a build of a thing."""
+    version. A size or build is a model's only: a product's, dataset's or software's "size" is part of its name, a SKU
+    ("Core Ultra 9 285K", "Build 29695"), so it is a variant."""
     fk = hk if N.has_version(hk) else pk
     if (fk[3] or fk[4]) and type_ in CHECKPOINT_TYPES:
         return "checkpoint"
@@ -1686,10 +1591,10 @@ def _maker_entity(w: Writer, maker: Optional[str], at: Optional[datetime]) -> Op
 
 
 def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
-    """The entity of a key with no alias yet, made from its mentions (0090 C: a known family's new version is its
-    provisional child; an unknown family is made provisional too)."""
+    """The entity of a key with no alias yet, made from its mentions (a known family's new version is its provisional
+    child; an unknown family is made provisional too)."""
     m = _majority(ms)
-    m = replace(m, fields=N.clean(m.fields, m.name))   # v10.30 (0259): a ratio is no version
+    m = replace(m, fields=N.clean(m.fields, m.name))   # a ratio is no version
     first = min((x.at for x in ms if x.at), default=None)
     hk = N.fields_key(m.fields, m.maker)
     pk = N.fields_key(N.parse(m.name, m.type, m.maker), m.maker)
@@ -1705,9 +1610,9 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
     fam_key = hk[0] if N.has_version(hk) and hk[0] else pk[0]
     parent = None
     if fam_key and fam_key != key:
-        parent = family_stem(w.book, w.book.by_key(fam_key))   # 0230: a member's name is never a family's
+        parent = family_stem(w.book, w.book.by_key(fam_key))   # a member's name is never a family's
         if parent is not None and not w.book.org_like(parent) and other_maker(w.book, parent, maker):
-            # 0230: another maker's thing made from the family: a thing of its own maker, based on the family
+            # another maker's thing made from the family: a thing of its own maker, based on the family
             up = _maker_entity(w, maker, first) if N.key(maker) != key else None
             eid = w.entity(type_=m.type, name=m.name, key=key, level="thing", parent=up, maker=maker,
                            fields=dict(m.fields) if N.has_version(hk) else dict(N.parse(m.name, m.type, m.maker)),
@@ -1715,7 +1620,7 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
             based_on_family(w.cur, eid, parent, maker=maker, makers=family_makers(w.book, parent), run_id=w.run_id)
             return eid
         if parent is not None and w.book.org_like(parent):
-            # 0164: an org (or person) is never a version's family: the family entity of that name under it
+            # an org (or person) is never a version's family: the family entity of that name under it
             parent = family_under(w, parent, fam_key, m.type, maker, first,
                                   (m.fields.get("family") or "").strip() if N.has_version(hk) else "")
         if parent is None:
@@ -1731,7 +1636,7 @@ def entity_for(w: Writer, key: str, ms: Sequence[Mention]) -> str:
 
 
 def product_type(book: Book, fam: str) -> str:
-    """0164 B: the type a product account takes: its family's (as its mentions give it), else a model."""
+    """The type a product account takes: its family's (as its mentions give it), else a model."""
     for t in (book.etype(fam), schemas_type(book.ents[fam].type)):
         if t and t not in ORGISH:
             return t
@@ -1739,9 +1644,9 @@ def product_type(book: Book, fam: str) -> str:
 
 
 def product_account(w: Writer, key: str, m: Mention, fam: str, first: Optional[datetime]) -> str:
-    """0164 B: a product account's entity ("Zentra Vela" typed an org, the family Vela's account): made with its
-    family's type and merged into the family (rule `product_account`, a redirect like any other, undoable), unless
-    the family's cluster holds an org (the owner's to settle) or the owner kept them apart."""
+    """A product account's entity ("Zentra Vela" typed an org, the family Vela's account): made with its family's type
+    and merged into the family (rule `product_account`, undoable), unless the family's cluster holds an org (the owner's
+    to settle) or the owner kept them apart."""
     eid = w.entity(type_=product_type(w.book, fam), name=m.name, key=key, level="thing", parent=None,
                    maker=(m.maker or "").strip() or None, fields=dict(N.NONE), first_seen=first)
     book = w.book
@@ -1754,14 +1659,14 @@ def product_account(w: Writer, key: str, m: Mention, fam: str, first: Optional[d
 
 
 def is_build(e: Ent) -> bool:
-    """v10.35: a build of a thing (a checkpoint, or a name stating a build: GGUF, NVFP4, quantised weights), the more
-    specific side of a merge (`merge` keeps the other)."""
+    """A build of a thing (a checkpoint, or a name stating a build: GGUF, NVFP4, quantised weights), the more specific
+    side of a merge (`merge` keeps the other)."""
     return e.level == "checkpoint" or bool(e.build)
 
 
 def cluster_maker(book: Book, root: str) -> Optional[str]:
-    """v10.35: the maker a cluster's names state: its root's, else its members' (in id order). A merge never loses
-    the maker the merged name stated (mx_entities.maker is the name's own and never changes)."""
+    """The maker a cluster's names state: its root's, else its members' (in id order). A merge never loses the maker
+    the merged name stated (mx_entities.maker is the name's own and never changes)."""
     e = book.ents.get(root)
     if e is not None and e.maker:
         return e.maker   # most roots: their own (the cluster is read only when it states none)
@@ -1773,13 +1678,13 @@ def cluster_maker(book: Book, root: str) -> Optional[str]:
 
 
 def maker_root(book: Book, maker: Optional[str]) -> Optional[str]:
-    """0164: the cluster a stated maker's name aliases (None: no entity of that name)."""
+    """The cluster a stated maker's name aliases (None: no entity of that name)."""
     k = N.key(maker)
     return book.root(book.by_key(k)) if k else None
 
 
 def same_maker(book: Book, x: Optional[str], y: Optional[str]) -> bool:
-    """0164: two stated makers name one maker: the same key, or keys of one cluster ("Zentra AI" merged into Zentra)."""
+    """Two stated makers name one maker: the same key, or keys of one cluster ("Zentra AI" merged into Zentra)."""
     kx, ky = N.key(x), N.key(y)
     if kx == ky:
         return True
@@ -1789,9 +1694,8 @@ def same_maker(book: Book, x: Optional[str], y: Optional[str]) -> bool:
 
 def family_under(w: Writer, org: str, fam_key: str, type_: Optional[str], maker: Optional[str],
                  first: Optional[datetime], fam_name: str = "") -> str:
-    """0164: the family a version names when its family's name is an org's ("Zentra 5" by Zentra, the org Zentra):
-    a `family` entity of that key outside any org cluster, else one made under the org (parent the org; its key's
-    alias stays the org's, so the org's own mentions stay the org's)."""
+    """The family a version names when its family's name is an org's ("Zentra 5" by the org Zentra): a `family` entity
+    of that key outside any org cluster, else one made under the org (its key's alias stays the org's)."""
     book = w.book
     for eid in book.families().get(fam_key, ()):
         r = book.root(eid)
@@ -1809,22 +1713,18 @@ def family_under(w: Writer, org: str, fam_key: str, type_: Optional[str], maker:
                     fields=dict(N.NONE), first_seen=first)
 
 
-# ---- 0230: a family is its maker's, and its stem ----------------------------------------------------------------
+# ---- a family is its maker's, and its stem (0230) -----------------------------------------------------------------
 # A version's family (its parent) is (1) the stem its name shares with the family's other members, never one member's
-# own name: a family key that names one of a family's versions or variants ("Orbit Argon", a variant of Orbit, as
-# the family of "Orbit Argon 3"; "Lumen 11", a version of Lumen, as the family of "Lumen 11 24H2") is that
-# family's; and (2) its maker's: a thing whose stated maker is none of the family's makers (a community quantisation,
-# merge or fine-tune of Orbit by another account; "Zentra Orbit 5" under Orbit; a thermostat "KX368" by Kestrel under
-# "Kx") is not a member: it is a thing of its own maker, `based_on` the family (an edge, rule FAMILY_RULE). The
-# family's makers: the maker its members (and its own names) state most, and any other a FAMILY_MAKER_SHARE of them state (a lab
-# beside its company); two stated makers are one when they are one cluster, one's words are in the other's ("Vantor" /
-# "Vantor Labs", "Zentra" / "Zentra Cloud"), or one names the family itself ("Orbit Team" of Orbit).
+# own name ("Orbit Argon", a variant of Orbit, is not the family of "Orbit Argon 3"); and (2) its maker's: a thing
+# whose stated maker is none of the family's makers (a community fine-tune by another account) is a thing of its own
+# maker, `based_on` the family (an edge, rule FAMILY_RULE). The family's makers: the maker its members state most, and
+# any other a FAMILY_MAKER_SHARE of them state; two stated makers are one when they are one cluster, one's words are
+# in the other's ("Vantor" / "Vantor Labs"), or one names the family itself ("Orbit Team" of Orbit).
 
 def families_on() -> Dict[str, bool]:
-    """0230's switches (entity_bands.json `families`): `maker` (another maker's thing leaves the family), `stem` (a
-    member's name is never a family), `namesakes` (a relation never crosses two makers' namesakes); 0250's: `split` (a
-    bare name several makers state splits into one thing a maker, `split_names`), `released_held` (a single post's
-    `released` whose maker is not the thing's settled maker is held, `held_released`). Off until measured."""
+    """The family switches (entity_bands.json `families`): `maker` (another maker's thing leaves the family), `stem` (a
+    member's name is never a family), `namesakes` (a relation never crosses two makers' namesakes), `split` (a bare name
+    several makers state splits, `split_names`), `released_held` (`held_released`). Off until measured."""
     got = bands().get("families") or {}
     return {k: bool(got.get(k, False)) for k in ("maker", "stem", "namesakes", "split", "released_held")}
 
@@ -1842,8 +1742,8 @@ def _words_in(a: str, b: str) -> bool:
 
 
 def maker_fits(book: Book, x: Optional[str], y: Optional[str], family: Optional[str] = None) -> bool:
-    """0230: whether two stated makers can be one maker (either unstated: they can). `family`: the family's key (a
-    maker naming the family, "Orbit Team" of Orbit, is its own)."""
+    """Whether two stated makers can be one maker (either unstated: they can). `family`: the family's key (a maker
+    naming the family, "Orbit Team" of Orbit, is its own)."""
     kx, ky = N.key(x), N.key(y)
     if not kx or not ky or kx == ky:
         return True
@@ -1861,8 +1761,8 @@ def family_members(book: Book, root: str) -> List[str]:
 
 
 def family_makers(book: Book, root: str) -> Optional[List[str]]:
-    """0230: a family's makers as stated (above), the top first; None when fewer than FAMILY_MAKER_MIN of its members
-    and names state one (too few to tell another maker's thing from its own)."""
+    """A family's makers as stated (above), the top first; None when fewer than FAMILY_MAKER_MIN of its members and
+    names state one."""
     cache = book.__dict__.setdefault("_family_makers", {})
     if root in cache:
         return cache[root]
@@ -1881,16 +1781,15 @@ def family_makers(book: Book, root: str) -> Optional[List[str]]:
 
 @dataclass
 class MakerGroup:
-    """0250: the stated makers that are one maker (`maker_fits`): its most stated name, how many state it, its names."""
+    """The stated makers that are one maker (`maker_fits`): its most stated name, how many state it, its names."""
     name: str
     n: int
     names: List[str] = field(default_factory=list)
 
 
 def maker_groups(book: Book, votes: Dict[str, int], family: Optional[str] = None) -> List[MakerGroup]:
-    """0230/0250: stated makers {name: how many state it} grouped into makers, the most stated first: a name joins the
-    first group one of whose names it fits (one cluster by their aliases, one's words in the other's, or one names
-    `family`, the name's key). The one rule both a family's makers and a bare name's makers are read by."""
+    """Stated makers {name: how many state it} grouped into makers, the most stated first: a name joins the first group
+    one of whose names it fits. The one rule both a family's makers and a bare name's makers are read by."""
     groups: List[MakerGroup] = []
     for name, n in sorted(((k.strip(), v) for k, v in votes.items() if (k or "").strip()), key=lambda kv: (-kv[1], kv[0])):
         g = next((g for g in groups if any(maker_fits(book, name, x, family) for x in g.names)), None)
@@ -1904,8 +1803,8 @@ def maker_groups(book: Book, votes: Dict[str, int], family: Optional[str] = None
 
 
 def family_stem(book: Book, parent: Optional[str]) -> Optional[str]:
-    """0230: the family a parent stands for: itself, or, when it is a version, variant or checkpoint of a family (a
-    family key naming one member), that family (climbed STEM_DEPTH times at most)."""
+    """The family a parent stands for: itself, or, when it is a version, variant or checkpoint of a family, that family
+    (climbed STEM_DEPTH times at most)."""
     r = book.root(parent) if parent else None
     for _ in range(STEM_DEPTH if families_on()["stem"] else 0):
         e = book.ents.get(r) if r else None
@@ -1919,7 +1818,7 @@ def family_stem(book: Book, parent: Optional[str]) -> Optional[str]:
 
 
 def other_maker(book: Book, family: Optional[str], maker: Optional[str]) -> bool:
-    """0230: a thing stating `maker` is another maker's than the family's (so never its member)."""
+    """A thing stating `maker` is another maker's than the family's (so never its member)."""
     if not family or not (maker or "").strip() or family not in book.ents or not families_on()["maker"]:
         return False
     makers = family_makers(book, family)
@@ -1929,13 +1828,11 @@ def other_maker(book: Book, family: Optional[str], maker: Optional[str]) -> bool
 
 def namesakes(cur: Any, sides: Sequence[Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]],
               root: Any) -> Set[int]:
-    """0230: of a post's relation sides [(the entity root a mention links to, the mention's type, its stated maker,
-    its name)], the indexes whose mention is about another maker's namesake of the entity, so no evidence of the
-    entity's relations: the maker the post gives the mention (an org or person mention is its own maker; a thing's,
-    its stated maker) and the entity's (an org or person entity is its own; a thing's, its stated maker) both known,
-    and not one maker (`maker_fits`, or their names alias one cluster). "Orbit" the exchange, an org in its post,
-    linked to Vantor's Orbit (a model by Vantor): its "Orbit released Orbit dollar" is not Vantor's model's.
-    `root`: an entity id -> its cluster's root. One read of the entities, one of the makers' aliases."""
+    """Of a post's relation sides [(the entity root a mention links to, the mention's type, its stated maker, its
+    name)], the indexes whose mention is about another maker's namesake of the entity, so no evidence of its relations:
+    the post's maker for the mention and the entity's maker both known and not one maker. "Orbit" the exchange linked to
+    Vantor's model Orbit: its "Orbit released Orbit dollar" is not the model's. `root`: an entity id -> its cluster's
+    root. One read of the entities, one of the makers' aliases."""
     ids = sorted({s[0] for s in sides if s[0]})
     if not ids or not families_on()["namesakes"]:
         return set()
@@ -1962,7 +1859,7 @@ def namesakes(cur: Any, sides: Sequence[Tuple[Optional[str], Optional[str], Opti
 
 def based_on_family(cur: Any, thing: str, family: str, *, maker: Optional[str], makers: Optional[Sequence[str]],
                     run_id: Any) -> int:
-    """0230: the edge of another maker's thing made from a family: thing `based_on` family (mx_connections, rule
+    """The edge of another maker's thing made from a family: thing `based_on` family (mx_connections, rule
     FAMILY_RULE; one current edge a pair, kept)."""
     cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, p, rule, run_id, evidence)
                    VALUES ('entity', %s, 'entity', %s, 'based_on', 1.0, %s, %s, %s::jsonb)
@@ -1972,21 +1869,14 @@ def based_on_family(cur: Any, thing: str, family: str, *, maker: Optional[str], 
     return cur.rowcount
 
 
-# ---- 0250: one bare name, several makers' things ----------------------------------------------------------------
-# 0230's maker rule, deepened from a versioned name's family to a bare name: a one-word thing ("Vexa") whose mentions
-# state several makers, each named by SPLIT_MIN or more of them and none one maker with another (`maker_groups`: one
-# cluster by their aliases, one's words in the other's), MAY be one thing a maker. v10.28 (0250 step 0 measured: of
-# the top 30 shared bare names about 18 were one thing under several makers: an owner change, a founder named as
-# maker, a foundation vs its project, one company's legal names): maker groups are never a split by themselves. Each
-# pair of them is a candidate, asked once (`maker_pair_input`: the collide kind, its guide deepened as the variant
-# PAIR_GUIDE: 3-5 sample mentions of each group, its types, dates and co-mentioned names), PAIR_RUNS runs; a pair is
-# apart only when every run says "different" (`pair_verdict`). The groups no "different" separates are one thing
-# (`split_plan`'s components); two or more things split: the one its entity states (else the most stated) keeps the
-# entity, its id and every redirect to it; each other is a new entity "<name> (<maker>)" under its maker, its
-# mentions pinned there (mx_entity_pins by 'facts', the link each left in from_entity: undoable), recorded in
-# mx_entity_fixes (kind SPLIT_KIND: the parent, the maker). A mention stating no maker goes by its post: the makers it
-# names otherwise (its org and person mentions, the same name's stated maker), else the post's links (a site named by
-# one maker), else the settled collision question's answer (identity.collisions' own); else it stays on the entity,
+# ---- one bare name, several makers' things (0250) -------------------------------------------------------------
+# A one-word thing whose mentions state several makers (each SPLIT_MIN+ times, `maker_groups`) MAY be one thing a
+# maker; maker groups are never a split by themselves (often one thing under several makers). Each pair of groups is
+# asked once (`maker_pair_input`, PAIR_GUIDE), PAIR_RUNS runs; apart only when every run says "different"
+# (`pair_verdict`). The groups no "different" separates are one thing (`split_plan`); the one its entity states
+# (else the most stated) keeps the entity, its id and redirects; each other becomes "<name> (<maker>)" under its
+# maker, its mentions pinned there (mx_entity_pins, undoable), recorded in mx_entity_fixes (SPLIT_KIND). A mention
+# stating no maker goes by its post (the makers it names, its link sites, the settled collision answer), else stays,
 # placed 'unsure'. Nothing is deleted; behind entity_bands.json `families.split`.
 SPLIT_KIND = "maker_split"
 SPLIT_MIN = 2                    # a maker this many of a bare name's mentions state is a candidate thing of its own
@@ -2003,18 +1893,17 @@ PAIR_CAP = 500                   # new pair questions a run adds (the rest wait 
 
 @dataclass
 class NameRow:
-    """One mention of a bare name, as the split reads it."""
     post_id: str
     guide: str
     n: int
     entity_id: Optional[str]
     maker: Optional[str] = None
     near: List[str] = field(default_factory=list)    # the makers its post names otherwise
-    sites: List[str] = field(default_factory=list)   # its post's link sites
+    sites: List[str] = field(default_factory=list)
     asked: Optional[str] = None                      # the maker the settled collision answer gives it
     span: str = ""                                   # how the post wrote it (a pair question's sample)
-    type: Optional[str] = None                       # the type the reading gave it
-    at: Optional[datetime] = None                    # its post's date
+    type: Optional[str] = None
+    at: Optional[datetime] = None
 
 
 def bare_thing(e: Optional[Ent]) -> bool:
@@ -2056,11 +1945,10 @@ def pair_verdict(answers: Sequence[Dict[str, Any]]) -> Optional[str]:
 
 def split_plan(book: Book, e: Ent, rows: Sequence[NameRow], said: Optional[Any] = None) -> Dict[str, Any]:
     """(no database) A bare name's split. `said(group a, group b)`: a candidate pair's settled verdict (`pair_verdict`)
-    or None (not asked, or waiting); no `said`: none settled. {big: the candidate groups (`name_groups`), pairs:
-    {(i, j): verdict} over them, ask: the pairs with no verdict yet, groups: the things (the candidate groups no
-    'different' separates, merged), home: the index of the one the entity keeps (its own stated maker's, else the most
-    stated), rows: {(post, guide, n): (group index or None, how)}}; rows {} when fewer than two things (one maker, one
-    thing under several, or a pair still waiting: a split acts only on settled answers)."""
+    or None. {big: the candidate groups (`name_groups`), pairs: {(i, j): verdict}, ask: the pairs with no verdict yet,
+    groups: the things (groups no 'different' separates, merged), home: the index of the one the entity keeps, rows:
+    {(post, guide, n): (group index or None, how)}}; rows {} when fewer than two things (a split acts only on settled
+    answers)."""
     big = name_groups(book, e, rows)
     pairs = {(i, j): (said(big[i], big[j]) if said else None)
              for i in range(len(big)) for j in range(i + 1, len(big))}
@@ -2114,7 +2002,7 @@ def split_plan(book: Book, e: Ent, rows: Sequence[NameRow], said: Optional[Any] 
     return {**base, "home": home, "rows": out}
 
 
-# ---- 0250 v10.28: the pair question (the collide kind, its guide PAIR_GUIDE) ------------------------------------
+# ---- the pair question (the collide kind, its guide PAIR_GUIDE) -------------------------------------------------
 
 _PAIR_SIDE_LINE = re.compile(r"^([AB]) makers: (\[.*?\]) \(\d+ mentions\)", re.M)
 
@@ -2262,8 +2150,8 @@ def _split_candidates(cur: Any, guide: Sequence[str], since: Optional[datetime])
 
 
 def _asked_makers(cur: Any, guide: Sequence[str], eid: str) -> Dict[Tuple[str, int], str]:
-    """{(post, n): maker}: the mentions a settled collision question about `eid` shows, each with the maker every one of
-    its answers (2+) gives the sense it puts the mention in (a mention they disagree on, or give no maker, is left)."""
+    """{(post, n): maker}: the mentions a settled collision question about `eid` shows, each with the maker all of its
+    answers (2+) give the mention's sense (a mention they disagree on, or give no maker, is left)."""
     cur.execute("""SELECT id::text, input FROM mx_tasks WHERE kind = 'collide' AND guide <> %s AND b IS NULL AND a = %s
                       AND status = 'answered' ORDER BY created_at DESC, id LIMIT 1""", (PAIR_GUIDE, eid))
     row = cur.fetchone()
@@ -2312,11 +2200,10 @@ def _post_context(cur: Any, guide: Sequence[str], key: str, posts: Sequence[str]
 
 def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = False,
                 limit: int = SPLIT_LIMIT) -> Dict[str, Any]:
-    """0250: the bare names several makers state, split where their maker groups are different things (above: each
-    candidate pair asked once, PAIR_GUIDE; apart only on PAIR_RUNS "different"), and the new mentions of the names split
-    before placed in their maker's thing. The first pass (and a full one) reads every bare name, then only those a
-    call since SPLIT_MARK named or whose pair question was answered since. Idempotent; `limit` names a run, PAIR_CAP
-    new questions. Off (`families.split`): nothing."""
+    """The bare names several makers state, split where their maker groups are different things (above), and the new
+    mentions of names split before placed in their maker's thing. The first pass (and a full one) reads every bare name,
+    then only those a call since SPLIT_MARK named or whose pair question was answered since. Idempotent; `limit` names a
+    run, PAIR_CAP new questions. Off (`families.split`): nothing."""
     out: Counter = Counter({k: 0 for k in ("names", "split", "made", "pinned", "unsure", "kept", "pairs", "asked",
                                            "asked_again", "waiting", "one_thing", "apart")})
     if not families_on().get("split"):
@@ -2329,7 +2216,7 @@ def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = 
     since = None if full or not mark else datetime.fromisoformat(mark) - SPLIT_MARGIN
     done = splits_of(cur)
     raw_ids = _split_candidates(cur, guide, since)
-    if since is not None:   # v10.28: and the names whose pair question was answered since
+    if since is not None:   # and the names whose pair question was answered since
         cur.execute("""SELECT DISTINCT t.a::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
                         WHERE t.kind = 'collide' AND t.guide = %s AND c.created_at >= %s""", (PAIR_GUIDE, since))
         raw_ids = sorted(set(raw_ids) | {r[0] for r in cur.fetchall() if r[0]})
@@ -2358,7 +2245,7 @@ def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = 
         asked = _asked_makers(cur, guide, root) if bare_posts else {}
         for r in rows:
             r.near, r.sites, r.asked = near.get(r.post_id, []), sites.get(r.post_id, []), asked.get((r.post_id, r.n))
-        # v10.28: each pair of its maker groups a question (asked once); a split only where every run says apart
+        # each pair of its maker groups a question (asked once); a split only where every run says apart
         pts = _pair_tasks(cur, root) if len(name_groups(book, e, rows)) >= 2 else []
         reopen: List[str] = []
 
@@ -2443,11 +2330,9 @@ def split_names(cur: Any, book: Book, w: "Writer", *, run_id: Any, full: bool = 
 
 
 def held_released(cur: Any, rows: Sequence[Dict[str, Any]], root: Any) -> Set[int]:
-    """0250: of an entity page's relations [{relation, a, b, posts}], the indexes of a `released` only one post states
-    whose maker (a) is not the thing's (b's) settled maker: its entity's stated maker, known and not one maker with a
-    (the same key, one's words in the other's, or one cluster by their aliases). Held, never shown, until a second post
-    states it (a namesake's release on one name's page, before or while its split settles). Off (`released_held`):
-    none."""
+    """Of an entity page's relations [{relation, a, b, posts}], the indexes of a `released` only one post states whose
+    maker (a) is not one maker with the thing's (b's) stated maker. Held, never shown, until a second post states it (a
+    namesake's release on one name's page). Off (`released_held`): none."""
     want = [k for k, r in enumerate(rows) if r["relation"] == "released" and len(r.get("posts") or []) <= 1]
     if not want or not families_on().get("released_held"):
         return set()
@@ -2478,7 +2363,7 @@ def held_released(cur: Any, rows: Sequence[Dict[str, Any]], root: Any) -> Set[in
 def resolve_mention(book: Book, m: Mention) -> Optional[str]:
     """The entity a mention links to now: its pin, else its key's alias (before redirects; reads go through them)."""
     pin = book.pins.get((m.post_id, m.guide, m.n))
-    if not pin:   # 0133: the owner's pin of the same name in the post's earlier guide's set (never within one guide)
+    if not pin:   # the owner's pin of the same name in the post's earlier guide's set (never within one guide)
         g, e = book.pin_keys.get((m.post_id, m.key), (None, None))
         pin = e if g is not None and g != m.guide else None
     if pin:
@@ -2487,8 +2372,8 @@ def resolve_mention(book: Book, m: Mention) -> Optional[str]:
 
 
 def _join_refs(w: Writer, refs: Sequence[Mention]) -> None:
-    """0133: a document the citation rule read an identifier for (arXiv, DOI, a document link) is one entity whatever
-    name each post gives it: its name's key and its identifier's key alias one entity (whichever came first)."""
+    """A document the citation rule read an identifier for (arXiv, DOI, a document link) is one entity whatever name
+    each post gives it: its name's key and its identifier's key alias one entity (whichever came first)."""
     for m in refs:
         rk = N.key(m.ref)
         if not rk or rk == m.key:
@@ -2501,13 +2386,13 @@ def _join_refs(w: Writer, refs: Sequence[Mention]) -> None:
 
 
 def published(cur: Any, book: Book, w: Writer, ms: Sequence[Mention]) -> int:
-    """0133: each linked document mention naming its publisher or author (`by`) as a `published` edge (0131's
-    mx_connections, a_kind = b_kind = 'entity', rule 'mention_by'): publisher -> document. The publisher is the
-    entity its name's key aliases, made a provisional org (or the type a mention in the same post gives that name)
-    when there is none. One current edge a pair (keep everything: never deleted). How many were added."""
+    """Each linked document mention naming its publisher or author (`by`) as a `published` edge (mx_connections, rule
+    'mention_by'): publisher -> document. The publisher is the entity its name's key aliases, made a provisional org (or
+    the type a mention in the same post gives that name) when there is none. One current edge a pair, never deleted.
+    How many were added."""
     added = 0
-    said: Dict[Tuple[str, str], Optional[str]] = {}   # v10.13.9: (post, key) -> the first org/person type, read once
-    for x in ms:                                       # (was a scan of every mention for each document mention)
+    said: Dict[Tuple[str, str], Optional[str]] = {}   # (post, key) -> the first org/person type, read once
+    for x in ms:
         if x.type in ("org", "person"):
             said.setdefault((x.post_id, x.key), x.type)
     for m in ms:
@@ -2542,15 +2427,15 @@ def link(cur: Any, book: Book, w: Writer, ms: Sequence[Mention]) -> Dict[str, in
 
 
 def make_entities(book: Book, w: Writer, ms: Sequence[Mention]) -> None:
-    """The entity of each key the mentions name that has none yet, made from all of its mentions here (v10.13.9:
-    before a run links its mentions in chunks, so a key's first seen and majority read every mention the run has)."""
+    """The entity of each key the mentions name that has none yet, made from all of its mentions here (so a key's first
+    seen and majority read every mention the run has, before it links in chunks)."""
     by_key: Dict[str, List[Mention]] = defaultdict(list)
     for m in ms:
         if m.key:
             by_key[m.key].append(m)
-    book.prime(keys=list(by_key) + [N.key(m.ref) for m in ms if m.ref])   # v10.23: a book read by need, in one go
+    book.prime(keys=list(by_key) + [N.key(m.ref) for m in ms if m.ref])   # a book read by need, in one go
     for k in sorted(by_key):
-        refs = [m for m in by_key[k] if m.ref]   # 0133: a key whose document's identifier names an entity joins it
+        refs = [m for m in by_key[k] if m.ref]   # a key whose document's identifier names an entity joins it
         if book.by_key(k) is None:
             known = next((book.by_key(N.key(m.ref)) for m in refs if book.by_key(N.key(m.ref))), None)
             if known:
@@ -2578,8 +2463,8 @@ def relink(cur: Any, book: Book, ms: Sequence[Mention]) -> Dict[str, int]:
 def vconflict(a: Ent, b: Ent, literal: bool = False) -> Optional[str]:
     """'strong': both name a version, variant, size or build and they differ; 'soft': one names one the other lacks
     (or an edition year on one side only); None. `literal`: the two names are one string once the maker and the
-    separators go, so only the parser's split counts (the lab's vconflict). v10.38: the parser's two readings of one
-    name in another word order, Haiku's fields one (reordered), are no conflict."""
+    separators go, so only the parser's split counts. The parser's two readings of one name in another word order,
+    Haiku's fields one, are no conflict."""
     worst = None
     ya, yb = N.years(a.key), N.years(b.key)
     if ya != yb and not literal:
@@ -2599,12 +2484,11 @@ def vconflict(a: Ent, b: Ent, literal: bool = False) -> Optional[str]:
 
 def family_values(book: Book) -> Dict[str, List[Set[Any]]]:
     """{family key: [the versions, variants, sizes, builds its entities state]} (Haiku's fields and the parser's),
-    read once a book (the narrowed version guard's 'the family has several')."""
+    read once a book (the version guard's 'the family has several')."""
     return book.family_values()
 
 
 def _family_value(got: Dict[str, List[Set[Any]]], e: "Ent") -> None:
-    """One entity's family values into `got` (Book.family_values)."""
     if e.status == "not_entity":
         return
     for fk in (e.hk, e.pk):
@@ -2616,10 +2500,9 @@ def _family_value(got: Dict[str, List[Set[Any]]], e: "Ent") -> None:
 
 
 def soft_reason(book: Book, a: Ent, b: Ent, literal: bool = False) -> str:
-    """0130 A3, the version guard narrowed, for a soft conflict (one side states what the other lacks):
-    'version' (held: the stated field is one the family has several of, so the bare side may be another member);
-    'version_year' (only an edition year on one side); 'version_one_side' (a field the family has only one of).
-    Both sides stating different versions is 'strong' (kept apart, vconflict) and never comes here."""
+    """The version guard for a soft conflict (one side states what the other lacks): 'version' (held: the family has
+    several of the stated field, so the bare side may be another member); 'version_year' (only an edition year on one
+    side); 'version_one_side' (a field the family has only one of). A strong conflict never comes here."""
     # the families: each side's family field, and each name itself (a bare "Nimbus" is the family of "Nimbus 5")
     fams = {N.squash(fk[0]) for e in (a, b) for fk in (e.hk, e.pk) if fk and fk[0]} | {e.sq for e in (a, b) if e.sq}
     vals = family_values(book)
@@ -2643,7 +2526,7 @@ def strong_only_one(a: Ent, b: Ent) -> bool:
 
 
 def types_ok(a: Optional[str], b: Optional[str]) -> bool:
-    a, b = schemas_type(a), schemas_type(b)   # 0133: ent-v3's paper is a document
+    a, b = schemas_type(a), schemas_type(b)
     return a == b or "other" in (a, b) or {a, b} == {"product", "software"}
 
 
@@ -2666,11 +2549,9 @@ def maker_prefix(x: Ent, y: Ent) -> bool:
 
 
 def generic_bare(book: Book, x: Ent, y: Ent) -> bool:
-    """v10.35: the bare name y of the maker-prefix pair (x = y with its maker in front) is generic: another maker's
-    name is y with that maker in front too ("linux": "suse linux" by SUSE, "amazon linux" by Amazon, "oracle linux"
-    by Oracle), in the book or in either cluster, or y's cluster states another maker. Several makers' names on one
-    bare name are several things the bare name is common to: none merges into it by the rule (on production SUSE
-    Linux took Linux, and then Amazon, Oracle, Red Hat and Raspberry Pi Linux, as one thing of SUSE's)."""
+    """The bare name y of the maker-prefix pair (x = y with its maker in front) is generic: another maker's name is y
+    with that maker in front too ("suse linux", "amazon linux"), in the book or either cluster, or y's cluster states
+    another maker. Then none merges into it by the rule (they are several things the bare name is common to)."""
     m = next((k for k in (N.key(x.maker or ""), N.key(y.maker or "")) if k and x.key.startswith(k + " ")), "")
     if not m:
         return False
@@ -2688,14 +2569,13 @@ def generic_bare(book: Book, x: Ent, y: Ent) -> bool:
 
 
 def one_maker(book: Book, a: str, b: str) -> bool:
-    """v10.35: two makers' keys name one maker: same_maker, or one's words in the other's ("google" and "google
-    deepmind")."""
+    """Two makers' keys name one maker: same_maker, or one's words in the other's ("google" and "google deepmind")."""
     return same_maker(book, a, b) or _words_in(a, b) or _words_in(b, a)
 
 
 def generic_bares(book: Book, members: Iterable[str]) -> Dict[str, Set[str]]:
-    """v10.35: of a cluster's names, the bare names (by id) that two or more makers' names in it are with their
-    maker in front ({linux: {"suse", "amazon", "oracle"}}: generic_bare's class, merged before the guard)."""
+    """Of a cluster's names, the bare names (by id) that two or more makers' names in it are with their maker in front
+    ({linux: {"suse", "amazon", "oracle"}}: generic_bare's class, merged before the guard)."""
     ms = [m for m in members if m in book.ents]
     by_sq: Dict[str, List[str]] = defaultdict(list)
     for m in ms:
@@ -2718,11 +2598,9 @@ def generic_bares(book: Book, members: Iterable[str]) -> Dict[str, Set[str]]:
 
 
 def fields_rule(a: Ent, b: Ent) -> Optional[str]:
-    """'auto': the same family, version tuple, variant, size and build in Haiku's fields, the parser's version,
-    variant, size and build agreeing, and the same maker or one side none (22/22 unseen); 'queue': only Haiku's
-    fields agree (34/39); None. Family + version + variant alone is never a merge (3/59). v10.38: the parser's
-    readings agreeing in another word order ("Claude Opus 4.5" / "Claude 4.5 Opus": reordered) agree (53/53 on the
-    server copy, v10.38)."""
+    """'auto': the same family, version tuple, variant, size and build in Haiku's fields, the parser's agreeing (in any
+    word order: "Claude Opus 4.5" / "Claude 4.5 Opus"), and the same maker or one side none; 'queue': only Haiku's
+    fields agree; None. Family + version + variant alone is never a merge. Measured: plan/issues/0119."""
     if not (N.has_version(a.hk) and a.hk == b.hk and a.hk[0]):
         return None
     if a.maker and b.maker and N.key(a.maker) != N.key(b.maker):
@@ -2731,13 +2609,13 @@ def fields_rule(a: Ent, b: Ent) -> Optional[str]:
 
 
 def reordered(a: Ent, b: Ent) -> bool:
-    """v10.38: one name in another word order: Haiku's fields one (a version stated), and the parser's two readings
-    the same words in another order (names.reordered). Haiku's fields are the guard: the parser's words alone join
-    "MacBook Pro M3" and "MacBook M3 Pro" (another chip), whose fields differ."""
+    """One name in another word order: Haiku's fields one (a version stated), and the parser's two readings the same
+    words in another order (names.reordered). Haiku's fields are the guard: the parser's words alone join "MacBook Pro
+    M3" and "MacBook M3 Pro" (another chip)."""
     return a.hk == b.hk and N.has_version(a.hk) and N.reordered(a.pk, b.pk, (a.maker, b.maker))
 
 
-@dataclass(slots=True)   # 0183: no per-pair __dict__ (a full pass pools hundreds of thousands of pairs)
+@dataclass(slots=True)   # slots: no per-pair __dict__ (a full pass pools hundreds of thousands of pairs)
 class Pooled:
     a: str
     b: str
@@ -2746,8 +2624,8 @@ class Pooled:
 
 
 class Pool:
-    """The pairs a chunk pools. v10.23 (0218): a pair is checked against the entities a mention names (`mentioned`)
-    when the pairs are read, all of them in one go (a book read by need asks the database once, not once a pair)."""
+    """The pairs a chunk pools, checked against the entities a mention names (`mentioned`) all in one go (a book read
+    by need asks the database once, not once a pair)."""
 
     def __init__(self, book: Book) -> None:
         self.book = book
@@ -2784,8 +2662,8 @@ def _live(book: Book) -> List[Ent]:
 def _string_add(index: Any, e: Ent) -> None:
     by_gram, by_sq = index
     by_sq[e.sq].append(e.id)
-    for g in N.grams(e.sq):   # v10.17.2 (0204): not kept on every live entity (e.grams): only the seeds' and their
-        by_gram[g].append(e.id)   # candidates' are (pool_strings), ~1 KB an entity held to the run's end before
+    for g in N.grams(e.sq):   # grams not kept on every live entity: only the seeds' and their
+        by_gram[g].append(e.id)   # candidates' are (pool_strings; memory)
 
 
 def _family_add(by_fam: Any, e: Ent) -> None:
@@ -2821,8 +2699,8 @@ def _strings(book: Book):
 
 
 def pool_strings(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
-    """Squashed equality, word containment (4+ letters), trigram Jaccard >= 0.5: blocked on shared grams. v10.23:
-    each seed's candidates found first, then read in one go (a book read by need), then judged."""
+    """Squashed equality, word containment (4+ letters), trigram Jaccard >= 0.5: blocked on shared grams. Each seed's
+    candidates found first, then read in one go, then judged."""
     by_gram, by_sq = _strings(book)
     found: List[Tuple[Ent, List[str]]] = []
     for sid in seeds:
@@ -2837,8 +2715,7 @@ def pool_strings(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
             if len(got) < GRAM_CAP:
                 cands.update(got)
         found.append((e, [oid for oid, _ in cands.most_common(GRAM_TOP) if oid != e.id]))
-    # v10.23 (0218): only the candidates' keys are read (a book read by need reads no more), their squashed form and
-    # grams worked out once a chunk
+    # only the candidates' keys are read, their squashed form and grams worked out once a chunk
     keys = book.keys_of({oid for _e, oids in found for oid in oids})
     forms: Dict[str, Tuple[str, Set[str]]] = {}
     for e, oids in found:
@@ -2884,8 +2761,8 @@ def pool_makers(pool: Pool, book: Book, seeds: Iterable[str]) -> None:
 
 def handles(cur: Any, guide: str, post_ids: Optional[Sequence[str]] = None,
             into: Optional[Dict[str, Dict[str, bool]]] = None) -> Dict[str, Dict[str, bool]]:
-    """{entity: {squashed handle form: drops a word}} from the handles its mentions were written as. v10.13.9:
-    `post_ids` reads only those posts' mentions, folded `into` what was read before (a run's later chunks)."""
+    """{entity: {squashed handle form: drops a word}} from the handles its mentions were written as. `post_ids` reads
+    only those posts' mentions, folded `into` what was read before (a run's later chunks)."""
     cur.execute(f"""SELECT DISTINCT entity_id::text, span FROM mx_mentions_now
                      WHERE guide = ANY(%s) AND entity_id IS NOT NULL AND (span LIKE '@%%' OR span LIKE '%%\\_%%')
                      {"AND post_id = ANY(%s::uuid[])" if post_ids is not None else ""}""",
@@ -2915,8 +2792,8 @@ def pool_handles(pool: Pool, book: Book, hf: Dict[str, Dict[str, bool]], seeds: 
 
 def anchors(cur: Any, book: Book, guide: str, post_ids: Optional[Sequence[str]] = None,
             into: Optional[Dict[str, Set[str]]] = None) -> Dict[str, Set[str]]:
-    """{entity: repository / model addresses} its subject posts link, when the address names it. v10.13.9:
-    `post_ids` reads only those posts, added `into` what was read before."""
+    """{entity: repository / model addresses} its subject posts link, when the address names it. `post_ids` reads only
+    those posts, added `into` what was read before."""
     cur.execute(f"""SELECT DISTINCT m.entity_id::text, l.target_url FROM mx_mentions_now m
                       JOIN post_links l ON l.post_id = m.post_id
                      WHERE m.guide = ANY(%s) AND m.role = 'subject' AND m.entity_id IS NOT NULL
@@ -2925,7 +2802,7 @@ def anchors(cur: Any, book: Book, guide: str, post_ids: Optional[Sequence[str]] 
                 (guide, list(post_ids)) if post_ids is not None else (guide,))
     out: Dict[str, Set[str]] = into if into is not None else defaultdict(set)
     rows = cur.fetchall()
-    keys = book.keys_of({eid for eid, _url in rows})   # v10.23 (0218): only their keys, in one read
+    keys = book.keys_of({eid for eid, _url in rows})
     for eid, url in rows:
         key = keys.get(eid)
         mm = ANCHOR_RE.search(url or "")
@@ -2933,7 +2810,7 @@ def anchors(cur: Any, book: Book, guide: str, post_ids: Optional[Sequence[str]] 
             continue
         sq = N.squash(key)
         # the address names it: the repository's name is its name (a build tag after it dropped: "-GGUF"). Not a name
-        # inside a longer one: the lab's containment test merged a maker's product into a repository of its tool.
+        # inside a longer one: containment merged a maker's product into a repository of its tool.
         words = N.tokens(mm.group(3).replace(".", " "))
         while len(words) > 1 and N.BUILD.match(words[-1]):
             words = words[:-1]
@@ -2967,8 +2844,7 @@ def paren_pairs(cur: Any, book: Book, guide: str, post_ids: Sequence[str]) -> Se
 
 
 def paren_by_post(cur: Any, book: Book, guide: str, post_ids: Sequence[str]) -> Dict[str, Set[Tuple[str, str]]]:
-    """paren_pairs by post, {post: its pairs} for every post asked (v10.13.9: the full pass's chunks read a post
-    once)."""
+    """paren_pairs by post, {post: its pairs} for every post asked (the full pass's chunks read a post once)."""
     if not post_ids:
         return {}
     from insight_core.markx import tasks
@@ -2981,11 +2857,9 @@ def paren_by_post(cur: Any, book: Book, guide: str, post_ids: Sequence[str]) -> 
     def pairs(es: List[Tuple[str, str, str]]) -> List[Tuple[Tuple[str, str, str], Tuple[str, str, str]]]:
         return [(x, y) for x, y in itertools.permutations(es, 2)
                 if x[2] != y[2] and x[0] and y[0] and x[1] == y[1] and x[1] not in ("place", "person")]
-    # v10.23 (0218): only the posts with a pair the rule could name have their text read (a full pass's chunk read every
-    # text of every post naming one of its 1,000 seeds: 18.5 s of a server run), and a pair is looked for only when its
-    # Y is the whole of some "(...)" in the text (a span folds to words and spaces, never a bracket)
-    # v10.24 (0221): the texts read a page at a time (PAREN_PAGE posts), each page's pairs worked out with it: a full
-    # pass's chunk whose seeds a hub names read ~28k posts' texts at once (757 MB on the server-sized copy)
+    # only the posts with a pair the rule could name have their text read, and a pair is looked for only when its Y is
+    # the whole of some "(...)" in the text (a span folds to words and spaces, never a bracket); the texts are read a
+    # page at a time (PAREN_PAGE posts): a hub's chunk can name tens of thousands of posts (memory, 0221)
     want = sorted(pid for pid, es in by.items() if pairs(es))
     out: Dict[str, Set[Tuple[str, str]]] = {pid: set() for pid in post_ids}
     for k in range(0, len(want), PAREN_PAGE):
@@ -3004,7 +2878,7 @@ def paren_by_post(cur: Any, book: Book, guide: str, post_ids: Sequence[str]) -> 
     return out
 
 
-PAREN_PAGE = 500   # v10.24 (0221): the posts whose texts paren_by_post reads at once
+PAREN_PAGE = 500   # the posts whose texts paren_by_post reads at once
 
 
 _INNER = re.compile(r"\(([^()]*)\)")   # what a "(...)" holds, no bracket inside
@@ -3020,9 +2894,8 @@ def vector_neighbours(cur: Any, book: Book, seeds: Sequence[str], model: str = "
     """A name's EMB_TOPK nearest names at cosine >= EMB_BAR (mx_entity_vectors, the embed_name kind)."""
     if not seeds:
         return []
-    # v10.23 (0218): the HNSW index walks each seed's nearest names (EXPLAIN on the server-sized copy: ~1,800 buffers a
-    # seed, the graph's 1024-dim tuples); the distance is the scan's own, not computed again from each neighbour's
-    # vector read back (its heap and TOAST pages: ~80 buffers a seed, 20% of the query's time warm). The same rows.
+    # the HNSW index walks each seed's nearest names; the distance is the scan's own, not computed again from each
+    # neighbour's vector read back (far fewer buffers; the same rows)
     cur.execute("""SELECT s.entity_id::text, n.entity_id::text, 1 - n.d
                      FROM mx_entity_vectors s
                      CROSS JOIN LATERAL (SELECT o.entity_id, o.v <=> s.v AS d FROM mx_entity_vectors o
@@ -3043,10 +2916,10 @@ class Decision:
     call_id: Optional[str] = None
     judge: Optional[Dict[str, Any]] = None
     rules: Tuple[str, ...] = ()
-    reasons: Tuple[str, ...] = ()          # 0130: every reason a `same` is held back for (reason is the first)
-    second: Optional[Dict[str, Any]] = None   # 0130 A2: the second opinion's answer
+    reasons: Tuple[str, ...] = ()          # every reason a `same` is held back for (reason is the first)
+    second: Optional[Dict[str, Any]] = None   # the second opinion's answer
     second_call: Optional[str] = None
-    ask2: bool = False                      # 0130 A2: the second opinion is to be asked
+    ask2: bool = False                      # the second opinion is to be asked
 
 
 _STATED: Dict[Tuple[int, str, str], bool] = {}
@@ -3077,8 +2950,8 @@ def rules_of(cur: Any, book: Book, p: Pooled, handle_extra: Dict[Tuple[str, str]
     if "squash" not in auto:
         for x, y in ((a, b), (b, a)):
             if maker_prefix(x, y):
-                if generic_bare(book, x, y):   # v10.35: several makers' names on one bare name: no rule, Haiku
-                    break                      # decides it as any pair no rule decides
+                if generic_bare(book, x, y):   # several makers' names on one bare name: no rule; Haiku decides it
+                    break
                 maker = x.maker or y.maker or ""
                 (auto if stated_maker(cur, y, maker, guide) else queue).add(
                     "maker_prefix" if stated_maker(cur, y, maker, guide) else "maker_unstated")
@@ -3107,9 +2980,9 @@ def _vsig(e: Ent) -> Tuple:
 
 
 def family_version(book: Book, a: Ent, b: Ent) -> bool:
-    """0164: two versions of one family (their families' clusters are one: "Vela 5" of the family Vela and "Zentra
-    Vela 5" of the family Zentra Vela once those merged) stating the same version, variant, size and build, in Haiku's
-    fields and the parser's, and the same maker or one side none."""
+    """Two versions of one family (their families' clusters are one: "Vela 5" and "Zentra Vela 5" once Vela and
+    Zentra Vela merged) stating the same version, variant, size and build, in Haiku's fields and the parser's, and the
+    same maker or one side none."""
     if a.level not in VERSION_LEVELS or b.level not in VERSION_LEVELS or not a.parent or not b.parent:
         return False
     if book.root(a.parent) != book.root(b.parent):
@@ -3124,12 +2997,11 @@ def family_version(book: Book, a: Ent, b: Ent) -> bool:
 def decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: Optional[Dict[str, Any]],
                 call_id: Optional[str], second: Optional[Dict[str, Any]] = None,
                 second_call: Optional[str] = None) -> Decision:
-    """0119 A1's merge rules for one pool pair, before the chain guard. tier 'ask': Haiku hasn't answered yet.
-    0130 A2: a held-back `same` whose reasons all have a second opinion on (entity_bands.json) is asked again
-    (`ask2`); two agreeing `same` at or above the second opinion's bar merge ('second'), a disagreement stays queued
-    with the second answer (`second`) for the queue to mark.
-    0164: an org (or person) and a product family are never merged automatically, read on their clusters
-    (`org_family`): such a merge goes to the queue ('type')."""
+    """The merge rules for one pool pair, before the chain guard. tier 'ask': Haiku hasn't answered yet. A held-back
+    `same` whose reasons all have a second opinion on (entity_bands.json) is asked again (`ask2`); two agreeing `same`
+    at or above its bar merge ('second'), a disagreement stays queued with the second answer (`second`). An org (or
+    person) and a product family are never merged automatically, read on their clusters (`org_family`: queued
+    'type')."""
     d = _decide_pair(book, p, auto, queue, judge, call_id, second, second_call)
     if d.tier == "auto" and org_family(book, p.a, p.b):
         d.tier, d.reason = "queue", "type"
@@ -3138,7 +3010,7 @@ def decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: O
 
 
 def org_family(book: Book, a: str, b: str) -> bool:
-    """0164: one side's cluster holds a product family and the other's an org or person (Book.sides)."""
+    """One side's cluster holds a product family and the other's an org or person (Book.sides)."""
     fa, oa = book.sides(book.cluster(book.root(a)))
     fb, ob = book.sides(book.cluster(book.root(b)))
     return bool((fa and ob) or (oa and fb))
@@ -3154,16 +3026,16 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
     if family_link(a, b) and not auto:
         return Decision(k, "apart", "family")
     if vc == "strong":
-        # two stated versions that differ, in Haiku's fields or the parser's: kept apart, never asked (the guard kept
-        # 135/135 labelled version pairs apart). A disagreement that changes a merge is the fields rule's queue.
+        # two stated versions that differ, in Haiku's fields or the parser's: kept apart, never asked. A disagreement
+        # that changes a merge is the fields rule's queue.
         return Decision(k, "apart", "version" if not strong_only_one(a, b) else "version_one_parse")
     proposed: Tuple[str, ...] = ()
     if auto and vc is None and not queue:
         mixed = not types_ok(a.type, b.type) or org_family(book, p.a, p.b)
         if not mixed:
             return Decision(k, "auto", "rule:" + sorted(auto)[0], RULE_CONF, None, judge, tuple(sorted(auto)))
-        # v10.18: a name rule's `same` across two types is right ~30% (the server's queue): Haiku decides it, as any
-        # pair no rule decides; the rule is only why the pair was proposed (never a confidence of its own)
+        # a name rule's `same` across two types is often wrong: Haiku decides it, as any pair no rule decides; the rule
+        # is only why the pair was proposed (never a confidence of its own)
         proposed = tuple(sorted(auto))
     if judge is None:
         return Decision(k, "ask", "unasked", rules=proposed)
@@ -3174,7 +3046,7 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
                             reasons=("type", "haiku_unsure"))
         return Decision(k, "apart", "judge", judge["confidence"], call_id, judge, proposed)
     conf = float(judge["confidence"])
-    # every reason the `same` is held back for (0130: the first is the one shown; all of them decide the second opinion)
+    # every reason the `same` is held back for (the first is the one shown; all of them decide the second opinion)
     reasons = sorted(queue)
     if vc is not None:
         reasons.append(soft_reason(book, a, b, literal=literal))
@@ -3198,25 +3070,24 @@ def _decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: 
 
 
 def rule_apart(judge: Dict[str, Any]) -> bool:
-    """v10.18: Haiku's not-`same` on a pair a name rule proposed across two types keeps it apart by itself when the
-    config's row for it is on, the answer one of its relations (`different`: 160/160) and at least its bar
-    (entity_bands.json `rule_type`, measured on the server's queue); `part` and `cant_tell` never do."""
+    """Haiku's not-`same` on a pair a name rule proposed across two types keeps it apart by itself when the config's
+    row is on, the answer one of its relations and at least its bar (entity_bands.json `rule_type`); `part` and
+    `cant_tell` never do."""
     rt = bands().get("rule_type") or {}
     return bool(rt.get("on")) and judge.get("relation") in (rt.get("apart_relations") or ()) and \
         float(judge.get("confidence") or 0) >= float(rt.get("apart_min_conf", 1.01))
 
 
 def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], Any]) -> List[Decision]:
-    """0201: a `same` still queued after both opinions and the chain guard, for a reason the config's `third` row
-    names (a weak first answer, a chain, a held version), is asked alias-v2 (each side's facts, accounts and four
-    posts). Its `same` at >= its bar merges ('third'; past the chain guard's two-groups rule, never past MAX_CLUSTER
-    names); its not-`same` keeps the pair apart where the reason held has a measured row (`apart`, by reason); anything else stays queued with it. Returns the
-    decisions still to ask."""
+    """A `same` still queued after both opinions and the chain guard, for a reason the config's `third` row names, is
+    asked alias-v2 (each side's facts, accounts and four posts). Its `same` at >= its bar merges ('third'; past the
+    chain guard's two-groups rule, never past MAX_CLUSTER names); its not-`same` keeps the pair apart where the reason
+    held has a measured row (`apart`); anything else stays queued. Returns the decisions still to ask."""
     cfg = bands().get("third") or {}
     if not cfg.get("on"):
         return []
-    # v10.20 (0211 C): the clusters as the chunk's merges leave them, each `third` merge counted as it is made, so
-    # several merges into one cluster in one chunk never pass MAX_CLUSTER together (each was checked alone before)
+    # the clusters as the chunk's merges leave them, each `third` merge counted as it is made, so several merges into
+    # one cluster in one chunk never pass MAX_CLUSTER together
     size: Dict[str, int] = {}
     parent: Dict[str, str] = {}
 
@@ -3248,7 +3119,7 @@ def third(book: Book, decisions: List[Decision], answers: Dict[Tuple[str, str], 
         if not set(d.reasons or (d.reason,)) | {d.reason} <= set(cfg.get("reasons") or ()):
             continue
         if d.ask2 or (d.second is not None and not second_agrees(d.second)):
-            continue   # the second opinion is still to come, or disagrees: the owner's (never measured here)
+            continue   # the second opinion is still to come, or disagrees: the owner's
         got_ = answers.get(d.pair)
         if not got_:
             need.append(d)
@@ -3364,8 +3235,8 @@ def _pick(eid: str, ms: Sequence[Tuple[str, str, str, str]], n: int, salt: int =
 def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool = False,
              wide: bool = False, picked: Optional[Dict[str, List[str]]] = None) -> Dict[str, List[str]]:
     """Up to n example posts of each entity: distinct sources, subjects first, picked by a seed of its key (stable).
-    `other` (0130 A2, the second opinion): n other posts than the first question's, topped up with the first's when
-    the entity has fewer. `picked` (0222): filled with each entity's example posts (what its question showed)."""
+    `other` (the second opinion): n other posts than the first question's, topped up with the first's when the entity
+    has fewer. `picked`: filled with each entity's example posts (what its question showed)."""
     from insight_core.markx import tasks
     if not eids:
         return {}
@@ -3383,7 +3254,7 @@ def examples(cur: Any, guide: str, eids: Sequence[str], n: int = 2, other: bool 
             first = again + [x for x in first if x[0] not in {pid for pid, _ in again}][:max(0, n - len(again))]
         picks[eid] = first
     posts = tasks.load_posts(cur, {pid for xs in picks.values() for pid, _ in xs})
-    win = (300, 500) if wide else (140, 220)   # 0201: alias-v2's wider windows
+    win = (300, 500) if wide else (140, 220)   # alias-v2's wider windows
     if picked is not None:
         picked.update({eid: [pid for pid, _ in xs if pid in posts] for eid, xs in picks.items()})
     return {eid: [_ctx(posts[pid], span, *win) for pid, span in xs if pid in posts] for eid, xs in picks.items()}
@@ -3415,17 +3286,14 @@ def alias_input(a: str, b: str) -> str:
     return f"A: {a}\nB: {b}"
 
 
-# ---- an opinion holds only for what it was asked on (issue 0222) ------------------------------------------------
+# ---- an opinion holds only for what it was asked on (0222) ------------------------------------------------------
 #
 # A pair question shows each side as it is when asked: its name, type and maker (they never change for an id) and up
-# to four example posts naming it. A side's posts do change: a relink, a post read again under a new entities guide,
-# an owner's split move a post's mention to another entity. Its answer is about the posts it was shown, so it holds
-# only while those posts still name that side: `void_opinions` reads what each answered question showed (recorded at
-# ask time in mx_opinion_inputs, `record_input`; read back from the input of a question asked before, `derive_inputs`)
-# and voids an answer whose side lost one of them. A void answer decides nothing: the pair's open item is closed
-# (kept, closed_by 'void') and the pair asked again with what it is now (the server, v10.23: "Qwen 14B" = "Qwen3.8FN"
-# at 0.97, Haiku's evidence "the same two posts appear on each side", shown and banded >= 0.90 while the two sides
-# shared no post). New posts on a side never void it (the posts it was shown are still that side's).
+# to four example posts. A side's posts do change (a relink, a post read again under a new guide, an owner's split),
+# so an answer holds only while the posts it was shown still name that side: `void_opinions` reads what each answered
+# question showed (mx_opinion_inputs, `record_input`; for questions asked before, `derive_inputs`) and voids an answer
+# whose side lost one of them. A void answer decides nothing: the pair's open item is closed (kept, closed_by 'void')
+# and the pair asked again. New posts on a side never void it.
 
 _EXAMPLE = re.compile(r'^  example: \[([^,\]]*), (\d{4}-\d{2}-\d{2})')
 
@@ -3590,11 +3458,10 @@ def void_opinions(cur: Any, book: Book, guide: Any, asked_: Dict[str, Tuple[str,
 
 
 def opinion_report(cur: Any, *, examples: int = 20) -> Dict[str, Any]:
-    """0222, read only: the automatic merges a Haiku answer made (by haiku, second, third; live) and the open alias
-    items, whose answer no longer holds today (`void_opinions`, nothing stored). A merge's example post whose mention
-    set changed before the merge (mx_mention_sets.at) was gone when it merged: `before_merge` counts those (made on a
-    stale answer); the rest broke after (the answer held when it merged, or a relink moved the post: no time kept).
-    For the server (one read; nothing written; the transaction rolled back):
+    """Read only: the automatic merges a Haiku answer made (haiku, second, third; live) and the open alias items whose
+    answer no longer holds today (`void_opinions`, nothing stored). `before_merge` counts merges whose example post's
+    mention set changed before the merge (made on a stale answer); the rest broke after.
+    For the server (nothing written; the transaction rolled back):
       docker exec insight-api python -c "import json; from insight_core.markx import api, identity as I
       with api.transaction() as cur: print(json.dumps(I.opinion_report(cur), default=str)); cur.connection.rollback()"
     """
@@ -3628,11 +3495,10 @@ def opinion_report(cur: Any, *, examples: int = 20) -> Dict[str, Any]:
 
 
 def collide_sample(eid: str, ms: Sequence[Tuple], suspect: Any = None) -> List[Tuple]:
-    """Up to COLLIDE_MENTIONS mentions from distinct posts ((post, span, type, maker[, at])): 0230: first, up to half
-    of them, one per (type, maker) of the mentions `suspect` calls another maker's namesake (`suspect_mention`), and
-    the oldest post's (an archive post may be another thing of the name: before 0230 a name with more (type, maker)
-    pairs than the sample's places never showed one); then one per (type, maker), then (0220) one per year the posts
-    span, the oldest years first, then the rest (the lab's sample, seeded by the entity)."""
+    """Up to COLLIDE_MENTIONS mentions from distinct posts ((post, span, type, maker[, at])): first, up to half of
+    them, one per (type, maker) of the mentions `suspect` calls another maker's namesake, and the oldest post's; then
+    one per (type, maker), then one per year the posts span, the oldest years first, then the rest (seeded by the
+    entity)."""
     rnd = random.Random(int(hashlib.md5(eid.encode()).hexdigest(), 16) % 100000)
     ms = sorted(ms, key=lambda m: tuple("" if x is None else str(x) for x in m))
     rnd.shuffle(ms)
@@ -3673,9 +3539,8 @@ def collide_sample(eid: str, ms: Sequence[Tuple], suspect: Any = None) -> List[T
 
 
 def suspect_mention(book: Book, e: Ent) -> Any:
-    """0230: (mention (post, span, type, maker, ...) -> bool) whether a mention of `e` may be another maker's namesake:
-    an org or person mention of a thing, a thing mention of an org or person, or a stated maker that is not the
-    thing's (`maker_fits`)."""
+    """(mention (post, span, type, maker, ...) -> bool) whether a mention of `e` may be another maker's namesake: an org
+    or person mention of a thing, a thing mention of an org or person, or a stated maker that is not the thing's."""
     org = schemas_type(e.type) in ORGISH
 
     def suspect(m: Tuple) -> bool:
@@ -3689,7 +3554,7 @@ _COLLIDE_YEAR = re.compile(r"^\s+\[[^\]\n]*, (\d{4})-\d\d-\d\d\] ", re.M)
 
 
 def asked_from(text: str) -> Optional[int]:
-    """0230: the oldest year a collision question's sample showed (None: none read)."""
+    """The oldest year a collision question's sample showed (None: none read)."""
     years = [int(y) for y in _COLLIDE_YEAR.findall(text or "")]
     return min(years) if years else None
 
@@ -3741,9 +3606,8 @@ def vote(rels: Sequence[str]) -> str:
 
 
 def one_thing(answer: Dict[str, Any], n: int) -> bool:
-    """0191: a collision answer that calls every mention pair the same thing (no split, no part, nothing unclear): it
-    settles the key alone. On the lab's four labelled collision sets (364 keys, each run in turn taken as the first)
-    5 of 1,092 split decisions changed, all toward fewer splits (precision 21/33 -> 20/28), and 43% of calls were saved."""
+    """A collision answer that calls every mention pair the same thing (no split, no part, nothing unclear) settles
+    the key alone (measured: plan/issues/0191)."""
     return all(v == "same" for v in pairrel(answer, n).values())
 
 
@@ -3776,7 +3640,7 @@ def _savepoint(cur: Any, sql: str, params: Sequence[Any]) -> Optional[Any]:
 def queue_item(cur: Any, *, kind: str, a: str, b: Optional[str], proposal: str, reason: str, conf: Optional[float],
                evidence: Dict[str, Any], call_id: Optional[str], run_id: Any, held: Optional[bool] = None) -> bool:
     """An open review item, unless the pair has one open or answered (an answer is never asked again). `held`: whether
-    it has, as `queue_state` read it (v10.25: then not asked again here)."""
+    it has, as `queue_state` read it."""
     if held is None:
         cur.execute("""SELECT 1 FROM mx_entity_queue WHERE kind = %s AND a = %s AND COALESCE(b, a) = COALESCE(%s::uuid, %s::uuid)
                         AND (answer IS NOT NULL OR closed_at IS NULL) LIMIT 1""", (kind, a, b, a))
@@ -3790,8 +3654,8 @@ def queue_item(cur: Any, *, kind: str, a: str, b: Optional[str], proposal: str, 
 
 
 def queue_state(cur: Any, pairs: Iterable[Tuple[str, str]]) -> Dict[Tuple[str, str], bool]:
-    """v10.25 (0226): the alias items of these pairs (a, b as given) that are open or answered, in one read: {pair:
-    open}. A pair absent has neither (queue_item may add one; close_queued and refresh_queued would change nothing)."""
+    """The alias items of these pairs (a, b as given) that are open or answered, in one read: {pair: open}. A pair
+    absent has neither."""
     ps = sorted(set(pairs))
     if not ps:
         return {}
@@ -3804,7 +3668,7 @@ def queue_state(cur: Any, pairs: Iterable[Tuple[str, str]]) -> Dict[Tuple[str, s
 
 
 def close_queued(cur: Any, p: Tuple[str, str], note: Dict[str, Any]) -> int:
-    """0130 A2: the open queue item of a pair the second opinion merged is closed (kept, with why), never deleted."""
+    """The open queue item of a pair the second opinion merged is closed (kept, with why), never deleted."""
     got = _savepoint(cur, """UPDATE mx_entity_queue SET closed_at = now(), evidence = COALESCE(evidence, '{}'::jsonb) || %s::jsonb
                               WHERE kind = 'alias' AND a = %s AND b = %s AND answer IS NULL AND closed_at IS NULL
                           RETURNING id""", (json.dumps(note, default=str), p[0], p[1]))
@@ -3812,8 +3676,8 @@ def close_queued(cur: Any, p: Tuple[str, str], note: Dict[str, Any]) -> int:
 
 
 def refresh_queued(cur: Any, p: Tuple[str, str], d: "Decision", ev: Dict[str, Any]) -> bool:
-    """v10.18: the pair's open item says what the run decided now (its reason, Haiku's confidence, the evidence), the
-    item's earlier reason and confidence kept in `evidence.before`. Only when one of them changed."""
+    """The pair's open item says what the run decided now (its reason, Haiku's confidence, the evidence), the item's
+    earlier reason and confidence kept in `evidence.before`. Only when one of them changed."""
     got = _savepoint(cur, """UPDATE mx_entity_queue
                                 SET reason = %s, confidence = %s, call_id = COALESCE(%s, call_id),
                                     evidence = COALESCE(evidence, '{}'::jsonb)
@@ -3831,7 +3695,7 @@ def refresh_queued(cur: Any, p: Tuple[str, str], d: "Decision", ev: Dict[str, An
 
 
 def backlog(cur: Any, limit: int = REDECIDE_CAP) -> List[Tuple[str, str]]:
-    """v10.18: the open alias items not decided again by this rule set yet (REDECIDE), oldest first: their pairs."""
+    """The open alias items not decided again by this rule set yet (REDECIDE), oldest first: their pairs."""
     cur.execute("""SELECT a::text, b::text FROM mx_entity_queue
                     WHERE kind = 'alias' AND b IS NOT NULL AND answer IS NULL AND closed_at IS NULL
                       AND COALESCE(evidence->>'redecided', '') <> %s
@@ -3852,13 +3716,10 @@ def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, cal
           run_id: Any = None, evidence: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """One merge: one root redirects into the other, the keeper. The redirect's id.
 
-    v10.35: the keeper is the more general thing, then the more mentioned cluster (its names' current mentions: a
-    misspelling written once, "Kimik 3", never keeps "Kimi K3" written a thousand times), then the larger cluster
-    (more names), then the older. A root is
-    the specific one when it is a build (a checkpoint, or a name stating a `build`: GGUF, NVFP4, quantised weights)
-    and the other is not: "Inkling 2 Mini" (a variant, its maker and its brief under its id) merged with
-    "Inkling-2-Mini-GGUF" keeps Mini, never the GGUF (on production the larger GGUF cluster kept, and the page lost
-    Mini's name, level, maker and brief)."""
+    The keeper is the more general thing, then the more mentioned cluster (a misspelling written once never keeps the
+    name written a thousand times), then the larger cluster, then the older. A build (a checkpoint, or a name stating a
+    `build`: GGUF, NVFP4) never keeps over a thing that is not one ("Inkling 2 Mini" keeps over
+    "Inkling-2-Mini-GGUF")."""
     ra, rb = book.root(a), book.root(b)
     if ra == rb:
         return None
@@ -3877,8 +3738,8 @@ def merge(cur: Any, book: Book, a: str, b: str, *, by: str, automatic: bool, cal
 
 
 class _Lookup:
-    """v10.20 (0211): what is asked of a key, read from the database when first asked (in one read with the other keys
-    `Asked.prime` was given) and kept for the run: `key in`, `[key]`, `.get(key)`."""
+    """What is asked of a key, read from the database when first asked (in one read with the other keys `Asked.prime`
+    was given) and kept for the run: `key in`, `[key]`, `.get(key)`."""
 
     def __init__(self, fill: Any) -> None:
         self._fill = fill
@@ -3903,20 +3764,19 @@ class _Lookup:
 
 
 class Asked:
-    """The questions already asked: of a pair (alias, alias2, the unsure queue's alias3/alias4: pair -> (task id,
-    status)) and of an entity (collide: entity -> (task id, status, input)). A question's identity is its pair (or
-    entity), of any status and guide, never its input text: an asked pair is never asked again.
+    """The questions already asked: of a pair (alias, alias2, alias3/alias4: pair -> (task id, status)) and of an
+    entity (collide: entity -> (task id, status, input)). A question's identity is its pair (or entity), of any status
+    and guide, never its input text: an asked pair is never asked again.
 
-    v10.20 (0211): read by the pairs and entities a chunk decides (`prime`, `prime_collide`; the index
-    mx_tasks_entity_pair_idx), not by reading every task and its input each run (at the server's 357k alias tasks that
-    read took 5.1 s and 1.8 GB of a decision run's peak). What a key reads is kept for the run, as the run's one read
-    at its start was: a question the run adds itself is not seen (the run decides each pair once)."""
+    Read by the pairs and entities a chunk decides (`prime`, `prime_collide`; mx_tasks_entity_pair_idx), not every task
+    each run (memory, 0211). What a key reads is kept for the run: a question the run adds itself is not seen (the run
+    decides each pair once)."""
 
     def __init__(self, cur: Any) -> None:
         self.cur = cur
         self.alias, self.alias2, self.alias3 = _Lookup(self.prime), _Lookup(self.prime), _Lookup(self.prime)
         self.collide = _Lookup(self.prime_collide)
-        self.inputs: Dict[str, Tuple[str, str]] = {}   # 0222: task id -> (kind, input hash)
+        self.inputs: Dict[str, Tuple[str, str]] = {}   # task id -> (kind, input hash)
 
     def prime(self, pairs: Iterable[Tuple[str, str]]) -> None:
         want = sorted({pair(*p) for p in pairs} - self.alias.known)
@@ -3932,7 +3792,7 @@ class Asked:
         for tid, kind, a, b, status, h in self.cur.fetchall():
             into = self.alias2 if kind == "alias2" else self.alias3 if kind in ("alias3", "alias4") else self.alias
             into.got[pair(a, b)] = (tid, status)
-            self.inputs[tid] = (kind, h)   # 0222: the question's input, what its answer holds for
+            self.inputs[tid] = (kind, h)   # the question's input, what its answer holds for
 
     def prime_collide(self, eids: Iterable[str]) -> None:
         want = sorted(set(eids) - self.collide.known)
@@ -3941,7 +3801,7 @@ class Asked:
         self.collide.known.update(want)
         self.cur.execute("""SELECT id::text, a::text, status, input FROM mx_tasks
                              WHERE kind = 'collide' AND guide <> %s AND b IS NULL AND a = ANY(%s::uuid[])
-                             ORDER BY created_at, id""", (PAIR_GUIDE, want))   # 0250: a maker pair's apart
+                             ORDER BY created_at, id""", (PAIR_GUIDE, want))   # a maker pair's apart
         for tid, a, status, text in self.cur.fetchall():
             self.collide.got[a] = (tid, status, text)
 
@@ -3987,36 +3847,23 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
           relink_page: Optional[int] = None, seed_rate: Optional[float] = None, keep: float = 0.0,
           collide_rate: Optional[float] = None, part_took: Optional[float] = None) -> Dict[str, Any]:
     """The decision run's entities stage. `full`: the nightly pass (every mention relinked and checked, every entity
-    pooled); else the mentions not linked yet and the pairs whose answers came since `since`. Returns its counts;
-    `days` the days whose mentions it linked (the surges recount them), `posts_linked` the posts whose mentions it
-    linked.
+    pooled); else the mentions not linked yet and the pairs whose answers came since `since`. Returns its counts; `days`
+    the days whose mentions it linked (the surges recount them), `posts_linked` the posts whose mentions it linked.
 
-    Past `deadline` (a time.monotonic() value: the stage's own budget) it stops after the chunk it is in, on either
-    pass, and what it leaves is the next run's (none of it is redone):
-      - v10.13.9, the incremental pass (and a resumed full pass's first part) links, pools and decides the mentions not
-        linked yet in chunks of about `mention_chunk` (a post's mentions in one chunk); the mentions it leaves stay
-        unlinked, so the next run takes them (`incremental`: {done, parts, of, left}). The entities of every new key
-        are made first, from all of the run's mentions of it; the answered pairs go with the first chunk, and the
-        collisions of what the chunks linked (and of the answers since) come after the chunks.
-      - the full pass relinks every mention in pages of `relink_page` posts in post id order (v10.13.9: `phase`
-        'link', `link_after` the last post relinked), then (0128) pools and decides every entity in chunks of
-        `chunk` seeds in id order, each chunk with its own "X (Y)" posts and collisions (phase 'pool', `after` the
-        last seed decided). `full` in the counts says where ({done, phase, after, link_after, chunks, of}) and the
-        next run resumes it there: it first links the mentions not linked yet, as an incremental pass does (with
-        the answered pairs), then goes on. Without a deadline nothing stops.
-      - v10.24 (0221): the budget is spent in order: the linking (every part until its mentions are linked), then
-        the full pass. A part, page or chunk starts only when the time it is expected to take is left (the last
-        one's seconds; a full-pass chunk is sized to the time left at `seed_rate`, the seeds a second the last run
-        measured, else SEED_RATE), so the stage never runs past its budget but for the first unit of the most urgent
-        work pending: the linking's first part, or the full pass's first page or chunk when nothing waited to be
-        linked. The full pass stops `keep` seconds early: what the steps after it (entity_stage) are expected to
-        take, so a pass that lasts days never starves them. (v10.22's LINK_SHARE split and v10.22.2's chunk
-        every other run are gone: on the server the linking did 1 part of 13 a run for days and the stage ran
-        55-87 s against 45.)
-      - v10.25 (0226): a part is expected to take the last plain part's seconds (`part_took`: a part that decided
-        only its own mentions' pairs), never the first part's when it also decided the answered pairs and the
-        backlog; the decisions' alias items are read in one go (queue_state) and written only where the pair has
-        one; the linking's counts carry its steps' seconds (`incremental.timing`)."""
+    Past `deadline` (a time.monotonic() value: the stage's own budget) it stops after the unit it is in, and what it
+    leaves is the next run's (none of it is redone):
+      - the incremental pass (and a resumed full pass's first part) links, pools and decides the unlinked mentions in
+        chunks of about `mention_chunk` (a post's mentions in one chunk); the mentions it leaves stay unlinked. The
+        entities of every new key are made first, from all of the run's mentions of it; the answered pairs go with the
+        first chunk, the collisions after the chunks (`incremental`: {done, parts, of, left}).
+      - the full pass relinks every mention in pages of `relink_page` posts in post id order (`phase` 'link',
+        `link_after`), then pools and decides every entity in chunks of `chunk` seeds in id order (phase 'pool',
+        `after`). `full` in the counts says where; the next run first links the unlinked mentions, then resumes there.
+        Without a deadline nothing stops.
+      - the budget is spent in order: the linking, then the full pass. A unit starts only when the time it is expected
+        to take is left (the last plain part's seconds, `part_took`; a full-pass chunk sized to the time left at
+        `seed_rate`, else SEED_RATE), so only the first unit of the most urgent work pending may run past it. The full
+        pass stops `keep` seconds early, for the steps after it (entity_stage)."""
     from insight_core.markx import schemas
     import time as _time
     t0 = _time.monotonic()
@@ -4029,18 +3876,17 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         return t
 
     def clock() -> float:
-        """v10.23 (0218): the budget's clock. The run's book's one read of the pool's indexes (RunBook.reading, once a
-        run, shared by every part and chunk) counts against the budget (v10.24: and is left out of what a unit is
-        expected to take)."""
+        """The budget's clock. The run's book's one read of the pool's indexes (RunBook.reading) counts against the
+        budget and is left out of what a unit is expected to take."""
         return _time.monotonic()
 
     def fits(seconds: float, until: Optional[float] = deadline) -> bool:
-        """v10.24 (0221): a unit expected to take `seconds` ends within the budget (`until`)."""
+        """A unit expected to take `seconds` ends within the budget (`until`)."""
         return until is None or clock() + seconds <= until
-    guide = schemas.mention_guides()   # 0133: the current set (mx_mentions_now), whichever guide it is
+    guide = schemas.mention_guides()   # the current set (mx_mentions_now), whichever guide it is
     _STATED.clear()
     t = _time.monotonic()
-    book = book if book is not None else run_book(cur)   # v10.23 (0218): read by need
+    book = book if book is not None else run_book(cur)
     w = Writer(cur, book, run_id)
     resume = full and (after is not None or link_after is not None or phase is not None)
     if full and not resume:
@@ -4065,20 +3911,17 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         # the keys whose collision answers came since the last run
         cur.execute("""SELECT DISTINCT t.a::text FROM mx_tasks t JOIN mx_calls c ON c.task_id = t.id AND c.valid
                         WHERE t.kind = 'collide' AND t.guide <> %s AND t.b IS NULL AND c.created_at >= %s""",
-                    (PAIR_GUIDE, since))   # 0274: a brief's sense question (b set) is not identity's
+                    (PAIR_GUIDE, since))   # a brief's sense question (b set) is not identity's
         collide_since = {r[0] for r in cur.fetchall()}
-    again = set(backlog(cur))   # v10.18: the open alias items decided again (the backlog, a cap a run)
+    again = set(backlog(cur))   # the open alias items decided again (the backlog, a cap a run)
     vec_seeds: Set[str] = set()
     if not full or resume:   # the names whose vector came since the last run
         cur.execute("""SELECT t.a::text FROM mx_tasks t WHERE t.kind = 'embed_name' AND t.status = 'answered'
                           AND t.answered_at >= %s""", (embedded_since or since or now,))
         vec_seeds = {r[0] for r in cur.fetchall()}
-    # the full pass's chunks: every vector of the seeds to come (ids after `after` in its pool, else all). v10.22 (0216):
-    # asked of each chunk's seeds (vector_neighbours reads only the seeds that have a vector), not read whole at the
-    # start (the server's 330k vectors: ~200k ids held for the run). And only the full pass's own chunks ask them: a
-    # resumed pass's linking pools as an incremental pass does (the names whose vector came since), as the pass's
-    # chunks pool every seed after `after` with its vector anyway (on the server the linking's first part spent
-    # 9-11 s a run asking the nearest names of seeds the pass had still to reach)
+    # the full pass's chunks: every vector of the seeds to come, asked of each chunk's seeds (memory), and only by the
+    # full pass's own chunks: a resumed pass's linking pools as an incremental pass does (the names whose vector came
+    # since), as the pass's chunks pool every seed after `after` with its vector anyway
     vec_after = (after if phase == "pool" else None) if full else None
 
     def vec_wanted(s_: str, sweep: bool) -> bool:
@@ -4097,11 +3940,11 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         nonlocal t
         before = {(m.post_id, m.guide, m.n): m.entity_id for m in ms}
         got_ = relink(cur, book, ms)
-        placed.update(entity_facts.place(cur, book, ms, run_id=run_id))   # 0184: a bare name's mentions, by sense
-        placed.update(entity_facts.place_by_handle(cur, book, ms))         # 0184: a first name in its own account's post
+        placed.update(entity_facts.place(cur, book, ms, run_id=run_id))   # a bare name's mentions, by sense
+        placed.update(entity_facts.place_by_handle(cur, book, ms))         # a first name in its own account's post
         link_out["mentions"] += got_["mentions"]
         link_out["linked"] += got_["linked"]
-        link_out["published"] += published(cur, book, w, ms)   # 0133: a document's `by`
+        link_out["published"] += published(cur, book, w, ms)   # a document's `by`
         book.mentioned |= {m.entity_id for m in ms if m.entity_id}
         for m in ms:
             if before.get((m.post_id, m.guide, m.n)) != m.entity_id:
@@ -4131,11 +3974,11 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     pooled: Set[Tuple[str, str]] = set()
     n = {"added": 0, "merged": 0, "queued": 0, "pairs": 0, "added2": 0, "cleared": 0, "marked": 0, "refreshed": 0,
          "added3": 0, "void_alias": 0, "void_alias2": 0, "void_alias3": 0}
-    closed: Counter = Counter()   # v10.18: open alias items closed by the run's decision, by what decided it
+    closed: Counter = Counter()   # open alias items closed by the run's decision, by what decided it
 
-    wrote: Dict[str, str] = {}   # v10.25 (0226): the tier of the decision being written (its seconds, by tier)
+    wrote: Dict[str, str] = {}   # the tier of the decision being written (its seconds, by tier)
     seeded: Set[str] = set()
-    neared: Set[str] = set()   # v10.22 (0216): the seeds whose nearest names the run asked
+    neared: Set[str] = set()   # the seeds whose nearest names the run asked
     collided: Set[str] = set()
 
     def decide_chunk(seeds: Set[str], parens: Set[Tuple[str, str]], first: bool, collide: Set[str],
@@ -4147,7 +3990,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         hf, an = facts["hf"], facts["an"]
         named = seeds - seeded
         seeded.update(named)
-        book.prime(ids=seeds)   # v10.23 (0218): a book read by need reads them in one go
+        book.prime(ids=seeds)
         pool = Pool(book)
         pool_strings(pool, book, named)
         pool_family(pool, book, named)
@@ -4188,15 +4031,15 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         pooled.update(pool.pairs)
         pairs = [p for p in sorted(pool.pairs.values(), key=lambda p: (p.a, p.b)) if (p.a, p.b) not in decided]
         pairs = pairs[:max(0, PAIR_LIMIT - n["pairs"])]
-        t = tick("pairs", t)   # v10.25 (0226): the pairs read (which a mention names), the answered ones' facts
+        t = tick("pairs", t)   # the pairs read (which a mention names), the answered ones' facts
         book.prime(ids={x for p in pairs for x in (p.a, p.b)})
         n["pairs"] += len(pairs)
         decided.update((p.a, p.b) for p in pairs)
-        got.prime((p.a, p.b) for p in pairs)   # 0211: the questions of these pairs, in one read
+        got.prime((p.a, p.b) for p in pairs)
         answers = valid_answers(cur, [got.alias[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias] +
                                 [got.alias2[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias2] +
                                 [got.alias3[(p.a, p.b)][0] for p in pairs if (p.a, p.b) in got.alias3])
-        # 0222: an answer holds only for what its question showed; a void one decides nothing (asked again below)
+        # an answer holds only for what its question showed; a void one decides nothing (asked again below)
         void = void_opinions(cur, book, guide, {tid: got.inputs[tid] for tid in answers if tid in got.inputs},
                              store=not getattr(ask, "dry", False))
         voided: Dict[str, Dict[Tuple[str, str], str]] = {"alias": {}, "alias2": {}, "alias3": {}}
@@ -4207,7 +4050,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     voided[k_][(p.a, p.b)] = void[task_[0]]
                     answers.pop(task_[0], None)
                     n["void_" + k_] += 1
-        t = tick("answers", t)   # v10.25 (0226): the pairs' questions, their answers and whether they still hold
+        t = tick("answers", t)   # the pairs' questions, their answers and whether they still hold
         decisions: List[Decision] = []
         for p in pairs:
             if (p.a, p.b) in book.never or book.ents[p.a].status == "not_entity" or book.ents[p.b].status == "not_entity":
@@ -4221,7 +4064,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 continue
             r0 = _time.monotonic()
             auto, queue = rules_of(cur, book, p, hextra, anchored, parens, guide)
-            timing["decide.rules"] += _time.monotonic() - r0   # v10.25 (0226): inside `decide`
+            timing["decide.rules"] += _time.monotonic() - r0
             judge = call = None
             task = got.alias.get((p.a, p.b))
             if task and answers.get(task[0]):
@@ -4239,12 +4082,12 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         reasons.update(f"{d.tier}:{d.reason}" for d in decisions)
         t = tick("decide", t)
         def asked_on(kind_: str, text_: str, d_: Decision, picked_: Dict[str, List[str]]) -> None:
-            """0222: the question asked, and what it showed of each side (its answer holds only for that)."""
+            """The question asked, and what it showed of each side (its answer holds only for that)."""
             ask.answer(kind_, text_, a=d_.pair[0], b=d_.pair[1])
             if not getattr(ask, "dry", False):
                 record_input(cur, kind_, text_, d_.pair[0], d_.pair[1], input_basis(book, *d_.pair, picked_))
 
-        # Haiku's questions for the pairs no rule decides (0222: and those whose answer is void)
+        # Haiku's questions for the pairs no rule decides (and those whose answer is void)
         need = [d for d in decisions if d.tier == "ask" and (d.pair not in got.alias or d.pair in voided["alias"])]
         if need:
             ids = sorted({x for d in need for x in d.pair})
@@ -4260,7 +4103,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     continue
                 asked_on("alias", text, d, picked)
                 n["added"] += 1
-        # 0130 A2: the second opinions (alias-v1 with two other example posts) for the held-back `same` the bands allow
+        # the second opinions (alias-v1 with two other example posts) for the held-back `same` the bands allow
         need2 = [d for d in decisions if d.ask2 and (d.pair not in got.alias2 or d.pair in voided["alias2"])]
         if need2:
             ids = sorted({x for d in need2 for x in d.pair})
@@ -4276,7 +4119,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     continue
                 asked_on("alias2", text, d, picked)
                 n["added2"] += 1
-        if need3:   # 0201: the unsure queue's question, each side's facts, accounts and four posts
+        if need3:   # the unsure queue's question, each side's facts, accounts and four posts
             for d in need3:
                 if d.pair in got.alias3 and d.pair not in voided["alias3"]:
                     continue
@@ -4288,18 +4131,17 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 asked_on(kind3, alias3_input(cur, book, guide, *d.pair, picked=picked), d, picked)
                 n["added3"] += 1
         t = tick("ask", t)
-        # v10.25 (0226): the decisions' pairs' alias items, in one read (open: closed or refreshed below; open or
-        # answered: never queued again). Was a statement or two for each decision, whether its pair had an item or
-        # not: a savepoint and an UPDATE for every pair kept apart (the server: 2.6k-15.5k a run)
+        # the decisions' pairs' alias items, in one read (open: closed or refreshed below; open or answered: never
+        # queued again), so a pair with no item costs no statement
         items = queue_state(cur, [d.pair for d in decisions if d.tier in ("apart", "queue", "auto", "same_cluster")
                                   or (d.tier == "ask" and d.pair in voided["alias"])])
         for d in decisions:
             t = tick("write." + prev_tier, t) if (prev_tier := wrote.get("tier")) else t
-            wrote["tier"] = d.tier   # v10.25 (0226): the write's seconds by the decision's tier
+            wrote["tier"] = d.tier
             why_void = voided["alias"].get(d.pair)
             is_open = items.get(d.pair) is True
             if why_void and d.tier == "ask":
-                # 0222: its open item showed an answer about other posts: closed (kept, with why); asked again above
+                # its open item showed an answer about other posts: closed (kept, with why); asked again above
                 closed["void"] += close_queued(cur, d.pair, {"closed_by": "void", "void": why_void,
                                                              "redecided": REDECIDE}) if is_open else 0
                 continue
@@ -4322,9 +4164,9 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                 closed["same_cluster"] += close_queued(cur, d.pair, {"closed_by": "same_cluster",
                                                                      "redecided": REDECIDE}) if is_open else 0
             elif d.tier == "apart" and not is_open:
-                closed["apart:" + d.reason] += 0   # no item to close (the counts keep the reason, as before)
+                closed["apart:" + d.reason] += 0   # no item to close (the counts keep the reason)
             elif d.tier == "apart":
-                # v10.18: kept apart (Haiku's answer, or a version rule): an open item of the pair is closed, with why
+                # kept apart (Haiku's answer, or a version rule): an open item of the pair is closed, with why
                 closed["apart:" + d.reason] += close_queued(cur, d.pair, {
                     "closed_by": "apart:" + d.reason, "judge": d.judge, "call_id": d.call_id, "rules": list(d.rules),
                     "redecided": REDECIDE})
@@ -4335,7 +4177,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
                     ev.update(second=d.second, second_call=d.second_call, disagree=not second_agrees(d.second))
                 elif d.ask2:
                     ev["second_asked"] = True
-                if d.second is None and d.pair in voided["alias2"]:   # 0222: a void second opinion is not shown
+                if d.second is None and d.pair in voided["alias2"]:   # a void second opinion is not shown
                     ev.update(second=None, second_call=None, disagree=None)
                 if queue_item(cur, kind="alias", a=d.pair[0], b=d.pair[1], proposal="same", reason=d.reason, conf=d.conf,
                               evidence=ev, call_id=d.call_id, run_id=run_id, held=d.pair in items):
@@ -4357,21 +4199,15 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         t = tick("collide", t)
 
     stopped = False      # the full pass stopped at the budget (its pages or chunks left are the next run's)
-    # v10.24 (0221): one budget, spent in the order of what matters: 1. the linking of the mentions not linked yet,
-    # every part until they are all linked or the budget is spent; 2. the full pass with what is left; 3.
-    # (entity_stage) the repairs and sweeps with what is left after that. A unit (a part, a page, a chunk) starts only
-    # when the time it is expected to take is left (the last one's seconds; a full-pass chunk is sized to the time
-    # left at the pace measured), so nothing runs past the budget but the first unit of the most urgent work pending:
-    # the linking's first part (the run's newest mentions and the answers since), or, when the linking had nothing to
-    # link, the full pass's first page or chunk. Was (v10.22, 0216): LINK_SHARE of the budget for the linking, the
-    # rest for the full pass, each at least one step, and the repairs (a quarter) before both: on the server the stage
-    # ran 55-87 s against its 45, linked 1 part of 13 a run (the newest mentions; ~5.5k waited for days) and the full
-    # pass moved a chunk every other run.
+    # one budget, spent in the order of what matters: 1. the linking of the mentions not linked yet, every part until
+    # they are all linked or the budget is spent; 2. the full pass with what is left; 3. (entity_stage) the repairs and
+    # sweeps with what is left after that. A unit starts only when the time it is expected to take is left, so nothing
+    # runs past the budget but the first unit of the most urgent work pending (0221)
     linked_any = False   # the linking had mentions to link (then the full pass's first unit waits for time left)
     # 1. the mentions not linked yet (the incremental pass; a resumed full pass's first part), in chunks
     if not full or resume:
         at_start, timing0, read_start = clock(), Counter(timing), _book_reading(book)
-        part_s: List[float] = []   # v10.25 (0226): each part's seconds
+        part_s: List[float] = []
         linking_stopped = False
         ms = _mentions(cur, guide, unlinked=True, limit=link_limit)
         if book.pins:   # the owner's splits since: the pinned mentions the run hasn't moved yet (first)
@@ -4390,13 +4226,10 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         parts = _parts(ms, mention_chunk)
         linked_seeds: Set[str] = set()
         done_parts = 0
-        # the seconds a part is expected to take: the last plain part's (once-a-run work left out). v10.25 (0226): a
-        # part is plain when it decides only its own mentions' pairs; the first part also decides the pairs answered
-        # since the last run and the open items' backlog, and asks their questions, once a run (on a server-shaped
-        # copy, cold: 2,379 such pairs, 2,106 questions, ~22 s of its 38.9 s, its own seeds' pairs 3), so it is
-        # plain only when there were none. v10.24 took the first part's seconds as the next one's: no second part
-        # fitted, and the linking did 1 part of 13 a run (5.5k mentions waiting). Before any plain part is
-        # measured: the last run's (`part_took`), else PART_GUESS.
+        # the seconds a part is expected to take: the last plain part's (once-a-run work left out). A part is plain when
+        # it decides only its own mentions' pairs; the first part also decides the pairs answered since the last run and
+        # the backlog, once a run, so it is plain only when there were none. Before any plain part is measured: the last
+        # run's (`part_took`), else PART_GUESS (0226)
         known_once = bool(answered_pairs or again)
         took = part_took if part_took is not None and part_took >= 0 else PART_GUESS
         plain_took: Optional[float] = None
@@ -4431,22 +4264,22 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
         left = sum(len(p_) for p_ in parts[done_parts:])
         out["incremental"] = {"done": not linking_stopped, "parts": done_parts, "of": len(parts), "left": left,
                               "seconds": round(clock() - at_start, 2),
-                              # v10.24 (0221): the collisions' seconds a mention linked (the next run keeps them)
+                              # the collisions' seconds a mention linked (the next run keeps them)
                               "collide_rate": (round(collide_s / n_linked, 5) if n_linked >= mention_chunk
                                                else collide_rate),
-                              # v10.25 (0226): where the linking's seconds went (its steps; `reading`: the pool's
-                              # indexes, inside `pool`), each part's seconds, and the pairs it decided
+                              # where the linking's seconds went (its steps; `reading`: the pool's indexes, inside
+                              # `pool`), each part's seconds, and the pairs it decided
                               "timing": {k_: round(v_ - timing0.get(k_, 0.0), 2) for k_, v_ in sorted(timing.items())
                                          if v_ - timing0.get(k_, 0.0) >= 0.005},
                               "reading": round(_book_reading(book) - read_start, 2), "part_seconds": part_s,
                               "pairs": n["pairs"],
-                              # v10.25: a plain part's seconds (the next run's expectation until it measures one)
+                              # a plain part's seconds (the next run's expectation until it measures one)
                               "part_took": round(plain_took, 3) if plain_took is not None else part_took}
         stopped = linking_stopped   # the budget is spent: the full pass's pages or chunks are the next run's
     first_unit = not linked_any     # the full pass is the most urgent work pending: its first unit always goes
     full_at = clock()
-    # the full pass never ends while it is half done (a pass takes days on the server): it leaves the steps after it
-    # the seconds they are expected to take (`keep`, entity_stage), so each of them has its turn every run
+    # the full pass never ends while it is half done (a pass takes days): it leaves the steps after it the seconds they
+    # are expected to take (`keep`, entity_stage), so each of them has its turn every run
     pass_end = None if deadline is None else deadline - max(0.0, keep)
     # 2. the full pass: every mention relinked, in pages of posts (post id order)
     moved_n = None
@@ -4490,7 +4323,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     if full and phase == "pool" and not stopped:
         if moved_n is not None or facts["hf"] is None:
             facts_for(None)   # read after the relinking (it may move a mention to another entity)
-        rest = book.ids(after)   # v10.23 (0218): read in id order, not walked from the book
+        rest = book.ids(after)
         n_chunks = max(1, -(-len(rest) // max(1, chunk)))
         paren_of: Dict[str, Set[Tuple[str, str]]] = {}   # a post's "X (Y)" pairs, read once over the chunks
         pace = seed_rate if seed_rate and seed_rate > 0 else SEED_RATE   # seeds a second: the last run's, else a guess
@@ -4511,7 +4344,7 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
             began, read0 = clock(), _book_reading(book)
             seeds = set(seeds_list)
             posts: Set[str] = set()
-            if seeds:   # the posts naming a seed
+            if seeds:
                 cur.execute("""SELECT DISTINCT post_id::text FROM mx_mentions_now
                                 WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[])""", (guide, seeds_list))
                 posts = {r[0] for r in cur.fetchall()}
@@ -4539,26 +4372,26 @@ def stage(cur: Any, *, ask: Any, now: datetime, run_id: Any, full: bool, since: 
     out["second"] = {"asked": n["added2"], "cleared": n["cleared"], "marked": n["marked"]}
     out["third"] = {"asked": n["added3"]}
     out["merged"], out["queued"] = n["merged"], n["queued"]
-    out["queue"] = {"again": len(again), "closed": dict(closed), "refreshed": n["refreshed"]}   # v10.18: the backlog
-    out["void"] = {k: n["void_" + k] for k in ("alias", "alias2", "alias3")}   # 0222: answers about other posts
+    out["queue"] = {"again": len(again), "closed": dict(closed), "refreshed": n["refreshed"]}
+    out["void"] = {k: n["void_" + k] for k in ("alias", "alias2", "alias3")}   # answers about other posts
     if full:
         done = not stopped
         out["full"] = {"done": done, "phase": None if done else phase,
                        "after": None if done or phase != "pool" else last,
                        "link_after": None if done or phase != "link" else link_after,
                        "chunks": done_chunks, "of": n_chunks, "resumed": resume,
-                       # v10.24 (0221): the seeds decided this run and those left, the pace (seeds a second: the next
-                       # run sizes its chunks by it) and the pass's seconds this run
+                       # the seeds decided this run and those left, the pace (seeds a second: the next run sizes its
+                       # chunks by it) and the pass's seconds this run
                        "seeds": seeds_done, "left": seeds_left, "rate": None if rate is None else round(rate, 1),
                        "seconds": round(clock() - full_at, 2)}
     out["collide"] = {k: collide_out.get(k, 0) for k in ("odd", "asked", "asked_again", "waiting", "one_thing", "queued")}
-    if entity_facts.on():   # 0184
+    if entity_facts.on():
         out["facts"] = {"placed": dict(placed), "facts": collide_out.get("facts", 0), "split": collide_out.get("split", 0),
                         "makers": entity_facts.makers(cur, book, {book.root(x) for x in seeded | collided if x in book.ents},
                                                       guide, run_id=run_id)}
     out["entities_made"] = len(w.made)
     out["timing"] = {k: round(v, 2) for k, v in sorted(timing.items())}
-    out["timing"]["reading"] = round(_book_reading(book), 2)   # v10.25 (0226): the pool's indexes (inside `pool`)
+    out["timing"]["reading"] = round(_book_reading(book), 2)   # the pool's indexes (inside `pool`)
     out["seconds"] = round(_time.monotonic() - t0, 3)
     out["days"] = sorted(d.isoformat() for d in touched_days)
     out["posts_linked"] = sorted(posts_linked)
@@ -4570,15 +4403,14 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
     """The collision judge: keys (entities) whose mentions differ in type or stated maker, asked COLLIDE_RUNS times;
     a split two runs make goes to the queue. `seeds` None: every entity."""
     from insight_core.markx import entity_facts, tasks
-    # 0184: with the facts on, also the entities holding unplaced mentions of a bare name, and the backfill's
+    # with the facts on, also the entities holding unplaced mentions of a bare name, and the backfill's
     extra = entity_facts.to_ask(cur, book, seeds, guide, int(entity_facts.config().get("cap") or 0))
     if seeds is not None:
         seeds = set(seeds) | extra
     # the keys whose mentions (the first of each post) differ in type or stated maker (`odd`), 2+ posts, counted by the
-    # database. v10.22 (0216): every mention of every seed was read to count them (a run's peak: ~300 MB more on the
-    # server-sized copy); only the new questions' entities' mentions are read now (`_first_mentions`)
-    # 0220: and, for a run's touched entities, the ones whose posts span COLLIDE_SPAN_DAYS or more (one name, several
-    # things: an archive post about another thing of the name, a line's failure); asked once, its sample across years
+    # database; only the new questions' entities' mentions are read (`_first_mentions`, memory). And, for a run's
+    # touched entities, the ones whose posts span COLLIDE_SPAN_DAYS or more (one name, several things); asked once, its
+    # sample across years
     span = seeds is not None
     cur.execute(f"""WITH f AS (SELECT DISTINCT ON (m.entity_id, m.post_id) m.entity_id, m.type, NULLIF(m.maker, '') AS maker
                                       {", COALESCE(p.published_at, p.created_at) AS at" if span else ""}
@@ -4596,11 +4428,11 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
     facts_on = entity_facts.on()
     rows = cur.fetchall()
     odd = [r[0] for r in rows]
-    oldest = {r[0]: r[1] for r in rows if span and r[1] is not None}   # 0230: each one's oldest post
+    oldest = {r[0]: r[1] for r in rows if span and r[1] is not None}
     book.prime(ids=odd)
     want = sorted(eid for eid in odd if book.ents.get(eid) and book.ents[eid].status != "not_entity")
     out["odd"] = len(want)
-    got.prime_collide(want)   # 0211: the collision questions of these entities, in one read
+    got.prime_collide(want)
     answers = valid_answers(cur, [got.collide[e][0] for e in want if e in got.collide])
     new = []
     for eid in want:
@@ -4613,9 +4445,8 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
         if status != "answered" or not calls:
             out["waiting"] += 1
             continue
-        # 0230: a name whose posts now go back before the oldest its question showed (an archive collected since: the
-        # exchange "Orbit" of 2018, a code tool's 2021 model of the same name) is asked again, its sample with the
-        # oldest post
+        # a name whose posts now go back before the oldest its question showed (an archive collected since) is asked
+        # again, its sample with the oldest post
         shown = asked_from(text)
         if eid in oldest and shown is not None and oldest[eid].year < shown:
             new.append(eid)
@@ -4623,8 +4454,8 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
             continue
         from insight_core.markx import validate
         n = validate.collide_mentions(text)
-        # the third run is asked only when the first two disagree on a pair: two that agree are the majority already;
-        # 0191: a first run that finds one thing (every pair the same, nothing unclear) is never asked again
+        # the third run is asked only when the first two disagree on a pair: two that agree are the majority already; a
+        # first run that finds one thing (every pair the same, nothing unclear) is never asked again
         settled = (len(calls) == COLLIDE_RUNS - 1 and pairrel(calls[0][1], n) == pairrel(calls[1][1], n)) \
             or (len(calls) == 1 and one_thing(calls[0][1], n))
         if len(calls) < COLLIDE_RUNS and not settled:
@@ -4638,7 +4469,7 @@ def collisions(cur: Any, book: Book, *, ask: Any, guide: str, run_id: Any, got: 
             found = match_pick(cur, guide, eid, text)
             for row in prop["mentions"]:
                 row["posts"] = [list(x) for x in found.get(row["n"], [])]
-        if facts_on:   # 0184: the answer's facts; a split made into senses when its bar is on, else queued below
+        if facts_on:   # the answer's facts; a split made into senses when its bar is on, else queued below
             got_ = entity_facts.apply(cur, book, eid, calls[:COLLIDE_RUNS], text, prop=prop, run_id=run_id,
                                       guide=schemas_guide("collide"), mguide=guide)
             out["facts"] += got_.get("facts", 0)
@@ -4687,8 +4518,8 @@ def schemas_guide(kind: str) -> Optional[str]:
 def match_pick(cur: Any, guide: str, eid: str, text: str, members: Optional[Iterable[str]] = None
                ) -> Dict[int, List[Tuple[str, int]]]:
     """A collision question's numbered mentions found again among the entity's mentions: {number: [(post, n)]} (the
-    input names no ids; each line's span, type, maker and its post's title and date say which post it is).
-    `members`: among the mentions of these entities (0274: an entity and the ones merged into it), else `eid`'s."""
+    input names no ids; each line's span, type, maker and its post's title and date say which post it is). `members`:
+    among the mentions of these entities (an entity and the ones merged into it), else `eid`'s."""
     from insight_core.markx import tasks
     cur.execute("""SELECT post_id::text, n, span, type, maker FROM mx_mentions_now
                     WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[])""",

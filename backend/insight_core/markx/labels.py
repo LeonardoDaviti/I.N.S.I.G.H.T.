@@ -1,14 +1,9 @@
-"""Mark X's labels (issue 0086 F): the owner's one-tap labels on Mark X News members, and the Wilson interval every
-precision on the owner's labels uses.
+"""Mark X's labels: the owner's one-tap labels on Mark X News members, and the Wilson interval every precision on the
+owner's labels uses.
 
-Storage: mx_labels (S1), keep everything: a changed answer is a new row, and the newest row of an item counts. A News
+Storage: mx_labels, keep everything: a changed answer is a new row, and the newest row of an item counts. A News
 member's label: item_kind news_row, `a` the post, `b` its Mark X story; one tap ("wrong story", "not about this", or
 "ok" to take it back).
-
-v10.22 (0216 D): the Labels queue (0086 F's queue of the decisions' questions, kept by the jobs process in
-mx_label_queues and mx_label_queue_items, its tab and its routes) is removed: the owner no longer labels it
-(Haiku-first decisions, no owner-label gates), and nothing else read it. The owner's labels in mx_labels stay, and so
-do the routes and modules that write or read them (News' flags here; the edge, perspective, fact and back labels).
 """
 from __future__ import annotations
 

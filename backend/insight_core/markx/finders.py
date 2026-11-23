@@ -1,50 +1,24 @@
-"""Track recall (issue 0147, Stealth v10.13): a track's passive posts are found by several finders whose candidates
-are combined, not by one description vector (0145's prefilter). The Haiku judge (track-v1) then decides as before.
-
-0145's measure: the median post sits at cosine 0.39-0.44 to any description; posts that belong often sit at 0.36-0.45
-(an abstract description, concrete posts; one vector for many sub-topics; short posts; passing mentions). Every
-finder is one signal; none decides alone (the owner's ensemble rule): each only puts a post up for judging.
+"""Track recall: a track's passive posts are put up for the Haiku judge by several finders whose candidates are
+combined (each one signal, none decides alone), not by one description vector.
 
 **The finders** (each candidate records which fired: mx_track_items.found_by):
-  1. **probe**: example posts. Once per track version a `probes` task (guide probes-v1, Haiku, one call) writes
-     12-20 short example posts across the track's likely sub-topics and up to 4 near-misses; each is embedded (an
-     `embed` task, subject 'track_probe'). A post's probe score is its max cosine to the probes and the description
-     (the description stays one probe; with ✓ / ✗ labels the 0145 profile is one more), minus how far its nearest
-     near-miss is closer than that (NEAR_PULL). It fires at the bar (`bar`).
-  2. **domain**: link domains (post_links, not boilerplate, not a home page, not a platform) of DOMAIN_MIN+ ✓ items,
-     in at most DOMAIN_MAX_SHARE of the posts; and the domain classes the description names by its words (code
-     hosts and 3D-model sites: DOMAIN_CLASSES; model hubs measured out); a post linking one (not its home page).
-  3. **word**: the terms most over-represented in ✓ items against the last SHARE_DAYS' posts (log-odds with an
-     informative prior, z >= WORD_Z, in WORD_MIN_POS+ ✓ items, the top WORDS), looked up in the post's index
-     (posts.search_vector) and Mark X's English layer (mx_post_search, 0139); WORD_MIN_HITS+ fire. The units of the
-     ✓ items' numbers (a reading's main.numbers: tok/s, GB, $) in UNIT_MIN_POS+ of them make a post's number with
-     one of those units count as a word.
-  4. **tool** (0207): a post naming one of the tools the track's practitioners discuss (track_tools.finder_ids: 2+
-     voices of its judged-in posts, specific to the track). The domain finder also learns from the track's own posts
-     in (`taught`: Haiku's in at TEACH_CONF or more from its sources, or joined), not only the owner's ✓: a track the
-     owner never labelled learned nothing. The words stay the ✓'s alone (taught, they were the sources' language).
-     Measured on held-out tool posts the owner never named: recall 72.5% -> 80% (issue 0207).
-  5. **source** (0252): a post from a source tied to the track: a passive source the track suggests (tracks.
-     suggestions: SUGGEST_MIN+ of its posts in within SUGGEST_DAYS, at least SUGGEST_SHARE of them). Always asked,
-     whatever its probe score, with or without a vector.
-  6. **linked** (0252): a post that LINK_MIN+ of the track's sources (its active ones and the tied ones, never the
-     post's own) link to (post_links to its address). Always asked, as 5.
-  The two are ALWAYS: they put a post up by who stands behind it, not by its words, and come first in the union's
-  order (`order_key`). A methods post from a tied source was never asked at probe bar 0.49 (issue 0252).
-Dropped in v10.18 (0203): the entity finder, the source and story priors and the classifier, never adopted (0147's
-held-out recall on the server copy: entity and story added none, the source prior -2 / +3, the classifier as the order
--21 points on one track at 30%; the owner's labels, 7, never opened the classifier's gate of 30). mx_track_models keeps
-the rows it ever wrote.
+  1. **probe**: example posts. Once per track version a `probes` task writes 12-20 example posts and up to 4
+     near-misses, each embedded (subject 'track_probe'). A post's probe score is its max cosine to the probes and the
+     description, minus how far its nearest near-miss is closer (NEAR_PULL); it fires at the bar.
+  2. **domain**: link domains of DOMAIN_MIN+ ✓ items (and of the track's own posts in, `taught`), in at most
+     DOMAIN_MAX_SHARE of the posts, plus the domain classes the description names (DOMAIN_CLASSES).
+  3. **word**: the terms most over-represented in ✓ items against the last SHARE_DAYS' posts (log-odds, z >= WORD_Z),
+     looked up in posts.search_vector and mx_post_search; WORD_MIN_HITS+ fire. The ✓ items' number units count too.
+  4. **tool**: a post naming a tool the track's practitioners discuss (track_tools.finder_ids).
+  5. **source**: a post from a passive source the track suggests (tracks.suggestions).
+  6. **linked**: a post LINK_MIN+ of the track's sources link to.
+  5 and 6 are ALWAYS: asked whatever the probe score, with or without a vector, and first in the union's order.
 
 **The bar and the budget**: until MIN_EXAMPLES ✓, the probe bar is set so the union passes the same share of the last
-SHARE_DAYS' posts as 0145's prefilter (tracks.DEFAULT_PASS_SHARE, at most tracks.DEFAULT_THRESHOLD): the other
-finders' hits are counted first, the probes fill the rest (at least half of it). From MIN_EXAMPLES ✓, 0145's rule on the
-probe score: the bar that keeps PASS_SHARE of the ✓ items passing. The union is ordered by how many finders fired, then
-the probe score (`order_key`), and capped by the per-run budget (tracks.TASKS_PER_RUN).
-
-**Which fire** (`active()`): all three (ADOPTED), or the ones INSIGHT_TRACK_FINDERS names (the example posts always).
-
-Only mx_* tables are written.
+SHARE_DAYS' posts as tracks.DEFAULT_PASS_SHARE (the other finders' hits first, the probes fill the rest); from
+MIN_EXAMPLES ✓, the bar that keeps PASS_SHARE of the ✓ items passing. The union is ordered by `order_key` and capped
+by tracks.TASKS_PER_RUN. `active()`: the finders that fire (ADOPTED, or INSIGHT_TRACK_FINDERS). Only mx_* tables are
+written.
 """
 from __future__ import annotations
 
@@ -67,14 +41,13 @@ KIND = "probes"
 EMBED_SUBJECT = "track_probe"
 MODEL = "bge-m3"
 FINDERS = ("probe", "domain", "word", "tool", "source", "linked")
-ALWAYS = ("source", "linked")   # 0252: always asked, whatever the probe score
-LINK_MIN = 2                    # 0252: the track's sources linking a post that put it up
+ALWAYS = ("source", "linked")   # always asked, whatever the probe score
+LINK_MIN = 2                    # the track's sources linking a post that put it up
 FINDERS_ENV = "INSIGHT_TRACK_FINDERS"
-ADOPTED = FINDERS   # measured on the server copy (0147-built.md); 0203 dropped the four that added no recall; 0207: tool;
-                    # 0252: source and linked
+ADOPTED = FINDERS   # measured on the server copy (plan/issues/0147, 0203, 0207, 0252)
 SHOWN = {"probe": "example post", "domain": "domain", "word": "words", "tool": "tool in use", "source": "tied source",
          "linked": "linked by its sources"}
-TEACH_CONF = 0.8    # 0207: the track's own posts in (Haiku's in at this confidence or more, active or joined) teach ...
+TEACH_CONF = 0.8    # the track's own posts in (Haiku's in at this confidence or more, active or joined) teach ...
 TEACH_MAX = 200     # ... the domain finder, the newest this many, with the owner's ✓ (the words, units and bar: the ✓ only)
 NEAR_PULL = 1.0
 DOMAIN_MIN, DOMAIN_MAX_SHARE = 2, 0.01
@@ -86,13 +59,11 @@ HOME_RE = r"^https?://[^/]+/?([?#].*)?$"
 PLATFORMS = {"reddit.com", "t.me", "youtube.com", "youtu.be", "news.ycombinator.com", "medium.com", "substack.com",
              "x.com", "twitter.com", "nitter.local", "piped.video", "facebook.com", "instagram.com", "linkedin.com",
              "threads.net", "bsky.app", "mastodon.social", "telegra.ph", "google.com", "archive.org", "bit.ly"}
-# The domain classes a description may name by its words (a class, not a site the owner named: 0147 finder 3).
+# The domain classes a description may name by its words (a class, never a site the owner named).
 DOMAIN_CLASSES = {
     "code": ({"github.com", "gitlab.com", "codeberg.org", "sr.ht", "bitbucket.org", "sourceforge.net"},
              r"open[- ]source|\brepo|\bcode\b|\bfork|side projects?|\bhacks?\b|\btools?\b|\bbuilds?\b"),
-    # model hubs ({"huggingface.co", "ollama.com", ...} for "models", "quantisation", "local AI") were measured and left
-    # out: on the local-setups track they added no recall at the 30% budget and cost 8 points at 10% (hub links ride on
-    # model launches, which then rank first as two-finder posts). 0147-built.md.
+    # model hubs were measured and left out: they added no recall and cost precision (hub links ride on model launches).
     "3d": ({"printables.com", "thingiverse.com", "makerworld.com", "cults3d.com", "thangs.com", "myminifactory.com"},
            r"3d[- ]print|\bprints?\b|\bstl\b|printable"),
 }
@@ -220,9 +191,8 @@ def domain_set(pos_domains: Sequence[Iterable[str]], df: Dict[str, int], n_posts
 
 def lexicon(pos_docs: Sequence[Iterable[str]], df: Dict[str, int], n_terms: int, *, top: int = WORDS) -> List[str]:
     """The terms most over-represented in the ✓ items against the window's posts (df: posts holding each term; n_terms:
-    the window's terms, each post's distinct terms counted): log-odds with an informative Dirichlet prior (Monroe et
-    al. 2008) on document counts, a prior of WORD_PRIOR terms shaped like the background; terms in WORD_MIN_POS+ ✓ items, z
-    at WORD_Z+, the `top` highest."""
+    the window's terms): log-odds with an informative Dirichlet prior (Monroe et al. 2008) on document counts, a prior
+    of WORD_PRIOR terms shaped like the background; terms in WORD_MIN_POS+ ✓ items, z at WORD_Z+, the `top` highest."""
     docs = [set(d) for d in pos_docs]
     y = Counter(w for d in docs for w in d)
     if not y:
@@ -279,8 +249,8 @@ def units_regex(units: Sequence[str]) -> Optional[str]:
 
 def _df(cur: Cursor, cache: Dict[Any, int], kind: str, cand: Sequence[str], sql: Any, params: Sequence[Any]
         ) -> Dict[str, int]:
-    """Document counts of `cand` (the posts of the window holding each), read once per key and window into `cache`
-    (v10.16: the window is in the key, so one cache serves every track of a plan pass)."""
+    """Document counts of `cand` (the posts of the window holding each), read once per key and window into `cache` (one
+    cache serves every track of a plan pass)."""
     win = tuple(params)
     missing = [c for c in cand if (kind, win, c) not in cache]
     if missing:
@@ -319,29 +289,27 @@ def _pos_domains(cur: Cursor, pos: Sequence[str]) -> Dict[str, List[str]]:
     return dict(cur.fetchall())
 
 
-# v10.16: each document count reads the window's posts first (the posts' date index), then their rows; a count of a
-# frequent site read every link and probed its post, 1.4 s a track on the scale copy. The words' counts are Postgres'
-# own document counts (ts_stat) of each post's terms, its index and English layer together: the same count as the
-# distinct posts holding the term, without a row per term (v10.22: kept by day, `word_counts`).
+# each document count reads the window's posts first (the posts' date index), then their rows. The words' counts are
+# Postgres' own document counts (ts_stat) of each post's terms, its index and English layer together, kept by day
+# (`word_counts`).
 _DF_DOM = f"""WITH w AS MATERIALIZED (SELECT p.id FROM posts p WHERE {DATE} >= %s AND {DATE} <= %s)
               SELECT l.target_site, count(DISTINCT l.post_id) FROM w JOIN post_links l ON l.post_id = w.id
                WHERE NOT l.boilerplate AND l.target_site IN (SELECT unnest(%s::text[])) GROUP BY 1"""
 
 
-# v10.22 (0216): the words' counts by day (migration 0148, mx_word_days). A window's count is the sum of its whole days'
-# kept counts (a post is in one day) and of its two partial days, counted from their posts: the same count as ts_stat
-# over the window (it was ts_stat over the window's ~30k posts on every plan pass: 3 s and ~100k buffers a call on the
-# server). A whole day is built (ts_stat over its posts, every term) when it has no row or one of its posts' terms or
-# dates changed since it was built (mx_word_days_dirty's count, raised by 0148's triggers in the writing transaction);
-# a read-only transaction counts such a day from its posts and keeps nothing. Days before the window asked are deleted.
+# The words' counts by day (mx_word_days). A window's count is the sum of its whole days' kept counts and of its two
+# partial days, counted from their posts: the same count as ts_stat over the window. A whole day is built when it has
+# no row or one of its posts' terms or dates changed since (mx_word_days_dirty, raised by triggers in the writing
+# transaction); a read-only transaction counts such a day from its posts and keeps nothing. Days before the window
+# asked are deleted.
 _DOCS = """SELECT COALESCE(p.search_vector, ''::tsvector) || COALESCE(s.vector, ''::tsvector)
              FROM posts p LEFT JOIN mx_post_search s ON s.post_id = p.id WHERE {where}"""
 KEEP_DAYS_BEFORE = 1   # built days kept before the window's first whole day (a pass whose clock is a little behind)
 
 
 def _ts_stat(cur: Cursor, where: str, cand: Sequence[str]) -> Dict[str, int]:
-    """ts_stat's ndoc over the posts matching `where` (literal SQL), for the words `cand` (v10.22.2: the tests'
-    reference; the counts read `_ndoc`)."""
+    """ts_stat's ndoc over the posts matching `where` (literal SQL), for the words `cand` (the tests' reference; the
+    counts read `_ndoc`)."""
     from psycopg import sql
     cur.execute(sql.SQL("SELECT word, ndoc FROM ts_stat({docs}) WHERE word IN (SELECT unnest(%s::text[]))").format(
         docs=sql.Literal(_DOCS.format(where=where))), (list(cand),))
@@ -349,8 +317,8 @@ def _ts_stat(cur: Cursor, where: str, cand: Sequence[str]) -> Dict[str, int]:
 
 
 def _ndoc(cur: Cursor, where: str, cand: Sequence[str]) -> Dict[str, int]:
-    """v10.22.2: `_ts_stat`'s counts (a word in no post left out), each post's distinct lexemes matched against `cand`:
-    ts_stat built a tree of every word of the posts (~1.8 s a partial edge day on the server, every plan pass)."""
+    """`_ts_stat`'s counts (a word in no post left out), each post's distinct lexemes matched against `cand` (ts_stat
+    builds a tree of every word of the posts)."""
     from psycopg import sql
     cur.execute(sql.SQL("""SELECT x.w, count(*) FROM ({docs}) d(v) CROSS JOIN LATERAL unnest(tsvector_to_array(d.v)) AS x(w)
                             WHERE x.w IN (SELECT unnest(%s::text[])) GROUP BY 1""").format(docs=sql.SQL(_DOCS.format(where=where))),
@@ -441,8 +409,8 @@ def _df_words(cur: Cursor, cache: Dict[Any, int], win: Tuple[datetime, datetime]
 
 
 def prefetch(cur: Cursor, pos: Iterable[str], *, now: datetime, days: int = 30, cache: Dict[Any, int]) -> None:
-    """v10.16: the window's counts every ✓ item of a plan pass needs (every track's, `pos`), read in one query each
-    into `cache`, so `learn` of each track reads none of the window again."""
+    """The window's counts every ✓ item of a plan pass needs (every track's, `pos`), read in one query each into
+    `cache`, so `learn` of each track reads none of the window again."""
     pos = sorted(set(pos))
     win = (_since(now, days), now)
     _window(cur, cache, win)
@@ -508,17 +476,14 @@ def probe_score(pos: Optional[float], near: Optional[float]) -> Optional[float]:
     return pos - NEAR_PULL * max(0.0, (near if near is not None else -1.0) - pos)
 
 
-# v10.22 (0216): each post's vector read once. A stored vector (halfvec, 2 kB) is out of line (TOAST), and every
-# `ps.v <=> pr.v` below fetched it again: 3 cosines x every probe (~60 fetches, ~88 buffers a post; the scoring of a
-# plan pass was ~2.3M of its 3.7M buffers on the scale clone). The post's row now carries the vector itself: the cast to
-# vector and back copies it out of TOAST, value for value (float16 -> float32 -> float16 is exact), in a subquery the
-# planner keeps (OFFSET 0), so it is made once a post.
-# 0252: how many of the track's sources (`linkers`) link a post (its address), never the post's own source.
+# each post's vector read once: a stored vector (halfvec) is out of line (TOAST) and each `ps.v <=> pr.v` would fetch
+# it again; the cast to vector and back copies it out of TOAST, value for value (float16 -> float32 -> float16 is
+# exact), in a subquery the planner keeps (OFFSET 0), so it is made once a post.
+# How many of the track's sources (`linkers`) link a post (its address), never the post's own source.
 LINKED_SQL = "(SELECT " + _voice.count_sql("q.source_id") + """ FROM post_links l JOIN posts q ON q.id = l.post_id
                   WHERE l.target_url = {url} AND NOT l.boilerplate AND q.source_id = ANY({linkers}::uuid[])
                     AND q.source_id <> {source})"""
-# 0252: a post with no vector is scored too when an ALWAYS finder can fire for it (from a tied source, or linked by
-# LINK_MIN+ of the track's sources); it has no probe score.
+# a post with no vector is scored too when an ALWAYS finder can fire for it; it has no probe score.
 _SCORE = f"""
 WITH pr AS MATERIALIZED (SELECT x.v::halfvec(1024) AS v, x.g FROM unnest(%(vs)s::text[], %(gs)s::text[]) AS x(v, g)),
 ps AS (SELECT p.id, {DATE} AS at, p.source_id, (e.v::vector)::halfvec AS v, p.search_vector,
@@ -575,12 +540,12 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
               "doms": learned["domains"], "home": HOME_RE, "words": learned["words"],
               "units": units_regex(learned["units"]), "passive": passive,
               "tools": list(learned.get("tools") or []) if "tool" in set(prep.get("on") or FINDERS) else [],
-              # 0252: the ALWAYS finders' sources (none when switched off)
+              # the ALWAYS finders' sources (none when switched off)
               "tied": list(learned.get("tied") or []) if "source" in set(prep.get("on") or FINDERS) else [],
               "linkers": list(learned.get("linkers") or []) if "linked" in set(prep.get("on") or FINDERS) else [],
               "link_min": LINK_MIN}
     from insight_core.db.repo_stories import suggestable_sql
-    # issue 0200: a passive post of a source switched off is never asked (it could only become a suggestion)
+    # a passive post of a source switched off is never asked (it could only become a suggestion)
     cur.execute(_SCORE.format(where=" AND ".join(where) or "true", suggestable=suggestable_sql("p.source_id")), params)
     out = []
     for r in cur.fetchall():
@@ -624,8 +589,8 @@ def labelled(prep: Dict[str, Any]) -> set:
 
 
 def order_key(d: Dict[str, Any]) -> Tuple[float, float, float]:
-    """The union's order (highest first): 0252: an ALWAYS finder fired first; then how many finders fired, then the
-    probe score."""
+    """The union's order (highest first): an ALWAYS finder fired first; then how many finders fired, then the probe
+    score."""
     fired = d.get("fired") or []
     return (float(any(f in ALWAYS for f in fired)), float(len(fired)),
             d.get("probe") if d.get("probe") is not None else -1.0)
@@ -686,8 +651,8 @@ def _placed(cur: Cursor, track: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def taught(placed: Sequence[Dict[str, Any]], neg: Sequence[str] = ()) -> List[str]:
-    """0207: the track's own posts that teach the domain finder: in the track (its sources' or joined) with
-    Haiku's in at TEACH_CONF or more, or the owner's ✓; never an owner ✗. The newest TEACH_MAX."""
+    """The track's own posts that teach the domain finder: in the track (its sources' or joined) with Haiku's in at
+    TEACH_CONF or more, or the owner's ✓; never an owner ✗. The newest TEACH_MAX."""
     no = set(neg)
     got = [it for it in placed if it.get("place") in ("track", "joined") and it["post_id"] not in no
            and (it.get("label") == "in" or (it.get("verdict") and (it.get("confidence") or 0) >= TEACH_CONF - 1e-9))]
@@ -697,8 +662,8 @@ def taught(placed: Sequence[Dict[str, Any]], neg: Sequence[str] = ()) -> List[st
 
 
 def tie(cur: Cursor, track: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[str, List[str]]:
-    """0252: {tied: the passive sources the track suggests (tracks.suggestions, the share rule), linkers: the track's
-    sources, its active ones and the tied ones}: the ALWAYS finders read them."""
+    """{tied: the passive sources the track suggests (tracks.suggestions), linkers: the track's sources, its active ones
+    and the tied ones}: the ALWAYS finders read them."""
     from insight_core.markx import tracks
     if not track.get("folder_id") or not track.get("version"):
         return {"tied": [], "linkers": []}
@@ -708,7 +673,7 @@ def tie(cur: Cursor, track: Dict[str, Any], *, now: Optional[datetime] = None) -
 
 
 def linked_by(cur: Cursor, post_id: str, linkers: Sequence[str]) -> int:
-    """0252: how many of `linkers` (the track's sources) link the post, never its own source (LINKED_SQL)."""
+    """How many of `linkers` (the track's sources) link the post, never its own source (LINKED_SQL)."""
     if not linkers:
         return 0
     cur.execute(f"SELECT {LINKED_SQL.format(url='p.normalized_url', linkers='%s', source='p.source_id')} "
@@ -730,23 +695,23 @@ def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now
     pos, neg = list(ex.get("in") or []), list(ex.get("out") or [])
     prof = tracks.profile(cur, track, ex) if (pos or neg) else None
     vectors = probe_vectors(cur, track, profile=prof["vector"] if prof and (pos or neg) else None)
-    cache = {} if cache is None else cache   # v10.16: a plan pass's tracks share it (the window's counts, `prefetch`)
-    # 0207: the domain finder learns from the track's own posts in too, not only the owner's ✓ (a track the
-    # owner never labelled learned nothing: its passive posts were found by the example posts alone); the tool finder
-    # reads the tools the track's practitioners discuss (track_tools). The probe bar stays the ✓'s alone.
+    cache = {} if cache is None else cache   # a plan pass's tracks share it (the window's counts, `prefetch`)
+    # the domain finder learns from the track's own posts in too, not only the owner's ✓ (else an unlabelled track
+    # learns nothing); the tool finder reads the tools the track's practitioners discuss. The probe bar stays the ✓'s
+    # alone.
     placed = _placed(cur, track)
     teach = list(dict.fromkeys(pos + taught(placed, neg)))
     learned = learn(cur, track, teach, now=now, cache=cache) if teach else {"pos": [], "domains": [], "words": [], "units": []}
     if len(teach) > len(pos):   # the words and units stay the owner's ✓'s alone: taught by the track's own posts they
         own = learn(cur, track, pos, now=now, cache=cache) if pos else {"words": [], "units": []}   # were the language
-        learned["words"], learned["units"] = own["words"], own["units"]   # of its sources (measured: issue 0207)
+        learned["words"], learned["units"] = own["words"], own["units"]   # of its sources (0207)
     learned["pos"] = pos
     learned["taught"] = len(teach) - len(pos)
     if not teach:   # the description's domain classes need no ✓ item
         learned["domains"] = domain_set([], {}, 1, (track.get("name") or "") + " " + (track.get("description") or ""))
     from insight_core.markx import track_tools
     learned["tools"] = track_tools.finder_ids(cur, placed, now=now) if placed else []
-    learned.update(tie(cur, track, now=now))   # 0252: the ALWAYS finders' sources
+    learned.update(tie(cur, track, now=now))   # the ALWAYS finders' sources
     prep: Dict[str, Any] = {"vectors": vectors, "learned": learned, "bar": cap, "neg": neg, "now": now,
                             "cache": cache, "on": tuple(on) if on is not None else active(),
                             "ready": any(g in ("desc", "probe", "profile") for _, g in vectors)}
@@ -755,7 +720,7 @@ def prepare(cur: Cursor, track: Dict[str, Any], ex: Dict[str, List[str]], *, now
     if len(pos) >= tracks.MIN_EXAMPLES:
         prep["bar"] = tracks.threshold_for(example_scores(cur, track, prep, pos, neg), default=cap)
     else:
-        # the bar's share is of the embedded posts (0252: a tied source's post with no vector is scored, never counted)
+        # the bar's share is of the embedded posts (a tied source's post with no vector is scored, never counted)
         rows = [d for d in score(cur, track, prep, since=_since(now, tracks.SHARE_DAYS), until=now) if d["embedded"]]
         if len(rows) >= tracks.SHARE_MIN_POSTS:
             prep["bar"] = budget_bar(rows, share, cap)
