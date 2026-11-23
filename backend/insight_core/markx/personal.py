@@ -6,9 +6,11 @@ and per **source**, so one tap on a row teaches every row that shares what was t
 
 **What a row is made of** (`row_facts`, in the jobs process when the rows are ranked; kept in mx_news_rank.why's
 `personal`): its things (its posts' current entities, subjects and actors first, then publishers and mentions, at
-most THINGS_MAX), its kind (`kind_of`: the significance answer's event, and for a release the release of a thing by
-someone other than its maker, "releases for someone else's model": quants, ports, hosting, day-0 support) and its
-posts' sources.
+most THINGS_MAX), its kind and its posts' sources. The kind (`subtype_kind`) is its posts' ent-v6 event type and
+subtype, the most common pair ("model_release/build": quants, conversions, adapters of an existing model;
+"research_result/method"); a row none of whose posts has a subtype yet (read before ent-v6) falls back to `kind_of`:
+the significance answer's event, and for a release of a thing by someone other than its maker (quants, ports,
+hosting, day-0 support) the same build key, so one tap teaches rows read before and after ent-v6.
 
 **What the reader taught** (`teach`, mx_interests, keep everything): "More" or "Less" of one thing, kind or source,
 "none" (not a reason) or "undo" (back to what was learned); the newest row of a (dim, key) counts. Seeds (`seed`,
@@ -25,7 +27,7 @@ subject of TRACK_MIN+ posts of a topic track is TRACK_PRIOR (a mild prior). A ta
 adds up five liked things), the kind's and the sources'; when a thing the reader named disagrees with the kind, the
 thing wins (a quant release of a model the reader follows rises; one of a model they do not follow sinks). The sum p
 is clipped to +-P_MAX and the row's factor is exp(SCALE * p), x0.47 to x2.1. `why` names the largest reason in words
-("you follow Inkling 2 Small", "you lowered 'releases for someone else's model'").
+("you follow Inkling 2 Small", "you lowered 'builds of an existing model'").
 
 **Where it runs.** The facts and the learned weights in the jobs process (news_rank.keep); the API reads the taps and
 the learned weights of the shown rows' keys only (`weights`: one small query each) and scores each row in Python.
@@ -70,7 +72,29 @@ EVENT_WORDS = {"new_method": "new methods", "new_model": "new models", "new_tool
                "product_launch": "product launches", "deal_funding": "deals and funding", "policy_legal": "policy and law",
                "security_incident": "security incidents", "outage": "outages", "people": "people moves",
                "opinion_analysis": "opinion and analysis", "tutorial": "tutorials"}
-BY_OTHER = "by_other:"
+BUILD = {"model": "model_release", "software": "product_release", "product": "product_release"}   # a made thing's type
+SUBTYPE_WORDS = {"new_model": "new models", "build": "builds of an existing {thing} (quants, conversions, adapters, ports)",
+                 "dataset": "datasets", "product": "product launches", "software": "software releases",
+                 "method": "new methods", "benchmark": "benchmarks", "finding": "research findings", "guide": "guides",
+                 "security": "security incidents", "failure": "outages and failures"}
+
+
+def _build_kind(event_type: str) -> Dict[str, str]:
+    thing = "model" if event_type == "model_release" else "product or program"
+    return {"key": f"{event_type}/build", "words": SUBTYPE_WORDS["build"].format(thing=thing)}
+
+
+def subtype_kind(typed: Sequence[Tuple[Optional[str], Optional[str]]]) -> Optional[Dict[str, str]]:
+    """Pure: a row's kind from its posts' (event type, subtype), in the row's order: the most common pair with a
+    subtype (a tie: the first given), {key "type/subtype", words}; None when no post has a subtype."""
+    pairs = [(t, st) for t, st in typed if t and st]
+    if not pairs:
+        return None
+    count = Counter(pairs)
+    t, st = max(pairs, key=lambda p: count[p])      # max keeps the first of equals
+    if st == "build":
+        return _build_kind(t)
+    return {"key": f"{t}/{st}", "words": SUBTYPE_WORDS.get(st, st.replace("_", " "))}
 
 
 # ---- what a row is made of ---------------------------------------------------------------------------------
@@ -88,21 +112,22 @@ def kind_of(event: Optional[str], main: Optional[Dict[str, Any]], shippers: Sequ
     """A row's kind of news: {key, words}. `main` its main subject {name, type, maker}; `shippers` the organisations
     that act in it (its posts' actors); `named` who acts in it or publishes it (its actors and publishers, any kind). A
     release (RELEASES) of a made thing (MADE) whose maker is known, that an organisation ships, and whose maker neither
-    acts in it nor publishes it (nor is a shipper's name the start of the thing's: Qwen ships Qwen3.8) is a release for someone else's thing (quants, ports, hosting,
-    day-0 support); else the event; None for no event or "other"."""
+    acts in it nor publishes it (nor is a shipper's name the start of the thing's: Qwen ships Qwen3.8) is a build of
+    someone else's thing (quants, ports, hosting, day-0 support: `_build_kind`, the key ent-v6's subtype gives); else
+    the event; None for no event or "other"."""
     if event in RELEASES and main and main.get("type") in MADE and main.get("maker") and shippers:
         maker, thing = _norm(main["maker"]), _norm(main.get("name"))
         own = any(_same(_norm(n), maker) for n in list(named) + list(shippers)) \
             or any(_norm(m) and thing.startswith(_norm(m)) for m in shippers)
         if not own:
-            return {"key": BY_OTHER + main["type"], "words": f"releases for someone else's {main['type']}"}
+            return _build_kind(BUILD[main["type"]])
     if not event or event == "other":
         return None
     return {"key": event, "words": EVENT_WORDS.get(event, event.replace("_", " "))}
 
 
 def facts_of(mentions: Sequence[Tuple[str, str, str, str, Optional[str], Optional[str]]], event: Optional[str],
-             sources: Sequence[str]) -> Dict[str, Any]:
+             sources: Sequence[str], typed: Sequence[Tuple[Optional[str], Optional[str]]] = ()) -> Dict[str, Any]:
     """Pure: one row's facts from its posts' mentions [(post, role, entity id, name, type, maker)], its significance
     event and its posts' sources. {things: [{id, name, type, role, posts}], kind, sources}."""
     best: Dict[str, Dict[str, Any]] = {}
@@ -135,12 +160,15 @@ def facts_of(mentions: Sequence[Tuple[str, str, str, str, Optional[str], Optiona
     acting = Counter({eid: len(posts[eid]) for eid, t in best.items() if t["type"] == "org" and eid in actors})
     shippers = [best[eid]["name"] for eid, _n in acting.most_common()]
     named = [t["name"] for eid, t in best.items() if eid in actors or eid in publishers]
-    return {"things": things, "kind": kind_of(event, main, shippers, named), "sources": sorted(set(sources))}
+    kind = subtype_kind(typed) or kind_of(event, main, shippers, named)
+    return {"things": things, "kind": kind, "sources": sorted(set(sources))}
 
 
 def row_facts(cur: Any, rows: Sequence[Dict[str, Any]], events: Mapping[str, Optional[str]]) -> Dict[str, Dict[str, Any]]:
     """{row id: its facts} from the database: its posts' current entities (named and made as the entity pages say:
-    a mention's own maker is not trusted, measured: posts disagree on it), its significance event (`events`) and its posts' sources."""
+    a mention's own maker is not trusted, measured: posts disagree on it), its posts' event types and subtypes
+    (event_types.of_posts), its significance event (`events`) and its posts' sources."""
+    from insight_core.markx import event_types
     of_post: Dict[str, List[str]] = defaultdict(list)
     for r in rows:
         for p in r.get("posts") or []:
@@ -160,8 +188,11 @@ def row_facts(cur: Any, rows: Sequence[Dict[str, Any]], events: Mapping[str, Opt
         for row in cur.fetchall():
             for rid in of_post[row[0]]:
                 mentions[rid].append(row)
+    types = event_types.of_posts(cur, ids) if ids else {}
+    typed = {str(r["id"]): [(types[p["post_id"]].type, types[p["post_id"]].subtype) for p in r.get("posts") or []
+                            if p["post_id"] in types] for r in rows}
     return {str(r["id"]): facts_of(mentions.get(str(r["id"]), ()), events.get(str(r["id"])),
-                                   sources.get(str(r["id"]), ())) for r in rows}
+                                   sources.get(str(r["id"]), ()), typed[str(r["id"])]) for r in rows}
 
 
 # ---- what the reader taught ---------------------------------------------------------------------------------

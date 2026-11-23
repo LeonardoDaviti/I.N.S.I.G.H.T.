@@ -13,13 +13,13 @@ import { renderWithProviders } from '../../test/render';
 const TEACH = {
   things: [{ id: 'e1', name: 'Example Model 2', type: 'model', answer: null },
     { id: 'e2', name: 'Example Lab', type: 'org', answer: 'more' as const }],
-  kind: { key: 'by_other:model', words: "releases for someone else's model", answer: null },
+  kind: { key: 'model_release/build', words: "releases for someone else's model", answer: null },
   source: { id: 's1', name: 'Example Channel', answer: null },
 };
 const PERSONAL: NewsPersonal = {
   p: 1, factor: 1.65, why: 'you follow Example Model 2', teach: TEACH,
   reasons: [{ dim: 'thing', key: 'e1', name: 'Example Model 2', amount: 1, words: 'you follow Example Model 2', by: 'reader', beaten: false },
-    { dim: 'kind', key: 'by_other:model', name: 'k', amount: -0.7, words: "you lowered 'k'", by: 'reader', beaten: true }],
+    { dim: 'kind', key: 'model_release/build', name: 'k', amount: -0.7, words: "you lowered 'k'", by: 'reader', beaten: true }],
 };
 
 describe('For you (v10.42)', () => {
@@ -33,7 +33,7 @@ describe('For you (v10.42)', () => {
     expect(chips.map((c) => c.textContent)).toEqual(['Example Model 2', 'Example Lab (more)',
       "this kind: releases for someone else's model", 'this source: Example Channel']);
     await userEvent.click(chips[2]);
-    expect(teachInterest).toHaveBeenCalledWith({ dim: 'kind', key: 'by_other:model', name: "releases for someone else's model",
+    expect(teachInterest).toHaveBeenCalledWith({ dim: 'kind', key: 'model_release/build', name: "releases for someone else's model",
       answer: 'less', row: 'r1', post: 'p1' });
     expect(await screen.findByRole('status')).toHaveTextContent("Taught: less of releases for someone else's model.");
     await userEvent.click(screen.getByRole('button', { name: 'Undo' }));

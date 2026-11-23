@@ -16,7 +16,7 @@ QWEN = {"id": "qwen", "name": "Qwen3.8-Flash-Next", "type": "model", "role": "su
 INK = {"id": "ink", "name": "Inkling 2 Small", "type": "model", "role": "subject"}
 UNSLOTH = {"id": "unsloth", "name": "Unsloth", "type": "org", "role": "actor"}
 UD = {"id": "ud", "name": "Unsloth Dynamic v3.1", "type": "software", "role": "mention"}
-QUANTS = {"key": "by_other:model", "words": "releases for someone else's model"}
+QUANTS = P.subtype_kind([("model_release", "build")])
 
 
 def facts(*things, kind=QUANTS, sources=("s1",)):
@@ -26,8 +26,8 @@ def facts(*things, kind=QUANTS, sources=("s1",)):
 class TheFacts(unittest.TestCase):
     def test_a_release_by_someone_other_than_its_maker(self):
         main = {"name": "Qwen3.8-Flash-Next", "type": "model", "maker": "Alibaba"}
-        self.assertEqual(P.kind_of("new_model", main, ["Unsloth"])["key"], "by_other:model")
-        self.assertEqual(P.kind_of("release_update", main, ["Unsloth"])["key"], "by_other:model")   # one kind
+        self.assertEqual(P.kind_of("new_model", main, ["Unsloth"])["key"], "model_release/build")
+        self.assertEqual(P.kind_of("release_update", main, ["Unsloth"])["key"], "model_release/build")   # one kind
         self.assertEqual(P.kind_of("new_model", main, ["Alibaba"])["key"], "new_model")             # its maker
         self.assertEqual(P.kind_of("new_model", main, ["Unsloth"], ["Alibaba"])["key"], "new_model")  # ... publishes it
         self.assertEqual(P.kind_of("new_model", main, [])["key"], "new_model")                      # no one ships it
@@ -37,6 +37,21 @@ class TheFacts(unittest.TestCase):
         self.assertEqual(P.kind_of("policy_legal", main, ["Unsloth"])["key"], "policy_legal")     # not a release
         self.assertIsNone(P.kind_of("other", None, []))
         self.assertIsNone(P.kind_of(None, None, []))
+
+    def test_the_ent_v6_subtype_is_the_kind_where_a_post_has_one(self):
+        self.assertEqual(QUANTS, {"key": "model_release/build",
+                                  "words": "builds of an existing model (quants, conversions, adapters, ports)"})
+        got = P.subtype_kind([("research_result", None), ("research_result", "method"), ("model_release", "new_model"),
+                              ("research_result", "method")])
+        self.assertEqual(got, {"key": "research_result/method", "words": "new methods"})   # the most common pair
+        self.assertEqual(P.subtype_kind([("model_release", "new_model"), ("model_release", "build")])["key"],
+                         "model_release/new_model")                         # a tie: the first
+        self.assertIsNone(P.subtype_kind([("model_release", None), (None, None)]))   # read before ent-v6
+        ms = [("p1", "subject", "qwen", "Qwen3.8", "model", "Alibaba"), ("p1", "actor", "unsloth", "Unsloth", "org", None)]
+        self.assertEqual(P.facts_of(ms, "new_model", [], [("model_release", "method")])["kind"]["key"],
+                         "model_release/method")                            # the subtype over the derived kind
+        self.assertEqual(P.facts_of(ms, "new_model", [], [("model_release", None)])["kind"]["key"],
+                         "model_release/build")                             # no subtype: derived, the same key
 
     def test_a_rows_things_subjects_first_its_best_role_each(self):
         ms = [("p1", "mention", "ud", "Unsloth Dynamic v3.1", "software", "Unsloth"),
@@ -48,7 +63,7 @@ class TheFacts(unittest.TestCase):
         got = P.facts_of(ms, "new_model", ["s2", "s1", "s1"])
         self.assertEqual([(t["id"], t["role"], t["posts"]) for t in got["things"]],
                          [("qwen", "subject", 2), ("unsloth", "actor", 2), ("ud", "mention", 1)])
-        self.assertEqual(got["kind"]["key"], "by_other:model")
+        self.assertEqual(got["kind"]["key"], "model_release/build")
         self.assertEqual(got["sources"], ["s1", "s2"])
 
 
@@ -88,7 +103,7 @@ class ARowsInterest(unittest.TestCase):
     def test_a_quant_release_of_a_model_not_followed_sinks(self):
         got = P.score(self.WS, facts(QWEN, UNSLOTH))
         self.assertLess(got["factor"], 1)
-        self.assertEqual(got["why"], "you lowered 'releases for someone else's model'")
+        self.assertEqual(got["why"], "you lowered 'builds of an existing model (quants, conversions, adapters, ports)'")
 
     def test_the_method_the_reader_raised_lifts_it_over_the_kind(self):
         got = P.score(self.WS, facts(QWEN, UNSLOTH, UD))
@@ -147,12 +162,12 @@ class Taught(_Api):
                 P.teach(self.cur, dim="row", key="x", answer="more")
 
     def test_the_route_teaches_and_lists(self):
-        status, got = call("POST", "/api/markx/interests", body={"dim": "kind", "key": "by_other:model",
+        status, got = call("POST", "/api/markx/interests", body={"dim": "kind", "key": "model_release/build",
                                                                  "answer": "less", "name": "quants"})
         self.assertEqual((status, got["answer"]), (200, "less"))
         self.assertEqual(call("POST", "/api/markx/interests", body={"dim": "kind", "key": "x", "answer": "meh"})[0], 400)
         status, got = call("GET", "/api/markx/interests")
-        self.assertEqual([(t["dim"], t["key"], t["answer"]) for t in got["taught"]], [("kind", "by_other:model", "less")])
+        self.assertEqual([(t["dim"], t["key"], t["answer"]) for t in got["taught"]], [("kind", "model_release/build", "less")])
         pid = self.post(title="A post")
         status, got = call("GET", f"/api/markx/posts/{pid}/interest")
         self.assertEqual((status, got["kind"], got["things"]), (200, None, []))
