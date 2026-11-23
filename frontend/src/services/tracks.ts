@@ -56,6 +56,15 @@ export interface TrackSection {
   joined?: number[];
 }
 
+export type TrackSort = 'newest' | 'news';
+/** v10.42: a thing (an entity) of the reader's stack. */
+export interface StackThing { id: string; name: string; type: string | null }
+export interface StackCandidate extends StackThing { level: string | null; mentions: number }
+export interface SubTrack {
+  id: string; name: string; description: string | null; rest: boolean; sort: TrackSort; stack: StackThing[];
+  count: number; items: Array<{ post_id: string; at: string | null; title?: string | null; url?: string | null; source?: string | null }>;
+}
+
 export type SubtopicNamedBy = 'judge' | 'haiku' | 'owner';
 export type SubtopicState = 'new' | 'active' | 'quiet';
 
@@ -102,7 +111,14 @@ export interface TrackPage {
   track: {
     id: string; name: string; kind: string; topic: boolean; description: string | null; excludes: string | null;
     sources: Array<{ id: string; name: string }>; version?: number; version_at?: string | null;
+    /** v10.42: a sub-track's parent (its posts are the parent's), whether it takes the rest, its order, its stack. */
+    parent?: { id: string; name: string } | null;
+    rest?: boolean;
+    sort?: TrackSort;
+    stack?: StackThing[];
   };
+  /** v10.42: the track's sub-tracks, each with its newest (or News-ranked) first posts. */
+  subtracks?: SubTrack[];
   sections: TrackSection[];
   discover: TrackItem[];
   /** v10.41: each week's review lane (the rest the blind check decides). */
@@ -194,6 +210,9 @@ export const tracksApi = {
   /** 0207: the reader looked at the track (or one sub-topic) now; answers the looks before and now. */
   look: (id: string, subtopic?: string | null) =>
     request<{ before: TrackSeen; now: TrackSeen }>(`${base(id)}/seen`, { method: 'POST', body: { subtopic: subtopic ?? null } }),
+  /** v10.42: the reader's stack (entity ids; a change is a new version) and the picker's search. */
+  setStack: (id: string, things: string[]) => request<TrackPage>(`${base(id)}/stack`, { method: 'PUT', body: { things } }),
+  findThings: (id: string, q: string) => request<StackCandidate[]>(`${base(id)}/stack/find?q=${encodeURIComponent(q)}`),
 };
 
 // ---- 0245 (built 0249; frontend v10.28): the general track briefer. Behind the backend's switch: every answer

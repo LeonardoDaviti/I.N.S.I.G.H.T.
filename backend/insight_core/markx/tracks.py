@@ -170,13 +170,14 @@ def fold_key(s: Optional[str]) -> str:
 # ---- the track ---------------------------------------------------------------------------------------
 
 _COLS = ("folder_id", "name", "kind", "description", "excludes", "version", "version_at", "v_hash", "has_v",
-         "history_at", "history_id", "history_done_at", "stats", "created_at", "updated_at")
+         "history_at", "history_id", "history_done_at", "stats", "created_at", "updated_at", "parent_id", "stack", "rest",
+         "sort")
 
 
 def _select(where: str) -> str:
     return f"""SELECT t.folder_id::text, f.name, f.kind, t.description, t.excludes, t.version, t.version_at, t.v_hash,
                       t.v IS NOT NULL, t.history_at, t.history_id::text, t.history_done_at, t.stats, t.created_at,
-                      t.updated_at
+                      t.updated_at, t.parent_id::text, t.stack::text[], t.rest, t.sort
                  FROM mx_tracks t JOIN folders f ON f.id = t.folder_id WHERE {where}"""
 
 
@@ -492,6 +493,8 @@ def header(cur: Cursor, track: Dict[str, Any], ex: Optional[Dict[str, List[str]]
     lines = [f"TRACK: {track['name']}", f"Belongs: {track['description']}"]
     if track.get("excludes"):
         lines.append(f"Not: {track['excludes']}")
+    from insight_core.markx import track_subtracks
+    lines += track_subtracks.header_lines(cur, track)   # v10.42: a sub-track's parent, the reader's stack
     subs = locked_names(cur, track["folder_id"])
     if subs:
         lines.append("Sub-topics: " + "; ".join(subs))
@@ -733,6 +736,10 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
     def share(left: int, k: int) -> int:
         return max(1, -(-left // max(1, k)))
 
+    # v10.42: a sub-track's posts are its parent's (track_subtracks): its own phase, after the top tracks' active one
+    from insight_core.markx import track_subtracks
+    subs = [t for t in ts if track_subtracks.is_sub(t)]
+    ts = [t for t in ts if not track_subtracks.is_sub(t)]
     # 1. active: the reading window, newest first
     for k, t in enumerate(ts):
         left = room - added
@@ -747,6 +754,22 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
                 n += 1
         added += n
         _stat(stats[t["folder_id"]], "active", planned=n)
+    # 1b. v10.42: sub-tracks: a judged one asks its parent's posts (with a stack: those touching it); a rest one
+    # copies its parent's verdicts (no question)
+    for k, t in enumerate(subs):
+        if t.get("rest"):
+            _stat(stats[t["folder_id"]], "sub", copied=track_subtracks.plan_rest(cur, t))
+            continue
+        left = room - added
+        rows = track_subtracks.candidates(cur, t, limit=share(left, len(subs) - k) if left > 0 else 0)
+        posts = tasks.load_posts(cur, [r[0] for r in rows])
+        n = 0
+        for pid, at in rows:
+            p = posts.get(pid)
+            if p is not None and _ask(cur, t, heads[t["folder_id"]], p, origin="active", cos=None, priority=_age(at, now)):
+                n += 1
+        added += n
+        _stat(stats[t["folder_id"]], "sub", planned=n)
     # 2. passive, recent
     for k, t in enumerate(ts):
         prof = profs[t["folder_id"]]
@@ -784,7 +807,7 @@ def plan(cur: Cursor, *, cap: Optional[int] = None, now: Optional[datetime] = No
         added += n
         if n:
             _stat(stats[t["folder_id"]], "reask", planned=n)
-    for t in ts:
+    for t in ts + subs:
         s = stats[t["folder_id"]]
         if not s:
             continue
@@ -1015,8 +1038,9 @@ def placed(cur: Cursor, track: Dict[str, Any], *, shown: bool = True) -> Dict[st
     active = {s["id"] for s in active_sources(cur, folder)}
     marks = labels(cur, folder)
     items = _items(cur, folder, shown=shown)
+    sub = bool(track.get("parent_id"))   # v10.42: a sub-track's posts all came from its parent (active)
     for it in items:
-        it["active"] = it["source_id"] in active
+        it["active"] = sub or it["source_id"] in active
         it["label"] = marks.get(it["post_id"], (None,))[0]
     cal = calibrate([(it["confidence"], it["label"] == "in") for it in items
                      if it["verdict"] and not it["active"] and it["label"]])
@@ -1035,6 +1059,10 @@ def placed(cur: Cursor, track: Dict[str, Any], *, shown: bool = True) -> Dict[st
             it["place"] = "out"
         it["rank"] = rank_of(cal, it["confidence"])
         it["calibrated"] = cal["labels"] >= RANK_MIN_LABELS
+    from insight_core.markx import track_subtracks
+    got = track_subtracks.scope(cur, track)   # v10.42: a sub-track holds only its parent's posts
+    if got is not None:
+        track_subtracks.place(items, track, got)
     review_lane(items, cal)
     return {"items": items, "calibration": cal}
 
@@ -1176,10 +1204,11 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
     from insight_core.markx import track_subtopics, track_tools
     now = now or datetime.now(timezone.utc)
     subs, groups = track_subtopics.sections(cur, t, items, now=now)   # 0207: the sub-topics found from the posts
-    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    from insight_core.markx import track_subtracks
+    by = track_subtracks.sorter(cur, t, [it for g in groups.values() for it in g])   # v10.42: newest, or News' rank
     if kept:   # the items the page shows get their title, address, source and why
         track_kept.fill(cur, t, [it for g in groups.values()
-                                 for it in sorted(g, key=lambda it: it["at"] or epoch, reverse=True)[:SECTION_ITEMS]]
+                                 for it in sorted(g, key=by, reverse=True)[:SECTION_ITEMS]]
                         + sorted((it for it in items if it["place"] == "discover"),
                                  key=discover_order(cal))[:DISCOVER_ITEMS])
 
@@ -1191,13 +1220,13 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
     order = {"new": 0, "active": 0, "quiet": 1}
     sections = []
     for s in sorted(subs, key=lambda s: (order.get(s["state"], 0), -len(groups.get(s["id"], [])))):
-        its = sorted(groups.get(s["id"], []), key=lambda it: it["at"] or epoch, reverse=True)
+        its = sorted(groups.get(s["id"], []), key=by, reverse=True)
         sections.append({"id": s["id"], "name": s["name"], "definition": s["definition"], "locked": s["locked"],
                          "made_by": s["made_by"], "named_by": s["named_by"], "keys": s["keys"], "count": len(its),
                          "state": s["state"], "last_member_at": _iso(s["last_member_at"]),
                          "digest": None if s["digest"] is None else {**s["digest"], "at": _iso(s["digest"]["at"])},
                          "joined": joined(its), "items": [_shown(it) for it in its[:SECTION_ITEMS]]})
-    other = sorted(groups.get(None, []), key=lambda it: it["at"] or epoch, reverse=True)
+    other = sorted(groups.get(None, []), key=by, reverse=True)
     if other:
         sections.append({"id": None, "name": "Other" if subs else "In this track", "definition": None, "locked": False,
                          "made_by": None, "named_by": None, "keys": [], "count": len(other), "state": "active",
@@ -1216,7 +1245,9 @@ def page(cur: Cursor, folder_id: Any, *, now: Optional[datetime] = None) -> Dict
     prof = profile(cur, t, ex)
     probes = finders.probe_rows(cur, folder_id, t["version"])
     stats = t.get("stats") or {}
-    return {"track": {**base, "version": t["version"], "version_at": _iso(t["version_at"])},
+    return {"track": {**base, "version": t["version"], "version_at": _iso(t["version_at"]),
+                      **track_subtracks.shape(cur, t)},   # v10.42: its parent, rest, order and stack
+            "subtracks": track_subtracks.listing(cur, t),
             "sections": sections, "discover": [_shown(it) for it in disc[:DISCOVER_ITEMS]],
             "discover_per_week": DISCOVER_PER_WEEK, "discover_weeks": DISCOVER_WEEKS,
             "counts": dict(counts), "calibration": cal, "suggestions": suggestions(cur, folder_id, now=now),
@@ -1276,12 +1307,20 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
     track's), a few indexed reads."""
     f = None if folder_id is None else str(folder_id)
     cur.execute("""SELECT json_agg(json_build_array(t.folder_id, fo.name, fo.kind, t.description, t.excludes, t.version,
-                                                    t.version_at, t.v_hash, t.v IS NOT NULL) ORDER BY t.folder_id),
+                                                    t.version_at, t.v_hash, t.v IS NOT NULL, t.parent_id, t.stack,
+                                                    t.rest, t.sort) ORDER BY t.folder_id),
                           json_agg(json_build_array(t.folder_id, md5(t.stats::text), t.history_at, t.history_id,
-                                                    t.history_done_at) ORDER BY t.folder_id)
+                                                    t.history_done_at) ORDER BY t.folder_id),
+                          array_agg(t.folder_id::text)
                      FROM mx_tracks t JOIN folders fo ON fo.id = t.folder_id
-                    WHERE (%(f)s::uuid IS NULL OR t.folder_id = %(f)s::uuid)""", {"f": f})
-    topic, planner = cur.fetchone()
+                    -- v10.42: a track's page shows its parent, its sub-tracks and (a sub-track's) its siblings' posts:
+                    -- their settings, labels and placements are its own
+                    WHERE (%(f)s::uuid IS NULL OR t.folder_id = %(f)s::uuid OR t.parent_id = %(f)s::uuid
+                           OR t.folder_id = (SELECT parent_id FROM mx_tracks WHERE folder_id = %(f)s::uuid)
+                           OR t.parent_id = (SELECT parent_id FROM mx_tracks WHERE folder_id = %(f)s::uuid))""",
+                {"f": f})
+    topic, planner, fam = cur.fetchone()
+    fam = sorted(set(fam or []) | ({f} if f else set()))
     cur.execute("""SELECT (SELECT json_build_array(f.name, f.kind) FROM folders f WHERE f.id = %(f)s::uuid),
                           -- 0207: what the owner sets of the sub-topics (the clustering's and the worker's changes are
                           -- the loose part's)
@@ -1292,7 +1331,7 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
                              FROM mx_track_subtopics s WHERE (%(f)s::uuid IS NULL OR s.track_id = %(f)s::uuid)
                               AND (s.made_by = 'owner' OR s.named_by = 'owner' OR s.locked)),
                           (SELECT json_build_array(count(*), max(created_at)) FROM mx_labels
-                            WHERE item_kind = %(k)s AND (%(f)s::uuid IS NULL OR b = %(f)s::uuid)),
+                            WHERE item_kind = %(k)s AND (%(f)s::uuid IS NULL OR b = ANY(%(fam)s::uuid[]))),
                           (SELECT json_build_array(count(*), count(v), max(created_at)) FROM mx_track_probes
                             WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
                           (SELECT md5(string_agg(concat_ws(':', sf.folder_id, s.id, s.enabled, s.handle_or_url,
@@ -1301,19 +1340,19 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
                              FROM source_folders sf JOIN sources s ON s.id = sf.source_id
                             WHERE %(f)s::uuid IS NULL OR sf.folder_id = %(f)s::uuid),
                           (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM sources WHERE NOT enabled)""",
-                {"f": f, "k": ITEM_KIND})
+                {"f": f, "k": ITEM_KIND, "fam": fam})
     strict = [f, topic, *cur.fetchone()]
     # 0269: when the track was placed again is strict too: the page reads its kept placement, so a page kept from an
     # older placement is never sent (production: posts the refresh had moved to Discover, as the sidebar's counts and
     # /why said, still 'joined' on the page until its KEPT_LAG ended). The jobs process places and then builds in one
     # look (jobs.Jobs.tracks), so the next open is sent kept.
     cur.execute("""SELECT (SELECT json_agg(json_build_array(track_id, placed_at) ORDER BY track_id)
-                             FROM mx_track_places_state WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
+                             FROM mx_track_places_state WHERE %(f)s::uuid IS NULL OR track_id = ANY(%(fam)s::uuid[])),
                           -- 0264: a kept track's page reads its kept placement: the worker's changes move it once
                           -- placed again (placed_at above, strict since 0269); a track never kept is placed live: all
                           -- its changes do
                           (SELECT json_build_array(count(*), max(c.id)) FROM mx_track_changes c
-                            WHERE (%(f)s::uuid IS NULL OR c.track_id = %(f)s::uuid)
+                            WHERE (%(f)s::uuid IS NULL OR c.track_id = ANY(%(fam)s::uuid[]))
                               AND (c.owner OR NOT EXISTS (SELECT 1 FROM mx_track_places_state s
                                                            WHERE s.track_id = c.track_id))),
                           -- 0207: the clustering's members and the sub-topics' names and digests (the jobs process's
@@ -1325,7 +1364,7 @@ def page_inputs(cur: Cursor, folder_id: Optional[Any]) -> Tuple[List[Any], str]:
                              FROM mx_track_subtopics WHERE %(f)s::uuid IS NULL OR track_id = %(f)s::uuid),
                           (SELECT json_build_array(count(*), max(c.created_at)) FROM mx_track_subtopic_asks a
                              JOIN mx_calls c ON c.task_id = a.task_id
-                            WHERE %(f)s::uuid IS NULL OR a.track_id = %(f)s::uuid)""", {"f": f})
+                            WHERE %(f)s::uuid IS NULL OR a.track_id = %(f)s::uuid)""", {"f": f, "fam": fam})
     loose = cur.fetchone()
     strict.append(loose[0])   # 0269: the placements kept (above)
     return strict, json.dumps([planner, *loose], default=str, separators=(",", ":"))
@@ -1413,7 +1452,7 @@ def label(cur: Cursor, folder_id: Any, *, post: Any, answer: str, note: Optional
 
 def list_tracks(cur: Cursor) -> List[Dict[str, Any]]:
     """Every folder, with whether it is a topic (GET /api/markx/tracks)."""
-    cur.execute("""SELECT f.id::text, f.name, f.kind, t.description, t.version FROM folders f
+    cur.execute("""SELECT f.id::text, f.name, f.kind, t.description, t.version, t.parent_id::text FROM folders f
                     LEFT JOIN mx_tracks t ON t.folder_id = f.id ORDER BY f.sort_order, f.name""")
-    return [{"id": i, "name": n, "kind": k, "topic": bool((d or "").strip()), "description": d, "version": v}
-            for i, n, k, d, v in cur.fetchall()]
+    return [{"id": i, "name": n, "kind": k, "topic": bool((d or "").strip()), "description": d, "version": v,
+             "parent": parent} for i, n, k, d, v, parent in cur.fetchall()]

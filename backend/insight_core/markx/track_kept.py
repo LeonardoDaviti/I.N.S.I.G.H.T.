@@ -200,10 +200,15 @@ def refresh(cur: Cursor, *, gap: float = REFRESH_GAP) -> Optional[int]:
         if owner:
             owners.add(tid)
     placed_n = 0
-    for t in topics:
+    from insight_core.markx import track_subtracks
+    again = set()   # v10.42: a sub-track is placed again with its parent or a sibling (it holds their posts)
+    for t in track_subtracks.order(topics):
         tid = t["folder_id"]
-        if tid in kept and (tid not in taken or (tid not in owners and not kept[tid])):
+        moved = t.get("parent_id") in again or any(
+            s["folder_id"] in again for s in topics if s.get("parent_id") and s.get("parent_id") == t.get("parent_id"))
+        if not moved and tid in kept and (tid not in taken or (tid not in owners and not kept[tid])):
             continue   # unchanged, or changed by the worker only and placed less than `gap` ago (its rows stay)
+        again.add(tid)
         got = tracks.placed(cur, t, shown=False)
         items = got["items"]
         write_places(cur, tid, items)

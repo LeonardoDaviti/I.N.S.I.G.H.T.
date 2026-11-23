@@ -494,6 +494,8 @@ def due_weekly(cur: Cursor, now: Optional[datetime] = None) -> List[str]:
     now = now or _now()
     out = []
     for t in tracks.described(cur):
+        if t.get("parent_id"):   # v10.42: a sub-track's posts are its parent's; it finds no sources
+            continue
         cur.execute("SELECT max(started_at) FROM mx_scout_runs WHERE track_id = %s", (t["folder_id"],))
         last = cur.fetchone()[0]
         if last is not None and last > now - WEEK:

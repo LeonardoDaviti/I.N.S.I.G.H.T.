@@ -18,6 +18,7 @@ import {
 import { bylineText } from '../../lib/byline';
 import { QuickLookPanel, ThingTables, WeekIssueView, WhatChanged } from './TrackBrief';
 import TrackFieldSuggestions from './TrackFieldSuggestions';
+import { StackEditor, SubTracks } from './TrackSubtracks';
 import { TRACK_COUNTS_KEY } from '../../hooks/useTrackCounts';
 import { kindWord, mondayOf, newestAt, schemaKey } from './briefWords';
 
@@ -296,6 +297,8 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
         </p>
         <Button size="sm" variant="ghost" className="mt-1 text-[0.75rem]" onClick={() => setEditing(true)}>edit the topic</Button>
       </div>
+      <SubTracks page={page} />
+      <StackEditor page={page} queryKey={trackKey(folderId)} />
       <MisleadingExamples page={page} />
       <Suggestions page={page} />
       <Tools tools={page.tools ?? []} shadow={page.shadow?.tools} />
