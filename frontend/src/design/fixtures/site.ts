@@ -319,6 +319,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     { path: '/api/operations/running', respond: () => ({ success: true, jobs: site.jobs }) },
     { path: '/api/operations/scheduler', respond: () => ({ success: true, scheduler: site.scheduler }) },
     { path: '/api/operations/background', respond: () => site.background ?? backgroundWork(new Date()) },
+    { path: '/api/operations/repairs', respond: () => ({ repairs: [] }) },   // v10.43: the Data repairs panel
     { path: '/api/version', respond: () => ({ version: null, commit: null, commit_date: null }) },
     {
       path: '/api/operations/jobs/:jobId',
