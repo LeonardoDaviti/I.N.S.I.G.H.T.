@@ -1,11 +1,7 @@
-"""A story's original fetched when INSIGHT lacks it (issues 0114, 0123), on the database.
-
-0114: a story links a followed source's page not stored -> the source is wanted (fetch_linked), once.
-0123: Collect originals (off by default) -> a News story's original no followed source owns is read once
-and stored as a Saved post by itself, joined to its story as its root; a walled one never is.
-
-No network: FakeHttp answers every page. The tests commit rows, so they run only against a `_test`
-database; they own every source and post on the example sites below.
+"""A story's original fetched when INSIGHT lacks it (0114, 0123): a followed source's page a story links makes the
+source wanted, once; with Collect originals on, a News story's original no followed source owns is read once and
+stored as a Saved post joined to its story as its root (a walled one never is). No network: FakeHttp. The tests commit,
+so they run only against a `_test` database.
 """
 from __future__ import annotations
 
@@ -128,7 +124,7 @@ class OriginalsCase(unittest.TestCase):
 
 
 class FetchLinkedTests(OriginalsCase):
-    """0114: a followed source whose page a story links is fetched early."""
+    """A followed source whose page a story links is fetched early (0114)."""
 
     def linked(self, *sources, hours=1, tag=""):
         return [self._post(s, f"https://{s[:4]}.oochan{n}.example/p/{n}{tag}", f"Post {n}{tag} about the new release {n}",
@@ -208,7 +204,7 @@ class CreditTests(OriginalsCase):
 
 
 class CollectTests(OriginalsCase):
-    """0123: a News story's original collected, when Collect originals is on."""
+    """A News story's original collected, when Collect originals is on (0123)."""
 
     def news_story(self, page, *sources):
         posts = [self._post(s, f"https://{s[:4]}.oochan{n}.example/p/essay-{n}", f"Thoughts {n} on an essay {n}",
@@ -217,7 +213,7 @@ class CollectTests(OriginalsCase):
         self.stories()
         story = self.story_of(posts[0])
         self.assertIsNotNone(story)
-        # News's own rows, as its job writes them (the rules are tested in test_news).
+        # News's own rows, as its job writes them (the rules are tested in test_news)
         self._rows("INSERT INTO news_stories (id, first_at, voices, reports, shares, mentions, score) "
                    "VALUES (%s::uuid, %s, %s, %s, 0, 0, 1) ON CONFLICT (id) DO NOTHING", story, self.now - timedelta(hours=3),
                    len(posts), len(posts))
@@ -232,7 +228,7 @@ class CollectTests(OriginalsCase):
                    json.dumps({"collect_originals": on, "collect_originals_default": "on", **more}))
 
     def test_on_by_default_and_an_explicit_off_collects_nothing(self):
-        """Issue 0126 (4): on unless you switched it off; a false the dialog wrote while off was the default is no choice."""
+        """On unless you switched it off; a false written while off was the default is no choice (0126)."""
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             self.assertTrue(collect_on(cur), "no scheduler row: on")
         self._rows("INSERT INTO system_settings (key, value) VALUES ('scheduler_config', %s::jsonb)",
@@ -278,8 +274,8 @@ class CollectTests(OriginalsCase):
             return ReaderRepository().unread_counts(cur)["by_source"].get(source_id, 0)
 
     def test_a_collected_page_shows_only_inside_its_story(self):
-        """Issue 0126 (2): no row of the Main feed or Saved, no unread count; its story's root, its post page, and
-        Later when you put it there. Saved by hand, it is in Saved as any page you save."""
+        """No row of the Main feed or Saved, no unread count; its story's root, its post page, and Later when you put
+        it there. Saved by hand, it is in Saved as any page you save (0126)."""
         story, posts = self.news_story(ESSAY, self.a, self.b)
         self.switch(True)
         run(self.service().run(FakeHttp({ESSAY: essay()})))

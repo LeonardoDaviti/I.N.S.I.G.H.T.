@@ -2,11 +2,8 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 
 const AnnounceContext = createContext<(message: string) => void>(() => {});
 
-/**
- * The reader's one `aria-live="polite"` region (spec §F.6): read, star,
- * mark-through and undo results are announced here. Repeating the same message
- * alternates a trailing no-break space so screen readers announce it again.
- */
+/** The reader's one `aria-live="polite"` region; a repeated message alternates a trailing no-break space so screen
+ *  readers announce it again. */
 export function LiveRegionProvider({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState('');
   const flip = useRef(false);

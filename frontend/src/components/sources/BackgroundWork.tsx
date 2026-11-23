@@ -17,12 +17,8 @@ function useBackgroundWork() {
   });
 }
 
-/**
- * Background work (issue 0062), in Sources → ingestion → overview: what INSIGHT does on its own
- * after an update and after each fetch run (stories, News and Classics; the search index; reading
- * links), so an empty "covered by" or News has a reason you can see. Read only: no buttons, no
- * settings (owner: checkable, not controllable). Refreshes every 5 seconds while work runs.
- */
+/** Background work, in Sources → ingestion → overview: what INSIGHT does on its own after an update and each fetch
+ *  run (stories, News and Classics, search index, reading links), so an empty News has a visible reason. Read only. */
 export default function BackgroundWork({ titleClass }: { titleClass: string }) {
   const work = useBackgroundWork();
   const now = useNow(30_000);

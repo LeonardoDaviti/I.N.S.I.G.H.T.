@@ -1,8 +1,7 @@
-"""Issue 0172: Discover's correctness and speed (v10.15 part F). The answer served is the last one built (built
-in the background, keyed on what changes it); suggestions credited, kept or dropped by class: other channels by a
-real relation, non-channels by their pages' shape, a moved site's old address, an unlinked row's rank, a site's
-declared account, a passing failure asked again soon, its own pages' sections, a link blog's archive row, one card
-per domain; a Pages row followed at its section or account. Invented names only.
+"""Discover's correctness and speed (0172): the answer served is the last one built (in the background, keyed on what
+changes it); suggestions credited, kept or dropped by class (other channels by a real relation, non-channels by their
+pages' shape, a moved site's old address, a site's declared account, a passing failure asked again soon, one card per
+domain); a Pages row followed at its section or account. Invented names only.
 """
 from __future__ import annotations
 
@@ -37,7 +36,7 @@ NOW = datetime(2026, 11, 12, tzinfo=timezone.utc)
 
 
 class OtherChannelTests(unittest.TestCase):
-    """b2: "Other channels" credited a site to a source by a word shared with its name."""
+    """b2: "Other channels" credits a site to a source by a real relation, never a word shared with its name."""
 
     def credited(self, key, name, *, account="", publication=""):
         return R.other_channel(key, *R.channel_names(name, account=account, publication=publication))
@@ -57,8 +56,8 @@ class OtherChannelTests(unittest.TestCase):
         self.assertTrue(self.credited("acmelabs.example", "Acme Labs", account="x.com/acmelabs"), "its account's name")
 
     def test_a_brands_own_top_level_domain_names_it(self):
-        """v10.15.2: a company's blog at blog.<brand> named nothing of its owner ("blog"), so cloud.<brand>.com left its
-        other channels for the suggestions, with the sources named by their feed address that link it."""
+        """A company's blog at blog.<brand> names its brand, so cloud.<brand>.com is credited to it as another
+        channel."""
         self.assertTrue(self.credited("cloud.acmebrand.example", "News from Acmebrand", publication="blog.acmebrand"))
         self.assertFalse(self.credited("cloud.other.example", "News from Acmebrand", publication="blog.acmebrand"))
         self.assertFalse(self.credited("news.example", "Someone", publication="blog.news"), "a generic suffix names no one")
@@ -105,7 +104,7 @@ class OrderTests(unittest.TestCase):
 
 
 class FollowUrlTests(unittest.TestCase):
-    """c3: a Pages row followed its bare domain (a tweet: the platform's home)."""
+    """c3: a Pages row follows its section or account, never its bare domain."""
 
     def test_its_section_or_its_account(self):
         self.assertEqual(R.follow_url("https://x.com/someone/status/2000000000000000001"), "https://x.com/someone")
@@ -132,7 +131,7 @@ class FollowTestTests(unittest.TestCase):
         self.assertEqual(got.get("moved_to"), "new.example")
 
     def test_a_bridge_hiccup_is_asked_again_soon(self):
-        """b6: a bridge's 5xx or a timeout labelled an account "headlines" for 30 days."""
+        """b6: a bridge's 5xx or a timeout is transient: asked again after TRANSIENT_HOURS, not 30 days."""
         http = FakeHttp(lambda url: HttpError("HTTP 502", status=502))
         got = self.read(http, "https://x.com/someone")
         self.assertEqual(got, {"label": "headlines", "transient": True})
@@ -176,7 +175,7 @@ class FollowTestTests(unittest.TestCase):
 
 class BackgroundTests(unittest.TestCase):
     def test_a_due_answer_is_rebuilt_by_the_jobs_process_even_with_reads_off(self):
-        """0206: Discover's answer is made again by the job "discover" (discover_reads.keep), never in the API."""
+        """Discover's answer is made again by the job "discover" (discover_reads.keep), never in the API (0206)."""
         built = []
         due = [True]
         stories = SimpleNamespace(refresh=lambda: built.append(1), served_due=lambda: due[0])
@@ -189,8 +188,7 @@ class BackgroundTests(unittest.TestCase):
 
 @requires_test_db
 class ServedTests(unittest.TestCase):
-    """c1: every fetch's settings write moved sources.updated_at, which keyed the list, so nearly every open made
-    it again (255-300 s on the server; the proxy gave up at 300)."""
+    """c1: a fetch's settings write must not change the list's key, or nearly every open makes the list again."""
 
     def setUp(self):
         self.mark = uuid.uuid4().hex[:8]
@@ -224,9 +222,8 @@ class ServedTests(unittest.TestCase):
         self.assertNotEqual(self.inputs(), renamed, "enabled or not")
 
     def test_reading_discover_never_writes(self):
-        """v10.16: the checks read Discover in a read-only transaction; with its counts to make again (another
-        story run's stamp) the read kept them and the list, and failed: "cannot execute INSERT in a read-only
-        transaction". A read makes them without writing; the background build keeps them."""
+        """The checks read Discover in a read-only transaction: with its counts to make again, a read makes them
+        without writing; the background build keeps them."""
         from insight_core.db import database
 
         voices = [insert_source(self.cur, f"Voice {n} {self.mark}") for n in range(3)]

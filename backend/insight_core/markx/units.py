@@ -1,53 +1,13 @@
-"""Units (issue 0181): a round-up's items, each one unit, attached to the stored posts and stories they carry.
+"""Units: a round-up's items, each one unit, attached to the stored posts and stories they carry (0181).
 
-A round-up (a daily digest, a link list, a long newsletter) carries many items. As a whole it is never compared
-(Pairing's unit rule) and never a voice; before this module its items were invisible to stories. Here a round-up is
-tagged, split into its items, and each item is attached (Pairing's `attach` relation) to the stored post it links:
-the post, and the story holding it, show "also in round-ups"; the digest (`digest`) ranks what round-ups carry by
-how many separate round-up sources carry it. A unit is NEVER a voice: nothing here writes a table a voice, a News
-count or a corroboration is read from (tests/test_markx_units.py checks every consumer).
-
-The interface (what a caller must know):
-  - `Unit` = (post, n, span, links, text, at): the n-th item of a round-up post (1-based), its span in the text the
-    splitter read (character offsets), the pages it links (normalized, in order), its words, its time (the stored
-    post it attaches to, else the issue's time).
-  - `split(html, text, url, reading, skip)` -> `Split` (pure): what the reading says, the digest shape, the items.
-  - `note(cur, post_ids)`: split the posts now and store what changed (a reading landed: tasks.record; a new post).
-  - `tag(cur, sources)`: the round-up tags of these sources' posts made current (a digest source's shaped posts).
-  - `backfill(cur)`: one resumable step of the candidates job: posts never split by this code, newest first, bounded;
-    then the attach of the recent round-ups again (a cited post stored after its digest); then `plan_types`.
-  - `plan_types(cur)` / `after_types(cur, task, call, answer)`: the worker's question about recent round-ups' items
-    (kind `unit_types`, UNITS_PER_QUESTION a question): each item's type, a short headline and whether it only continues
-    the item before it; keyed by the item's words. Read back through the event-type seam (event_types.of_units).
-  - `also_in(cur, post_ids)` / `also_in_story(cur, story_id)`: the round-ups carrying these posts (a story's line).
-  - `digest(cur, span, until)`: INSIGHT's own round-up of a day or a week, news items only, ranked (what an issue
-    is built from); `issues_step(cur, now)` builds the closed days' and weeks' issues (the candidates job's process).
-
-The splitter adapters (each reads the post's HTML as the reader renders it; the finest split is used). No item links
-the post's own page (a table of contents) or its source's signature (post_links.boilerplate):
-  - `list`: each list item (<li>) carrying a link of its own is an item; a list item with no link is in the nearest
-    item around it, or right after an item, its detail. A heading ends every list left open (digests leave <li> and
-    <ul> unclosed: each next topic would else nest under the last).
-  - `sections`: headed sections (<h1>-<h6>) carrying a link.
-  - `lines`: paragraphs or lines (<p>, <br>): when bullets ("-", "—", "•", "1.") open half the lines that link, a
-    bulleted line starts an item and the lines after it continue it; else, when leads (a paragraph whose first words
-    are a link or bold) open half the paragraphs that link, paragraph items: a lead, or a heading over plain
-    paragraphs, starts an item (its bold line or heading its headline), its <br> lines and the paragraphs with no link
-    after it continue it; else each line carrying a link is an item.
-  - `reading`: a round-up the reading names (read-v2 kind `roundup`) whose HTML gives too few items: the reading's own
-    items (headline and link), each placed on the line that links it when one does.
-
-The tag. A post is a round-up when its reading says so (and it splits into MIN_ITEMS+ items); or when it has a digest's
-shape (STRUCTURE_ITEMS+ list items, sections or bulleted lines carrying links to STRUCTURE_PAGES+ pages, holding
-ITEMS_SHARE of its words), its reading did not see it whole (a read task shows READ_SEEN characters: a daily digest's
-reading saw only its first story) and its source is a digest source (more than DIGEST_SHARE of its posts have the
-shape: an essayist's post with a list of links has it too). Paragraphs that link are never a shape. Measured in
-plan/research/roundups-1016 (private).
-
-Stored (migration 0123): `mx_roundups` (a post's tag and issue time, one row a post this code looked at, kept
-current), `mx_units` (the items of each split, appended when a split's inputs change: a new reading, a new text, new
-code; the post's current basis is mx_roundups.basis) and `mx_attach` (unit -> stored post, once per source; never
-deleted). Nothing here rewrites a post or deletes a row.
+A round-up (a digest, a link list, a long newsletter) is tagged (`tag`: its reading says so, or it has a digest's
+shape in a digest source), split into items (`split`, pure: the finest of the `list`, `sections`, `lines` adapters,
+else the reading's own items; never the post's own page or its source's signature links) and each item is attached
+(Pairing's `attach` relation) to the stored post it links. Entry points: `note`, `tag`, `backfill` (the candidates
+job's step), `plan_types` / `after_types` (the worker's `unit_types` question), `also_in` / `also_in_story`,
+`digest` and `issues_step`. A unit is NEVER a voice: nothing here writes a table a voice, a News count or a
+corroboration is read from (tests/test_markx_units.py checks every consumer). Writes mx_roundups, mx_units (appended)
+and mx_attach (never deleted); nothing here rewrites a post or deletes a row.
 """
 from __future__ import annotations
 
@@ -70,28 +30,24 @@ READING_GUIDE = "read-v2"
 
 
 def reading_guides(cur: Any) -> List[str]:
-    """0212: the readings a split reads, preferred first: read-v2's, with ent-v5's first while its switch is on."""
+    """The readings a split reads, preferred first (reading5.guides)."""
     from insight_core.markx import reading5
     return reading5.guides(cur, READING_GUIDE)
-MIN_ITEMS = 2                  # a split of fewer items is no split (a reading's round-up of one item is a post)
-STRUCTURE_ITEMS = 5            # a round-up by its structure: this many linked items ...
-STRUCTURE_PAGES = 4            # ... linking this many distinct pages ...
-ITEMS_SHARE = 0.5              # ... holding this share of the post's words
-READ_SEEN = 1500               # a read task shows a post's first 1,500 characters (tasks.TEXT_CHARS): within it the
-                               # reading saw the whole post and decides alone
-TEXT_MAX = 1200                # an item's words kept (characters)
-LINKS_MAX = 20                 # an item's links kept
-BACKFILL_PAGE = 1000           # posts never split by this code, a candidates run, newest first
+MIN_ITEMS = 2
+STRUCTURE_ITEMS = 5            # a digest's shape: this many linked items, to this many pages,
+STRUCTURE_PAGES = 4
+ITEMS_SHARE = 0.5              # holding this share of the post's words
+READ_SEEN = 1500               # tasks.TEXT_CHARS: within it the reading saw the whole post and decides alone
+TEXT_MAX = 1200                # characters of an item's words kept
+LINKS_MAX = 20
+BACKFILL_PAGE = 1000
 RECHECK = timedelta(days=3)    # the round-ups of the last days are attached again each run (cited posts arrive late)
 RECHECK_PAGE = 500
-DIGEST_SHARE = 0.5             # a digest source: more than half of its split posts ...
-DIGEST_WORDS = 150             # ... of this many words ...
-DIGEST_POSTS = 4               # ... at least this many of them, have a digest's shape
+DIGEST_SHARE = 0.5             # a digest source: more than this share of its split posts of DIGEST_WORDS+ words,
+DIGEST_WORDS = 150
+DIGEST_POSTS = 4               # at least this many, have a digest's shape
 SIGNATURE = 4                  # the digest: a page one source's round-ups link in this many issues is its signature
-# The digest's single-curator items attached to nothing, a round-up source at most: in a daily, most items have one
-# curator and nothing attached, and one long round-up (a 40-item newsletter) would fill the issue with its own list
-# (the 2 Nov daily on the server copy: 3 sources gave 85 of its 100 rows). Its first items (an editor leads with
-# what matters) stand for it; what INSIGHT holds and what 2+ curators carry are never capped.
+# unattached single-curator items a round-up source adds to a digest at most
 SOLO_PER_SOURCE = 5
 
 # ---- the splitter (pure) -------------------------------------------------------------------------------------------
@@ -129,7 +85,7 @@ class _Line:
     gap: bool = False                  # an empty line (a paragraph's end, <br><br>) came before it
     block: int = 0                     # the block (paragraph, list item, heading) it is in: a <br> ends a line only
     lead: Optional[str] = None         # what its first words are in: 'a' (a link), 'b' (bold), 'text'
-    bold: List[str] = field(default_factory=list)   # its bold words
+    bold: List[str] = field(default_factory=list)
     plain: bool = False                # it has words outside bold
 
     @property
@@ -142,8 +98,7 @@ class _Line:
 
 
 class _Lines(HTMLParser):
-    """A post's HTML as a stream of lines: a block, a list item, a heading or a <br> ends one. Each line keeps its
-    character span, its words, its links (raw hrefs), the heading it is in and the list item it is in."""
+    """A post's HTML as a stream of lines: a block, list item, heading or <br> ends one."""
 
     def __init__(self, src: str) -> None:
         super().__init__(convert_charrefs=True)
@@ -192,8 +147,8 @@ class _Lines(HTMLParser):
         if tag in _HEADS:
             self._break()
             self.head = _HEADS[tag]
-            self.open_lis.clear()         # a heading ends every list left open (unclosed <li> and <ul>: a digest's
-            self.depth = 0                # sections would else nest under its last item)
+            self.open_lis.clear()         # a heading ends every list left open: digests leave <li>/<ul> unclosed
+            self.depth = 0
         elif tag in _LISTS:
             self._break()
             self.depth += 1
@@ -297,7 +252,7 @@ def _text_as_html(text: str) -> str:
 
 
 def page(href: str, base: Optional[str]) -> Optional[str]:
-    """A link as a page (normalized as posts are, 0049), or None: no web page, a media file, a search."""
+    """A link as a normalized page, or None: no web page, a media file, a search."""
     from insight_core.utils.post_links import is_search_link
     from insight_core.utils.url_normalization import normalize_url
     href = html_lib.unescape(href or "").strip()
@@ -331,9 +286,9 @@ class Item:
 class Split:
     said: bool                    # the reading names it a round-up (and it splits)
     why: str                      # 'reading' | 'structure' | 'none': where the items came from
-    adapter: Optional[str]        # 'list' | 'sections' | 'lines' | 'reading'
+    adapter: Optional[str]
     items: Tuple[Item, ...]
-    words: int                    # the post's words
+    words: int
     structured: bool = False      # the shape of a digest (alone no tag: see `tag`)
     read_whole: bool = False      # a reading saw all of it: the reading decides alone
 
@@ -363,8 +318,7 @@ def _numbered(groups: Sequence[Sequence[_Line]], base: Optional[str], own: Any) 
 
 
 def split_list(lines: Sequence[_Line], lis: Mapping[int, _Li], base: Optional[str], own: Any) -> List[Item]:
-    """`list`: each list item carrying a link of its own words is an item; a list item with no link of its own is in
-    the nearest item around it, or, right after an item, is its detail (a digest's bullet under its topic)."""
+    """`list`: each list item with a link of its own; one without belongs to the item around it or before it."""
     own_links: Dict[int, bool] = defaultdict(bool)
     for ln in lines:
         if ln.li is not None and any(page(h, base) not in own for h in ln.links):
@@ -375,8 +329,8 @@ def split_list(lines: Sequence[_Line], lis: Mapping[int, _Li], base: Optional[st
         while li is not None:
             chain.append(li)
             li = lis[li].parent
-        for x in chain:             # the nearest item with a link of its own (a digest's malformed lists nest each
-            if own_links[x]:        # next topic under the last: the outermost would swallow them all)
+        for x in chain:             # the nearest, not the outermost: malformed lists nest each topic under the last
+            if own_links[x]:
                 return x
         return None
 
@@ -416,8 +370,7 @@ def _headline(text: str) -> Optional[str]:
 
 
 def _blocks(lines: Sequence[_Line]) -> List[List[_Line]]:
-    """The lines outside lists grouped by their block (a paragraph and its <br> lines); a list item is a block of
-    its own (a boundary)."""
+    """Lines grouped by block (a paragraph and its <br> lines); a list item is a block of its own."""
     out: List[List[_Line]] = []
     for ln in lines:
         if out and out[-1][0].block == ln.block and (out[-1][0].li is None) == (ln.li is None):
@@ -428,8 +381,7 @@ def _blocks(lines: Sequence[_Line]) -> List[List[_Line]]:
 
 
 def _block_kind(b: Sequence[_Line], linked: bool) -> str:
-    """'list' (a list item), 'head' (a heading), 'label' (a short bold paragraph with no link: a heading in all but
-    its tag), 'link' or 'bold' (a lead: its first words are a link or bold), else 'plain'."""
+    """'list', 'head', 'label' (a short bold paragraph with no link), 'link' or 'bold' (a lead), else 'plain'."""
     first = b[0]
     if first.li is not None:
         return "list"
@@ -442,15 +394,10 @@ def _block_kind(b: Sequence[_Line], linked: bool) -> str:
 
 
 def _paragraph_items(lines: Sequence[_Line], base: Optional[str], own: Any) -> Optional[List[Item]]:
-    """Paragraph items (a newsletter whose items are paragraphs): an item starts at a lead, a paragraph whose first
-    words are a link or bold (its bold line its headline), at a heading followed by plain paragraphs (the heading its
-    headline), or at a plain paragraph with a link of its own after an item that has one. The <br> lines of its
-    paragraph (a story's "+" related links) and the plain paragraphs with no link after it continue it (a release's
-    second paragraph); a link continues an item that has none yet (a section's "read the full story"). Whether a
-    later paragraph with a link of its own is a new item or more of the last ("This release also adds ...") is a
-    matter of meaning: the unit's type question says (`continues`). A heading, a short bold label or a list ends an
-    item; plain paragraphs before any item are none's. None when leads open fewer than half the paragraphs that link
-    (an essay's linking paragraphs: each line its own item)."""
+    """Paragraph items: an item starts at a lead (first words a link or bold), at a heading over plain paragraphs,
+    or at a plain paragraph with a link after an item that has one; plain paragraphs and <br> lines continue it.
+    Whether a later linked paragraph only continues an item is meaning, left to the type question (`continues`).
+    None when leads open fewer than half the linking paragraphs (an essay)."""
     blocks = _blocks(lines)
     linked = [bool(_pages(b, base, own)) for b in blocks]
     kinds = [_block_kind(b, k) for b, k in zip(blocks, linked)]
@@ -490,17 +437,16 @@ def _paragraph_items(lines: Sequence[_Line], base: Optional[str], own: Any) -> O
 
 
 def split_lines(lines: Sequence[_Line], base: Optional[str], own: Any) -> Tuple[List[Item], bool]:
-    """`lines`: bulleted lines (and the lines continuing them) when bullets open at least half the lines that link;
-    else paragraph items when leads open most linking paragraphs (`_paragraph_items`); else each line carrying a link.
-    (items, bulleted)."""
+    """`lines`: bulleted items when bullets open half the linking lines, else `_paragraph_items`, else each linking
+    line. (items, bulleted)."""
     plain = [ln for ln in lines if ln.li is None and not ln.head]
     bullets = [ln for ln in plain if BULLET.match(ln.words)]
     groups: List[List[_Line]] = []
-    if len(bullets) >= MIN_ITEMS and 2 * len(bullets) >= sum(1 for ln in plain if ln.links):   # bullets lead most
+    if len(bullets) >= MIN_ITEMS and 2 * len(bullets) >= sum(1 for ln in plain if ln.links):
         for ln in lines:
             if ln.head or ln.li is not None:
                 if groups and groups[-1]:
-                    groups.append([])               # a heading or a list closes an item
+                    groups.append([])
                 continue
             if BULLET.match(ln.words):
                 groups.append([ln])
@@ -527,7 +473,6 @@ def _located(lines: Sequence[_Line], link: Optional[str], base: Optional[str]) -
 
 def split_reading(lines: Sequence[_Line], items: Sequence[Mapping[str, Any]], base: Optional[str],
                   own: Any) -> List[Item]:
-    """`reading`: the reading's items (headline, link), each on the line linking it when one does."""
     out: List[Item] = []
     for it in items or ():
         head = " ".join(str(it.get("headline_en") or "").split())
@@ -555,8 +500,7 @@ def _structured(items: Sequence[Item], total: int) -> bool:
 
 
 class _Own:
-    """The pages that are no item's: the post's own page (any of its addresses' forms: a table of contents links its
-    own sections) and its source's signature links (post_links.boilerplate: a newsletter's sign-up page)."""
+    """The pages that are no item's: the post's own page (any address form) and its source's signature links."""
 
     def __init__(self, url: Optional[str], skip: Iterable[str] = ()) -> None:
         from insight_core.markx.pairing import page_address
@@ -571,15 +515,9 @@ class _Own:
 
 def split(content_html: Optional[str], content: Optional[str], url: Optional[str],
           reading: Optional[Mapping[str, Any]] = None, skip: Iterable[str] = ()) -> Split:
-    """A post's split and what it says on its own (pure: the post's HTML, else its text; its address; its reading).
-
-    - `said`: the reading names it a round-up and it splits into MIN_ITEMS+ items (its HTML's finest split, else the
-      reading's own items): a round-up.
-    - `structured`: its finest split of list items, headed sections or bulleted lines (never plain paragraphs that
-      link: an essay's as often as a digest's) has STRUCTURE_ITEMS+ items, to STRUCTURE_PAGES+ pages, holding
-      ITEMS_SHARE of its words. Alone it is no tag: an essay with a list of links has the shape; a source whose posts
-      mostly have it is a digest (`tag`, over the source's posts).
-    - `read_whole`: a reading saw the whole post (its text within READ_SEEN characters), so the reading decides alone."""
+    """A post's split (pure). `said`: the reading names it a round-up and it splits into MIN_ITEMS+ items.
+    `structured`: a digest's shape (never from plain linking paragraphs); alone no tag, see `tag`. `read_whole`: the
+    reading saw the whole post, so it decides alone."""
     from insight_core.utils.post_links import decoded_html
     src = decoded_html(content_html) if content_html else _text_as_html(content or "")
     lines, lis = lines_of(src or "")
@@ -610,7 +548,7 @@ _version: Optional[str] = None
 
 
 def version() -> str:
-    """UNITS_VERSION and the sha256 of this module's code: a change splits every post again."""
+    """UNITS_VERSION plus this module's code hash: a code change splits every post again."""
     global _version
     if _version is None:
         h = hashlib.sha256(UNITS_VERSION.encode())
@@ -622,7 +560,6 @@ def version() -> str:
 
 @dataclass(frozen=True)
 class Unit:
-    """A round-up's n-th item as stored: its post, number, span, links, words and time."""
     id: int
     post: str
     n: int
@@ -657,10 +594,8 @@ def _inputs(cur: Any, ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def note(cur: Any, ids: Iterable[str]) -> Dict[str, int]:
-    """Split these posts now: a post whose inputs (code, reading, text) moved is split again; its items are stored
-    (appended) when it is said or shaped a round-up; then its source's tags (`tag`) and the attach of the posts
-    tagged. A post whose tag moved is queued for the story job (v10.39: a round-up joins no Mark IX story by its links).
-    {split, roundups, units}."""
+    """Splits the posts whose inputs (code, reading, text) moved, appends their items, then retags their sources and
+    attaches the tagged posts; a post whose tag moved is queued for the story job. {split, roundups, units}."""
     ids = sorted({str(i) for i in ids})
     if not ids:
         return {"split": 0, "roundups": 0, "units": 0}
@@ -690,7 +625,7 @@ def note(cur: Any, ids: Iterable[str]) -> Dict[str, int]:
                          it.stop if it.stop >= 0 else None, list(it.links), it.text, it.headline))
     tagged = tag(cur, sources)
     moved = was ^ _tagged_in(cur, sources)
-    if moved:   # v10.39: Mark IX's story job reads the tag (a round-up joins no story by its links): it regroups them
+    if moved:   # the story job reads the tag (a round-up joins no story by its links)
         from insight_core.db.repo_stories import StoriesRepository
         StoriesRepository.queue_regroup(cur, sorted(moved))
     cur.execute("SELECT post_id::text FROM mx_roundups WHERE post_id = ANY(%s::uuid[]) AND roundup", (now,))
@@ -713,30 +648,25 @@ def _tagged_in(cur: Any, source_ids: Iterable[str]) -> Set[str]:
 
 
 def roundup_sql(post: str) -> str:
-    """The round-up predicate as SQL (GLOSSARY "Round-up": this module owns it): the post (the column `post`) is a
-    round-up as `tag` keeps it current (its reading says so, or it has a digest's shape in a digest source). For a
-    query over many posts (Discover's counts, v10.17's 0190)."""
+    """The round-up predicate as SQL over the column `post` (this module owns it), as `tag` keeps it current."""
     return f"EXISTS (SELECT 1 FROM mx_roundups r_ WHERE r_.post_id = {post} AND r_.roundup)"
 
 
 def tags_stamp(cur: Any) -> str:
-    """What the round-up tags are now, as a short hash (the tagged posts): a reader that keeps counts made with
-    `roundup_sql` counts again when it moves (Discover's kept counts)."""
+    """A short hash of the tagged posts: a reader keeping `roundup_sql` counts recounts when it moves."""
     cur.execute("""SELECT md5(COALESCE(string_agg(post_id::text, ',' ORDER BY post_id), ''))
                      FROM mx_roundups WHERE roundup""")
     return cur.fetchone()[0][:16]
 
 
 def tagged(cur: Any) -> List[str]:
-    """The posts tagged round-ups now, in order (what `tags_stamp` hashes): a reader that keeps counts made with
-    `roundup_sql` counts again those whose tag moved (Discover's kept counts, v10.22)."""
+    """The posts tagged round-ups now, in order (what `tags_stamp` hashes)."""
     cur.execute("SELECT post_id::text FROM mx_roundups WHERE roundup ORDER BY post_id")
     return [r[0] for r in cur.fetchall()]
 
 
 def digest_sources(cur: Any, source_ids: Iterable[str]) -> Set[str]:
-    """The sources whose posts are mostly shaped as round-ups: more than DIGEST_SHARE of their split posts of
-    DIGEST_WORDS+ words, DIGEST_POSTS+ of them (a daily digest; an essayist's post with a list of links is not)."""
+    """The sources whose split posts mostly have a digest's shape (DIGEST_SHARE, DIGEST_WORDS, DIGEST_POSTS)."""
     cur.execute("""SELECT source_id::text FROM mx_roundups
                     WHERE source_id = ANY(%s::uuid[]) AND version = %s AND words >= %s
                     GROUP BY source_id HAVING count(*) >= %s AND avg(structured::int) > %s""",
@@ -745,9 +675,8 @@ def digest_sources(cur: Any, source_ids: Iterable[str]) -> Set[str]:
 
 
 def tag(cur: Any, source_ids: Iterable[str]) -> Set[str]:
-    """The round-up tag of these sources' split posts, made current: the reading says so (`said`), or the post has
-    a digest's shape, its reading (if any) saw only its head, and its source is a digest source (`digest_sources`).
-    A post no longer tagged loses its issue time. Returns the posts tagged now that were not before."""
+    """Makes these sources' round-up tags current: `said`, or a digest's shape not read whole in a digest source.
+    An untagged post loses its issue time. Returns the posts newly tagged."""
     sources = sorted({str(s) for s in source_ids if s})
     if not sources:
         return set()
@@ -773,8 +702,7 @@ def units_of(cur: Any, post_ids: Iterable[str]) -> Dict[str, List[Unit]]:
 
 
 def attach(cur: Any, roundup_ids: Iterable[str]) -> Dict[str, int]:
-    """Pairing's `attach` relation for these round-ups' current units: each unit's targets (pairing.attach_targets,
-    stored once per unit, target and source), then each unit's time and the issue's time. {attached: rows added}."""
+    """Stores the `attach` targets of these round-ups' units, then their times. {attached: rows added}."""
     from insight_core.markx import pairing
     ids = sorted({str(p) for p in roundup_ids})
     units = units_of(cur, ids)
@@ -792,9 +720,8 @@ def attach(cur: Any, roundup_ids: Iterable[str]) -> Dict[str, int]:
 
 
 def _times(cur: Any, ids: Sequence[str]) -> None:
-    """A unit's time: its earliest attached post's own date; the issue's time: its latest unit time within the attach
-    row's `issue_reach` of the round-up's own date (either side: a digest dated at the start of the day it covers);
-    none: NULL (the post's own date stands). Never a rewrite of the post."""
+    """A unit's time: its earliest attached post's date; the issue's: its latest unit time within `issue_reach` of
+    the round-up's date (either side), else NULL. Never rewrites the post."""
     from insight_core.markx import pairing
     reach = pairing.POLICIES[pairing.ATTACH].issue_reach
     cur.execute(f"""UPDATE mx_units u SET at = t.at
@@ -815,9 +742,8 @@ def _times(cur: Any, ids: Sequence[str]) -> None:
 
 def backfill(cur: Any, *, limit: int = BACKFILL_PAGE, recheck: int = RECHECK_PAGE,
              now: Optional[datetime] = None) -> Dict[str, int]:
-    """One resumable step (the candidates job's, each run): `limit` posts never split by this code, newest first
-    (Pairing's post date), split; then the round-ups of the last RECHECK days attached again (`recheck` of them,
-    newest first). {split, roundups, units, rechecked, left}."""
+    """One resumable candidates-job step: split `limit` posts never split by this code (newest first), reattach
+    `recheck` recent round-ups (cited posts arrive late), plan types. {split, roundups, units, rechecked, left}."""
     from insight_core.markx import pairing
     missing = """FROM posts p LEFT JOIN mx_roundups r ON r.post_id = p.id
                 WHERE r.version IS DISTINCT FROM %(v)s"""
@@ -843,17 +769,14 @@ def backfill(cur: Any, *, limit: int = BACKFILL_PAGE, recheck: int = RECHECK_PAG
 
 
 # ---- the items' types: the worker's question (kind `unit_types`) ------------------------------------------------------
-#
-# Each current item of a recent round-up is asked, UNITS_PER_QUESTION a question in the round-up's order, its type (the
-# event-type seam's UNIT_TYPES), a short headline and whether it only continues the item before it. Keyed by the item's
-# words (sha256 of its text), so a new split of the same words keeps its answer. Planned by the candidates job's units
-# step (its own process); the answer is stored by tasks.record (`after_types`). An own round-up keeps the news types.
+# Each item's type, short headline and whether it continues the item before; keyed by the sha256 of its words, so a
+# new split of the same words keeps its answer.
 
 TYPE_KIND = "unit_types"
-TYPE_DAYS = timedelta(days=16)     # round-ups this recent are asked (the issues it may still build: 2 weeks, settled)
-TYPE_PLAN_MAX = 60                 # questions a run adds at most (a first run's backlog: the next runs go on)
-TYPE_TEXT = 400                    # an item's words shown
-TYPE_LINKS = 2                     # and its first pages
+TYPE_DAYS = timedelta(days=16)     # round-ups this recent are asked (the issues still buildable)
+TYPE_PLAN_MAX = 60
+TYPE_TEXT = 400
+TYPE_LINKS = 2
 SHA = "encode(sha256(convert_to({t}, 'UTF8')), 'hex')"
 
 
@@ -867,8 +790,7 @@ def _short(url: str) -> str:
 
 
 def type_question(head: Mapping[str, Any], items: Sequence[Mapping[str, Any]], before: Optional[str]) -> str:
-    """One question's input: the round-up (source, title, date), the item before the first (context), then each item
-    keyed u1..uN with its words and first pages."""
+    """One question's input: the round-up's head, the item before the first, then items keyed u1..uN."""
     at = head.get("at")
     lines = [f"ROUND-UP: {head.get('source') or 'a source'} - {' '.join((head.get('title') or '').split())[:160]}"
              f" ({at.date().isoformat() if at else 'no date'})"]
@@ -883,8 +805,7 @@ def type_question(head: Mapping[str, Any], items: Sequence[Mapping[str, Any]], b
 
 
 def plan_types(cur: Any, *, now: Optional[datetime] = None, limit: int = TYPE_PLAN_MAX) -> int:
-    """The type questions of recent round-ups' items never typed nor asked (TYPE_DAYS back by Pairing's post date):
-    UNITS_PER_QUESTION items a question, in each round-up's order. How many questions were added."""
+    """Adds type questions for recent items never typed nor asked; returns how many."""
     from insight_core.markx import pairing, schemas, tasks
     sha = SHA.format(t="u.text")
     cur.execute(f"""SELECT u.post_id::text, u.n, u.text, u.links, {sha}, v.text
@@ -950,9 +871,8 @@ def _source_names(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def also_in(cur: Any, post_ids: Iterable[str], *, exclude: Iterable[str] = ()) -> List[Dict[str, Any]]:
-    """The round-ups carrying these posts as an item (current units, attached), each round-up once, earliest first:
-    [{post, source, title, url, at, n, item, carries}]. `exclude`: round-ups not to list (a story's own members).
-    Display only: never a voice, a member or a mention."""
+    """The round-ups carrying these posts as an item, each once, earliest first: [{post, source, title, url, at, n,
+    item, carries}]. `exclude`: round-ups not to list. Display only: never a voice, a member or a mention."""
     from insight_core.markx import pairing
     ids = sorted({str(p) for p in post_ids})
     if not ids:
@@ -989,11 +909,8 @@ def _neg_time(iso: str) -> float:
 
 
 def _lead_page(links: Sequence[str]) -> Optional[str]:
-    """The page an item attached to nothing is grouped by: its first page that is no page to look things up in (a site
-    root, a docs, pricing, help or legal page: post_links' REFERENCE and LEGAL), else its first page. Not
-    post_links.is_reference whole: it counts every one-segment path as a profile, and a blog's article slug
-    (site/some-title) is one; an item's first link is its subject in a digest (an item linking a news article and,
-    later, the round-up's own earlier issue is the article's)."""
+    """The page an unattached item is grouped by: its first page that is no reference or legal page, else its first
+    page. Not post_links.is_reference: that counts a one-segment article slug as a profile."""
     from insight_core.markx import pairing
     from insight_core.utils.post_links import LEGAL, REFERENCE, bare
     pages = [x for x in links if pairing.page_key(x)]
@@ -1006,24 +923,12 @@ def _lead_page(links: Sequence[str]) -> Optional[str]:
 
 
 def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit: int = 60) -> Dict[str, Any]:
-    """INSIGHT's own round-up of a day or a week (what an issue is built from; no route computes it). The items of the
-    round-ups whose unit time is in the span:
+    """INSIGHT's own round-up of a day or a week (what an issue is built from), from the round-up items in the span.
 
-    - **News only**: an item the worker typed (event_types.of_units) is kept when its type is news
-      (event_types.UNIT_NEWS) and it does not only continue the item before it; `left_out` counts the rest by type
-      (and `continues`). An item not typed yet is kept and counted (`untyped`).
-    - **Grouped** by what it carries: the Mark X story holding the attached post, else its Mark IX story, else the post;
-      an item attached to nothing by its first page that is no reference page (a source's signature page, linked by
-      its round-ups in SIGNATURE+ issues, is no item).
-    - **Headline**: the Mark X story's, else the worker's headline of its first typed item, else the attached post's
-      title, else the item's own lead (a splitter headline), else its words.
-    - **Ranked**: first what INSIGHT holds as a story or 2+ separate curators carry (round-up sources that are not the
-      source of what they carry: a site's own newsletter listing its own article curates nothing), by curators, then
-      issues, then the latest; then single-curator items attached to a stored post; then single-curator items attached
-      to nothing, at most SOLO_PER_SOURCE a round-up source (`capped` counts the rest). Inside the last two tiers the
-      round-ups' own order (an item's place in its round-up: editors lead with what matters) comes first.
-      `only_roundups`: nothing attached and no post outside round-ups links its page in the span.
-    Display only: nothing here is a voice."""
+    News only (typed items of a news type that do not just continue the one before; untyped kept and counted),
+    grouped by what they carry (Mark X story, Mark IX story, post, else lead page; signature pages dropped), ranked:
+    stories or 2+ independent curators first, then single-curator attached items, then unattached ones (at most
+    SOLO_PER_SOURCE a source, by their place in the round-up). Display only: nothing here is a voice."""
     from insight_core.markx import event_types, pairing
     if span not in SPANS:
         raise ValueError(f"span must be one of {', '.join(SPANS)}")
@@ -1091,7 +996,7 @@ def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit:
         g["worker"] = g["worker"] or worker_head
         g["lead"] = g["lead"] or head
         g["units"].append({"unit": uid, "post": rid, "n": n, "item": (worker_head or head or text or "")[:240]})
-    # only in round-ups: nothing attached, and no post that is not a round-up links its page in the span
+    # only in round-ups: nothing attached, and no non-round-up post links its page in the span
     loose = sorted({p for g in groups.values() if not g["targets"] for p in g["pages"] if p})
     linked: Set[str] = set()
     if loose:
@@ -1100,8 +1005,7 @@ def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit:
                          WHERE NOT pl.boilerplate AND {pairing.post_date('p')} > %s - %s AND {pairing.post_date('p')} <= %s
                            AND NOT COALESCE(r.roundup, false)""", (lo, SPANS[span], hi))
         linked = {k for k in (pairing.page_key(u) for (u,) in cur.fetchall()) if k}
-    # a source's signature (its profile, its licence, its sign-up page): a page its round-ups link in SIGNATURE+
-    # issues, ever: no item (post_links.boilerplate marks it only once the story job has seen enough of its posts)
+    # a source's signature: a page its round-ups link in SIGNATURE+ issues is no item (boilerplate may not know it yet)
     refs = sorted({g["ref"] for g in groups.values() if g["kind"] == "page" and g["ref"]})
     signature: Set[Tuple[str, str]] = set()
     if refs:
@@ -1148,27 +1052,20 @@ def digest(cur: Any, span: str = "day", until: Optional[datetime] = None, limit:
             "left_out": dict(sorted(left_out.items())), "untyped": untyped, "untyped_roundups": sorted(untyped_roundups)}
 
 
-# ---- the stored issues: a daily and a weekly own round-up (owner 2026-11-12) -------------------------------------------
-#
-# Each closed day and each closed week gets an issue: `digest` over the period, written once as a row of
-# mx_roundup_issues and never rewritten. A rebuild (`build_issue(..., rebuild=True)`, by hand) adds a new version row
-# of the same period; readers read the newest version. The periods are the owner's: local midnight and local Monday
-# at a fixed offset from UTC (mx_settings TZ_KEY, minutes; default UTC+4). A period is built ISSUE_SETTLE after it
-# closes (a digest of a day arrives the next morning; its items' times put it in its day). Built by the candidates
-# job's step in that job's own process (jobs._issues_step), never in the API.
+# ---- the stored issues: a daily and a weekly own round-up -------------------------------------------------------------
+# Each closed local day and week gets `digest` written once to mx_roundup_issues, never rewritten (a rebuild adds a new
+# version; readers read the newest). Built by the candidates job (jobs._issues_step), never in the API.
 
 TZ_KEY = "roundup_tz_offset_minutes"
-TZ_DEFAULT = 240                        # UTC+4, the owner's
-ISSUE_SETTLE = timedelta(hours=6)       # a period is built this long after it closes
-ISSUE_CATCHUP = {"day": 7, "week": 2}   # closed periods a run builds at most, newest first (a job that was off;
-                                        # within TYPE_DAYS: older periods' items were never asked their types)
-ISSUE_ITEMS = 100                       # items kept in an issue
-TYPE_WAIT = timedelta(hours=18)         # a settled period waits this long more for its items' types (the worker
-                                        # answers in its cycles); then it is built and its untyped items counted
+TZ_DEFAULT = 240
+ISSUE_SETTLE = timedelta(hours=6)       # a day's digest arrives the next morning
+ISSUE_CATCHUP = {"day": 7, "week": 2}   # closed periods a run builds at most; within TYPE_DAYS
+ISSUE_ITEMS = 100
+TYPE_WAIT = timedelta(hours=18)         # a settled period waits this long more for its items' types
 
 
 def tz_offset(cur: Any) -> timedelta:
-    """The owner's offset from UTC that the issues' days and weeks begin at (mx_settings TZ_KEY, minutes)."""
+    """The offset from UTC the issues' days and weeks begin at (mx_settings TZ_KEY, minutes)."""
     from insight_core.markx import repo
     v = repo.get_setting(cur, TZ_KEY, default=TZ_DEFAULT)
     try:
@@ -1179,8 +1076,7 @@ def tz_offset(cur: Any) -> timedelta:
 
 
 def period(span: str, at: datetime, offset: timedelta) -> Tuple[datetime, datetime]:
-    """The day (local midnight to midnight) or the week (local Monday to Monday) holding `at`, in UTC. `at` is read
-    in UTC first (a database time comes in the session's zone; a naive time is UTC)."""
+    """The local day or week (from Monday) holding `at`, as UTC bounds; a naive `at` is UTC."""
     if span not in SPANS:
         raise ValueError(f"span must be one of {', '.join(SPANS)}")
     at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at.astimezone(timezone.utc)
@@ -1203,10 +1099,8 @@ def closed_periods(span: str, now: datetime, offset: timedelta, n: int) -> List[
 
 def build_issue(cur: Any, span: str, start: datetime, *, rebuild: bool = False,
                 now: Optional[datetime] = None) -> Optional[int]:
-    """The issue of the period starting at `start`: written when the period has none (or as a new version with
-    `rebuild`); a past issue is never changed. With `now` (the job's step), a period whose items are not all typed
-    waits TYPE_WAIT after it settled, or after its round-ups' items were last asked (a first run asks a backlog). Its
-    id, or None (one exists and no rebuild, or it waits)."""
+    """Writes the issue of the period starting at `start` when it has none (or a new version with `rebuild`); a
+    past issue is never changed. With `now`, a period with untyped items waits TYPE_WAIT. Its id, or None."""
     cur.execute("SELECT max(version) FROM mx_roundup_issues WHERE span = %s AND period_start = %s", (span, start))
     have = cur.fetchone()[0]
     if have is not None and not rebuild:
@@ -1228,8 +1122,7 @@ def build_issue(cur: Any, span: str, start: datetime, *, rebuild: bool = False,
 
 
 def _split_from(cur: Any, since: datetime) -> Optional[datetime]:
-    """The newest own date of a post dated from `since` on that this code never split (no mx_roundups row), or None:
-    the backfill (newest first) has split every post from there on."""
+    """The newest date of a post from `since` on never split, or None: the backfill has split them all."""
     from insight_core.markx import pairing
     cur.execute(f"""SELECT max({pairing.ordinary_date('p')}) FROM posts p
                      WHERE {pairing.ordinary_date('p')} >= %s
@@ -1238,11 +1131,8 @@ def _split_from(cur: Any, since: datetime) -> Optional[datetime]:
 
 
 def issues_step(cur: Any, now: datetime) -> Dict[str, List[int]]:
-    """The candidates job's step: the closed days and weeks (ISSUE_CATCHUP of each, newest first) with no issue yet,
-    built. A period waits while a post that may carry its items was never split (a first backfill still under way: a
-    round-up from ATTACH_AFTER before the period on may list them), and while its items wait for their types (at
-    most TYPE_WAIT), as an issue is never changed once written.
-    {span: [issue ids written]}."""
+    """Builds the closed days' and weeks' missing issues. A period waits while a post that may carry its items is
+    unsplit, or for its items' types, since an issue is never changed once written. {span: [issue ids written]}."""
     from insight_core.markx import pairing
     offset = tz_offset(cur)
     after = pairing.POLICIES[pairing.ATTACH].after
@@ -1270,8 +1160,7 @@ def _issue_row(r: Sequence[Any], items: bool) -> Dict[str, Any]:
 
 
 def issues(cur: Any, limit: int = 30) -> Dict[str, Any]:
-    """The newest version of each issue: {daily: the latest day's (with its items), weekly: the latest week's, past:
-    [the others, newest first, without items], tz_offset_minutes}."""
+    """The newest version of each issue: {daily, weekly (with items), past (no items), tz_offset_minutes}."""
     cur.execute(f"""SELECT {_ISSUE_COLS} FROM (SELECT DISTINCT ON (span, period_start) * FROM mx_roundup_issues
                                                 ORDER BY span, period_start, version DESC) x
                      ORDER BY period_start DESC, span LIMIT %s""", (limit,))

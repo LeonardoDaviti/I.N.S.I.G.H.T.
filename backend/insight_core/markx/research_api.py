@@ -1,17 +1,16 @@
-"""0162 (Stealth v10.14)'s routes: research (Shadow; the app's own; 404 when Mark X is off, as every /api/markx path).
-Included into markx/api.py's router. A run starts only on the owner's tap (POST /research); nothing here starts one by
-itself.
+"""Research's routes (the app's own; 404 when Mark X is off), included into markx/api.py's router. A run starts only
+on the owner's tap (POST /research); nothing here starts one by itself.
 
-POST /api/markx/research                                   {seed, kind?} -> {id, seed_kind, held}; its steps in the background
-GET  /api/markx/research                                   the latest runs
+POST /api/markx/research                                   {seed, kind?} -> {id, seed_kind, held}; its steps in the
+background GET  /api/markx/research                                   the latest runs
 GET  /api/markx/research/settings                          {paper_index: openalex | off, web_search: provider | null}
 PUT  /api/markx/research/settings                          {paper_index}
 GET  /api/markx/research/{id}                              the research page (markx/research.view); a run that can go on
                                                            is advanced in the background
 POST /api/markx/research/{id}/rerun                        a new run of the same seed (what this one found is not new)
 POST /api/markx/research/{id}/watch                        "Watch this": a track from the run -> {track_id, made}
-POST /api/markx/research/{id}/channels/{candidate}/follow  -> {source_id, as} (0148's add path, provenance 'research')
-POST /api/markx/research/{id}/channels/{candidate}/not     -> {answer}
+POST /api/markx/research/{id}/channels/{candidate}/follow  -> {source_id, as} (the scout's add path, provenance
+'research') POST /api/markx/research/{id}/channels/{candidate}/not     -> {answer}
 """
 from __future__ import annotations
 

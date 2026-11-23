@@ -1,22 +1,13 @@
 """telegram_mtproto: bare Telegram handles (platform telegram, no "://") read over MTProto.
 
-Built from the Mark VIII Telegram connector (spec §B8, §D.2):
-- synthesize_posts: its album grouping (by grouped_id), as a pure function
-- fetch_latest / archive_pages: its chunked get_messages(offset_id=...) loop, 100 messages
-  a chunk, paced by the profile (page 1s; the 10-request / 18s throttle is the batch cooldown)
-- TelegramSession: its connect(), minus the interactive stdin login. One session per run, opened
-  lazily by the runner before the first due telegram source and closed in a finally. open()
-  takes the session lock, connects and checks is_user_authorized(); it never calls
-  client.start(), send_code_request or a stdin prompt. Authorisation is the browser sign-in
-  in Sources → Connections, which stores the session encrypted.
+- synthesize_posts: album grouping (by grouped_id), pure
+- fetch_latest / archive_pages: chunked get_messages(offset_id=...), CHUNK_SIZE a chunk, paced by the profile
+- TelegramSession: one per run, opened lazily; open() takes the session lock, connects and checks authorisation; it
+  never prompts (authorisation is the browser sign-in in Sources → Connections).
 
-Flood wait: the client never sleeps one itself (flood_sleep_threshold=0). A wait of at most
-MAX_INLINE_FLOOD_WAIT_S is slept through KindHttp.sleep and the request retried once; a
-longer one fails that source (error, normal backoff, "flood wait Ns") and floods the
-session, so every later telegram source in the run is unavailable ("Telegram flood wait
-until ..."), which is not backoff.
-
-Telethon is never imported here (kinds/telegram_session.py owns that edge).
+Flood wait: a wait up to MAX_INLINE_FLOOD_WAIT_S is slept and retried once; a longer one fails that source and
+floods the session, so later telegram sources in the run are unavailable (not backoff). Telethon is never imported
+here (kinds/telegram_session.py owns that edge).
 """
 from __future__ import annotations
 
@@ -46,8 +37,7 @@ from insight_core.ingestion.kinds.telegram_session import (
 )
 from insight_core.utils.json_safe import iso
 
-# The connector's 10-request / 18s throttle becomes the batch cooldown. Every MTProto source
-# shares one client, so the host key is one constant (2s floor in gates.HOST_FLOORS).
+# A 10-request / 18s throttle as the batch cooldown. Every MTProto source shares one client, so one host key.
 TELEGRAM_MTPROTO_PROFILE = PolitenessProfile(
     concurrency_pool="host-lock",
     page_delay_s=1,
@@ -59,8 +49,8 @@ TELEGRAM_MTPROTO_PROFILE = PolitenessProfile(
 
 TELEGRAM_HOST_KEY = "platform:telegram"
 MAX_INLINE_FLOOD_WAIT_S = 60
-CHUNK_SIZE = 100          # messages per get_messages call (the connector's fetch_chunk_size)
-MAX_CHUNKS = 20           # per live fetch (the connector's max_fetches)
+CHUNK_SIZE = 100          # messages per get_messages call
+MAX_CHUNKS = 20           # per live fetch
 
 NOT_AUTHORISED = f"Telegram session not authorised; {LOGIN_HINT}"
 IN_USE = "Telegram session in use by another run"
@@ -75,27 +65,24 @@ def _handle(source: Source) -> str:
     return str(source.get("handle_or_url") or "").strip().lstrip("@")
 
 
-FORWARDS_SWITCH = "INSIGHT_TELEGRAM_FORWARDS"   # 0132 C3: off by default
+FORWARDS_SWITCH = "INSIGHT_TELEGRAM_FORWARDS"   # off by default
 
 
 def forwards_on() -> bool:
-    """0132 C3: keep a forwarded message's "forwarded from" (INSIGHT_TELEGRAM_FORWARDS on; off by default)."""
+    """Keep a forwarded message's "forwarded from" (INSIGHT_TELEGRAM_FORWARDS on; off by default)."""
     import os
     return os.getenv(FORWARDS_SWITCH, "off").strip().lower() in ("on", "1", "true", "yes")
 
 
 def forwarded_from(message: Any) -> Optional[Dict[str, Any]]:
-    """0132 C3: who a forwarded message came from, as Telegram's forward header says it (the RSS bridge drops it):
-    {channel_id, user_id, name, post, date}, the fields it has; None for a message of the channel's own. The source
-    stats count such a post as a repost (Byline's rule, utils/byline.is_repost)."""
+    """Who a forwarded message came from, per its forward header: {channel_id, user_id, name, post, date}, the
+    fields it has; None for the channel's own message. Counted as a repost (utils/byline.is_repost)."""
     fwd = getattr(message, "fwd_from", None)
     if fwd is None:
         return None
     peer = getattr(fwd, "from_id", None)
     date = getattr(fwd, "date", None)
-    # The forwarded channel's own entity, when the answer carried it (Telethon's message.forward.chat, no extra
-    # request): its username is the account Pairing's voice rule matches (t.me/<username>, issue 0178), its title
-    # the name a header by id alone lacks.
+    # the forwarded channel's entity, when the answer carried it (no extra request): its username and title
     forward = getattr(message, "forward", None)
     chat = getattr(forward, "chat", None) if forward is not None else None
     username = getattr(chat, "username", None) if chat is not None else None
@@ -111,14 +98,9 @@ def forwarded_from(message: Any) -> Optional[Dict[str, Any]]:
 
 
 def synthesize_posts(messages: Iterable[Any], handle: str, *, forwards: Optional[bool] = None) -> List[Dict[str, Any]]:
-    """Group a chunk of messages into logical posts (moved from _synthesize_messages).
-
-    Messages sharing a grouped_id are one album: the post's text and url come from the
-    message that carries text (the last one seen), and every message with media adds a
-    `?single` media url. Groups without text (media-only) are dropped.
-
-    `forwards` (default: INSIGHT_TELEGRAM_FORWARDS, off): a forwarded post keeps its forward header in
-    metadata.forwarded_from (0132 C3).
+    """Group a chunk of messages into logical posts. Messages sharing a grouped_id are one album: text and url from
+    the last message with text, each media message adds a `?single` media url; media-only groups are dropped.
+    `forwards` (default INSIGHT_TELEGRAM_FORWARDS): keep the forward header in metadata.forwarded_from.
     """
     if forwards is None:
         forwards = forwards_on()
@@ -154,7 +136,7 @@ def synthesize_posts(messages: Iterable[Any], handle: str, *, forwards: Optional
             "media_urls": [f"https://t.me/{handle}/{m.id}?single" for m in group["messages"] if m.media],
             "categories": [],
             "metadata": metadata,
-            # Mark IX addition: (source_id, external_id) dedupe, the same id telegram_rss uses.
+            # (source_id, external_id) dedupe: the same id telegram_rss uses
             "external_id": str(main.id),
         })
     return posts
@@ -208,7 +190,7 @@ class TelegramSession:
 
 class TelegramKind(BaseKind):
     name = "telegram_mtproto"
-    chronological = True   # newest first: an archive back to a date stops past it (issue 0130 C)
+    chronological = True   # newest first: an archive back to a date stops past it
     available_basis = "exact"
     profile = TELEGRAM_MTPROTO_PROFILE
 
@@ -317,8 +299,8 @@ class TelegramKind(BaseKind):
             })
 
     async def channel_full(self, source: Source) -> Any:
-        """The channel's full info (issue 0132 C2's profile): one entity and one full-channel request, on the open
-        session, under the flood-wait rule. ingestion/profiles.parse_telegram_full reads it."""
+        """The channel's full info: one entity and one full-channel request on the open session, under the flood-wait
+        rule. ingestion/profiles.parse_telegram_full reads it."""
         session = self._open_session()
         handle = _handle(source)
         entity = await self._call(session, lambda c: c.get_entity(handle))

@@ -1,6 +1,4 @@
-"""
-Business logic for folders: a grouping layer over sources.
-"""
+"""Folders: a grouping layer over sources."""
 from insight_core.db import database as db
 from typing import List, Dict, Any, Optional
 from insight_core.db.repo_folders import FoldersRepository

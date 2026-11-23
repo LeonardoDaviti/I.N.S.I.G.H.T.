@@ -26,7 +26,7 @@ function PageRow({ page, onFollow, onDone }: {
   const api = useApi();
   const [busy, setBusy] = useState<string | null>(null);
   const title = page.title || untitledLine(page.url);
-  // Its section or its account (v10.15 c3), never its bare domain.
+  // its section or its account, never its bare domain
   const follow = pageFollow(page);
   const save = async () => {
     setBusy('Saving…');
@@ -88,11 +88,10 @@ function PageRow({ page, onFollow, onDone }: {
 }
 
 /**
- * Discover → Pages (issue 0113): each story's root that no source of yours publishes and INSIGHT doesn't store, one page
- * a row, the biggest stories first. Save page keeps it as one post (the save path: a followed source's page is fetched
- * there first, issue 0122), so its story has its original; Follow… is Discover's follow (the feed finder and page
- * watching) on the page's section or account, never its bare domain (v10.15 c3); Hide hides that page, never its site. 0138 D1: then the originals of things (Mark X's entities) two of your
- * sources wrote about, or one in a News lead, that INSIGHT doesn't have: "The original of <thing>".
+ * Discover → Pages: each story's root that no source of yours publishes and INSIGHT doesn't store, biggest stories
+ * first. Save page keeps it as one post (so its story has its original); Follow… follows the page's section or
+ * account, never its bare domain; Hide hides that page, never its site. Then the originals of things two of your
+ * sources wrote about (or one in a News lead) that INSIGHT doesn't have: "The original of <thing>".
  */
 export default function DiscoverPages({ pages, onFollow }: { pages: DiscoverPage[]; onFollow: (url: string) => void }) {
   const [gone, setGone] = useState<Set<string>>(() => new Set());

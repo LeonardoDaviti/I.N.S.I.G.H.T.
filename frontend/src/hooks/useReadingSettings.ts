@@ -17,10 +17,7 @@ const WIDTHS = READING_WIDTHS.map((option) => option.value);
 
 export type SetReadingSetting = <K extends keyof ReadingSettings>(key: K, value: ReadingSettings[K]) => void;
 
-/**
- * The post text's font, size and width (issue 0045), per device in local storage:
- * the reader's stored-choice store, so the Aa popover and the page change together.
- */
+/** The post text's font, size and width, per device (the stored-choice store, so the Aa popover and page agree). */
 export function useReadingSettings(): [ReadingSettings, SetReadingSetting] {
   const [font, setFont] = useStoredChoice<ReadingFont>(READING_KEYS.font, FONTS, READING_DEFAULTS.font);
   const [size, setSize] = useStoredChoice<ReadingSize>(READING_KEYS.size, SIZES, READING_DEFAULTS.size);

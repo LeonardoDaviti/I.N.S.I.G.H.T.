@@ -1,18 +1,10 @@
-"""Voices (issue 0132 A, 0078): one company, person or publication made of its channels (today's sources).
+"""Voices: one company, person or publication made of its channels (sources).
 
-- **Suggested voices**: utils/voice_rules.py's rules over every source (the same address, a standing link, near-
-  identical own posts with a shared name, both official for the same maker), each with its evidence; name-only pairs
-  as "possible"; related voices (staff <-> company, heavy reposting). Computed in the background and kept
-  (system_settings `voice_suggestions`); what the owner decided since is applied when they are read, so a decision
-  shows at once. **Never applied without the owner.**
-- **The owner decides**: Join (a voice, named by its main channel, editable), Not the same, Related, Make a voice
-  by hand, a channel leaves, the voice is removed (its channels stay sources: 0078's question 4, default yes).
-- **Stories count a confirmed voice once** (voice.count by Policy.STORIES_IX, through SourceFacts.voice_of). A
-  decision that changes which voice a source counts as queues only those sources' posts (and the X posts by or reposting their
-  accounts) for the story job, then asks for a run; nothing else regroups, and the rules' stamp never moves.
-
-One voice per source (sources.voice_id): joining a source of another voice moves it (that voice, left with none, is
-removed). Keep everything: no source, post or decision is deleted.
+Suggestions (utils/voice_rules.py over every source, with evidence; "possible" and "related" pairs) are computed in
+the background and kept in system_settings `voice_suggestions`; the owner's decisions since are applied when read.
+Never applied without the owner (join, not the same, related, make a voice, leave, remove). Stories count a confirmed
+voice once; a decision that changes a source's counted voice queues only those sources' posts for the story job.
+One voice per source (sources.voice_id); nothing is deleted (a removed voice keeps its row, removed_at).
 """
 from __future__ import annotations
 
@@ -43,8 +35,8 @@ Officials = Callable[[Any, Mapping[str, Channel], Set[str]],
 
 def default_officials(cur: Any, channels: Mapping[str, Channel], reposts: Set[str]
                       ) -> Tuple[Dict[str, source_roles.Official], Dict[str, source_roles.Focus]]:
-    """The role rule's step 3 and 4 (utils/source_roles.py) over Mark X's readings of each source's original posts:
-    who is official, for which maker, and which maker each is most about. The hook Part B's role rule can replace."""
+    """The role rule's steps 3-4 (utils/source_roles.py) over Mark X's readings of each source's original posts:
+    who is official for which maker, and which maker each is most about."""
     reads = source_roles.load_reads(cur)
     officials, focus = {}, {}
     for sid, posts in reads.items():
@@ -64,8 +56,8 @@ def default_officials(cur: Any, channels: Mapping[str, Channel], reposts: Set[st
 
 
 def one_question_per_voice(pairs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """v10.6.1: one question per (voice or source, voice or source): a channel possible with a confirmed voice is
-    asked once, not once per channel of the voice; two channels of one voice are never asked. First kept."""
+    """One question per (voice or source, voice or source): a channel possible with a confirmed voice is asked once,
+    two channels of one voice never. First kept."""
     seen: Set[Tuple[str, str]] = set()
     out: List[Dict[str, Any]] = []
     for p in pairs:
@@ -79,8 +71,7 @@ def one_question_per_voice(pairs: Sequence[Dict[str, Any]]) -> List[Dict[str, An
 
 
 def _run_story_job(db_url: str) -> None:
-    """A voice changed (a rule input, `StoriesService._facts`): the story job is wanted (0216: insight-ingestion's jobs
-    runner runs it, markx/jobs.py)."""
+    """A voice changed (a story rule input): ask for the story job (markx/jobs.py runs it)."""
     from insight_core.markx.jobs import want_stories
     want_stories(db_url)
 
@@ -121,8 +112,7 @@ class VoicesService:
             logger.exception("Voices: the official rule could not run")
             officials, focus = {}, {}
         verdicts = judge(channels, counts, officials, focus)
-        # 0132 C2: what the channels' profiles say (none before migration 0086 or a first fetch), and the channels
-        # nobody follows that a profile, a source's own posts or Discover name as a source's other channel.
+        # what the channels' profiles say, and the unfollowed channels a profile, own post or Discover names
         profiles = profiles_service.current(cur)
         if profiles:
             verdicts = with_profiles(verdicts, profile_verdicts(channels, profiles, counts, held_by), channels,
@@ -160,8 +150,7 @@ class VoicesService:
             self._computing.release()
 
     def start_refresh(self) -> bool:
-        """Compute the suggestions in the background, in a process of its own (one at a time; measured on the
-        server copy of 2026-11-05: 4.0 s, 196 MB at its peak). True when one started."""
+        """Compute the suggestions in the background, in a process of its own, one at a time. True when one started."""
         if not self._computing.acquire(blocking=False):
             return False
         if not self.background:
@@ -186,10 +175,8 @@ class VoicesService:
         return {"success": True, **shaped, "computing": self._computing.locked()}
 
     def shape(self, cur: Any, found: Mapping[str, Any]) -> Dict[str, Any]:
-        """What the page shows of kept verdicts, as things stand now: the suggested voices (a pair said not the same
-        never joins; a group already one voice is gone), the possible ones and the related ones the owner has not
-        answered. A source switched off is in none of them (issue 0200), as things stand now (its kept verdicts stay,
-        so switching it on brings them back)."""
+        """The kept verdicts as things stand now: suggested voices (no "not the same" pair, no group already one
+        voice), and the unanswered possible and related ones. A switched-off source is in none (its verdicts stay)."""
         info = found.get("channels", {})
         verdicts = [Verdict(v["a"], v["b"], v["verdict"], v["evidence"], v.get("names", [])) for v in found.get("verdicts", [])]
         verdicts = [v for v in verdicts if v.a in info and v.b in info]
@@ -235,9 +222,8 @@ class VoicesService:
     @staticmethod
     def _not_followed(cur: Any, found: Mapping[str, Any], current: Mapping[str, Optional[str]]
                       ) -> Dict[str, Dict[str, Any]]:
-        """0132 C2: the kept "not followed" channels as things stand now, one group per voice (its channels' merged)
-        or per source with no voice: {subject {kind, id, name}, channels [{key, url, label, platform, of, why}]}.
-        A channel followed since is gone."""
+        """The kept "not followed" channels, one group per voice or voiceless source: {subject {kind, id, name},
+        channels [{key, url, label, platform, of, why}]}. A channel followed since is gone."""
         kept = found.get("not_followed") or {}
         if not kept:
             return {}
@@ -424,7 +410,7 @@ class VoicesService:
             raise LookupError(f"no such voice: {voice_id}")
         return {"success": True, "voice": found[0], "not_followed": self.not_followed_of(voice_id)}
 
-    # ---- 0132 C2: the channel profiles' switch --------------------------------------------------
+    # ---- the channel profiles' switch --------------------------------------------------------
 
     def profiles_setting(self) -> Dict[str, Any]:
         with self._cursor() as cur:

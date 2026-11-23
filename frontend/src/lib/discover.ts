@@ -1,7 +1,4 @@
-/**
- * Discover's reasons for where your stories start (issue 0065), worded for its cards. Only Sources →
- * discover reads them, so they stay out of the reader's chunks. Pure; `now` is injected.
- */
+/** Discover's reasons and lines, worded for its cards; out of the reader's chunks. Pure; `now` is injected. */
 import type { FollowLabel, MissingOrigins, SuggestedSource } from '../services/api';
 import { feedDateLabel } from './dates.ts';
 import { formatCount } from './format.ts';
@@ -15,8 +12,7 @@ export function originReason(s: SuggestedSource): string {
   return `You follow ${s.follows.join(', ')}; ${place} started ${started}`;
 }
 
-/** "37 pages at openai.com/index where your stories started aren't in it, 36 from before its first post (Oct 23)": the pages
- *  it still lacks (issue 0109: pages, not stories; a page it has stored since has left the row). */
+/** "37 pages at openai.com/index where your stories started aren't in it, 36 from before its first post (Oct 23)". */
 export function missingReason(a: MissingOrigins, now: Date = new Date()): string {
   const older = a.older && a.since
     ? `, ${a.older === a.origins ? 'all' : formatCount(a.older)} from before its first post (${feedDateLabel(a.since, now)})`
@@ -25,8 +21,7 @@ export function missingReason(a: MissingOrigins, now: Date = new Date()): string
   return `${formatCount(a.origins)} ${pages} at ${a.places.join(', ')} where your stories started ${a.origins === 1 ? "isn't" : "aren't"} in it${older}`;
 }
 
-/** A missing row's archive, as stored (issue 0080): "Archive running · 3 found so far, 37 to go"; finished,
- *  "Archive finished · 37 of these pages aren't in its archive"; null before any archive. */
+/** A missing row's archive: "Archive running · 3 found so far, 37 to go", or finished; null before any archive. */
 export function archiveLine(a: MissingOrigins): string | null {
   const { state, found = 0 } = a.archive ?? {};
   if (state === 'running' || state === 'paused') {
@@ -38,7 +33,7 @@ export function archiveLine(a: MissingOrigins): string | null {
   return null;
 }
 
-/** What else a row says (issue 0109): the pages stored since, a feed that stopped, a section its source doesn't watch. */
+/** What else a row says: the pages stored since, a feed that stopped, a section its source doesn't watch. */
 export function rowNotes(a: MissingOrigins, now: Date = new Date()): string[] {
   const notes: string[] = [];
   const running = a.archive?.state === 'running' || a.archive?.state === 'paused';
@@ -54,17 +49,15 @@ export function canArchive(a: MissingOrigins): boolean {
   return (a.archivable ?? a.origins) > 0 && state !== 'running' && state !== 'finished';
 }
 
-/** The follow test's labels (issue 0080), and those that can't be followed: a section of their own (issue 0109). */
+/** The follow test's labels; those that can't be followed get a section of their own. */
 export const FOLLOW_LABELS: Record<FollowLabel, string> = {
   feed: 'Feed found', page: 'Page watching', headlines: 'Headlines only', blocked: 'Blocks readers',
   other_feed: 'A feed, but not of these pages',
 };
 export const UNFOLLOWABLE: ReadonlySet<FollowLabel> = new Set<FollowLabel>(['headlines', 'blocked', 'other_feed']);
 
-/** What a Pages row's Follow… follows (v10.15 c3): the server's `follow_url` when it sends one, else the account a platform's
- *  page sits under (a tweet: its user), else the section the page sits in (https://host/a/b/slug → https://host/a/b/); the
- *  site only for a page at its root. Never a platform's host; null when a platform's page names no account (a video). The
- *  label names what it follows: "Follow @user…", "Follow section…", "Follow site…". */
+/** What a Pages row's Follow… follows: the server's `follow_url`, else a platform page's account, else the
+ *  page's section (the site only at its root). Never a platform's host; null when it names no account (a video). */
 export function pageFollow(page: { url: string; follow_url?: string | null }): { url: string; label: string } | null {
   let address = page.follow_url || null;
   if (!address) {
@@ -95,8 +88,7 @@ export function pageFollow(page: { url: string; follow_url?: string | null }): {
 const NUMBERISH = /^\d[\d_.-]*$/;
 const LANGUAGE = /^[a-z]{2}(?:[-_](?:[a-z]{2}|[a-z]{4}|\d{3}))?$/i;
 
-/** An article line with no title (issue 0080): "a post by @account" for a tweet, else its site and section
- *  ("example.com · blog"), the site alone at its root; never its address. */
+/** An article line with no title: "a post by @account" for a tweet, else "example.com · blog"; never its address. */
 export function untitledLine(url: string): string {
   let parsed: URL;
   try {

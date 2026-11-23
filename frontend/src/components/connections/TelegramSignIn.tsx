@@ -16,11 +16,8 @@ function accountFromTest(view: CredentialProviderView): string | null {
   return match ? match[1] : null;
 }
 
-/**
- * Telegram's browser sign-in, inline: phone → code → (two-step password when the
- * account has one) → "signed in as <name>". Needs the API ID and hash first.
- * A sign-in the backend still holds (10 minutes) resumes at its step.
- */
+/** Telegram's browser sign-in, inline: phone → code → (two-step password) → "signed in as <name>". Needs the API
+ *  ID and hash first; a sign-in the backend still holds (10 minutes) resumes at its step. */
 export default function TelegramSignIn({ view }: { view: CredentialProviderView }) {
   const api = useApi();
   const queryClient = useQueryClient();

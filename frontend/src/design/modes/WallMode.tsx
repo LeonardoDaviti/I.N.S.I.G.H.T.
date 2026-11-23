@@ -79,14 +79,10 @@ function PageCard({
 }
 
 /**
- * Wall mode (prototype verdict B, slice S4): the whole website as one wall.
- * Every page in use at its normal state, in navigation order as a site map,
- * the moves between them drawn and labelled by what you do. A principle chip
- * lights the pages whose doc cites it and dims the rest; fixtures or live
- * data and the theme apply to every frame. The walk replays the journey in
- * one large interactive frame and lights each move on the map as it goes.
- * Pan by dragging or scrolling, zoom with a pinch or ⌘-scroll; only frames
- * on screen mount.
+ * Wall mode: the whole website as one wall, every page at its normal state in navigation order, the moves between
+ * them drawn and labelled. A principle chip lights the pages whose doc cites it; data and theme apply to every frame.
+ * The walk replays the journey in one large interactive frame. Pan by dragging or scrolling, zoom with a pinch or
+ * ⌘-scroll; only frames on screen mount.
  */
 export default function WallMode() {
   const [data, setData] = useParam<FrameData>('data', DATA_OPTIONS);

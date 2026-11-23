@@ -1,4 +1,4 @@
-// 0145: a track, while Mark X is on, offers View Topic; the Main feed and a source never do. Synthetic data only.
+// A track, while Mark X is on, offers View Topic; the Main feed and a source never do (0145). Synthetic data only.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

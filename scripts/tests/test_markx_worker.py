@@ -1,4 +1,4 @@
-"""Tests for scripts/markx-worker (0086 part D) against a stub of 0086 C's API and a fake `claude`.
+"""Tests for scripts/markx-worker against a stub of the worker API and a fake `claude`.
 
     python3 -m unittest discover -s scripts/tests -p 'test_markx_worker.py'
 
@@ -50,7 +50,7 @@ KIND_GUIDE = {"read": "read-v2", "entities": "ent-v3", "merge": "judge-story-v1"
 # ---------------------------------------------------------------------------------------------- the stub
 
 class Stub:
-    """0086 C's worker API, in memory: leases, checks, calls, releases."""
+    """The worker API, in memory: leases, checks, calls, releases."""
 
     def __init__(self, lease_seconds=1800, token=TOKEN):
         self.lease_seconds = lease_seconds
@@ -62,9 +62,9 @@ class Stub:
         self.works = []             # every /work query
         self.picked = []            # tasks each /work leased
         self.fail_posts = 0         # answer this many posts with 503 first
-        self.slow_kinds = set()     # /work for these kinds answers after 2 s (v10.13.2)
-        self.unknown_kinds = set()  # /work for these kinds answers 400 unknown kind (a server older than the worker)
-        self.serve_ready = False    # v10.42: GET /ready answered (False: 404, a server older than it)
+        self.slow_kinds = set()     # /work for these kinds answers after 2 s
+        self.unknown_kinds = set()  # /work for these kinds answers 400 unknown kind (an older server)
+        self.serve_ready = False    # GET /ready answered (False: 404, an older server)
         self.guides = dict(GUIDES)
         self.lock = threading.Lock()
         stub = self
@@ -138,7 +138,7 @@ class Stub:
                                     "input": f"platform: test\ntitle: post {tid}\ntext: something happened",
                                     "status": "open", "lease_until": None, "leased_by": None, "attempts": 0,
                                     "last_error": None}
-            if post is not None:          # 0176: a long post's windows carry their post
+            if post is not None:          # a long post's windows carry their post
                 self.tasks[str(tid)]["post"] = post
 
     def _expire(self, now):
@@ -265,7 +265,7 @@ class Base(unittest.TestCase):
 
 
 class TestSystemPrompt(unittest.TestCase):
-    """v10.0.1: the guide's answer schema goes with its body, so the field names are never left to the prose."""
+    """The guide's answer schema goes with its body, so the field names are never left to the prose."""
 
     def test_the_body_then_the_schema_with_its_exact_field_names(self):
         g = GUIDES["read-v2"]
@@ -300,7 +300,7 @@ class TestValid(Base):
         self.assertTrue(all(c["valid"] for c in self.stub.calls))
 
     def test_a_kinds_model_from_the_server_is_the_one_asked(self):
-        """v10.18: a task the server names a model for (entity_bands.json `models`) is asked with it, else --model."""
+        """A task the server names a model for (entity_bands.json `models`) is asked with it, else --model."""
         self.stub.add("read", 3)
         for t in list(self.stub.tasks.values())[:3]:
             t["model"] = "sonnet"
@@ -309,7 +309,7 @@ class TestValid(Base):
         self.assertEqual({c["argv"][2] for c in self.fake_calls()}, {"sonnet"})
 
     def test_days_goes_with_every_lease_and_without_it_none(self):
-        """0112 Decided 9: `--days <N|all>` makes the server plan that window first; without it the page's holds."""
+        """`--days <N|all>` makes the server plan that window first; without it the page's holds (0112)."""
         self.stub.add("read", 5)
         p = self.run_worker("--kinds", "read", "--days", "120")
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -349,7 +349,7 @@ class TestValid(Base):
         self.assertEqual((d["tokens_in"], d["tokens_out"], d["valid"], d["exit"]), (7200, 1800, 45, 0))
 
     def test_drain_keeps_the_old_order(self):
-        """--drain: a kind until it runs dry, then the next (the order before v10.12.1)."""
+        """--drain: a kind until it runs dry, then the next."""
         self.stub.add("read", 25, start=1)
         self.stub.add("entities", 25, start=101)
         p = self.run_worker("--kinds", "read,entities", "--parallel", "1", "--batches", "10", "--drain")
@@ -357,7 +357,7 @@ class TestValid(Base):
         self.assertEqual([w["kinds"] for w in self.stub.works], ["read", "read", "entities", "entities"])
 
     def test_a_long_queue_does_not_starve_the_kinds_after_it(self):
-        """v10.12.1: with a long first queue and a batch budget it can fill alone, every kind still gets a turn."""
+        """With a long first queue and a batch budget it can fill alone, every kind still gets a turn."""
         self.stub.add("read", 200, start=1)
         self.stub.add("entities", 5, start=1001)
         p = self.run_worker("--kinds", "read,entities", "--parallel", "1", "--batches", "3")
@@ -370,7 +370,7 @@ class TestValid(Base):
         p = self.run_worker("--kinds", "read,entities", "--parallel", "1", "--batches", "10")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(self.stub.by_status("answered")), 50)
-        self.assertEqual([w["kinds"] for w in self.stub.works], ["read", "entities", "read", "entities"])   # v10.12.1: turns
+        self.assertEqual([w["kinds"] for w in self.stub.works], ["read", "entities", "read", "entities"])   # turns
         for c in self.fake_calls():
             ids = [int(x) for x in __import__("re").findall(r"^### ITEM id: (\d+)$", c["stdin"], 8)]
             kinds = {self.stub.tasks[str(i)]["kind"] for i in ids}
@@ -378,9 +378,8 @@ class TestValid(Base):
             self.assertEqual(c["system"], W.system_for(GUIDES[KIND_GUIDE[kinds.pop()]]))
 
     def test_merges_are_asked_one_per_call_and_leased_twenty_at_a_time(self):
-        """0112 Decided 8: a merge is asked alone (313 of 313 answered live at --batch 1); --batches still counts
-        leases, and the other kinds keep 20 a call. v10.13.3: a merge lease takes --parallel (4 here), the calls the
-        callers start at once, so no merge waits out its lease in the queue."""
+        """A merge is asked alone (0112); --batches still counts leases, other kinds keep 20 a call; a merge lease
+        takes --parallel tasks so no merge waits out its lease in the queue."""
         self.stub.add("merge", 7, start=1)
         self.stub.add("read", 25, start=101)
         p = self.run_worker("--kinds", "merge,read", "--parallel", "4", "--batches", "10")
@@ -396,7 +395,7 @@ class TestValid(Base):
         self.assertEqual([(w["kinds"], w["limit"]) for w in self.stub.works][:1], [("merge", "4")])
 
     def test_two_windows_of_one_post_are_never_in_one_call(self):
-        """0176 (0150 B): a long post's entities windows (the server's "post") are asked in different calls."""
+        """A long post's entities windows (the server's "post") are asked in different calls (0176)."""
         for k, post in enumerate(("p-a", "p-b", "p-c")):
             self.stub.add("entities", 4, start=100 + 10 * k, post=post)
         self.stub.add("entities", 8, start=1)
@@ -530,9 +529,8 @@ class TestRetry(Base):
         self.assertEqual(len(self.stub.releases), 1)
 
     def test_a_refused_batch_is_halved_until_the_refused_post_stands_alone(self):
-        # 2026-11-08: Haiku refused whole batches of 20 for one post ("can't help with this"); the 20 were released
-        # and leased again every round. The retry halves a refused batch; a single refused task is posted as an
-        # empty answer, which the server stores as a failed try (three and it fails), so the other 19 are answered.
+        # Haiku refused whole batches for one post: a refused batch is halved; a single refused task is posted as
+        # an empty answer (the server's failed try), so the other 19 are answered.
         self.stub.add("read", 20)
         self.stub.tasks["7"]["input"] += " FORBIDDEN"
         p = self.run_worker("--kinds", "read", "--parallel", "1", plan="refuse:FORBIDDEN")
@@ -569,8 +567,8 @@ class TestStops(Base):
         self.assertEqual(len(self.fake_calls()), 3)              # the three already started finish
         self.assertEqual(len(self.stub.by_status("answered")), 40)
         self.assertEqual(self.stub.by_status("leased"), [])
-        # nothing leased after it: v10.13.3's leaser runs ahead of the calls, so it may have asked once more,
-        # and found nothing (the 60 were leased); every task is answered or released
+        # nothing leased after it: the leaser runs ahead of the calls, so it may have asked once more and found
+        # nothing; every task is answered or released
         self.assertLessEqual(len(self.stub.works), 4)
         self.assertEqual(self.stub.picked[:3], [20, 20, 20])
         self.assertEqual(sum(self.stub.picked[3:]), 0)
@@ -668,15 +666,14 @@ class TestServer(Base):
         self.assertEqual(len(self.stub.by_status("answered")), 100)
 
     def test_a_slow_call_holds_back_no_other_batch(self):
-        """v10.13.3: the pipeline: with 2 callers, while the first call sleeps the other caller asks the rest;
-        rounds (before) waited for the slowest call of each round, so two slow calls in two rounds took twice."""
+        """With 2 callers, while the first call sleeps the other caller asks the rest (a pipeline, not rounds)."""
         self.stub.add("read", 80)
         t = time.monotonic()
         p = self.run_worker("--kinds", "read", "--batches", "4", "--parallel", "2", plan="sleep:3,valid,valid,sleep:3")
         took = time.monotonic() - t
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(self.stub.by_status("answered")), 80)
-        self.assertLess(took, 5.5, took)           # rounds: 3 s + 3 s at least; the pipeline: about 3 s
+        self.assertLess(took, 5.5, took)           # rounds would take 3 s + 3 s at least; the pipeline about 3 s
 
     def test_a_merge_lease_takes_no_more_than_the_callers_start(self):
         self.stub.add("merge", 30)
@@ -691,7 +688,7 @@ class TestServer(Base):
             self.assertIn("--lease", p.stderr)
 
     def test_a_bug_in_a_batch_stops_the_cycle_with_exit_1(self):
-        """v10.13.3: a batch that raises is never swallowed into exit 0; its tasks are released."""
+        """A batch that raises is never swallowed into exit 0; its tasks are released."""
         from unittest import mock
         self.stub.add("read", 40)
         argv = ["cycle", "--server", self.stub.url, "--token-file", str(self.token_file), "--worker", "test-device",
@@ -713,7 +710,7 @@ class TestServer(Base):
         self.assertEqual([e["kind"] for e in self.events("lease-slow")], ["entities"])
 
     def test_a_kind_the_server_does_not_know_sits_out_and_the_others_go_on(self):
-        """v10.14: a worker newer than its server: the unknown kind is skipped, never a stop for every kind."""
+        """A worker newer than its server: the unknown kind is skipped, never a stop for every kind."""
         self.stub.add("read", 20)
         self.stub.unknown_kinds = {"rename"}
         p = self.run_worker("--kinds", "rename,read")
@@ -840,7 +837,7 @@ class TestParts(unittest.TestCase):
 
 
 class TestTracks(Base):
-    """0145: the track judge and the sub-topic proposal are default kinds, 10 posts a call and one track a call."""
+    """The track judge and the sub-topic proposal are default kinds, 10 posts a call and one track a call (0145)."""
 
     def setUp(self):
         super().setUp()
@@ -851,19 +848,19 @@ class TestTracks(Base):
 
     def test_track_and_subtopics_are_default_kinds_with_their_call_sizes(self):
         kinds = W.DEFAULT_KINDS.split(",")
-        self.assertEqual(kinds[-7:-3], ["track", "subtopics", "subtopic_place", "digest"])   # 0207: + placement, digest
+        self.assertEqual(kinds[-7:-3], ["track", "subtopics", "subtopic_place", "digest"])
         per = W.per_call_arg(W.PER_CALL)
         self.assertEqual((per["track"], per["subtopics"], per["subtopic_place"], per["digest"]), (10, 1, 1, 1))
 
     def test_the_track_briefer_kinds_are_default_kinds_with_their_call_sizes(self):
-        """0245: a track's schema and a post window's things one a call, five same-claim pairs a call."""
+        """A track's schema and a post window's things one a call, five same-claim pairs a call (0245)."""
         kinds = W.DEFAULT_KINDS.split(",")
         self.assertEqual(kinds[-3:], ["track_schema", "track_things", "track_same"])
         per = W.per_call_arg(W.PER_CALL)
         self.assertEqual((per["track_schema"], per["track_things"], per["track_same"]), (1, 1, 5))
 
     def test_the_worker_salvages_a_things_answer_as_the_server_does(self):
-        """0245: a value whose number is not in its quote is dropped (kept under "dropped"), the rest stays."""
+        """A value whose number is not in its quote is dropped (kept under "dropped"), the rest stays (0245)."""
         kinds = {"kinds": [{"kind": "recipe", "fields": [{"name": "name", "type": "text", "key": True},
                                                         {"name": "time", "type": "number"}]}]}
         text = ("SCHEMA: t v1\nTRACK: T\nBelongs: b\nExcludes: (none)\nKINDS: " + json.dumps(kinds)
@@ -890,7 +887,7 @@ class TestTracks(Base):
 
 
 class TestProbes(Base):
-    """0147: a track's example posts (probes-v1) are a default kind, leased before the track judge, one track a call."""
+    """A track's example posts (probes-v1) are a default kind, before the track judge, one track a call (0147)."""
 
     def setUp(self):
         super().setUp()
@@ -920,7 +917,7 @@ class TestProbes(Base):
 
 
 class TestRename(Base):
-    """0165 B: the rename judge (rename-v1) is a default kind, after the collision judge, five items a call."""
+    """The rename judge (rename-v1) is a default kind, after the collision judge, five items a call (0165)."""
 
     def setUp(self):
         super().setUp()
@@ -944,7 +941,7 @@ class TestRename(Base):
 
 
 class TestScout(Base):
-    """0148: a track's scout question (scout-v1) is a default kind, asked one track a call, before the track judge."""
+    """A track's scout question (scout-v1) is a default kind, one track a call, before the track judge (0148)."""
 
     def setUp(self):
         super().setUp()
@@ -974,7 +971,7 @@ class TestScout(Base):
 
 
 class TestIdentity(Base):
-    """0162: research's same-maker question (identity-v1) is a default kind, five pairs a call."""
+    """Research's same-maker question (identity-v1) is a default kind, five pairs a call (0162)."""
 
     def setUp(self):
         super().setUp()
@@ -996,8 +993,7 @@ class TestIdentity(Base):
 
 
 class TestSourceJudge(Base):
-    """0173: "Is this worth it?" (source-judge-v1) is a default kind leased first (the owner waits), one candidate a
-    call, with no tool."""
+    """"Is this worth it?" (source-judge-v1) is a default kind leased early, one candidate a call, no tool (0173)."""
 
     def setUp(self):
         super().setUp()
@@ -1006,7 +1002,7 @@ class TestSourceJudge(Base):
         self.stub.guides["source-judge-v1"] = guide("source-judge-v1", "GUIDE source-judge-v1")
 
     def test_source_judge_is_the_first_default_kind_one_a_call(self):
-        # 0275: the reader's question first (the search page waits), then the source judge (the owner waits)
+        # the reader's question first (the search page waits), then the source judge
         self.assertEqual(W.DEFAULT_KINDS.split(",")[:2], ["question", "source_judge"])
         self.assertEqual(W.per_call_arg(W.PER_CALL)["source_judge"], 1)
         self.assertEqual(W.per_call_arg(W.PER_CALL)["question"], 1)
@@ -1023,8 +1019,7 @@ class TestSourceJudge(Base):
 
 
 class TestNewsSections(Base):
-    """0174: News' sections (news-sections-v1) is a default kind, after the headlines, one question a call (each holds
-    every row of the page), with no tool."""
+    """News' sections (news-sections-v1) is a default kind after the headlines, one question a call, no tool (0174)."""
 
     def setUp(self):
         super().setUp()
@@ -1049,8 +1044,8 @@ class TestNewsSections(Base):
 
 
 class TestNewsPlace(Base):
-    """0197: the new rows' placement (news-place-v1) is a default kind right after News' sections, one question a call,
-    with no tool; a server older than the worker (no news_place yet) has it skipped, the others go on."""
+    """The new rows' placement (news-place-v1) is a default kind right after News' sections, one a call, no tool;
+    an older server without it has it skipped (0197)."""
 
     def setUp(self):
         super().setUp()
@@ -1091,8 +1086,8 @@ WEB_SCHEMA = {"type": "object", "required": ["candidates", "queries"],
 
 
 class TestWebSearch(Base):
-    """0171: research's web search (websearch-v1) is asked of this worker: its calls, and only its, get Claude Code's
-    web search tool (no fetch, no other tool), allowed without a prompt and their turns capped; one question a call."""
+    """Research's web search (websearch-v1): only its calls get the web search tool (no other tool), allowed
+    without a prompt, turns capped; one question a call (0171)."""
 
     def setUp(self):
         super().setUp()
@@ -1151,8 +1146,8 @@ class TestWebSearch(Base):
 
 
 class TestCost0191(Base):
-    """0191: thinking effort by kind, the prompt cache, refusals isolated at once and remembered, and the server's
-    own answer checks run by the worker so a refused answer is asked again in the same cycle."""
+    """Thinking effort by kind, the prompt cache, refusals isolated and remembered, and the server's answer checks
+    run by the worker so a refused answer is asked again in the same cycle (0191)."""
 
     def setUp(self):
         super().setUp()
@@ -1301,8 +1296,7 @@ class TestCost0191(Base):
         self.assertIsNone(W.rule_error("no-such-kind", good, "Title: Acme"))
 
     def test_the_servers_checks_need_only_the_standard_library(self):
-        # one source of truth: the worker imports the server's validate.py, so it must stay standard library only
-        # (back's and subtopics' checks import more lazily; the worker has no opinion on those)
+        # the worker imports the server's validate.py, so it must stay standard library only
         backend = HERE.parent.parent / "backend"
         code = ("import sys; sys.path.insert(0, sys.argv[1]); from insight_core.markx import validate, schemas; "
                 "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('psycopg', 'fastapi', 'pydantic', 'numpy'));"
@@ -1312,8 +1306,8 @@ class TestCost0191(Base):
 
 
 class TestChain0219(unittest.TestCase):
-    """0219: the story chain question, asked as it was measured (Haiku, effort low, 10 a call), after relate; the
-    server's rules accept a reason and refuse an empty one or a successor (identity's, never the judge's)."""
+    """The story chain question (Haiku, effort low, 10 a call) after relate; the server's rules accept a reason and
+    refuse an empty one or a successor (0219)."""
 
     def test_the_chain_kind_is_asked_with_the_measured_settings(self):
         kinds = W.DEFAULT_KINDS.split(",")
@@ -1332,9 +1326,8 @@ class TestChain0219(unittest.TestCase):
 
 
 class TestJudgeQuotes0258(unittest.TestCase):
-    """0258 (v10.30): join and pair ask judge-read-v2, whose answer quotes the POST; the worker refuses, as the server
-    does, an answer whose quote is not in its own question's POST (one written from another question of its batch),
-    and asks it again in the same cycle."""
+    """join and pair ask judge-read-v2, whose answer quotes the POST; the worker refuses an answer whose quote is not
+    in its own question's POST and asks it again in the same cycle (0258)."""
 
     TEXT = ("STORY\nHeadline: Cursor adds Fable 5.2\nMembers (earliest first):\n"
             "- [Example Dev News, x] Cursor adds Fable 5.2 — Cursor added Claude Fable 5.2, scoring 56.9% on CursorBench"
@@ -1355,13 +1348,12 @@ class TestJudgeQuotes0258(unittest.TestCase):
         self.assertIsNotNone(W.check_answer(schema, {"relation": "different", "confidence": 90}))   # no quote
         v1 = {"relation": "same_event", "confidence": 90}
         self.assertIsNone(W.check_answer(rules.schemas.schema_for("pair", "judge-read-v1"), v1))
-        self.assertIsNone(W.rule_error("pair", v1, self.TEXT, "judge-read-v1"))   # v1's open tasks: as before
+        self.assertIsNone(W.rule_error("pair", v1, self.TEXT, "judge-read-v1"))   # v1's open tasks still pass
 
 
 class TestCollideMakers0250(unittest.TestCase):
-    """0250 (v10.28): two maker groups of one bare name, the collide kind's guide collide-makers-v1: the worker checks
-    it by its own schema and the server's guide check (a verdict of three, its evidence never empty), not collide-v1's
-    senses."""
+    """collide-makers-v1 (two maker groups of one bare name) is checked by its own schema and the server's guide
+    check (a verdict of three, evidence never empty), not collide-v1's senses (0250)."""
 
     def test_the_answer_passes_the_workers_checks(self):
         rules = W.server_rules()
@@ -1376,8 +1368,8 @@ class TestCollideMakers0250(unittest.TestCase):
 
 
 class TestDerive0234(unittest.TestCase):
-    """0234: the based_on check (a thing and its predecessor in one post), asked as it was measured (Haiku, effort low,
-    10 a call), after chain; the server's rules accept a reason and a relation of its four, refuse an empty reason."""
+    """The based_on check (Haiku, effort low, 10 a call) after chain; the server's rules accept a reason and one of
+    its four relations, refuse an empty reason (0234)."""
 
     def test_the_derive_kind_is_asked_with_the_measured_settings(self):
         kinds = W.DEFAULT_KINDS.split(",")
@@ -1396,7 +1388,7 @@ class TestDerive0234(unittest.TestCase):
 
 
 class TestReading0212(unittest.TestCase):
-    """0212: ent-v5's kind `reading`, asked with the settings it was measured at (d7), checked by the server's rules."""
+    """ent-v5's kind `reading`, asked with its measured settings, checked by the server's rules (0212)."""
     WINDOW = ("Platform: site | Source: Example\nTitle: T\nWindow: 2 of 3 of the post's text (characters 5,801-11,800 "
               "of 15,000)\nText: […] Later the Kestrel Lab answered.")
 
@@ -1419,7 +1411,7 @@ class TestReading0212(unittest.TestCase):
 
 
 class TestLogRotation(unittest.TestCase):
-    """v10.17: the JSON-lines log rotates by size and keeps a few old files; every line lands in one of them."""
+    """The JSON-lines log rotates by size and keeps a few old files; every line lands in one of them."""
 
     def test_rotates_and_keeps(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1451,8 +1443,8 @@ class TestLogRotation(unittest.TestCase):
 
 
 class Test0214(Base):
-    """0214: missing lines asked again halved at once, other output shapes read, the unreachable API waited out then a
-    stop (exit 3), the output of a call with missing lines logged, the weekly limit a stop within one round."""
+    """Missing lines asked again halved, other output shapes read, an unreachable API waited out then a stop
+    (exit 3), a call's output with missing lines logged, the weekly limit a stop within one round (0214)."""
 
     def sizes(self):
         return [len(re.findall(r"^### ITEM id: ", c["stdin"], re.M)) for c in self.fake_calls()]

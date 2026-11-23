@@ -1,7 +1,4 @@
-/**
- * Connections fixtures (tests, screenshots): the backend's write-only views
- * (`GET /api/credentials`). No fixture carries a secret value; only last4.
- */
+/** Connections fixtures: the backend's write-only views (`GET /api/credentials`); no secret value, only last4. */
 import type { CredentialField, CredentialProviderView, CredentialsResponse } from '../../services/api';
 
 export function field(overrides: Partial<CredentialField> & { key: string }): CredentialField {

@@ -1,14 +1,11 @@
-"""Read the @mentions of the X and Bluesky posts stored before 0235, once, and time it.
+"""Read the @mentions of the X and Bluesky posts stored before mentions were read, once, and time it.
 
     python -m insight_core.scripts.backfill_mentions [--db DSN] [--batch N]
 
-A post saved after 0235 reads its mentions when it is saved (utils/post_links.extract_links); this reads them for the
-posts stored before (StoriesRepository.fill_mentions): the posts of X and Bluesky sources whose text holds an @, a batch
-a transaction, resumable (its place in system_settings `mentions_backfill`: a stopped run goes on where it stopped).
-Each post's links are written as extract_links reads them now: the rows it had, plus its mentions (kind 'mention',
-boilerplate, so no story, News or Mark X rule reads them). Then Discover's kept counts are dropped, so its next count
-(the story job's, or Discover's own) is a full one that counts the mentions. Reads no page, fetches nothing, asks no
-model. Prints {posts, mentions, seconds, peak_mb} as JSON. Not run by any job: run it by hand, once, after the deploy.
+StoriesRepository.fill_mentions, a batch a transaction, resumable (system_settings `mentions_backfill`): each
+post's links rewritten as extract_links reads them now (plus mentions, stored as boilerplate). Then Discover's
+kept counts are dropped so its next count is a full one. Fetches nothing, asks no model. Prints {posts,
+mentions, seconds, peak_mb} as JSON. Not run by any job: run it by hand, once, after the deploy.
 """
 from __future__ import annotations
 

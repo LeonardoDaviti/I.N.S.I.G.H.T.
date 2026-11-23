@@ -1,10 +1,8 @@
 import { useCallback, useSyncExternalStore } from 'react';
 
 /**
- * Small persisted UI choices for the reader (localStorage). One store shared by
- * every component, so flipping a switch in the shortcut help updates the feed's
- * key handling at once. Storage failures (private mode, quota) fall back to the
- * default and never throw.
+ * Small persisted UI choices (localStorage), one store shared by every component, so a switch updates the
+ * feed's key handling at once. Storage failures fall back to the default and never throw.
  */
 const listeners = new Set<() => void>();
 
@@ -12,8 +10,7 @@ function subscribe(listener: () => void) {
   listeners.add(listener);
   const onStorage = (event: StorageEvent) => {
     if (!event.key?.startsWith('insight.reader.')) return;
-    // Another tab wrote it: its value replaces ours, so the in-memory copy
-    // (kept only for when storage throws) must not shadow it.
+    // Another tab wrote it: its value replaces ours, so the in-memory copy must not shadow it.
     if (event.newValue === null) memory.delete(event.key);
     else memory.set(event.key, event.newValue);
     listener();
@@ -67,7 +64,7 @@ export function useShortcutPreference(): [boolean, (enabled: boolean) => void] {
 
 export type ReadingFlow = 'continuous' | 'single';
 
-/** How the post page goes on after a post: the next one follows below, or one at a time (issue 0014). */
+/** How the post page goes on after a post: the next one follows below, or one at a time. */
 export function useFlowPreference(): [ReadingFlow, (flow: ReadingFlow) => void] {
   return useStoredChoice('insight.reader.flow', ['continuous', 'single'] as const, 'continuous');
 }

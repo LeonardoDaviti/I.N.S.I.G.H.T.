@@ -121,10 +121,7 @@ describe('specimenProblems', () => {
   });
 });
 
-/**
- * The real docs (D7.6). Loaded the way the studio will load them (D1), so a
- * doc that moves or is renamed here moves for /design too.
- */
+/** The real docs, loaded the way the studio loads them, so a doc that moves here moves for /design too. */
 const files = import.meta.glob<string>('./docs/**/*.md', { query: '?raw', import: 'default', eager: true });
 const docs = Object.entries(files).map(([path, text]) => parseDoc(path.replace('./docs/', ''), text));
 const pageDocs = docs.filter((doc) => doc.path.startsWith('pages/'));
@@ -184,7 +181,7 @@ describe('the design docs', () => {
   });
 });
 
-/** The prototype registry (D6): what Bench and the Handbook list, found by glob. */
+/** The prototype registry: what Bench and the Handbook list, found by glob. */
 describe('the prototypes', () => {
   const principles = definedPrinciples(docs.find((doc) => doc.path === 'principles.md')!);
   const pages = new Set(pageDocs.map(docSlug));

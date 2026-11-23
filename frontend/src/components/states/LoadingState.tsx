@@ -1,8 +1,7 @@
 import Skeleton from '../ui/Skeleton';
 
-/** A skeleton placeholder for a data fetch in flight (Mark IX §F.6), shaped like
- *  the list rows it stands in for. `aria-busy` + a visually hidden label is what
- *  screen readers announce. */
+/** A skeleton placeholder for a fetch in flight, shaped like the rows it stands in for; `aria-busy` plus a visually
+ *  hidden label for screen readers. */
 export default function LoadingState({
   label = 'Loading',
   rows = 3,

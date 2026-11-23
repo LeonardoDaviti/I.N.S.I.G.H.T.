@@ -1,4 +1,4 @@
-/** The specimen's vocabulary (D4), shared by the Handbook's slot and its controls and by Bench. */
+/** The specimen's vocabulary, shared by the Handbook's slot and its controls and by Bench. */
 export type SpecimenTheme = 'dark' | 'light';
 
 /** A desktop window and a phone; a state may add its own (the 320px top bar). The first of each is the default. */

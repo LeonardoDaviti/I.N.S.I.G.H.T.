@@ -10,10 +10,10 @@ import type { MarkxEntitiesGuide, MarkxEntityPage, MarkxOverview, MarkxPostPanel
 import { makeFakeApi as makeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
-// the guide switch's method lives outside createApi (api.ts' 0133 block), so the fake takes it untyped
+// the guide switch's method lives outside createApi, so the fake takes it untyped
 const makeFakeApi = (methods: Record<string, unknown>) => makeApi(methods as Parameters<typeof makeApi>[0]);
 
-// Issue 0133 (ent-v4): documents and cited sources on the post panel and the entity page, and the guide switch.
+// ent-v4 (0133): documents and cited sources on the post panel and the entity page, and the guide switch.
 const now = new Date().toISOString();
 const e = (name: string, type: string, role: string, extra: Partial<MarkxPostPanel['entities'][number]> = {}) => ({
   name, type, role, maker: null, family: null, version: null, variant: null, span: name, entity_id: null, ...extra });

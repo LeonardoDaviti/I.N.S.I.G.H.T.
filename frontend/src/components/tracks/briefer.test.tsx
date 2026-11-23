@@ -1,7 +1,5 @@
-// 0245 (frontend v10.28): the general track briefer's views over three invented tracks of three different kinds
-// (garden tools, board games, bread baking): the quick look, the weekly issue, the tables, the schema editor and the
-// rail's count, and none of it while the backend's switch is off. Synthetic data only; no word of these tracks is in
-// the code.
+// The general track briefer's views (0245) over three invented tracks of different kinds: quick look, weekly issue,
+// tables, schema editor and the rail's count, and none of it while the backend's switch is off.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -160,8 +158,7 @@ describe('the briefer words', () => {
 // ---- the track page -----------------------------------------------------------------------------------------------
 
 describe('the quick look on a track page', () => {
-  // the page words the look's day against today: today is NOW, three days after it (the real clock made LOOKED a
-  // date, not a weekday, once a week had passed)
+  // today is NOW, three days after the look (a real clock would make LOOKED a date, not a weekday, after a week)
   beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW); });
   afterEach(() => { vi.useRealTimers(); });
   it('shows nothing of the briefer while the switch is off', async () => {
@@ -194,10 +191,8 @@ describe('the quick look on a track page', () => {
     expect(tools.querySelector('[data-thing="t1"]')).toHaveTextContent('Hori knife · 30 USD · 0.3 kg · hand · reviews.example.com');
     expect(within(tools).getByRole('link', { name: 'Open the post about Hori knife' })).toHaveAttribute('href', '/posts/p-t1');   // in INSIGHT: a bridge's address may not open on the reader's device
     expect(within(panel).getByRole('region', { name: 'Also in the track' })).toHaveTextContent('What do you all use for weeding?');
-    // the posts follow, as today
     const order = [...document.querySelectorAll('[aria-label="Since you looked"], [aria-label="Tools"]')].map((e) => e.getAttribute('aria-label'));
     expect(order).toEqual(['Since you looked', 'Tools']);
-    // see all › opens the kind's table
     const table = vi.spyOn(briefApi, 'things').mockResolvedValue({ on: true, track: { id: 'garden', name: 'x' }, kind: 'tool',
       kinds: ['tool', 'practice_or_claim'], fields: GARDEN.fields, filters: {}, count: 3, things: TOOLS });
     await userEvent.click(within(tools).getByRole('button', { name: 'see all ›' }));

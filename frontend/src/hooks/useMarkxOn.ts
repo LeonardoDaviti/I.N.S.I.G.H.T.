@@ -3,10 +3,7 @@ import { useApi } from '../services/ApiContext';
 
 export const MARKX_ON_KEY = ['markx-on'] as const;
 
-/**
- * Whether Mark X Shadow is on (issue 0086 E: INSIGHT_MARKX): GET /api/markx/on answers, or 404s while it is off.
- * Asked once a session; `undefined` while it is being asked, so a caller can wait instead of guessing.
- */
+/** Whether Mark X is on: GET /api/markx/on answers, or 404s while off. Asked once a session; `undefined` while asking. */
 export function useMarkxState(): boolean | undefined {
   const api = useApi();
   const query = useQuery({

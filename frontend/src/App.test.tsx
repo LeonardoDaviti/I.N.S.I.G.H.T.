@@ -27,7 +27,7 @@ function renderRoutes(route: string) {
   );
 }
 
-/** The analysis pages retired in issue 0005. */
+/** The retired analysis pages (0005). */
 const RETIRED_ROUTES = [
   '/briefing',
   '/briefing/topics',

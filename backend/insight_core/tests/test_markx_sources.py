@@ -1,9 +1,7 @@
-"""0132 B (Stealth v10.6): the source analysis page. The role rule's order and "official"; the stance answer's quotes
-checked by code; each card's formula and threshold on synthetic sources (posting rate, own share, first to report,
-solo share, News yield, cited by, too few to tell); voices when the table exists, per source when it doesn't; the
-page's routes (rows only, no overall score, 404s); the stance planner (monthly, own posts of 250+ characters) and its
-labels; Part C1 (the last 20 posts read) and C3 (Telegram forwards) off by default; the stats job's schedule.
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""The source analysis page (0132 B): the role rule and "official"; the stance answer's quotes checked by code; each
+card's formula and threshold on synthetic sources; voices when the table exists, per source when it doesn't; the
+page's routes (rows only, no overall score, 404s); the stance planner and its labels; C1 (last 20 posts read) and C3
+(Telegram forwards) off by default; the stats job's schedule. Synthetic data; DB tests only on a _test database."""
 from __future__ import annotations
 
 import json
@@ -271,7 +269,7 @@ class Signals(_World):
         self.assertEqual({sig for (s, sig) in got if s == self.site}, set(S.SIGNALS))
 
     def test_audience_from_profiles(self):
-        """0132 C2: the Audience card's followers, from the channel's current profile; none: no audience data."""
+        """The Audience card's followers, from the channel's current profile; none: no audience data (0132 C2)."""
         from insight_core.ingestion.profiles import Ask, Profile
         from insight_core.services.profiles_service import record
         self.world()
@@ -355,7 +353,7 @@ class Signals(_World):
             self.add(a, url=f"https://x.com/acmelabs2/status/{i}", author="acmelabs2")
             self.add(self.x, url=f"https://x.com/acmelabs/status/{i}", author="acmelabs")
         existed = S.voices_exist(self.cur)
-        # 0132 A's tables, in a transaction rolled back (another slice's migration 0080 makes them)
+        # 0132 A's tables (migration 0080), in a transaction rolled back
         with self.conn.transaction():
             self.cur.execute("CREATE TABLE IF NOT EXISTS voices (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
                              "name text, kind text)")
@@ -377,7 +375,7 @@ class Signals(_World):
         self.assertEqual(S.voices_exist(self.cur), existed)
 
 
-# ---- 0266: the track record (firsts and lead, signal and noise, opened, "switch off?") -------------------
+# ---- the track record (firsts and lead, signal and noise, opened, "switch off?"; 0266) -------------------
 
 class TrackRecord(_World):
     def test_firsts_lead_signal_noise_and_opened(self):
@@ -537,8 +535,8 @@ class Stance(_World):
         self.assertEqual(self.cur.fetchone()[0], 20)      # never more
 
     def test_last_posts_ask_only_the_current_readings_kind(self):
-        """0233 (0225 #17): with ent-v5 on, a thin source's last posts get `reading` tasks, never read or entities;
-        off, `reading` plans nothing here."""
+        """With ent-v5 on, a thin source's last posts get `reading` tasks, never read or entities; off, `reading` plans
+        nothing here (0233)."""
         from insight_core.markx import reading5
         for i in range(25):
             self.add(self.thin, url=f"https://thin.example-thin.invalid/v{i}", at=NOW - (400 + i) * D)

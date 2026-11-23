@@ -1,7 +1,6 @@
-"""0136 (Stealth v10.8): back in the news, in Shadow. The trigger (E, L, V, and V only without E or L), its windows and
-exclusions, one candidate per story and window, the `back` kind (planned, capped, asked three times, answered), the
-verdicts per post combined as the lab's bk_judge does, "unknown" on a split, and the rows and labels /markx shows.
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""Back in the news (0136): the trigger (E, L, V, and V only without E or L), its windows and exclusions, one candidate
+per story and window, the `back` kind, the per-post verdicts combined as the lab's bk_judge does, and the rows /markx
+shows. Synthetic data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import hashlib
@@ -17,7 +16,7 @@ from insight_core.tests.test_markx_graph import unit
 
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
 DAY = timedelta(days=1)
-FROZEN_GUIDE_MD5 = "0c748c76706392daf6efae7414da55a7"   # the lab's back_v3c.md, ported unchanged
+FROZEN_GUIDE_MD5 = "0c748c76706392daf6efae7414da55a7"   # ported unchanged
 
 
 def ans(*verdicts, old="Widget 4.1", new="The fix shipped."):
@@ -58,7 +57,7 @@ class TheKind(unittest.TestCase):
         self.assertEqual(back.verdict([ans("retold"), ans("related"), ans("unrelated")])["relation"], "unknown")
 
     def test_a_first_related_or_unrelated_settles_the_candidate_alone(self):
-        # 0191: ask once; a second and third time only when the first is development or retold
+        # ask once; a second and third time only when the first is development or retold
         self.assertEqual(back.verdict([ans("related")]), {"relation": "related", "runs": ["related"]})
         self.assertEqual(back.verdict([ans("unrelated", "unrelated")]), {"relation": "unrelated", "runs": ["unrelated"]})
         self.assertIsNone(back.verdict([ans("retold")]))
@@ -95,10 +94,9 @@ class _Back(_Api):
         self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = ANY(%s::uuid[])", ([self.third, self.fourth],))
         self.stories = []
         self.addCleanup(self._drop_stories)
-        # 0180: these tests are the old engine's; the anchors engine's Shadow rows are test_markx_anchors' (it turns
-        # the Shadow back on)
+        # these are the old engine's tests; the anchors engine's are test_markx_anchors'
         repo.set_setting(self.cur, anchors.SHADOW_KEY, self.shadow)
-        # 0210: Back in the news is off (not shipped); these tests are its own, with it on
+        # Back in the news is off; these tests turn it on
         from insight_core.markx import consumers
         consumers.set_on(self.cur, "back", True)
         self.addCleanup(consumers.forget)
@@ -313,7 +311,7 @@ class TheQuestions(_Back):
         _, body = self.lease("back")
         tid = body["tasks"][0]["id"]
         self.assertEqual(self.answer((tid, ans("unrelated", "related")))[1]["valid"], 1)
-        self.assertEqual(self.row(tid)["status"], "answered")          # 0191: never asked again
+        self.assertEqual(self.row(tid)["status"], "answered")          # never asked again
         _, page = call("GET", "/api/markx/back")
         self.assertEqual((page["items"], page["counts"]), ([], {"candidates": 1, "related": 1}))
 
@@ -354,8 +352,8 @@ class TheQuestions(_Back):
         self.assertEqual(call("POST", "/api/markx/labels/back", body={"row": str(uuid.uuid4()), "answer": "retold"})[0], 404)
 
     def test_off_is_not_shown(self):
-        """0233: its feature off (the default since 0210: the bar failed), the page shows no row, count or precision;
-        the rows stay. On again, the same row is back."""
+        """Its feature off (the default), the page shows no row, count or precision; the rows stay. On again, the same
+        row is back (0233)."""
         from insight_core.markx import consumers
         self.candidate()
         for _ in range(3):

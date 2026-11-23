@@ -1,8 +1,6 @@
-"""0147 (Stealth v10.13): track recall, several finders. Example posts (probes) planned once per track version,
-embedded, scored by max cosine with near-misses subtracted; domain and word sets learned from ✓ items with their
-thresholds; numbers with the ✓ items' units as words; the union's order and budget; "found by" on items (0203 dropped
-the never-adopted entity finder, source and story priors and classifier). Synthetic data only; the DB tests run on a
-database whose name ends in _test."""
+"""Track recall's finders (0147): example posts (probes) planned once per track version, embedded, scored by max cosine
+less near-misses; domain and word sets learned from ✓ items; numbers with the ✓ items' units; the union's order and
+budget; "found by" on items. Synthetic data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import json
@@ -76,7 +74,7 @@ class Pure(unittest.TestCase):
 
     def test_the_adopted_finders_and_the_env(self):
         self.assertEqual(finders.active(), finders.ADOPTED)
-        self.assertEqual(finders.ADOPTED, ("probe", "domain", "word", "tool", "source", "linked"))   # 0207: + tool; 0252
+        self.assertEqual(finders.ADOPTED, ("probe", "domain", "word", "tool", "source", "linked"))
         with mock.patch.dict(os.environ, {finders.FINDERS_ENV: "domain, entity,bogus"}):
             self.assertEqual(finders.active(), ("probe", "domain"))    # the example posts always; dropped names ignored
         off = {"bar": 0.5, "on": ("probe",)}
@@ -180,8 +178,8 @@ class Probes(_Finders):
 
 
 class WordDays(_Finders):
-    """v10.22 (0216, migration 0148): the words' window counts from the days kept (mx_word_days) and the two partial
-    days are ts_stat's over the window, before and after any change to a kept day's posts."""
+    """The words' window counts from the kept days (mx_word_days) and the two partial edge days from ts_stat, before
+    and after any change to a kept day's posts (0216)."""
     NOW = datetime(2031, 3, 10, 13, 30, tzinfo=timezone.utc)   # a window no other test's posts are in
 
     def setUp(self):
@@ -271,8 +269,8 @@ class Learned(_Finders):
         t = tracks.get(self.cur, self.folder)
         return t, finders.prepare(self.cur, t, tracks.examples(self.cur, self.folder))
 
-    # v10.16 (0177): a plan pass reads the window's counts once for every track (`prefetch` into one cache), and what
-    # each track learns from them is what it learns alone.
+    # a plan pass reads the window's counts once for every track (`prefetch`), and each track learns what it learns
+    # alone
     def scene(self):
         texts = [f"Running a quantised model on a used card {k}: 22 tok/s with llamafile and kobold" for k in range(3)]
         items = [self.passive(f"item {k}", text=x, links=[(f"https://example.com/build/{k}", "build")])

@@ -1,11 +1,7 @@
 /**
- * Keyboard navigation over a feed (spec §F.3, §F.5), as a pure reducer.
- *
- * Selection is held by post id, never by index, so a page appended at the end or
- * new posts prepended on top never move it to a different item. Actions that need
- * the outside world (focus the row, load the next page, toggle read, Later or Keep, open,
- * mark read up to here) come back as one `intent` on the new state; the caller
- * performs it. A reducer cannot fire effects, and this keeps it testable.
+ * Keyboard navigation over a feed, as a pure reducer. Selection is held by post id, never index, so appended or
+ * prepended posts never move it. Side effects (focus, load more, toggles, open) come back as one `intent` on
+ * the new state for the caller to perform.
  */
 
 export type NavIntent =
@@ -61,8 +57,7 @@ export function feedNavigation(state: NavState, action: NavAction): NavState {
   switch (action.type) {
     case 'sync': {
       const ids = action.ids;
-      // Same ids and the same paging: nothing to do. Returning the same object
-      // lets the caller skip a render (a read/star patch re-syncs an equal list).
+      // Same ids and paging: returning the same object lets the caller skip a render.
       if (!state.pendingAdvance && !state.intent && state.hasMore === action.hasMore && sameIds(state.ids, ids)) return state;
       let next: NavState = { ...state, ids, hasMore: action.hasMore, intent: null };
       if (state.selectedId && !ids.includes(state.selectedId)) {

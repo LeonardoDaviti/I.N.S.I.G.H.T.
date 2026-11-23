@@ -1,14 +1,12 @@
-"""The ingestion module (Mark IX): one entry point for every fetch run.
+"""The ingestion module: one entry point for every fetch run.
 
     report = await run_ingestion(FetchRequest(SourceSelector.all(), Trigger.SCHEDULER))
 
 The only callers are main.py (the API routes), scripts/run_scheduler.py and the
 scripts/safe_ingest.py CLI shim.
 
-Deliberately import-light: adapters/*.py import ingestion.kinds.base, and importing that
-runs this file first. The types are cheap; the runner, the ports and the real adapters are
-imported inside the functions, so `import insight_core.adapters` never pulls in the DB
-layer or the services through this file.
+Import-light on purpose: adapters/*.py import ingestion.kinds.base, which runs this file first, so the runner, ports
+and adapters are imported inside the functions.
 """
 from __future__ import annotations
 
@@ -79,15 +77,13 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
         run_lock=PgAdvisoryRunLock(db_url),
         availability=availability_from_env,
         clock=clock,
-        # The doctor's look uses the Add source dialog's short timeout; a switch rewrites
-        # sources.json, the sources' export, too (issue 0036).
+        # the doctor uses the Add source dialog's short timeout; a switch rewrites sources.json too
         doctor=SourceDoctor(
             http=KindHttp(timeout=5), registry=registry, clock=clock,
             store=DbDoctorStore(db_url, switch=SourceConfigSyncService(db_url).switch_source),
         ),
         watch=DbPageWatchStore(db_url),
-        # 0216: the story job is wanted, never run here: insight-ingestion's jobs runner runs it (markx/jobs.py), then
-        # the originals the new stories lack and Mark X's scouts and research runs (issues 0114, 0123, 0148, 0162)
+        # the story job is only wanted here; the jobs runner (markx/jobs.py) runs it and what follows it
         stories=partial(want_stories, db_url),
     )
 

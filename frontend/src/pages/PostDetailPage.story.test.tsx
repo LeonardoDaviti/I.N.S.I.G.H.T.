@@ -11,8 +11,8 @@ import { postKey } from '../hooks/usePost';
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
 import type { Api, FeedStory, Post, PostDetailResponse } from '../services/api';
 
-// The post page knows what INSIGHT has: "Covered by" at the end (issue 0055), and links to
-// stored posts that open here, with ↗ for the original (issue 0057).
+// The post page knows what INSIGHT has: "Covered by" at the end (0055), and links to stored posts that open
+// here, with ↗ for the original (0057).
 
 const LAB = '00000000-0000-4000-8000-0000000000a1';
 const CHANNEL = '00000000-0000-4000-8000-0000000000a2';
@@ -133,7 +133,7 @@ describe('PostDetailPage covered by, as a tree (issue 0064)', () => {
     expect(depths(block)).toEqual([
       ['0', expect.stringMatching(/^Anthropic News·Introducing Kimi K3\.1 Pro· first/)],
       ['1', expect.stringMatching(/·My notes on Kimi K3\.1· this post$/)],
-      ['2', expect.stringMatching(/^↳ simonwillison\.net@data_whispers·Вышла Kimi K3\.1· share/)],   // on a phone: its parent, not more indent (0068)
+      ['2', expect.stringMatching(/^↳ simonwillison\.net@data_whispers·Вышла Kimi K3\.1· share/)],  // on a phone: its parent, not more indent
     ]);
     expect(within(block).getAllByRole('listitem')[1]).toHaveAttribute('aria-current', 'true');
     expect(within(within(block).getAllByRole('listitem')[1]).queryByRole('link')).toBeNull();

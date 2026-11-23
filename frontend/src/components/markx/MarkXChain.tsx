@@ -3,7 +3,7 @@ import type { MarkxChain, MarkxChainLink, MarkxChainRelation, MarkxRowChain, Mar
 
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 
-/** How the linked story relates, read from the page's story's side (0219). `before`: the page follows from it. */
+/** How the linked story relates, read from the page's story's side. `before`: the page follows from it. */
 const BEFORE: Record<MarkxChainRelation, string> = {
   same_release: 'earlier in this release', same_event: 'the same event, filed earlier', follows_up: 'this follows up on it',
   development: 'this develops it', reaction: 'this reacts to it', builds_on: 'this builds on it',
@@ -31,11 +31,8 @@ function Link({ link, words }: { link: MarkxChainLink; words: Record<MarkxChainR
   );
 }
 
-/**
- * A story's Earlier and Later (0219, 0267): the stories about the same thing before it and after it, each link with its
- * relation in plain words and the judge's reason, in date order. Shown only when there is a link; only the relations
- * that passed their bar reach the page.
- */
+/** A story's Earlier and Later: the stories about the same thing before and after it, each with its relation and the
+ *  judge's reason, in date order; only relations that passed their bar reach the page. Shown only when there is one. */
 export function StoryChain({ chain }: { chain?: MarkxChain | null }) {
   if (!chain || (!chain.before.length && !chain.after.length)) return null;
   const side = (label: string, links: MarkxChainLink[], more: number, words: Record<MarkxChainRelation, string>) =>
@@ -55,7 +52,7 @@ export function StoryChain({ chain }: { chain?: MarkxChain | null }) {
   );
 }
 
-/** 0267: a News row's Earlier and Later, one plain line a story (the row's own stories left out). */
+/** A News row's Earlier and Later, one plain line a story (the row's own stories left out). */
 export function RowChain({ chain }: { chain?: MarkxRowChain | null }) {
   if (!chain || (!chain.before.length && !chain.after.length)) return null;
   const line = (label: string, l: MarkxRowChainLink, words: Record<MarkxChainRelation, string>) => (

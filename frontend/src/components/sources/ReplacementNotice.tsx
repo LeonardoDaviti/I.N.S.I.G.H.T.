@@ -17,10 +17,9 @@ function replacementLabel(replacement: SourceReplacement): string {
 }
 
 /**
- * The source doctor's finding on a broken source (issue 0036), in the source sheet: the
- * replacement it found, with Switch (the source keeps its name, tracks and posts) and
- * Dismiss (until the next failure streak), or that it looked and found none. A server error is no
- * move (issue 0072 D3): the site's own server is failing (issue 0088: named), and INSIGHT keeps retrying.
+ * The source doctor's finding on a broken source, in the source sheet: the replacement it found, with Switch (the
+ * source keeps its name, tracks and posts) and Dismiss (until the next failure streak), or that it found none. A
+ * server error is no move: the site's own server is failing, and INSIGHT keeps retrying.
  */
 export default function ReplacementNotice({ row, now, onSwitched }: { row: SourceHealthRow; now: Date; onSwitched: () => void }) {
   const api = useApi();
@@ -30,7 +29,7 @@ export default function ReplacementNotice({ row, now, onSwitched }: { row: Sourc
   const [done, setDone] = useState(false);
   const { replacement, doctor_looked_at: lookedAt, server_error: failing, dead } = row;
   if (dead) {
-    // Issue 0242: a dead host. The owner switches it off or replaces it (Add source); nothing is done by itself.
+    // a dead host: the owner switches it off or replaces it (Add source); nothing is done by itself
     return (
       <Notice tone="warning" title={`${dead.host} ${dead.reason}: this source looks dead.`}
         message={`Nothing has worked ${dead.since ? `since ${formatRelativeTime(dead.since, now)}` : 'since it was added'}. Switch it off, or replace it with another address; INSIGHT never removes it.`} />

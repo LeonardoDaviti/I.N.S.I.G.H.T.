@@ -4,12 +4,10 @@
     python -m insight_core.scripts.archive_on_follow_0167 --apply         # queues their archives
     python -m insight_core.scripts.archive_on_follow_0167 --source <id>   # one source, on demand (with --apply)
 
-A source is listed when following it would queue its archive now (services/follow_archive.plan: an enabled website
-feed or Substack publication the archive accepts) and it holds nothing older than the follow horizon
-(follow_archive.horizon): its oldest stored post is newer, and no archive of it ever ran. --source takes the one
-source whatever it holds. Each is queued as a follow queues it (ArchiveJobs.enqueue, back to the horizon); the
-ingestion process runs them in their turn, one per lane, inside the host gates and budgets. Nothing is fetched here.
-Resumable: a source queued (or archived) is not listed again. Prints the list as JSON.
+A source is listed when following it would queue its archive now (services/follow_archive.plan) and it holds
+nothing older than the follow horizon and no archive of it ever ran; --source takes the one source whatever it
+holds. Each is queued as a follow queues it (ArchiveJobs.enqueue); the ingestion process runs them in their turn.
+Nothing is fetched here. Resumable: a queued source is not listed again. Prints the list as JSON.
 """
 from __future__ import annotations
 

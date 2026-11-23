@@ -1,7 +1,4 @@
-"""
-Business logic layer for posts operations.
-Coordinates between API and database repository.
-"""
+"""Posts: storage stats and the one-off repair of stored bodies to the current reader rule."""
 from functools import lru_cache
 from typing import Dict, Any
 
@@ -17,8 +14,7 @@ STORED_BODIES_KEY = "stored_bodies"
 
 @lru_cache(maxsize=1)
 def stored_bodies_stamp() -> str:
-    """The reader rule the stored bodies were brought up to (issue 0068: 0063's link labels): what the
-    repair makes of the sample's bodies (utils/stamps.py, issue 0071), which it reads and how it leaves them."""
+    """The stamp of the reader rule for stored bodies: what the repair makes of utils/stamps.py's sample bodies."""
     from insight_core.ingestion.kinds.parsing import HIDDEN_HINT_RE, _without_hidden_link_labels, strip_html
 
     return fingerprint([(bool(HIDDEN_HINT_RE.search(body)), _without_hidden_link_labels(body),
@@ -26,9 +22,7 @@ def stored_bodies_stamp() -> str:
 
 
 class PostsService:
-    """
-    Post storage stats. Listing posts is the reader's job (reader_service).
-    """
+    """Post storage stats. Listing posts is reader_service's job."""
 
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -42,11 +36,8 @@ class PostsService:
                 return self.repo.get_source_post_stats(cur, source_id)
 
     def catch_up_stored_bodies(self) -> int:
-        """Bring the bodies stored before a reader rule up to it, once, in the background (issue
-        0068), as search's refill does for its index (0042): `stored_bodies` holds the stamp of the
-        rule the stored bodies are at (stored_bodies_stamp), and the repair reads only what was
-        stored, nothing fetched: the screen-reader labels inside links (0063) go. Returns how many
-        posts changed."""
+        """Bring stored bodies up to the current reader rule once (`stored_bodies` holds the stamp they are at),
+        from what is stored, nothing fetched. Returns how many posts changed."""
         with db.transaction(self.db_url) as cur:
             done = (SystemSettingsRepository.get(cur, STORED_BODIES_KEY) or ({}, None))[0] or {}
             if done.get("rules") == stored_bodies_stamp():

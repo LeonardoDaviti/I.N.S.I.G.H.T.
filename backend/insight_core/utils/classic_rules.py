@@ -1,9 +1,7 @@
-"""Classics (issue 0051): what your sources keep citing. Pure functions over plain data; the story
-job (services/news_service.py) loads the links and writes what these return.
-
-- **A classic** is a page linked by 2+ of your voices (not the page's own), with links 180+ days
-  apart: a stored post or an outside page. Reference pages (a path segment like `docs`,
-  `pricing`, `help`) and home pages are not classics.
+"""Classics: what your sources keep citing (`classics`). Pure functions over plain data; the story job
+(services/news_service.py) loads the links and writes what these return. A classic is a page linked by 2+ of your
+voices (not the page's own), with links CLASSIC_MIN_SPREAD apart: a stored post or an outside page. Reference pages and
+home pages are not classics.
 """
 from __future__ import annotations
 
@@ -16,9 +14,8 @@ from insight_core.utils import voice
 from insight_core.utils.addresses import bare, publication_of, site_of
 from insight_core.utils.post_links import is_reference, titled_link_text
 
-CLASSIC_MIN_VOICES = 2   # the prototype's (plan/research/dedup-prototype), not measured
-# Measured on the server's data, 2026-10-30 (0051): at 30 days most were news with legs (~15% real
-# classics in a sample); at 180, 172 classics, ~80% real in a random 30.
+CLASSIC_MIN_VOICES = 2   # the prototype's, not measured
+# Measured (plan/issues/0051): at 30 days most were news with legs; at 180 most were real classics.
 CLASSIC_MIN_SPREAD = timedelta(days=180)
 CLASSIC_CITED_AGAIN = timedelta(days=7)   # cited in the last 7 days: "cited again this week", first; not measured
 BACKGROUND_SHOWN = 2
@@ -55,7 +52,7 @@ class Classic:
         return (self.last_at - self.first_at).days
 
 
-_titled = titled_link_text   # moved to post_links (issue 0064: a story's outside origin is titled so too)
+_titled = titled_link_text   # lives in post_links: a story's outside origin is titled so too
 
 
 def classics(citations: Iterable[Citation], stored: Dict[str, Tuple[str, datetime, Optional[str]]]) -> List[Classic]:
@@ -80,9 +77,8 @@ def classics(citations: Iterable[Citation], stored: Dict[str, Tuple[str, datetim
         voices = {c.voice for c in counted}
         if len(voices) < CLASSIC_MIN_VOICES:
             continue
-        # The spread starts at the stored post's own date, else at the second voice's first link:
-        # one voice's date alone can't make a classic (a page rewritten under an old date, like
-        # Gwern's, dated a 2026 link 2023 on the server's data).
+        # The spread starts at the stored post's own date, else at the second voice's first link: one voice's date
+        # alone can't make a classic (a page rewritten under an old date).
         firsts = sorted({c.voice: c.t for c in reversed(counted)}.values())
         first = post[1] if post is not None else firsts[1]
         last = cites[-1].t

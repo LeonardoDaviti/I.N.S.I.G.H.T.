@@ -1,9 +1,4 @@
-/**
- * Job runs (job_runs rows) as the ingestion surfaces show them: a monochrome
- * glyph for the status, a short duration, a one-line summary and the events
- * worth reading, for Sources → ingestion, and the
- * top bar's activity sign. Pure.
- */
+/** Job runs (job_runs rows) as the ingestion surfaces show them: status glyph, duration, summary, events. Pure. */
 import type { Status } from '../components/ui/styles';
 import type { ArchiveWaiting, JobRun } from '../services/api';
 import { waitingLine } from './archiveWaiting.ts';
@@ -12,20 +7,19 @@ import { formatElapsed } from './duration.ts';
 import { asRunReport, summarizeRunReport } from './runReport.ts';
 import { isRecord } from './utils.ts';
 
-/** A job that has not finished: running, or queued to run. */
 function isActive(status?: string | null): boolean {
   return status === 'running' || status === 'queued' || status === 'pending';
 }
 
 /** Job status -> monochrome glyph (design docs system/status.md). */
 export function jobGlyph(status?: string | null): Status {
-  if (status === 'failed' || status === 'interrupted') return 'failing';   // interrupted: a restart ended it (0070)
+  if (status === 'failed' || status === 'interrupted') return 'failing';  // interrupted: a restart ended it
   if (isActive(status)) return 'running';
-  if (status === 'waiting') return 'scheduled';   // an archive waiting out a host's limit (0107)
+  if (status === 'waiting') return 'scheduled';  // an archive waiting out a host's limit
   return 'ok';
 }
 
-/** What a waiting archive job waits for (issue 0107: a host's limit; it continues by itself), or null. */
+/** What a waiting archive job waits for (a host's limit; it continues by itself), or null. */
 export function jobWaiting(job: Pick<JobRun, 'status' | 'payload'>): ArchiveWaiting | null {
   const payload = job.payload ?? {};
   if (job.status !== 'waiting' || typeof payload.waiting_until !== 'string' || typeof payload.waiting_host !== 'string') return null;
@@ -41,8 +35,7 @@ export function formatJobDuration(startedAt?: string | null, finishedAt?: string
   return formatElapsed((finished.getTime() - started.getTime()) / 1000);
 }
 
-/** How long a job ran: a job a restart ended ran until its last event before that, not until the
- *  restart closed it a day later (issue 0072). */
+/** How long a job ran: a job a restart ended ran until its last event, not until the restart closed it. */
 export function jobDuration(job: JobRun): string | null {
   const events = job.status === 'interrupted' && Array.isArray(job.payload?.events)
     ? (job.payload.events as Array<Record<string, unknown>>).filter((event) => event.status !== 'interrupted') : [];
@@ -85,8 +78,8 @@ export function runProgressLine(job: JobRun): string | null {
   return `${done} of ${total} source${total === 1 ? '' : 's'} · ${newPosts} new post${newPosts === 1 ? '' : 's'}`;
 }
 
-/** A job's one line: what an ingestion run delivered ("9 new posts from 2 sources"), else its message, the
- *  source it names by its name, not its id ("Fetch <source name>", issue 0072). */
+/** A job's one line: what an ingestion run delivered ("9 new posts from 2 sources"), else its message, naming
+ *  the source by its name ("Fetch <source name>"). */
 export function jobSummary(job: JobRun, timeZone?: string): string | null {
   const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
   if (report) return summarizeRunReport(report).headline;
@@ -113,10 +106,8 @@ function clock(value: string, timeZone?: string): string | null {
   return format.format(at);
 }
 
-/** An API restart record (issue 0117) in the reader's zone (issue 0124). The watchdog runs in a UTC container: it
- *  stores its times as ISO in the payload (`at`, and `until` when it gave up), and this writes the line. A record
- *  written before 0124 had the container's clock (UTC) in its message: it is written again from its start, and a
- *  give-up of then, whose end it didn't store, says "for up to an hour". Null for any other job. */
+/** An API restart record in the reader's zone: the watchdog stores ISO times in the payload (`at`, `until`
+ *  when it gave up); a record from before that is rewritten from its start. Null for any other job. */
 export function apiRestartLine(job: JobRun, timeZone?: string): string | null {
   const payload = job.payload ?? {};
   if (job.job_type !== 'api_restart' || (payload.kind !== 'restart' && payload.kind !== 'gave_up')) return null;
@@ -134,7 +125,7 @@ export function apiRestartLine(job: JobRun, timeZone?: string): string | null {
 
 export type JobEvent = { at?: string; level?: string; message?: string };
 
-/** Phases whose event only repeated the run's summary (stored before issue 0021). */
+/** Phases whose event only repeated the run's summary (old reports). */
 const NOISE_PHASES = new Set(['decided', 'saved']);
 
 /** A job's events worth reading: the per-source lines, not the ones that repeat its summary. */
@@ -147,7 +138,7 @@ export function jobEvents(job: JobRun): JobEvent[] {
   }).map(localWaitingEvent) as JobEvent[];
 }
 
-/** A waiting event (issue 0107) says when it continues in the reader's time, as of when it was written. */
+/** A waiting event says when it continues in the reader's time, as of when it was written. */
 function localWaitingEvent(event: Record<string, unknown>): Record<string, unknown> {
   const data = isRecord(event.data) ? event.data : null;
   if (!data || data.stage !== 'waiting' || typeof data.host !== 'string' || typeof data.waiting_until !== 'string') return event;

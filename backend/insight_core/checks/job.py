@@ -1,16 +1,12 @@
-"""The story job on a scratch copy, on the copy's clock (issue 0075 C: each version's code over its own
-copy). Never on a copy that matters: realdata-check.sh gives it a scratch database only.
+"""The story job on a scratch copy, on the copy's clock (each version's code over its own copy). Never on a copy that
+matters: realdata-check.sh gives it a scratch database only (`scratch_only`).
 
     python -m insight_core.checks.job --db <scratch dsn> [--now ISO] [--deploy-json out]
 
-Prints the job's summary as one JSON line. Runs in this process (not in_own_process): the check's
-container ends with it.
-
-With `--deploy-json`, first what a deploy's first start runs (issue 0110): the incremental job over the copy
-as stored, step by step to the end; a copy whose rows are of other rules than this code's runs the rule
-change's rebuild (keys, threads, names, then every post in batches), as the server did after v9.17. Then the
-full job, and the rows the deploy's start left unlike it: `story.deploy_start` (1 when it raised),
-`story.deploy_identity`, `story.deploy_lost` and `story.dangling`, read by the report with the other invariants."""
+Prints the job's summary as one JSON line. Runs in this process: the check's container ends with it. With
+`--deploy-json`, first what a deploy's first start runs (the incremental job over the copy as stored, a rule change's
+rebuild included), then the full job, and the rows the deploy's start left unlike it: `story.deploy_start` (1 when it
+raised), `story.deploy_identity`, `story.deploy_lost` and `story.dangling`, read by the report with the invariants."""
 from __future__ import annotations
 
 import argparse
@@ -57,8 +53,7 @@ def run_deploy_start(db_url: str, now: datetime) -> Dict[str, Any]:
     clock = lambda: now   # noqa: E731
     with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
         stored = (SystemSettingsRepository.get(cur, SETTINGS_KEY) or ({}, None))[0] or {}
-    # 0216: the redo the stamp's parts say is due; a version from before them compares its one stamp (the checks run
-    # on any version)
+    # the redo the stamp's parts say is due; an older version compares its one stamp (the checks run on any version)
     due = getattr(stories_service, "rebuild_due", None)
     change = due(stored) if due else stored.get("rules") != stories_service.rules_stamp()
     out: Dict[str, Any] = {"rules_change": change, "rebuild_before": stored.get("rebuild")}

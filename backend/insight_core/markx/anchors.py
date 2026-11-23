@@ -1,37 +1,20 @@
-"""Anchors (issue 0180, 0166 step 3): what a follow-up attaches to, and the follow-ups Pairing's `develops` relation
-finds for it. Back in the news (back.py) was a trigger over Mark IX stories with private gates; here one module
-reads every anchor the same way and asks Pairing which later posts develop it. (Its Later half, later_find and the
-mx_later rows, was dropped with Later developments in v10.18, 0203.)
+"""Anchors: what a follow-up attaches to, and the follow-ups Pairing's `develops` relation finds for it, read the same
+way for every anchor.
 
-An **Anchor** is
-  - `kind`: `ix_story` (a Mark IX story), `mx_story` (a Mark X story: its current members, not merged away) or
-    `happening` (posts of one happening no story holds: their stored keys one happening within the develops row's
-    first gap, so a later post of it is a follow-up, not a member);
-  - `id`: the story's id, or the happening's earliest post;
-  - `members` (back._P, oldest first), `at` / `last` (its first and last post), `voices` (its distinct sources, a
-    saved post none: Pairing's voice rule);
-  - `happenings`: {member: its happening key} read from mx_happenings through happening.stored (the event-type
-    seam's groups), only the groups the develops row pairs (deal, legal);
-  - `subject`: its main subject when it has one specific entity (later.mains: 0163's rule), else None;
-  - `pages`: its own pages by Pairing's page key (members' addresses, pages 2+ members link, the origin).
+An **Anchor**: `kind` (`ix_story`, `mx_story`, or `happening`: posts of one happening no story holds), `id`, `members`
+(back._P, oldest first), `at` / `last`, `voices`, `happenings` ({member: its stored happening key}, the develops
+groups only), `subject` (its one specific main subject, else None) and `pages` (by Pairing's page key).
 
-The interface:
-  - `of(cur, kinds=KINDS, near=None)`: {(kind, id): Anchor}: the story anchors of 2+ voices, the happening anchors of
-    the posts dated in `near` (lo, hi).
-  - `follow_ups(anchors, posts, keys)`: Pairing's `develops` happening gate over them: {(kind, id): [(at, post)]}.
-  - `back_find`: the engine's candidates (nothing written): the anchor's **happening first**
-    (a post whose key develops one of its members' keys: E6's windows, 2+ separate shared parties, no money clash;
-    one source is enough, no quiet rule, no 14/7-day wait: the key replaces them), **its subject second** (later's E
-    and L, back's E, L and V, with their gates now in Pairing's develops row, over Mark X stories too).
-  - `shadow(cur, "back", ...)`: the decision run's part (from back.stage, so inside its savepoint): the anchors
-    engine's rows written beside the old engine's (mx_back, engine 'anchors'),
-    each on its own clock; an error in it is logged and leaves the old engine's rows standing (a concurrent update
-    still defers the stage).
-  - `shown(cur)`: which engine the pages show (mx_settings SHOWN_KEY: 'old' by default, 'anchors').
-  - `compare(cur, "back")`: the rows only the old engine has, only the anchors engine has, and both.
+  - `of(cur, kinds=KINDS, near=None)`: {(kind, id): Anchor}: story anchors of 2+ voices, happening anchors of the
+    posts dated in `near`.
+  - `follow_ups(anchors, posts, keys)`: Pairing's `develops` happening gate: {(kind, id): [(at, post)]}.
+  - `back_find`: the engine's candidates (nothing written): the anchor's happening first, its subject second.
+  - `shadow(cur, "back", ...)`: the decision run's part (inside back.stage's savepoint): this engine's rows written
+    beside the old engine's (mx_back, engine 'anchors'); an error is logged and leaves the old rows standing.
+  - `shown(cur)`: which engine the pages show; `compare(cur, "back")`: the rows only one engine has, and both.
 
-One post, one anchor per happening (or subject): when a Mark IX story, a Mark X story and a happening anchor all hold
-the post's happening, the Mark IX story's row stands (RANK), so the two engines compare on the same anchors.
+One post, one anchor per happening (or subject): the first by RANK holds it, so the two engines compare on the same
+anchors.
 """
 from __future__ import annotations
 
@@ -52,8 +35,8 @@ KINDS = (IX, MX, HAPPENING)
 RANK = {IX: 0, MX: 1, HAPPENING: 2}       # one post's row goes to the first of these that holds its match
 OLD, ENGINE = back.ENGINE, "anchors"
 SHOWN_KEY = "anchors_shown"               # mx_settings: which engine the pages show ('old' by default)
-# mx_settings: the anchors engine runs beside the old one. Off by default since v10.17 (0190): 0180 measured it at 20%
-# against an 85% bar, and it cost 0.8-3.9 s a stage call; the owner turns it on with this key (true).
+# mx_settings: the anchors engine runs beside the old one. Off by default: it measured far under its bar and cost
+# seconds a stage call (0190); the owner turns it on with this key (true).
 SHADOW_KEY = "anchors_shadow"
 BACK_SINCE_KEY = "back_anchors_since"
 POL = back.DEVELOPS
@@ -138,9 +121,8 @@ def _stories(cur: Any, kinds: Sequence[str]) -> List[Anchor]:
 
 def _happening_anchors(cur: Any, near: Tuple[datetime, datetime], stories: Sequence[Anchor]) -> List[Anchor]:
     """The happening anchors of the posts dated in `near` whose stored key is of a develops group and no story anchor
-    holds (`held`): their keys one happening (happening.same) within the group's same-story window (Pairing's
-    same_story row: deal 30 days, legal 7), chained. A later post of the happening may be a member and a follow-up
-    of its earlier members at once (`follow_ups`)."""
+    holds (`held`): their keys one happening (happening.same) within the group's same-story window, chained. A later
+    post of the happening may be a member and a follow-up of its earlier members at once (`follow_ups`)."""
     from insight_core.markx import happening
     from insight_core.utils.post_links import source_kind
     groups = list(POL.develops_groups)
@@ -215,11 +197,10 @@ def of(cur: Any, *, kinds: Sequence[str] = KINDS, near: Optional[Tuple[datetime,
 def follow_ups(anchors: Mapping[Tuple[str, str], Anchor], posts: Iterable[Any], keys: Mapping[str, Any]
                ) -> Dict[Tuple[str, str], List[Tuple[datetime, str, List[str]]]]:
     """{anchor: [(date, post, the members it follows up)], sorted} of the posts (back._P, voices) whose happening key
-    (`keys`) develops one of the anchor's members' keys (pairing.develops: the gap from that member within the
-    group's window, from its first gap on). A story anchor: never one of its members, and from the first gap after
-    its last post (its own coverage is no follow-up). A happening anchor: its members dated a first gap or more
-    before the post (a post of it may follow up its earlier posts: the story is the happening as it stood then).
-    Then one anchor per post and happening: the first by RANK, then the latest last post, then the id."""
+    (`keys`) develops one of the anchor's members' keys (pairing.develops, from the group's first gap on). A story
+    anchor: never one of its members, and from the first gap after its last post. A happening anchor: its members dated
+    a first gap or more before the post. Then one anchor per post and happening: the first by RANK, then the latest last
+    post, then the id."""
     index: Dict[Tuple[str, FrozenSet[str]], Set[Tuple[str, str]]] = defaultdict(set)
     for a in anchors.values():
         for k in a.happenings.values():
@@ -265,7 +246,7 @@ def _wholes(cur: Any, posts: Sequence[Any]) -> List[Any]:
     never is, until its items are units)."""
     if POL.roundups != pairing.ROUNDUP_WHOLE_EXCLUDED or not posts:
         return list(posts)
-    from insight_core.markx import reading5   # 0212: the preferred reading's kind (ent-v5's first when on)
+    from insight_core.markx import reading5   # the preferred reading's kind (ent-v5's first when on)
     order = reading5.guides(cur, "read-v2")
     cur.execute("""SELECT post_id FROM (SELECT DISTINCT ON (post_id) post_id::text, kind FROM mx_readings
                                     WHERE guide = ANY(%s) AND post_id = ANY(%s::uuid[])
@@ -292,11 +273,10 @@ def _one_anchor(rows: List[Dict[str, Any]], posts_of: Any) -> List[Dict[str, Any
 # ---- the back engine ----------------------------------------------------------------------------------------
 
 def back_find(cur: Any, *, now: datetime, since: datetime) -> List[Dict[str, Any]]:
-    """The anchors engine's back candidates of the posts dated in [since, now]: back's trigger (a burst of 2+ voices
-    in 72 hours) over Mark IX and Mark X stories, its E, L and V and, first, H: posts whose happening develops the
-    story's (from the group's first gap after its last post, not 14 / 7 days). Pages by Pairing's page key. Once a
-    story, again 30 days after its last window when it keeps listening (a specific subject or a happening key) and is
-    still followed. [{anchor_kind, story, members, first_at, last_at, window_at, trig, posts, post_trig}]."""
+    """The anchors engine's back candidates of the posts dated in [since, now]: back's trigger (a burst of 2+ voices in
+    72 hours) over Mark IX and Mark X stories, its E, L and V and, first, H: posts whose happening develops the story's.
+    Once a story, again 30 days after its last window when it keeps listening and is still followed. [{anchor_kind,
+    story, members, first_at, last_at, window_at, trig, posts, post_trig}]."""
     from insight_core.markx import later
     anchors = of(cur, kinds=(IX, MX))
     if not anchors:
@@ -344,9 +324,9 @@ def back_find(cur: Any, *, now: datetime, since: datetime) -> List[Dict[str, Any
 # ---- the decision run's part (Shadow) -----------------------------------------------------------------------------
 
 def shadow(cur: Any, which: str, *, now: datetime, run_id: Any = None, limit: Optional[int] = None) -> Dict[str, Any]:
-    """The anchors engine's back rows ("back"; 0203 dropped "later") written beside the old engine's, on its own clock,
-    in a savepoint: an error is logged and counted (the old engine's rows stand); a concurrent update (serialization
-    failure, deadlock) is raised, so the caller's stage is deferred as before. Its counts."""
+    """The anchors engine's back rows written beside the old engine's, on its own clock, in a savepoint: an error is
+    logged and counted (the old engine's rows stand); a concurrent update (serialization failure, deadlock) is raised,
+    so the caller's stage is deferred. Its counts."""
     from psycopg import errors as psycopg_errors
 
     from insight_core.markx import repo

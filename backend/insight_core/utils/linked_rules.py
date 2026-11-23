@@ -1,36 +1,15 @@
-"""A followed source's own pages, as its stored posts show them (issue 0084 B): which address is a
-post page of which source, and which links of a post point to its own publication.
+"""A followed source's own pages, as its stored posts show them: which address is a post page of which source
+(`OwnPages`), and which links of a post point to its own publication (`own_links`). Pure: the database side is
+db/repo_linked.py.
 
-**Own links.** post_links never keeps a post's links to its own publication (post_links.extract_links,
-issue 0070): a writer citing their own older post is no connection between voices. Those are the
-links a source's own older posts are found by, so `own_links` reads them from the stored HTML the way
-extract_links reads the others (the same hrefs, made absolute and normalized; no media, not the post
-itself). A link in a quarter of a source's posts (4 at least) is its signature (story_rules'
-SIGNATURE_SHARE, SIGNATURE_MIN_POSTS: a subscribe page, a series index), not a post it cites.
-
-**Whose page an address is** (`OwnPages.owner`):
-- *on a platform* (Discover's platforms: X, Telegram, Reddit, YouTube) a post of the account a source
-  follows, its account as 0065 reads it (discover_address) and a post by its shape (a tweet, a
-  Telegram /<channel>/<number>, a Reddit thread): x.com/<user>/status/<id> is the followed <user>'s;
-  youtube.com/watch?v=… names no channel, so no one's;
-- *elsewhere* an address of the same shape as the source's stored posts on the same publication
-  (its host without www.). A shape is the path's segments, each a number (`#`) or a word (`*`), and
-  the query's keys; its first segment stays as written when 2+ of the source's posts there share it
-  (a section: /p/<slug>, /news/<slug>, /blog?id=), so /p/x is a Substack post page and /about,
-  /archive and /p/x/comments are not. Only its posts on the site it publishes on count (a link blog
-  stores posts at the pages it links). A Ghost blog's /<slug>/ is a shape of words only: it holds
-  when half the source's posts there have it (GENERIC_SHARE), and a page named for a kind of page
-  (NOT_POST: about, tag, author, page, subscribe…; by such a shape also post_links.REFERENCE: docs,
-  pricing, product…) is none.
-- On a publication other than the one its address is on, a source's shapes are learned from 2+ of its
-  posts there (CROSS_POST_MIN, issue 0129): one cross-post stored at another writer's newsletter makes
-  none of that writer's pages the source's.
-- One shape on one publication held by two sources (a site's feed and a page watch of it) is the one
-  with more posts there. Hacker News and Saved own nothing (story_rules.NOT_PUBLISHERS).
-- One page at two of a source's publications (its platform's address and its own domain) is one page
-  (`same_page`: its source, path and query), at the address `preferred` puts first.
-
-Pure: the database side is db/repo_linked.py.
+post_links never keeps a post's links to its own publication, but those are how a source's own older posts are
+found, so `own_links` reads them the way extract_links reads the others; a link in SIGNATURE_SHARE of a source's
+posts is its signature, not a citation. On a platform a page is the followed account's post by its shape (a tweet,
+/<channel>/<number>); elsewhere an address of the same shape as the source's stored posts on the same publication
+(path segments as `#` or `*`, the first kept as written when 2+ posts share it: /p/<slug>). A shape of words only
+holds when GENERIC_SHARE of its posts there have it; a page named for a kind of page (NOT_POST) is none. On another
+publication the shapes need CROSS_POST_MIN posts there. One shape held by two sources is the one with more posts;
+one page at two of a source's publications is one page (`same_page`). Hacker News and Saved own nothing.
 """
 from __future__ import annotations
 
@@ -53,15 +32,11 @@ NOT_POST = frozenset({
     "form", "forms",
 })
 
-# A shape of words only (no section, no number) holds a source's pages when half of its posts on that
-# publication have it. On the server's copy (2026-11-05) the blogs at their root have 85-100% of their
-# posts so, and a few stray root pages of a sectioned site 0-2% (a news site's /<product>).
+# A shape of words only (no section, no number) holds a source's pages when half of its posts on that publication
+# have it: root-level blogs have nearly all their posts so, sectioned sites only stray pages (measured: 0084).
 GENERIC_SHARE = 0.5
-# A source's posts on a publication other than the one its address is on that teach its shapes there
-# (issue 0129): one cross-post at another writer's newsletter is no publication of its own. On the
-# server's copy (2026-11-05) it drops 3 pages (one source's, at the writer it cross-posted); without
-# the address's exception it would also drop 2 right ones (a blog with 1 stored post). Counting 2+
-# posts of the shape instead of the publication gave the same pages.
+# A source's posts on a publication other than the one its address is on that teach its shapes there: one
+# cross-post at another writer's newsletter is no publication of its own (measured: plan/issues/0129).
 CROSS_POST_MIN = 2
 
 Shape = Tuple[str, ...]
@@ -166,7 +141,7 @@ class OwnPages:
                 if _loose(shape) and n < GENERIC_SHARE * on_pub[pub]:
                     continue   # a few pages at the site's root (/sora) don't make every root page a post
                 if on_pub[pub] < CROSS_POST_MIN and pub != address_publications.get(source_id):
-                    continue   # one cross-post at another writer's publication teaches nothing (0129)
+                    continue   # one cross-post at another writer's publication teaches nothing
                 held[(pub, shape)][source_id] += n
                 self.posts_on[(source_id, pub)] += n
         self.held = {key: min(counter.items(), key=lambda item: (-item[1], item[0]))[0] for key, counter in held.items()}
@@ -197,7 +172,7 @@ class OwnPages:
     def same_page(self, url: str) -> Optional[Tuple[str, str, str]]:
         """(its source, its path without a trailing slash, its query) of a source's post page, or None:
         one page at two of the source's publications (its platform's address and its own domain) is
-        one page (issue 0129). A platform post is keyed by its address."""
+        one page. A platform post is keyed by its address."""
         found = self.page(url)
         if not found:
             return None

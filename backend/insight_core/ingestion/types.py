@@ -1,7 +1,6 @@
 """Request, outcome and report vocabulary shared by the ingestion module and its callers.
 
-Spec: plan/INSIGHT_mark_ix_plan.md §A.1. Import-light (no DB, no kinds): the report types
-reference save results only by duck type.
+Import-light (no DB, no kinds): the report types reference save results only by duck type.
 """
 from __future__ import annotations
 
@@ -48,7 +47,7 @@ class FetchOutcome:
     fetched: int
     error: str | None
     duration_s: float
-    # A fetch that worked but skipped over half its items says so (issue 0135); never on an error.
+    # a fetch that worked but skipped over half its items says so; never on an error
     warning: str | None = None
 
     @staticmethod
@@ -100,8 +99,8 @@ class FetchRequest:
     limit: Optional[int] = None      # per-source post limit (still floored by profile.min_posts_per_fetch)
 
     def __post_init__(self) -> None:
-        """A limit is a whole number from 1 to MAX_FETCH_LIMIT (issue 0187: a fetch is not an archive; a request
-        asking a million posts per source ran a million-post fetch). ValueError otherwise (the API's 400)."""
+        """A limit is a whole number from 1 to MAX_FETCH_LIMIT (a fetch is not an archive). ValueError otherwise
+        (the API's 400)."""
         if self.limit is not None and (isinstance(self.limit, bool) or not isinstance(self.limit, int)
                                        or not 1 <= self.limit <= MAX_FETCH_LIMIT):
             raise ValueError(f"limit must be a whole number from 1 to {MAX_FETCH_LIMIT}")
@@ -153,7 +152,7 @@ class RunReport:
 
     @property
     def job_status(self) -> str:
-        """The job_runs status: a run with any failure is a failed job (Mark VIII semantics)."""
+        """The job_runs status: a run with any failure is a failed job."""
         return "success" if self.status in ("success", "nothing_due", "skipped_busy") else "failed"
 
     def summary_line(self) -> str:

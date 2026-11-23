@@ -1,4 +1,4 @@
-// Discover's "main source missing" lines (issue 0170): what each row says, from the server's row. Pure.
+// Discover's "main source missing" lines: what each row says, from the server's row. Pure.
 import type { MainSourceEvent, MainSourceRow, MainSourceTest } from '../services/api';
 import { formatCount, plural } from './format.ts';
 import { FOLLOW_LABELS } from './discover.ts';

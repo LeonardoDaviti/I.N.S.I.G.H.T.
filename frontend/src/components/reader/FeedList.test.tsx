@@ -4,8 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes, useLocation } from 'react-router-dom';
 
 import FeedList from './FeedList';
-// The feed's dialogs are lazy chunks (the reader's JS budget). Imported with the file, they
-// open in the same turn instead of racing findBy against their first transform.
+// the feed's dialogs are lazy chunks: imported here so they open in the same turn instead of racing findBy
 import './ShortcutHelp';
 import '../ops/ConfirmDialog';
 import { LiveRegionProvider } from './LiveRegion';
@@ -73,7 +72,7 @@ describe('FeedList', () => {
     });
     const [fresh, oldOne] = await screen.findAllByRole('article');
     const clock = (date: Date) => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
-    // The time column, and below `sm` the meta line, which takes the column's place (issue 0073).
+    // the time column, and below `sm` the meta line, which takes the column's place (0073)
     const [column, meta] = within(fresh).getAllByText(clock(new Date(iso(2))));
     expect(column).toHaveClass('max-sm:hidden');
     expect(meta).toHaveClass('sm:hidden');
@@ -81,8 +80,7 @@ describe('FeedList', () => {
     const shortDate = old.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     expect(within(oldOne).queryByText(shortDate)).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+[hd] ago/)).not.toBeInTheDocument();
-    // The day headers are drawn for the eye only: the ARIA feed owns articles, and
-    // each row reads its day out with its time.
+    // the day headers are for the eye only: the ARIA feed owns articles, each row reads its day out with its time
     const headers = Array.from(document.querySelectorAll('[data-day-header]'));
     expect(headers).toHaveLength(2);
     expect(headers[1]).toHaveTextContent(shortDate);
@@ -141,7 +139,7 @@ describe('FeedList', () => {
     expect(within(hn).getByRole('button', { name: 'Mark read' }).parentElement).toHaveClass('max-sm:col-start-2', 'max-sm:row-span-2');
     const lines = (row: HTMLElement) => Array.from(row.querySelector('h3 + p')!.children)
       .filter((child) => !child.classList.contains('sr-only')).map((line) => line.textContent);
-    // Source · time · length; then the counts with the length and its bar; then the note. A line never starts on a dot.
+    // source · time · length; then the counts with the length and its bar; then the note; never a line starting on a dot
     expect(lines(hn)).toEqual([expect.stringMatching(/^Hacker News·Today, \d\d:\d\d$/), '·1,675 points · 1,628 comments·4 min read·40% read', '·published Sep 14 ’25']);
     const dots = hn.querySelectorAll('h3 + p [aria-hidden="true"]');
     expect(Array.from(dots).filter((dot) => dot.textContent === '·').map((dot) => dot.classList.contains('max-sm:hidden')))
@@ -218,7 +216,6 @@ describe('FeedList', () => {
     const labels = (row: HTMLElement) => within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'));
     expect(labels(rows[0])).toEqual(['Mark read', 'Read later']);
     expect(labels(rows[1])).toEqual(['Mark unread', 'Keep']);
-    // A save already on keeps its button, so it can be undone by hand.
     expect(labels(rows[2])).toEqual(['Mark unread', 'Read later', 'Keep']);
     expect(labels(rows[3])).toEqual(['Mark read', 'Read later', 'Keep']);
     expect(within(rows[2]).getByText('In Later')).toBeInTheDocument();
@@ -495,14 +492,14 @@ describe('FeedList', () => {
         byline: { author: '@oddlogic_games', via: 'toolsmith_pete', quoting: null } }),
     ])) });
     const toggle = await screen.findByRole('button', { name: 'Thread · 3 posts' });
-    // On a phone a story's line may take two lines, so the names show (issue 0073).
+    // on a phone a story's line may take two lines, so the names show (0073)
     expect(within(toggle).getByText('Thread · 3 posts')).toHaveClass('truncate', 'max-sm:line-clamp-2', 'max-sm:whitespace-normal');
     await user.click(toggle);
     const list = document.querySelector('[data-story-posts]') as HTMLElement;
     expect(within(list).getAllByRole('listitem').map((li) => `${li.dataset.depth} ${li.textContent?.split('·')[1]}`))
       .toEqual([expect.stringMatching(/^0 pretty joyless now/), expect.stringMatching(/^0 there will remain/)]);
     const [, repost] = screen.getAllByRole('article');
-    // The source once (issue 0070), the repost's line beside it from `sm` up, under it on a phone (issue 0073).
+    // the source once, the repost's line beside it from `sm` up, under it on a phone (0070, 0073)
     expect(repost.textContent?.match(/toolsmith_pete/g)).toHaveLength(1);
     expect(within(repost).getByText('↻ from @oddlogic_games')).toHaveClass('sm:order-1');
     expect(within(repost).getByText('4 min read').parentElement).toHaveClass('sm:order-2');

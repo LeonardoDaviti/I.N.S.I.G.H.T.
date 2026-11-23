@@ -1,22 +1,7 @@
-"""Mark X News (issue 0086 E): Mark IX's own News code over Mark X's stories, into mx_news, each row tagged against
-Mark IX's News; the day's briefing; and what the Mark X page reads.
-
-**The rows** are made by `NewsService.rows` (the code Mark IX's story job writes news_stories with: the stories
-begun in the last 30 days and the posts of no story, joined by the surging names) over Mark X's current stories,
-with Mark IX's stored surges (news_surges, read only). Each row has Mark IX's shape (first post id, first_at,
-voices, reports, shares, mentions, score) and its posts as news_posts rows (role, voice, name, position) plus the
-Mark X story each came from. A run writes its rows only when they differ from the last rows written (keep
-everything, without a copy an hour), so the page reads the newest run that wrote rows.
-
-**The tags**, against Mark IX's current News rows (news_posts):
-  - NEW: no post of the row is in a Mark IX row (a story that only gained an earlier post is CHANGED, not new);
-  - MERGED: its posts are in two or more Mark IX rows;
-  - SPLIT: its Mark IX row's posts are in two or more Mark X rows;
-  - CHANGED: one Mark IX row, other posts;
-  - SAME.
-
-Only mx_* tables are written. Mark IX's are read, and its post_parts are never parsed here: a post with no parts
-is left out of the rows rather than parsed (Mark IX's own job parses it, then the next run counts it).
+"""Mark X News: Mark IX's News code (`NewsService.rows`) over Mark X's stories into mx_news, each row tagged against
+Mark IX's News (NEW, MERGED, SPLIT, CHANGED, SAME: `tag`); the day's briefing; and what the News page reads (`page`,
+kept by `page_inputs`). A run writes its rows only when they differ from the last rows written. Only mx_* tables are
+written; a post with no post_parts is left out rather than parsed here.
 """
 from __future__ import annotations
 
@@ -28,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from insight_core.markx import pairing
 from insight_core.utils import voice
 
-HAIKU_PER_MILLION = (0.10, 0.50)     # 0086 H: Haiku 5.5, $ per million tokens in and out (what the API would cost)
+HAIKU_PER_MILLION = (0.10, 0.50)     # Haiku $ per million tokens in and out
 
 
 # ---- writing -------------------------------------------------------------------------------------------
@@ -59,8 +44,7 @@ def tag(posts: Sequence[str], x_of: Dict[str, str], row_id: str, ix_of: Dict[str
 
 
 def _story_posts(cur: Any, ids: Iterable[str], sources: Any = None) -> Dict[str, Any]:
-    """Mark IX's StoryPosts of the posts that have their parts (none is parsed here). `sources`: the SourceFacts read
-    this run, else read here."""
+    """Mark IX's StoryPosts of the posts that have their parts (none is parsed here)."""
     from insight_core.db.repo_stories import SourceFacts, StoriesRepository
     from insight_core.services.stories_service import StoriesService
     cur.execute("SELECT post_id::text FROM post_parts WHERE post_id = ANY(%s::uuid[])", (sorted(set(ids)),))
@@ -74,8 +58,7 @@ def _story_posts(cur: Any, ids: Iterable[str], sources: Any = None) -> Dict[str,
 
 
 def reports(cur: Any, ids: Iterable[str]) -> Dict[str, bool]:
-    """v10.39: {post: whether its preferred reading (reading5.rank_sql, as the post panel picks it) says it reports an
-    event: kind report, of no leak or rumour type} of the posts read (StoryPost.report: what leads a row)."""
+    """{post: whether its preferred reading says it reports an event (kind report, not a leak)}: what leads a row."""
     from insight_core.markx import event_types, reading5
     ids = sorted({str(p) for p in ids if p})
     if not ids:
@@ -87,13 +70,9 @@ def reports(cur: Any, ids: Iterable[str]) -> Dict[str, bool]:
     return {pid: kind == "report" and kind_type != event_types.LEAK for pid, kind, kind_type in cur.fetchall()}
 
 
-# ---- 0177: what each post's StoryPost is made of, kept by the run's state ------------------------------------------
-# A post's StoryPost (StoriesService._story_post over StoriesRepository.load_posts) reads its posts row, its parts, its
-# kept links and the stored post each link resolves to (the first at that address), and its source's facts. News was
-# made in full whenever ingestion touched Mark IX's tables (on the server: almost every run). The run's state now
-# keeps, for every post News reads, a digest of its text stamp (plan_marks.STAMP: its row, parts and links rows) and
-# of its links' resolution; the facts as a StoryPost reads them; and Mark IX's surges. The posts whose digest changed,
-# and those of a surge that changed, seed the rows made again (with `_changed_rows`' closure); other facts: in full.
+# ---- what each post's StoryPost is made of, kept by the run's state (0177) -----------------------------------------
+# Per post a digest of its text stamp and its links' resolution, plus the source facts and the surges: the posts whose
+# digest or surge changed seed the rows made again (`_changed_rows`); changed source facts: a full pass.
 
 def facts_digest(sources: Any) -> str:
     """The source facts as a StoryPost reads them (kind, publication, home site, account; accounts; owners)."""
@@ -116,7 +95,7 @@ def post_digests(cur: Any, memo: Any, ids: Iterable[str]) -> Dict[str, str]:
                                                            ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
                     WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[]) GROUP BY pl.post_id""", (ids,))
     links = dict(cur.fetchall())
-    said = reports(cur, ids)   # v10.39: a reading that comes or changes may change a row's lead
+    said = reports(cur, ids)   # a reading that comes or changes may change a row's lead
     return {i: hashlib.sha1(f"{stamps[i]}\x1f{links.get(i, '')}\x1f{said.get(i)}".encode()).hexdigest()[:16]
             for i in ids if i in stamps}
 
@@ -138,17 +117,15 @@ def changed_posts(last: Dict[str, Any], now: Dict[str, Any]) -> Set[str]:
 
 def window_posts(cur: Any, since: datetime) -> Set[str]:
     """The posts News reads for the window starting at `since`: from NEWS_EDGE before it, as Mark IX's code does
-    (issue 0111: a row is in the window by its first post, so a row an earlier post begins is no row of it).
-    Reading from `since` only, Mark X's row began inside where Mark IX's didn't, and was tagged NEW with no answer
-    (0124, the v10.0.2 review's W5)."""
+    (a row is in the window by its first post, so a row an earlier post begins is no row of it; 0111, 0124)."""
     from insight_core.utils.news_rules import NEWS_EDGE
     cur.execute(f"SELECT id::text FROM posts WHERE {pairing.ix_date('')} >= %s", (since - NEWS_EDGE,))
     return {r[0] for r in cur.fetchall()}
 
 
 def release_keys(joins: Iterable[Sequence[str]], stories: Iterable[str]) -> Dict[str, str]:
-    """0236: {story: its one-release group's key (the group's lowest story id)} for the stories of `stories` in a
-    group with another of them. Pure."""
+    """{story: its one-release group's key (the group's lowest story id)} for the stories in a group with another of
+    `stories`. Pure."""
     have = set(stories)
     out: Dict[str, str] = {}
     for g in joins:
@@ -161,11 +138,9 @@ def release_keys(joins: Iterable[Sequence[str]], stories: Iterable[str]) -> Dict
 
 def _window_stories(stories: Dict[str, Tuple[List[str], Set[str]]], sp: Dict[str, Any],
                     joins: Iterable[Sequence[str]], since: datetime) -> Set[str]:
-    """v10.39: the stories a one-release group joins in the window starting at `since`: each by its own start (a row
-    is in the window by its first post, 0111, and so is each stage of a release). A group's story begun before
-    `since` is left out of the group, its own row of an earlier window: the group's row, begun by it, was no row of
-    this window, and its launch went with it (Gemini 4 Carbon: an arena leak 31 days old took the launch 25 days old
-    and its 17 posts out of News; Mistral Large 4's open-weight release of 10-29 went with its 10-06 launch)."""
+    """The stories a one-release group joins in the window starting at `since`, each by its own start: a group's
+    story begun before `since` stays out of the group, else it would carry the group's row (and its launch) out of
+    the window."""
     grouped = {str(s) for g in joins for s in g} & set(stories)
     out = set(stories) - grouped
     for sid in grouped:
@@ -176,9 +151,8 @@ def _window_stories(stories: Dict[str, Tuple[List[str], Set[str]]], sp: Dict[str
 
 
 def _own_start(members: Iterable[str], sp: Dict[str, Any]) -> Optional[datetime]:
-    """A story's own start (story_rules.story_start over its own posts' times), whatever group it is in: the date the
-    window reads it by (`_window_stories`) and the run keeps as its `first` (0116: a story whose start crossed the
-    window's start is made again, its group with it)."""
+    """A story's own start over its own posts, whatever group it is in: what the window reads it by and the run keeps
+    as its `first`."""
     from insight_core.utils.story_rules import story_start, story_times
     ps = [sp[p] for p in members if p in sp]
     return story_start(ps, story_times(ps)) if ps else None
@@ -188,13 +162,11 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
             only: Optional[Set[str]] = None, window: Optional[Set[str]] = None,
             first: Optional[Dict[str, Any]] = None, memo: Any = None, sources: Any = None,
             joins: Optional[Sequence[Sequence[str]]] = None) -> List[Dict[str, Any]]:
-    """Mark IX's News code over Mark X's stories ({Mark X story id: (members, mentions)}) and the posts of no Mark X
-    story posted since `since` (as `NewsService.refresh` reads Mark IX's): the rows, each with its posts as news_posts
-    rows and the Mark X story of each. With `only` (0116), the rows of those posts only: the caller passes every
-    story touching them, and a set closed under rows, stories, mentions and surges. `first` gets each story's
-    first_at. `joins` (0236, the one-release row: graph.release_groups, read here when None): each group's stories
-    are one story to News's code (its posts in date order, the lowest id its key), each post still naming its own; a
-    group's story begun before `since` is no story of the group (`_window_stories`, v10.39)."""
+    """Mark IX's News code over Mark X's stories ({story id: (members, mentions)}) and the window's posts of no story:
+    the rows, each with its posts as news_posts rows and the Mark X story of each. `only`: the rows of those posts
+    only (a set closed under rows, stories, mentions and surges). `first` gets each story's own start. `joins`
+    (graph.release_groups, read when None): each group's stories are one story to News's code, keyed by the lowest
+    id, each post still naming its own."""
     from insight_core.services.news_service import NewsService
     from insight_core.utils.story_rules import Story, lead_order, story_start, story_times
     in_story = {p for ms, _ in stories.values() for p in ms}
@@ -224,7 +196,7 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
         if not ps or (len(ps) < 2 and not key.startswith("one:")):
             continue
         times = story_times(ps)
-        ps = lead_order(ps, times)    # 0263, v10.39: never led by a background page nor a non-report; its start the earliest
+        ps = lead_order(ps, times)    # never led by a background page nor a non-report (0263)
         start = story_start(ps, times)
         built.append(Story(id=key, first_at=start, posts=ps, voices=0, roles={}, reasons={},
                            mentions=mentions - seen))
@@ -242,9 +214,9 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
                     story_of.setdefault(p, sid)
     from insight_core.markx import incremental
     found = incremental.surges(cur, memo)
-    from insight_core.markx import built as mx_built   # 0203: the judge's story connections guard two large stories
-    # a joined story's connections are its group's (a pair inside one group is no pair)
-    # v10.40: and the chain's one-happening edges (graph.chain_connected): two stories join by a name only when judged
+    from insight_core.markx import built as mx_built
+    # two stories join by a surging name only when judged connected (the judge's or the chain's one-happening edges);
+    # a pair inside one release group is no pair
     from insight_core.markx import graph
     judged = {frozenset(key_of.get(s, s) for s in pair)
               for pair in mx_built._connected(cur, stored) | graph.chain_connected(cur, stored)}
@@ -266,9 +238,7 @@ def _signature(rows: Iterable[Dict[str, Any]]) -> Set[str]:
 
 
 def last_written(cur: Any) -> Optional[str]:
-    """The newest run that wrote News rows. 0198: the runs newest first, each asked whether it has a row (by
-    mx_news' (run_id, first_at) index), not every row of every run grouped (keep everything: ~100k rows on the server,
-    read on every page load and every look of the jobs runner)."""
+    """The newest run that wrote News rows (an EXISTS per run on mx_news' index, not a group-by over all rows: 0198)."""
     cur.execute("""SELECT r.id::text FROM mx_runs r WHERE EXISTS (SELECT 1 FROM mx_news n WHERE n.run_id = r.id)
                     ORDER BY r.started_at DESC, r.finished_at DESC NULLS LAST LIMIT 1""")
     row = cur.fetchone()
@@ -279,14 +249,13 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
                   last: Dict[str, Any], window: Set[str], memo: Any = None, extra: Iterable[str] = (),
                   sources: Any = None, joins: Sequence[Sequence[str]] = ()
                   ) -> Tuple[List[Dict[str, Any]], Set[str], Dict[str, Any]]:
-    """0116: the last run's rows, with only those its changed stories reach made again (as Mark IX's incremental News,
-    0072 A). The seeds: the posts of every story whose members or mentions changed (now and before), the posts that
-    came into or left the window, the stories whose start left it, and (0236) the stories of a one-release group
-    that came or went. The group: the seeds with every row, story (members and mentions), one-release group (now and
-    before) and surge holding one of them, until nothing joins. Returns (rows, the group, firsts)."""
+    """The last run's rows, with only those its changed stories reach made again. Seeds: the posts of changed stories
+    (now and before), posts that entered or left the window, stories whose start left it, release groups that came
+    or went; closed over rows, stories, release groups and surges. Must agree with a full pass.
+    Returns (rows, the group, firsts)."""
     from insight_core.markx import incremental
     stories = {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()}
-    seeds: Set[str] = set(window ^ last["window"]) | set(extra)   # 0177: `extra`, the posts whose StoryPost changed
+    seeds: Set[str] = set(window ^ last["window"]) | set(extra)   # `extra`: the posts whose StoryPost changed
     now_joins = {tuple(sorted(g)) for g in joins}
     was_joins = {tuple(sorted(g)) for g in last.get("joins") or ()}
     partners: Dict[str, Set[str]] = defaultdict(set)
@@ -345,8 +314,8 @@ def _changed_rows(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], sinc
 
 
 def main_story(row: Dict[str, Any]) -> Optional[str]:
-    """The row's Mark X story holding most of its voices, then most of its posts, then the first (0121 Decided 2);
-    None when none of its posts is in a Mark X story (posts joined by a surging name)."""
+    """The row's Mark X story holding most of its voices, then most posts, then the first; None when no post is in a
+    story."""
     seen: Dict[str, List[Any]] = {}
     for n, p in enumerate(row.get("posts") or []):
         sid = p.get("story")
@@ -360,8 +329,7 @@ def main_story(row: Dict[str, Any]) -> Optional[str]:
 
 
 def row_headline_input(row: Dict[str, Any], posts: Dict[str, Any]) -> Optional[str]:
-    """A row's own headline question (0121 Decided 2), from its posts as the headline guide reads a story's members
-    (tasks.headline_input: its core members, earliest first). The page finds the answer again by this input."""
+    """A row's own headline question (tasks.headline_input over its posts); the page finds the answer by this input."""
     from insight_core.markx import tasks
     ps = [posts[p["post_id"]] for p in row.get("posts") or [] if p["post_id"] in posts]
     return tasks.headline_input(ps) if ps else None
@@ -378,11 +346,9 @@ def _row_posts(cur: Any, rows: Sequence[Dict[str, Any]], known: Optional[Dict[st
 
 def ask_row_headlines(cur: Any, rows: Sequence[Dict[str, Any]], ask: Any, *, headed: Set[str],
                       known: Optional[Dict[str, Any]] = None, memo: Any = None) -> Dict[str, int]:
-    """0121 Decided 2: a headline task for every News row whose main story is asked none of its own (`headed`: the
-    Mark X stories of 2+ voices the run asks a headline for), so every row gets one: a row of stories of one voice,
-    or of posts joined by a surging name (14 of the 19 rows the v10.0.1 review saw titled by their lead).
-    {"asked": rows asked, "answered": of them, answered}. With the run's state (`memo`, 0169: `known` its texts),
-    each row's input is kept by its posts' stamps."""
+    """A headline task for every News row whose main story is not in `headed` (the stories the run asks a headline
+    for), so every row gets one. {"asked", "answered"}. With the run's state (`memo`, `known` its texts), each row's
+    input is kept by its posts' stamps."""
     need = [r for r in rows if main_story(r) not in headed]
     if not need:
         return {"asked": 0, "answered": 0}
@@ -402,8 +368,7 @@ def ask_row_headlines(cur: Any, rows: Sequence[Dict[str, Any]], ask: Any, *, hea
 
 def _ask_row_headlines_kept(cur: Any, need: Sequence[Dict[str, Any]], ask: Any, memo: Any, texts: Any
                             ) -> Dict[str, int]:
-    """ask_row_headlines' questions, each input kept by its posts' stamps (incremental.rendered): a row's posts that
-    exist, in its order, as row_headline_input reads them."""
+    """ask_row_headlines' questions, each input kept by its posts' stamps (incremental.rendered)."""
     from insight_core.markx import incremental, tasks
     stamps = incremental.stamps_of(cur, memo, {p["post_id"] for r in need for p in r.get("posts") or []})
     asked = answered = 0
@@ -422,9 +387,8 @@ def _ask_row_headlines_kept(cur: Any, need: Sequence[Dict[str, Any]], ask: Any, 
 def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, now: datetime,
           store: bool = True, ask: Any = None, headed: Optional[Set[str]] = None) -> Dict[str, Any]:
     """A run's Mark X News: the rows, tagged, written when they differ from the last rows written. With the run's
-    memo (0116: `world.memo`, Mark IX's News inputs unchanged since the last run), only the rows its changed stories
-    reach are made again. `store` False: nothing is written, the rows are returned (the incremental check). With
-    `ask`, every row whose main story is not in `headed` is asked a headline of its own (0121 Decided 2)."""
+    memo (`world.memo`), only the rows its changed stories reach are made again. `store` False: nothing is written,
+    the rows are returned. With `ask`, rows whose main story is not in `headed` are asked a headline of their own."""
     import copy
     from insight_core.markx import incremental, repo
     from insight_core.utils.news_rules import NEWS_KEEP
@@ -437,19 +401,19 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
         mentions = {p for k, ms in out.mentions.items() if out.final.get(k, k) == key for p in ms}
         mentions |= {p for k, ms in world.ix_mentions.items() if out.final.get(k, k) == key for p in ms}
         stories[ids[key]] = (members, mentions - set(members))
-    for key in sorted(out.ix):   # a Mark IX story of one post Mark X left alone: its roundups still count (no Mark X story)
+    for key in sorted(out.ix):   # a one-post Mark IX story Mark X left alone: its roundups still count
         ms = [p for p in out.about.get(key, {}) if p in world.posts]
         if len(ms) == 1 and world.ix_mentions.get(key):
             stories[f"one:{key}"] = (ms, set(world.ix_mentions[key]) - set(ms))
     memo = getattr(world, "memo", None)
     window = window_posts(cur, since)
-    from insight_core.markx import graph   # 0236: the one-release groups ([] while chains.one_row is off)
+    from insight_core.markx import graph   # the one-release groups ([] while chains.one_row is off)
     joins = graph.release_groups(cur, [sid for sid in stories if not sid.startswith(("one:", "new:"))])
     how, group = "full", None
     first: Dict[str, Any] = {}
     sources = inputs = last_inputs = None
-    state = isinstance(memo, incremental.State)   # 0169's kept state (an older run's in-process memo has no stamps)
-    if state:   # 0177: what the StoryPosts are made of (the state keeps it; the next run compares)
+    state = isinstance(memo, incremental.State)   # the kept state (an in-process memo has no stamps)
+    if state:   # what the StoryPosts are made of, for the next run to compare
         from insight_core.db.repo_stories import SourceFacts
         sources = SourceFacts(cur)
         universe = window | {p for ms, _ in stories.values() for p in ms}
@@ -457,13 +421,12 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
                   "surges": surge_keys(incremental.surges(cur, memo))}
         last_inputs = (memo.news or {}).get("inputs")
     if state and memo.news is not None and last_inputs is not None and last_inputs["facts"] == inputs["facts"]:
-        # 0177: Mark IX's tables changed or not (ingestion: almost every run), the posts whose StoryPost changed seed it
         rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo,
                                            extra=changed_posts(last_inputs, inputs), sources=sources, joins=joins)
         how = "incremental"
     elif (not state and memo is not None and memo.news is not None
           and not set(memo.report.get("ix_changed") or ()) & set(incremental.NEWS_TABLES)):
-        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo, joins=joins)   # 0116: in-process
+        rows, group, first = _changed_rows(cur, stories, since, memo.news, window, memo, joins=joins)   # in-process memo
         how = "incremental"
     else:
         rows = rows_of(cur, stories, since, window=window, first=first, memo=memo, sources=sources, joins=joins)
@@ -475,7 +438,7 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
     if memo is not None:
         memo.news = {"since": since, "window": window, "first": first, "rows": copy.deepcopy(rows),
                      "stories": {sid: (frozenset(ms), frozenset(mentions)) for sid, (ms, mentions) in stories.items()},
-                     "inputs": inputs, "code": incremental.news_stamp(),   # 0215: the code that made them
+                     "inputs": inputs, "code": incremental.news_stamp(),   # the code that made them
                      "joins": [list(g) for g in joins]}
     made = {"made": how, **({"group": len(group)} if group is not None else {})}
     if ask is not None:
@@ -492,9 +455,8 @@ def write(cur: Any, run_id: Any, *, out: Any, ids: Dict[str, str], world: Any, n
 
 
 def briefing(cur: Any, *, ask: Any, now: datetime, hour: int, limit: int) -> Dict[str, Any]:
-    """The day's briefing (F12), after `hour` server time: asked from the day's top Mark X News rows (most voices, then
-    score), keyed s1..sN; stored with each line's Mark X stories once answered. The same rows ask the same question,
-    so an answer's keys always name the stories it was asked about."""
+    """The day's briefing, after `hour` server time: asked from the day's top News rows (most voices, then score), keyed
+    s1..sN; stored with each line's stories once answered. The same rows ask the same question."""
     from insight_core.markx import repo, tasks
     local = now.astimezone()
     if local.hour < hour:
@@ -529,8 +491,7 @@ def briefing(cur: Any, *, ask: Any, now: datetime, hour: int, limit: int) -> Dic
 # ---- reading (the Mark X page) -----------------------------------------------------------------------
 
 def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-    """The page's post lines: title (the one every page shows), source, platform, time (published: built.PUBLISHED,
-    0128; a saved page by its own date), and its byline (issue 0185: who wrote it, via whom, quoting whom)."""
+    """The page's post lines: title, source, kind, published time, url and byline."""
     from insight_core.utils import byline
     from insight_core.utils.post_links import source_kind
     ids = sorted(set(ids))
@@ -542,7 +503,7 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
                      WHERE p.id = ANY(%s::uuid[])""", (ids,))
     rows = cur.fetchall()
     owns: Dict[Any, str] = {}
-    sites = byline.site_owners(cur)   # 0265: a maker's page an aggregator carried is the maker's, via the aggregator
+    sites = byline.site_owners(cur)   # a maker's page an aggregator carried is the maker's, via the aggregator
     return {pid: {"id": pid, "title": title or "", "source_id": sid, "source": name or "", "kind": source_kind(platform, handle),
                   "at": at, "url": url, "byline": byline.of_row(name, platform, handle, author, fwd, quoted, owns=owns,
                                                                  url=url, sites=sites)}
@@ -550,19 +511,15 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def launch_order(facts: Dict[str, Dict[str, Any]], weight: Optional[Dict[str, int]] = None) -> List[str]:
-    """0236: the stories a row's headline is taken from, in order, by the owner's rule (a release is named by its
-    launch, never by a leak): those holding the maker's own post, then the others of a news type; a story of leaks
-    never. In each, v10.31.1 (0268): a release first (grouping.RELEASES: the launch is the release itself, never a
-    result the maker announced alongside it, as a research result of the same day), then the story holding most of
-    the row's voices (`weight`: {story: its voices in the row}; main_story's rule), then the newest (its release).
-    `facts`: {story: {maker, type, at}} (`_story_facts`). Pure."""
+    """The stories a row's headline is taken from, in order (a release is named by its launch, never by a leak): those
+    holding the maker's own post, then the others of a news type; leak stories never. In each: a release type first,
+    then most of the row's voices (`weight`), then the newest. `facts`: {story: {maker, type, at}}. Pure."""
     from insight_core.markx import event_types
-    from insight_core.utils.grouping import RELEASES
     floor = datetime.min.replace(tzinfo=timezone.utc)
     weight = weight or {}
 
     def ordered(sids: Iterable[str]) -> List[str]:
-        return sorted(sids, key=lambda s: (facts[s].get("type") in RELEASES, weight.get(s, 0),
+        return sorted(sids, key=lambda s: (facts[s].get("type") in event_types.RELEASES, weight.get(s, 0),
                                            facts[s].get("at") or floor, s), reverse=True)
     makers = [s for s, f in facts.items() if f.get("maker") and f.get("type") != event_types.LEAK]
     news_ = [s for s, f in facts.items() if s not in makers and f.get("type") in event_types.NEWS_TYPES]
@@ -579,8 +536,7 @@ def story_voices(row: Dict[str, Any]) -> Dict[str, int]:
 
 
 def _story_facts(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-    """{story: {maker (its original is the maker's own post), post (that post), type (its event type), at (its
-    release)}} by how the story is built (built.build: read-v3's types, the maker by identity)."""
+    """{story: {maker (its original is the maker's own post), post, type (event type), at (release)}} (built.build)."""
     from insight_core.markx import built
     got = built.build(cur, sorted(set(story_ids)))
     out = {}
@@ -596,11 +552,9 @@ def _row_stories(row: Dict[str, Any]) -> List[str]:
 
 
 def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Each row's headline (0121 Decided 2): its main story's Haiku headline (F4; `main_story`, the story holding most
-    of its voices, not its first post's), else the row's own headline answer (`ask_row_headlines`, found by its
-    input), else its lead's title. 0236: a one-release row (2+ of its stories in one graph.release_groups group) is
-    named by its launch (`launch_order`: the maker's own story, else the newest story of a news type, never a leak
-    story); a lead title that is a leak's, in a row holding the maker's own post, is that post's title instead."""
+    """Each row's headline: its main story's Haiku headline, else the row's own headline answer, else its lead's
+    title. A one-release row is named by its launch (`launch_order`); a leak lead's title, in a row holding the
+    maker's own post, gives way to that post's title."""
     from insight_core.markx import event_types, graph, repo, schemas
     mains = {str(r["id"]): main_story(r) for r in rows}
     groups = graph.release_groups(cur, {s for r in rows for s in _row_stories(r)})
@@ -627,7 +581,6 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
         posts = _row_posts(cur, rest)
         guide = schemas.KINDS["headline"].guide
         texts = {str(r["id"]): row_headline_input(r, posts) for r in rest}
-        # v10.17 (0186): the rows' tasks and answers in two reads, not two a row
         tasks_ = repo.tasks_for(cur, kind="headline", guide=guide, inputs={t for t in texts.values() if t})
         calls = repo.valid_calls(cur, [t["id"] for t in tasks_.values() if t["status"] == "answered"])
         for r in rest:
@@ -638,7 +591,7 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
             if words.strip():
                 own[str(r["id"])] = words.strip()
     untitled = [r for r in rows if not heads.get(mains[str(r["id"])] or "") and not own.get(str(r["id"]))]
-    makers: Dict[str, str] = {}   # 0236: an untitled row led by a leak: the maker's own post in it, if any
+    makers: Dict[str, str] = {}   # an untitled row led by a leak: the maker's own post in it, if any
     if untitled:
         types = event_types.types_of(cur, [str(r["id"]) for r in untitled])
         leaked = [r for r in untitled if types.get(str(r["id"]), (None, None))[0] == event_types.LEAK]
@@ -695,17 +648,16 @@ def _checks(cur: Any, post_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def rank_key(row: Dict[str, Any], now: datetime) -> Tuple[Any, ...]:
-    """News' order by coverage (the page's before 0208, and still `order=coverage`): the last 48 hours first, then the
-    highest score, the newest, the id."""
+    """News' order by coverage: the last 48 hours first, then the highest score, the newest, the id."""
     return (row["first_at"] < now - timedelta(hours=48), -float(row["score"]), -row["first_at"].timestamp(),
             str(row["id"]))
 
 
 def ranked_key(row: Dict[str, Any], rank: Optional[Dict[str, Any]], now: datetime) -> Tuple[Any, ...]:
-    """0208: News ranked for the reader: the Notable lane first, then the last 48 hours, each by its kept rank score
-    (news_rank.keep; a row not ranked yet by its coverage), then `rank_key`'s order."""
+    """News ranked for the reader: the Notable lane first, then the last 48 hours, each by its kept rank score (an
+    unranked row by its coverage), then `rank_key`'s order."""
     from insight_core.markx import news_rank
-    score = rank["score"] if rank else news_rank.combine(None, news_rank.coverage(row["score"]), 0.0)
+    score = rank["score"] if rank else news_rank.combine(None, news_rank.coverage(row["score"]))
     return (not (rank or {}).get("notable"), row["first_at"] < now - timedelta(hours=48), -float(score),
             *rank_key(row, now)[1:])
 
@@ -738,15 +690,15 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
             for p in ix_rows.get(nid, ()) if p not in {q["post_id"] for q in r["posts"]}}
     left |= {p for nid in gone_rows for p in ix_rows[nid]}
     checks = _checks(cur, sorted(left))
-    mention_of: Dict[str, Dict[str, Any]] = {}   # v10.17 (0186): a post's first non-member membership, once (each
-    for (_s, q), w in why.items():               # removed line walked every membership of the page before)
+    mention_of: Dict[str, Dict[str, Any]] = {}   # a post's first non-member membership
+    for (_s, q), w in why.items():
         if w["role"] != "member":
             mention_of.setdefault(q, w)
     heads = headlines(cur, shown)
     ix_titles = {nid: (posts.get(nid) or {}).get("title") for nid in ix_rows}
     from insight_core.markx import labels
     flagged = labels.flags(cur, {(p["post_id"], p.get("story")) for r in shown for p in r["posts"] if p.get("story")})
-    from insight_core.markx import entity_views   # 0119 A2: the rows whose posts make an entity surge
+    from insight_core.markx import entity_views
     surging = entity_views.surging_posts(cur, {p["post_id"] for r in shown for p in r["posts"]})
 
     def line(pid: str, story: Optional[str], row_ids: Set[str]) -> Dict[str, Any]:
@@ -777,17 +729,17 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                       "removed": removed,
                       "surging": list({s["id"]: s for p in mine for s in surging.get(p, [])}.values()),
                       "ix": [{"id": nid, "title": ix_titles.get(nid), **(ix_meta.get(nid) or {})} for nid in ix_hit]})
-    from insight_core.markx import news_rank   # 0208: each row's kept rank (significance, fit, coverage, the lane)
+    from insight_core.markx import news_rank
     ranks = news_rank.read(cur, [i["id"] for i in items])
     order = news_rank.mode(cur)
     for i in items:
         i["rank"] = ranks.get(i["id"])
-    items.sort(key=lambda i: ranked_key(i, i["rank"], now) if order == "ranked" else rank_key(i, now))
-    from insight_core.markx import folds   # 0127: each line's fold, the header's count
+    items.sort(key=lambda i: ranked_key(i, i["rank"], now) if order != "coverage" else rank_key(i, now))
+    from insight_core.markx import folds   # each line's fold, the header's count
     fold_count = folds.annotate(cur, items)
-    from insight_core.markx import built   # 0128: how each row's story is built, its original first, published order
+    from insight_core.markx import built   # how each row's story is built, its original first
     built.annotate(cur, items)
-    from insight_core.markx import graph   # 0267: each row's Earlier and Later (the chain relations shown)
+    from insight_core.markx import graph   # each row's Earlier and Later
     thread = graph.row_chains(cur, {i["id"]: _row_stories(i) for i in items})
     for i in items:
         i["chain"] = thread.get(i["id"])
@@ -800,7 +752,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
                                for p in sorted(ix_rows[nid])]})
     cur.execute("SELECT started_at, finished_at, code_version, counts FROM mx_runs WHERE id = %s", (run,))
     started, finished, code, run_counts = cur.fetchone()
-    from insight_core.markx import news_sections   # 0174: the rows in Haiku's titled sections
+    from insight_core.markx import news_sections
     untitled = sum(1 for i in items if i["headline"]["from"] != "haiku")
     return {"run": {"id": run, "started_at": started, "finished_at": finished, "code_version": code},
             "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone), "untitled": untitled},
@@ -811,25 +763,17 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
 # ---- the kept page (issue 0198) ------------------------------------------------------------------------------
 
 VIEWS = {"differences": True, "all": False}   # the kept views: key -> only_differences
-SHAPE = "3"   # v10.33: the answer changed with 0271/0273 merged. 0267: a row's `chain` added. 0232: the answer's shape, in the kept keys (a field the frontend reads added, renamed or gone: bump it):
-#               a view kept by an older code is sent only while its shape is this one
+SHAPE = "3"   # the answer's shape, in the kept keys: bump it when a field the frontend reads changes
 KEEP_RUNS = 3                                 # the newest runs whose kept views stay (a cache: pruned)
 RECENT = timedelta(hours=48)                   # rank_key's "last 48 hours first"
 
 
 def page_inputs(cur: Any, now: datetime) -> Tuple[Optional[str], Optional[str]]:
-    """(the newest decision run's id, the stamp of what `page` reads at `now`), or (None, None) before any run; a
-    few indexed reads (kept_pages.stamp). In it:
-      - the newest run: every row, story, membership, headline, surge, fold rule and entity the run wrote;
-      - the rows of the newest written run that are in the page's window and in its last 48 hours (the run's rows are
-        fixed and both bounds only move forward, so the same counts are the same rows in the same order);
-      - Mark IX's News of the window (its rows' ids, voices and starts, its posts' rows), hashed: its story job writes
-        them between Mark X's runs;
-      - the newest sectioning, the placements into it and whether a sections question waits (news_sections.view);
-      - the answered headline questions (a row's own headline is read from its answer);
-      - what the owner changed (kept_pages.owner_marks: labels, merges, pins, sources, handles, fixes).
-    A worker's other answers (fold, check, reading, entities) are read by the next decision run, which each of them
-    asks for (api.post_answers): the page shows them from that run on."""
+    """(the newest decision run's id, the stamp of what `page` reads at `now`), or (None, None) before any run; a few
+    indexed reads. The stamp covers the newest run, the counts of the written run's rows in the window and its last
+    48 hours (rows are fixed and both bounds only move forward), Mark IX's News of the window (hashed), the newest
+    sectioning, the answered headline questions, the rank's inputs and the owner's marks. Other worker answers reach
+    the page through the next decision run."""
     from insight_core.markx import kept_pages, repo
     from insight_core.utils.news_rules import NEWS_DAYS
     last = repo.last_run(cur)
@@ -857,14 +801,14 @@ def page_inputs(cur: Any, now: datetime) -> Tuple[Optional[str], Optional[str]]:
     sections.append(bool(cur.fetchone()[0]))
     cur.execute("SELECT count(*), max(answered_at) FROM mx_tasks WHERE kind = 'headline' AND status = 'answered'")
     heads = list(cur.fetchone())
-    from insight_core.markx import news_rank   # 0208: the rank's inputs (significance answers, the reader's hour), its switch
+    from insight_core.markx import news_rank
     ranked = news_rank.stamp(cur, now) + [news_rank.mode(cur), news_rank.analysis_mode(cur)]
     return str(last["id"]), kept_pages.stamp("news", written, rows, ix, sections, heads, kept_pages.owner_marks(cur),
                                              ranked)
 
 
 def _key(view: str) -> str:
-    """A view's kept key (0232: with the answer's SHAPE)."""
+    """A view's kept key, with the answer's SHAPE."""
     from insight_core.markx import kept_pages
     return kept_pages.shaped(view, SHAPE)
 
@@ -874,10 +818,9 @@ def _view_key(only_differences: bool) -> str:
 
 
 def kept_page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = None) -> Optional[bytes]:
-    """The page's kept answer: the bytes `page` would answer now (0232: kept by this code or, its inputs the same, by
-    the code before a deploy), else the newest view kept (an input changed since, a run whose views are being built:
-    the jobs process builds the next one, News is never built in a request; before, 11 s); None only when no view of
-    this shape was ever kept (the first start): the caller builds the page then."""
+    """The page's kept answer: the bytes `page` would answer now (kept by any code, same inputs), else the newest view
+    kept (the jobs process builds the next one; News is never built in a request); None only when no view of this
+    shape was ever kept: the caller builds the page then."""
     from insight_core.markx import kept_pages
     key = _view_key(only_differences)
     run, st = page_inputs(cur, now or datetime.now(timezone.utc))
@@ -895,10 +838,7 @@ def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
     return any(not kept_pages.has(cur, "news", _key(view), run, st) for view in VIEWS)
 
 
-# 0215: what the News page doesn't read of `page` (components/markx/MarkXNews.tsx, MarkXFolds.tsx, MarkXBuilt.tsx,
-# lib/markx.ts, lib/byline.ts), left out of the answer the route sends; `page` itself is unchanged (its tests, the
-# sections). On the server's page (2.27 MB): each line's address, kind and role, the Mark IX row's index, the fold's
-# rule, the rank's coverage and score, the surges' and Mark IX rows' ids, the build's internals.
+# what the News page's frontend doesn't read of `page`, left out of the answer the route sends (0215)
 _ITEM_DROPPED = ("reports", "score")
 _RANK_KEPT = ("notable", "significance", "fit", "why")
 _RANK_WHY_KEPT = ("why", "effect", "analysis")
@@ -921,8 +861,7 @@ def _line(p: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def reader_view(view: Dict[str, Any]) -> Dict[str, Any]:
-    """`page` as GET /api/markx/news sends it (kept by `keep_pages`, or built by the route): without what no page
-    reads (above)."""
+    """`page` as GET /api/markx/news sends it: without what no page reads."""
     items = []
     for item in view.get("items") or []:
         item = {k: v for k, v in item.items() if k not in _ITEM_DROPPED}
@@ -952,8 +891,8 @@ def reader_view(view: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
-    """In the jobs process (jobs.Jobs.news), in one snapshot: each view not kept for its inputs built by `page` and
-    kept (kept_pages.encode: the bytes the route answers); the views of all but the newest KEEP_RUNS runs pruned."""
+    """In the jobs process, in one snapshot: each view not kept for its inputs built and kept as the bytes the route
+    answers; the views of all but the newest KEEP_RUNS runs pruned."""
     import time
     from insight_core.markx import kept_pages
     now = now or datetime.now(timezone.utc)
@@ -966,7 +905,7 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
         key = _key(view)
         if kept_pages.has(cur, "news", key, run, st):
             continue
-        if not ranked:   # 0208: the rows ranked and kept first (their inputs are in the stamp), once a build
+        if not ranked:   # ranks are page inputs: kept before the first view is built
             from insight_core.markx import news_rank
             t0 = time.monotonic()
             out["rank"] = {**news_rank.keep(cur, now=now), "seconds": round(time.monotonic() - t0, 2)}
@@ -985,23 +924,23 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
     """The post page's Mark X panel: its reading, its entities and their roles, its Mark X stories (role, reason, the
     judge's words) and connections, each with its reason."""
     from insight_core.markx import repo
-    from insight_core.markx import reading5   # 0212: the preferred reading (ent-v5 first while its switch is on)
+    from insight_core.markx import reading5
     rank = reading5.rank_sql("guide")
     cur.execute(f"SELECT guide, kind, events, lang, headline, reading FROM mx_readings WHERE post_id = %s "
                 f"AND {rank} IS NOT NULL ORDER BY {rank}", (post_id,))
     r = cur.fetchone()
     reading = None if r is None else {"guide": r[0], "kind": r[1], "events": r[2], "lang": r[3], "headline": r[4],
                                       "main": (r[5] or {}).get("main"), "mentions": (r[5] or {}).get("mentions") or []}
-    from insight_core.markx import entity_views   # 0119 A3: each entity opens its page
+    from insight_core.markx import entity_views
     linked = entity_views.post_entities(cur, post_id)
     from insight_core.markx import schemas
-    current = repo.current_guide(cur, post_id)   # 0133: the newest valid entities answer's set, and its guide
-    from insight_core.markx import ent42   # 0133 v4.2: q2 marks, which are new entities, the owner's labels
+    current = repo.current_guide(cur, post_id)   # the newest valid entities answer's guide
+    from insight_core.markx import ent42   # q2 marks, new entities, the owner's labels
     mine = ent42.labels_of(cur, post_id)
     entities = [{**{k: m[k] for k in ("name", "maker", "family", "version", "variant", "span")},
                  "type": schemas.entity_type(m["type"]), "role": m["role"] or "mention", "rule": m.get("rule"),
                  "by": m.get("by_name"), "guide": m["guide"], "entity_id": linked.get(m["n"]),
-                 "n": m["n"], "q2": m.get("rule") == ent42.Q2, "new": ent42.is_new(m),            # 0133 v4.2
+                 "n": m["n"], "q2": m.get("rule") == ent42.Q2, "new": ent42.is_new(m),
                  "label": mine.get(f"{m['guide']}:{m['n']}")}
                 for m in repo.mentions(cur, post_id) if m["guide"] == current]
     documents = [e for e in entities if e["type"] == "document" and e["role"] not in ("source", "recommended")]
@@ -1016,7 +955,7 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
     things = [("post", post_id)] + [("story", s["id"]) for s in stories]
     for kind, thing in things:
         for c in repo.current_connections(cur, kind, thing):
-            if c["rule"] == "chain_stops":   # 0219: a story's chain is shown on its story page, by its own switch
+            if c["rule"] == "chain_stops":   # a story's chain is shown on its story page
                 continue
             other_kind, other = (c["b_kind"], c["b"]) if (c["a_kind"], str(c["a"])) == (kind, thing) else (c["a_kind"], c["a"])
             conns.append({"relation": c["relation"], "p": c["p"], "rule": c["rule"], "from": kind,
@@ -1034,37 +973,23 @@ def post_panel(cur: Any, post_id: str) -> Dict[str, Any]:
             c["title"] = (other_posts.get(c["other"]) or {}).get("title")
     return {"post_id": post_id, "reading": reading, "entities": entities, "stories": stories, "connections": conns,
             "read": reading is not None,
-            # 0133: the guide the entities came from; the documents it names and its cited sources, under their roles
             "entities_guide": current, "documents": documents, "sources": cited["source"],
             "recommended": cited["recommended"]}
 
 
-# v10.36: related reading, the post page's Obsidian-like "related": the posts nearest it by its stored BGE-M3 vector
-# (embed.MODEL), computed on request: a scan of every stored vector (no index, nothing kept), ~1.5 s on the
-# 2026-11-19 server copy's 158,875, so it is a click of its own, never part of the panel above. Not the panel's
-# `recommended` (the works the post itself recommends, 0133). Left out: the post; its Mark X stories' members (its
-# news, listed there); a post of a source within a day of the seed or of one already listed from that source (a
-# thread); a title already listed or the post's own (one copy kept); and a source's posts past RELATED_PER_SOURCE
-# (one prolific source never fills the list). At cosine RELATED_MIN or more: on the copy's five seeds (an explainer,
-# a release, a CVE advisory, a Russian lecture post, a 3D-printing project) the posts above 0.62 were on the subject;
-# under it a security seed's were loosely so (weeknotes, newsletters) and a release's unrelated ("Starlink Mini 2").
+# related reading: the posts nearest a post by its stored vector, computed on request (a full scan, so a click of its
+# own, never part of the post panel). Left out: the post, its stories' members, a source's post within a day of one
+# already listed, a repeated title, and a source's posts past RELATED_PER_SOURCE.
 RELATED_N = 10
-RELATED_MIN = 0.62
+RELATED_MIN = 0.62          # measured on the server copy's seeds (v10.36)
 RELATED_SCAN = 1000         # the nearest rows read before the rules above thin them (one source can fill 200)
 RELATED_PER_SOURCE = 2
 RELATED_GUIDE_TYPES = ("tutorial_explainer",)   # what a reading calls a guide or explainer
-# v10.37: under RELATED_LOOSE items at the floor, the nearest under it fill the list up to RELATED_LOOSE, each marked
-# `loose` (the page shows them under "loosely related"): a seed nothing was near (a 3D-printed GPU chassis) had none.
+# under RELATED_LOOSE items at the floor, the nearest under it fill the list up to RELATED_LOOSE, marked `loose`
 RELATED_LOOSE = 3
-# v10.37: what a short report is about. A post of at most RELATED_ABOUT_WORDS words (post_parts.words) reporting a
-# document, a guide, a course or a tool ("Google released a free course, How LLMs Work") has a vector of the news, so
-# its nearest were the maker's news, not the subject's explainers. Its page, when INSIGHT holds it: the stored page of
-# its subject document (story_originals `work`, by the entity), any length; for a short post, a page it links (its
-# kept links, its shared page, the originals step's `linked`/`reference` rows) stored as a post. Of those, the one
-# nearest the post, at RELATED_ABOUT_MIN or more (a link to something else, a signature, is not it: on the copy a
-# YouTube link post's linked guide was at 0.35, a CVE roundup's advisory at 0.52; the realtime "Interaction Models"
-# post's own paper at 0.61). The list is then seeded by the two vectors' mean (the report and what it reports), and
-# the page is listed first, marked `about`.
+# what a short report is about: the stored page of its subject document or, for a post of at most RELATED_ABOUT_WORDS
+# words, a stored page it links, nearest the post at RELATED_ABOUT_MIN or more; the list is then seeded by the two
+# vectors' mean and the page listed first, marked `about` (a short report's own vector is of the news, not the subject)
 RELATED_ABOUT_WORDS = 200
 RELATED_ABOUT_MIN = 0.55
 
@@ -1078,8 +1003,8 @@ def title_key(title: Optional[str]) -> str:
 
 
 def related_about(cur: Any, post_id: str, *, floor: float = RELATED_ABOUT_MIN) -> Optional[Tuple[str, float]]:
-    """(the stored page the post is about, its cosine to the post) or None, by RELATED_ABOUT_WORDS's rule: from what the
-    entities answer and the links already store (no model call)."""
+    """(the stored page the post is about, its cosine to the post) or None, by RELATED_ABOUT_WORDS's rule (no model
+    call)."""
     from insight_core.markx import embed
     cur.execute("""WITH short AS (SELECT COALESCE((SELECT pp.words FROM post_parts pp WHERE pp.post_id = %(p)s), 0)
                                          <= %(words)s AS yes),
@@ -1110,12 +1035,9 @@ def related_about(cur: Any, post_id: str, *, floor: float = RELATED_ABOUT_MIN) -
 
 def related(cur: Any, post_id: str, *, n: int = RELATED_N, floor: float = RELATED_MIN,
             about: bool = True) -> Dict[str, Any]:
-    """{post_id, vector: whether the post has one, about: the page it is about or None, items: [_posts' line + cosine,
-    guide, about, loose]}: the page the post is about first (RELATED_ABOUT_WORDS; `about` False: never), then the
-    nearest first, `cosine` to the seed (the post's vector, or its mean with the page's; the page's own to the post's);
-    `guide` True when the post's
-    reading already types it a tutorial or explainer (event_types; no model call); `loose` one under the floor
-    (RELATED_LOOSE)."""
+    """{post_id, vector, about, items: [_posts' line + cosine, guide, about, loose]}: the page the post is about first
+    (`about` False: never), then the nearest to the seed; `guide` when the reading types it a tutorial or explainer;
+    `loose` under the floor."""
     from insight_core.markx import embed, event_types
     date = pairing.published_date("p")
     cur.execute(f"""SELECT p.source_id::text, {date}, COALESCE(pp.title, p.title) FROM mx_embeddings e
@@ -1172,7 +1094,7 @@ def related(cur: Any, post_id: str, *, n: int = RELATED_N, floor: float = RELATE
     ids = [pid for pid, _ in kept]
     lines = _posts(cur, ids)
     typed = event_types.of_posts(cur, ids)
-    # a reading with no closed type: its kind as the closed type it reads as (event_types.KIND_TYPES: a tool an explainer)
+    # a reading with no closed type: its kind as the closed type it reads as
     kinds = [k for k, t in event_types.KIND_TYPES.items() if t in RELATED_GUIDE_TYPES]
     cur.execute("SELECT DISTINCT post_id::text FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND kind = ANY(%s)",
                 (ids, kinds))
@@ -1188,7 +1110,7 @@ def related(cur: Any, post_id: str, *, n: int = RELATED_N, floor: float = RELATE
 
 
 def entities(cur: Any, *, now: Optional[datetime] = None, limit: int = 30) -> Dict[str, Any]:
-    """Today's and this week's main-subject entities (F7, ent-v3: role subject), each with its posts and voices."""
+    """Today's and this week's main-subject entities, each with its posts and voices."""
     now = now or datetime.now(timezone.utc)
     out = {}
     for name, days in (("today", 1), ("week", 7)):
@@ -1225,13 +1147,12 @@ def briefings(cur: Any) -> Dict[str, Any]:
     return {"day": day, "briefings": out}
 
 
-WORKER_STALE_DAYS = 3     # 0188: a worker silent this long shows as stale (the overview, /api/status's warnings)
+WORKER_STALE_DAYS = 3     # a worker silent this long shows as stale
 
 
 def workers_view(contacts: Dict[str, datetime], now: datetime,
                  leased: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
-    """Each worker that called or holds leases: {worker, last_contact, leased, stale (silent for more than
-    WORKER_STALE_DAYS, or no contact on record)}."""
+    """Each worker that called or holds leases: {worker, last_contact, leased, stale}."""
     leased = leased or {}
     limit = timedelta(days=WORKER_STALE_DAYS)
     return [{"worker": w, "last_contact": contacts.get(w), "leased": leased.get(w, 0),
@@ -1246,12 +1167,12 @@ def worker(cur: Any, contacts: Dict[str, datetime]) -> Dict[str, Any]:
     queue = repo.queue_counts(cur)
     cur.execute("""SELECT created_at::date, count(*), count(*) FILTER (WHERE valid), COALESCE(sum(tokens_in), 0),
                           COALESCE(sum(tokens_out), 0) FROM mx_calls WHERE created_at >= COALESCE(%s, '-infinity'::timestamptz)
-                    GROUP BY 1 ORDER BY 1 DESC LIMIT 14""", (repo.calls_days_floor(cur, 14),))   # v10.14: 14 days read
+                    GROUP BY 1 ORDER BY 1 DESC LIMIT 14""", (repo.calls_days_floor(cur, 14),))
     days = [{"day": d, "calls": n, "valid": v, "tokens_in": int(ti), "tokens_out": int(to),
              "api_usd": round(int(ti) * HAIKU_PER_MILLION[0] / 1e6 + int(to) * HAIKU_PER_MILLION[1] / 1e6, 4)}
             for d, n, v, ti, to in cur.fetchall()]
     from insight_core.markx import kept_counts
-    n, ti, to, cost = kept_counts.call_totals(cur)   # issue 0195: kept, not summed over every call per request
+    n, ti, to, cost = kept_counts.call_totals(cur)   # kept, not summed per request
     cur.execute("""SELECT kind, last_error, count(*) FROM mx_tasks WHERE status = 'failed'
                     GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 20""")
     failed = [{"kind": k, "error": e, "tasks": c} for k, e, c in cur.fetchall()]

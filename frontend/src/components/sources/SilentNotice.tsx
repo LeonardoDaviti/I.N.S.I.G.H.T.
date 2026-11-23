@@ -14,10 +14,9 @@ import { Notice } from '../states';
 const VIA: Record<string, string> = { address: 'Its address', 'home page': 'Its home page', post: 'Its newest posts' };
 
 /**
- * A source silent far beyond its own rhythm (issue 0178), in the source sheet and Discover: how long, against how
- * often it usually posts; where the source doctor found it went (its address now landing on another site), and the
- * live feed found there, with "Switch to <address>" (the switch path: the source keeps its id, name, tracks and
- * posts) and "It stopped" (its silence is not shown again until it posts). INSIGHT never switches it by itself.
+ * A source silent far beyond its own rhythm, in the source sheet and Discover: how long against how often it posts,
+ * where the source doctor found it went and the live feed there, with "Switch to <address>" (the source keeps its
+ * id, name, tracks and posts) and "It stopped" (not shown again until it posts). Never switched by itself.
  */
 export default function SilentNotice({ row, now, onSwitched, compact = false }: {
   row: SourceHealthRow; now: Date; onSwitched?: () => void; compact?: boolean;

@@ -5,13 +5,12 @@ import { runningFetchJob } from '../lib/jobRuns';
 
 /** Cache keys for the operations endpoints (Sources → ingestion). */
 export const OPERATIONS_OVERVIEW_KEY = ['operations', 'overview'] as const;
-/** GET /api/operations/running: the recent jobs only (issue 0195), for every page's top bar. */
+/** GET /api/operations/running: the recent jobs only, for every page's top bar. */
 export const RUNNING_JOBS_KEY = ['operations', 'running'] as const;
 export const SCHEDULER_KEY = ['operations', 'scheduler'] as const;
 export const operationJobKey = (id: string | null) => ['operations', 'job', id] as const;
 
-/** Recent jobs, alerts, source health and counts: every 5 seconds while a fetch job runs, else every 15.
- *  The Ingestion tab only (issue 0195): every other page reads useRunningJobs. */
+/** Recent jobs, alerts, source health and counts, every 5 s while a fetch job runs, else 15. Ingestion tab only. */
 export function useOperationsOverview() {
   const api = useApi();
   return useQuery({
@@ -21,9 +20,8 @@ export function useOperationsOverview() {
   });
 }
 
-/** The recent jobs alone (issue 0195: the overview's source health stays on the Ingestion tab): every 5
- *  seconds while a fetch job runs, else every 15. The one source of "what is running" outside the Ingestion tab
- *  (the top bar's sign, the reader's counts, a source's sheet). */
+/** The recent jobs alone, every 5 s while a fetch job runs, else 15: the one source of "what is running"
+ *  outside the Ingestion tab. */
 export function useRunningJobs() {
   const api = useApi();
   return useQuery({
@@ -52,8 +50,7 @@ export function useSchedulerConfig() {
   });
 }
 
-/** One job in full; polled every 5 seconds while it runs, every 30 while it waits (an archive waiting
- *  out a host's limit, issue 0107, which the scheduler continues). Idle without an id. */
+/** One job in full; polled every 5 s while it runs, every 30 while it waits or is queued. Idle without an id. */
 export function useOperationJob(id: string | null) {
   const api = useApi();
   return useQuery({
@@ -66,7 +63,6 @@ export function useOperationJob(id: string | null) {
     enabled: Boolean(id),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      // A queued archive (issue 0130) starts when its lane frees: asked again as a waiting one is.
       return status === 'running' ? 5_000 : status === 'waiting' || status === 'queued' ? 30_000 : false;
     },
   });

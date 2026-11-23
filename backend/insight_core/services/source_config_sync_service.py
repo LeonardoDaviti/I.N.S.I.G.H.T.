@@ -1,12 +1,7 @@
-"""
-sources.json and the database's sources (issue 0071).
+"""sources.json and the database's sources: the database is the truth, sources.json its export.
 
-The database is the truth. sources.json is its export, rewritten after each change, and a
-file can be imported: that only adds the sources the database lacks (issue 0072). It never
-deletes one, never changes an existing source's on/off, and never adds back a source that was
-removed (or an address a source was switched away from): the database remembers those
-(removed_sources), until the source is added again in the app. Removing a source is Remove in
-the app.
+The file is rewritten after each change. An import only adds the sources the database lacks: it never deletes one,
+never changes an existing source's on/off, and never adds back a removed address (removed_sources).
 """
 from __future__ import annotations
 
@@ -46,12 +41,9 @@ class SourceConfigSyncService:
         self.logger = get_component_logger("source_config_sync")
 
     def import_json(self) -> Dict[str, Any]:
-        """Add the file's sources the database lacks, each on or off as the file says.
-
-        Never deletes, never changes a source the database has, and never adds back a removed
-        one (`removed` counts those). A missing, empty or broken file changes nothing; a bad
-        entry, or a source another process added meanwhile, is skipped with a line in the log.
-        `read` says whether the file could be read at all."""
+        """Add the file's sources the database lacks, each on or off as the file says; never adds back a removed one
+        (`removed` counts those). A missing or broken file changes nothing; a bad entry is skipped and logged.
+        `read`: whether the file could be read."""
         stats: Dict[str, Any] = {"read": False, "added": 0, "removed": 0, "skipped": []}
         try:
             document = json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -92,8 +84,7 @@ class SourceConfigSyncService:
         return stats
 
     def import_once(self) -> Dict[str, Any]:
-        """import_json, the first time a start reads a file into this database (a new install,
-        or the first start after 0071); later starts leave the database as it is."""
+        """import_json on the first start against this database only; later starts leave it as it is."""
         with db.transaction(self.db_url) as cur:
             if SystemSettingsRepository.get(cur, IMPORTED_KEY):
                 self.logger.info("sources.json was imported before: the database is the truth")
@@ -106,8 +97,7 @@ class SourceConfigSyncService:
         return stats
 
     def switch_source(self, source_id: str, url: str, page_watch: Dict[str, Any] | None = None) -> Dict[str, Any]:
-        """SourcesService.switch_source (issue 0036), then the export. A file that can't be
-        written is logged: the switch stands, since the database is the truth."""
+        """SourcesService.switch_source, then the export; a failed write is logged and the switch stands."""
         old = self.sources_service.switch_source(source_id, url, page_watch)
         try:
             self.export_db_to_json()
@@ -143,8 +133,7 @@ class SourceConfigSyncService:
         }
 
     def sources_document(self, sources: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
-        """Every source in the shape import_json reads (sources.json; Settings → Data's Export
-        sources, issue 0079)."""
+        """Every source in the shape import_json reads."""
         if sources is None:
             sources = self.sources_service.get_all_sources()
         platforms: Dict[str, Dict[str, Any]] = {}

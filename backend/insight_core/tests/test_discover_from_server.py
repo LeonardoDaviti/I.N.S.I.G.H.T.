@@ -1,7 +1,7 @@
-"""Discover from the server's review (issue 0109 A): the order (the tested followable first, then the untested,
-the ones that can't be followed in a section of their own, never below the untested), a followed source's other
-channels, what isn't a source, one card per owner domain, archive rows by pages, read titles that are the
-site's name, "feed found" only for a feed of the linked pages, and voices named once. Neutral names only.
+"""Discover from the server's review (0109 A): the order (tested followable first, then untested, the unfollowable in
+a section of their own), a followed source's other channels, what isn't a source, one card per owner domain, archive
+rows by pages, read titles that are the site's name, "feed found" only for a feed of the linked pages, voices named
+once. Neutral names only.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def card(key, score, label=None):
 
 
 class OrderTests(unittest.TestCase):
-    """W2: an unfollowable suggestion sank below every untested one (the top score at #1254 of 1,275)."""
+    """W2: an unfollowable suggestion never sinks below the untested ones."""
 
     def test_tested_followable_first_then_untested_and_the_unfollowable_apart(self):
         found = [card("walled.example", 13.0, "blocked"), card("untested.example", 4.0), card("feed.example", 3.0, "feed"),
@@ -57,8 +57,7 @@ class OrderTests(unittest.TestCase):
 
 
 class OtherChannelTests(unittest.TestCase):
-    """W3 A: a suggestion a followed source links, under a name of that source, is its other channel (measured
-    on the server's pairs: 21 of 23 right by the review's rule)."""
+    """W3 A: a suggestion a followed source links, under a name of that source, is its other channel."""
 
     def names(self, name, account="", publication="", shared=frozenset()):
         return discover_rules.own_names(name, account=account, publication=publication, shared_sites=shared)
@@ -86,8 +85,8 @@ class OtherChannelTests(unittest.TestCase):
 
 
 class NotSourcesTests(unittest.TestCase):
-    """W4: archives and CDNs, apps' shared chats, document and data hosts, paper pages, and a creators'
-    platform as one site, told by the address's shape (each measured on the server's suggestions)."""
+    """W4: archives and CDNs, apps' shared chats, document and data hosts, paper pages, and a creators' platform as one
+    site, told by the address's shape."""
 
     def kind(self, key, *paths):
         return discover_rules.place_kind(key, [f"https://{key}{p}" for p in paths])
@@ -137,7 +136,7 @@ class NotSourcesTests(unittest.TestCase):
 
 
 class OneCardPerDomainTests(unittest.TestCase):
-    """W5: one owner's hosts on one registrable domain were several cards (23 owners in 54 on the server)."""
+    """W5: one owner's hosts on one registrable domain are one card."""
 
     def suggestion(self, key, score, voices, *, origins=0, articles=()):
         return {"key": key, "url": "https://" + key, "score": score, "voices": len(voices), "voice_names": list(voices),
@@ -165,8 +164,8 @@ class OneCardPerDomainTests(unittest.TestCase):
         self.assertEqual([s["key"] for s in got], ["ann.blogs.example", "bob.blogs.example"])
 
     def test_a_catalog_subdomain_is_no_companys_own_place(self):
-        """Issue 0111: a company's podcast or app directory lists many owners' shows and apps: its own card, not
-        one of the company's places."""
+        """A company's podcast or app directory lists many owners' shows and apps: its own card, not one of the
+        company's places (0111)."""
         found = [self.suggestion("maker.example", 5.0, ["a", "b"]), self.suggestion("labs.maker.example", 3.0, ["c"]),
                  self.suggestion("podcasts.maker.example", 2.0, ["d"]), self.suggestion("apps.maker.example", 1.0, ["e"])]
         got = {s["key"]: s for s in discover_rules.one_card_per_domain(found, federations=set())}
@@ -183,7 +182,7 @@ class OneCardPerDomainTests(unittest.TestCase):
 
 
 class SiteNameTitleTests(unittest.TestCase):
-    """W7: a read title that is the site's own name ("The Wall Street Journal" on 5 of its articles) is no title."""
+    """W7: a read title that is the site's own name is no title."""
 
     def test_a_page_whose_title_is_its_sites_name(self):
         page = ('<html><head><meta property="og:site_name" content="The Daily Example">'

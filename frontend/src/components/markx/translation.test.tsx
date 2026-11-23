@@ -9,7 +9,7 @@ import type { MarkxPostPanel } from '../../services/markx';
 import { makeFakeApi as makeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
-// the translation methods live outside createApi (api.ts' 0130 D block), so the fake takes them untyped
+// the translation methods live outside createApi, so the fake takes them untyped
 const makeFakeApi = (methods: Record<string, unknown>) => makeApi(methods as Parameters<typeof makeApi>[0]);
 const at = new Date().toISOString();
 const view = (over: Partial<MarkxTranslationView> = {}): MarkxTranslationView => ({

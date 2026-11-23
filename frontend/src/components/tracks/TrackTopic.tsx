@@ -18,6 +18,7 @@ import {
 import { bylineText } from '../../lib/byline';
 import { QuickLookPanel, ThingTables, WeekIssueView, WhatChanged } from './TrackBrief';
 import TrackFieldSuggestions from './TrackFieldSuggestions';
+import { StackEditor, SubTracks } from './TrackSubtracks';
 import { TRACK_COUNTS_KEY } from '../../hooks/useTrackCounts';
 import { kindWord, mondayOf, newestAt, schemaKey } from './briefWords';
 
@@ -76,7 +77,7 @@ function Row({ folderId, item, discover = false, fresh = false }: {
   );
 }
 
-/** Issue 0185: why a post is, or isn't, in this track — Haiku's stored verdict for it, read on demand. */
+/** Why a post is, or isn't, in this track: Haiku's stored verdict for it, read on demand. */
 function WhyNotHere({ folderId }: { folderId: string }) {
   const [post, setPost] = useState('');
   const ask = useMutation({ mutationFn: (ref: string) => tracksApi.why(folderId, ref) });
@@ -117,7 +118,7 @@ function Suggestions({ page }: { page: TrackPage }) {
   );
 }
 
-/** v10.41: the ✓ examples the judge, asked against the description alone, says do not fit: shown, never removed. */
+/** The ✓ examples the judge, asked against the description alone, says do not fit: shown, never removed. */
 function MisleadingExamples({ page }: { page: TrackPage }) {
   const bad = page.examples.misleading ?? [];
   if (!bad.length) return null;
@@ -137,7 +138,7 @@ function MisleadingExamples({ page }: { page: TrackPage }) {
   );
 }
 
-/** 0207: a sub-topic's digest: each point with the posts it cites, numbered in the order they are first cited. */
+/** A sub-topic's digest: each point with the posts it cites, numbered in the order they are first cited. */
 function Digest({ section, shadow }: { section: TrackSection; shadow?: ShadowMeasure }) {
   const d = section.digest;
   if (!d?.points.length) return null;
@@ -199,7 +200,7 @@ function Section({ folderId, section, since, onSeen, shadow }: {
   );
 }
 
-/** 0207: the tools and products the track's practitioners discuss, by voices, each linked to its entity page. */
+/** The tools and products the track's practitioners discuss, by voices, each linked to its entity page. */
 function Tools({ tools, shadow }: { tools: TrackTool[]; shadow?: ShadowMeasure }) {
   if (!tools.length) return null;
   return (
@@ -221,16 +222,15 @@ function Tools({ tools, shadow }: { tools: TrackTool[]; shadow?: ShadowMeasure }
 }
 
 /**
- * A track as a topic (issue 0145, Mark X): its posts judged against the owner's description, as sections by
- * sub-topic (newest first within), then Discover (passive sources' matches, ranked by calibrated precision), each
- * with ✓ / ✗; the precision and the auto-join bar, the sources it found, and what it costs. A track without a
- * description is a folder: one line and the sheet to describe it.
+ * A track as a topic (Mark X): its posts judged against the owner's description, as sections by sub-topic, then
+ * Discover (passive sources' matches, ranked by calibrated precision), each with ✓ / ✗; the precision and auto-join
+ * bar, the sources it found, and its cost. A track without a description is a folder: one line and the sheet.
  */
 export default function TrackTopic({ folderId }: { folderId: string }) {
   const [editing, setEditing] = useState(false);
   const client = useQueryClient();
   const query = useQuery({ queryKey: trackKey(folderId), queryFn: () => tracksApi.page(folderId), staleTime: 30_000 });
-  // 0207: the looks before this visit are what "new since you looked" counts from; this open is recorded as a look
+  // "new since you looked" counts from the looks before this visit; this open is recorded as a look
   const [seen, setSeen] = useState<TrackSeen | null>(null);
   const [looked, setLooked] = useState(false);
   const topic = query.data?.track.topic ?? false;
@@ -243,7 +243,7 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
     }).catch(() => undefined);
     return () => { live = false; };
   }, [client, folderId, topic]);
-  // 0245 (v10.28): the briefer, when the backend's switch is on and the track has its kinds and fields
+  // the briefer, when the backend's switch is on and the track has its kinds and fields
   const schema = useQuery({ queryKey: schemaKey(folderId), queryFn: () => briefApi.schema(folderId), enabled: topic,
     staleTime: 60_000, retry: false });
   const briefer = Boolean(schema.data?.on && schema.data.schema);
@@ -277,7 +277,7 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
   }
   const counts = page.counts;
   const quick = briefer && look.data?.on ? look.data : null;
-  // never a stale brief above fresh posts (0002): points older than a find or a post since show after the posts
+  // never a stale brief above fresh posts: points older than a find or a post since show after the posts
   const late = quick ? quick.stale || (quick.as_of ? newestAt(quick.also.map((p) => p.at)) > Date.parse(quick.as_of) : false) : false;
   const kinds = (schema.data?.schema?.kinds ?? []).map((k) => ({
     kind: k.kind, header: k.kind === PRACTICE_KIND ? 'Practices and claims' : kindWord(k.kind),
@@ -296,6 +296,8 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
         </p>
         <Button size="sm" variant="ghost" className="mt-1 text-[0.75rem]" onClick={() => setEditing(true)}>edit the topic</Button>
       </div>
+      <SubTracks page={page} />
+      <StackEditor page={page} queryKey={trackKey(folderId)} />
       <MisleadingExamples page={page} />
       <Suggestions page={page} />
       <Tools tools={page.tools ?? []} shadow={page.shadow?.tools} />

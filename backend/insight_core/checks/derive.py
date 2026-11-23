@@ -1,11 +1,10 @@
-"""What a version of the code makes of every stored post (issue 0075 B and C): its title as every page
-shows it, the start of its shown text, the page it links out to, and the marks the invariants count.
+"""What a version of the code makes of every stored post: its title as every page shows it, the start of its shown
+text, the page it links out to, and the marks the invariants count.
 
-One pass over the whole copy, in parallel: each worker process reads its share of the posts (by a hash
-of the id) on a connection of its own and runs the app's own functions on them (compat), so a check
-reads what the pages read. The text is read from the body's first TEXT_WINDOW characters: the start of
-the text, and a feed's footer on the short posts that carry one, are inside it (a footer at the end of
-a longer body isn't seen; none of the feeds that add one write bodies that long).
+One pass over the whole copy, in parallel: each worker process reads its share of the posts (by a hash of the id) on
+a connection of its own and runs the app's own functions on them (compat), so a check reads what the pages read. The
+text is read from the body's first TEXT_WINDOW characters (a feed's footer on the short posts that carry one is
+inside it).
 """
 from __future__ import annotations
 
@@ -49,7 +48,7 @@ def facts(row) -> Facts:
     from insight_core.checks import compat
     pid, source_id, platform, title, content, html, *stored = row
     parts = compat.stored_parts()
-    if stored and parts:   # issue 0076: what the pages read, the post's stored parts (its stored title until parsed)
+    if stored and parts:   # what the pages read, the post's stored parts (its stored title until parsed)
         shown, link_target = (stored[0] if stored[0] is not None else title or ""), stored[5]
         text = (parts[1](content, stored[1:5]) or "")[:TEXT_WINDOW]   # the window the rules read before (above)
     else:
@@ -80,8 +79,8 @@ SQL = f"""SELECT p.id::text, p.source_id::text, s.platform, p.title, left(p.cont
           WHERE abs(hashtext(p.id::text)) %% %s = %s"""
 
 
-# A version that stores each post's parts (issue 0076): its title, its text's cut points (the whole text,
-# where they cut) and its link, read as its pages read them.
+# A version that stores each post's parts: its title, its text's cut points (the whole text, where they cut) and its
+# link, read as its pages read them.
 SQL_PARTS = """SELECT p.id::text, p.source_id::text, s.platform, p.title, p.content, left(p.content_html, {window}),
                       pp.title, {text_columns}, pp.link_target
                FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id

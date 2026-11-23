@@ -1,8 +1,4 @@
-/**
- * Source anatomy (issue 0054): the words and the order of Sources → ingestion → sources, one
- * row per source, how it is read and what it gives. Pure; `now` is injected. Imported only by
- * the view's lazy chunk.
- */
+/** Source anatomy: the words and order of Sources → ingestion → sources. Pure; `now` injected; lazy chunk only. */
 import type { AnatomyKind, SourceAnatomyRow, SourceGives } from '../services/api';
 import { compactAge, formatLocalDateTime } from './dates.ts';
 import { formatHours } from './duration.ts';
@@ -82,7 +78,7 @@ export function anatomyKindLabel(row: Pick<SourceAnatomyRow, 'kind'>): string {
 /** A short word and what it means. */
 export interface Cell { text: string; title: string }
 
-/** Why a post was left as the feed's summary (issue 0140), in a few words. */
+/** Why a post was left as the feed's summary, in a few words. */
 export function teaserWords(outcome: string): string {
   if (outcome === 'nothing_longer') return 'the page held nothing longer';
   if (outcome === 'not_same_article') return 'not the same article';
@@ -91,7 +87,7 @@ export function teaserWords(outcome: string): string {
   return 'could not be read';
 }
 
-/** The posts its page reads left as the summary (issue 0140), a page that held nothing longer aside (often a whole short post). */
+/** The posts its page reads left as the summary, those whose page held nothing longer aside. */
 export function summaryOnly(row: Pick<SourceAnatomyRow, 'teasers'>): number {
   return Object.entries(row.teasers ?? {}).reduce((sum, [outcome, n]) => sum + (outcome === 'nothing_longer' ? 0 : n), 0);
 }
@@ -110,7 +106,7 @@ export function fullTextCell(row: Pick<SourceAnatomyRow, 'full_text' | 'teasers'
     cell = { text: short ? `on · ${formatCount(short)} summary only` : 'on', title: `Reads each post’s page for the whole text${teaserBreakdown(row)}` };
   } else if (row.full_text === 'off') cell = { text: 'off', title: 'Full text is off: only what the feed carries' };
   else cell = { text: 'in feed', title: 'The feed carries the whole post' };
-  // 0138 F2: pages of it other posts linked that its feed never carried (each read once as its post).
+  // Pages of it other posts linked that its feed never carried (each read once as its post).
   const missed = row.feed_misses ?? 0;
   if (!missed) return cell;
   return { text: `${cell.text} · partial`,

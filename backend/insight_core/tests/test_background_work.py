@@ -1,9 +1,6 @@
-"""Background work (issue 0062): the read-only block of Sources -> Ingestion -> overview.
-
-Each state the block shows: stories never run, running, done; the search index up to date or
-re-indexing; links all read or being read. On the database in one transaction per test, rolled
-back (the stories setting and the lock are the real ones, so a test changes them only inside its
-transaction); the lock is held from a second connection, as the story job holds it.
+"""Background work (0062): the read-only block of Sources -> Ingestion -> overview, in each state it shows. On the
+database, rolled back (the stories setting and lock are the real ones, changed only inside the test's transaction);
+the lock is held from a second connection, as the story job holds it.
 """
 from __future__ import annotations
 

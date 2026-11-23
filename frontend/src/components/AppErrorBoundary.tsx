@@ -39,7 +39,7 @@ export default class AppErrorBoundary extends Component<Props, State> {
 
   render() {
     if (!this.state.hasError) return this.props.children;
-    // A chunk from before a deploy that the one automatic reload did not fix (issue 0061).
+    // a chunk from before a deploy that the one automatic reload did not fix
     const updated = isStaleChunkError(this.state.error);
     return (
       <div className="mx-auto max-w-xl px-4 py-16 sm:px-6">

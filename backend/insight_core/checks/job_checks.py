@@ -1,15 +1,14 @@
-"""The invariants that run the story job (issue 0075 B, "Stories"), so they only ever get a scratch copy
-(job.scratch_only), after a full rebuild.
+"""The invariants that run the story job, so they only ever get a scratch copy (job.scratch_only), after a full
+rebuild.
 
     python -m insight_core.checks.job_checks --db <scratch dsn> [--now ISO] [--identity module:function] [--json out]
 
-- `story.rebuild_identity` and `story.id_changes`: a second full rebuild with no new posts writes the
-  same rows (table_rows), and no story's id changes.
-- `story.identity`: the incremental job equals a full rebuild, row by row (0072 A's oracle). That check
-  belongs to the incremental job (`insight_core.scripts.story_identity.check`, its own slice); this
-  calls it, pluggable by `--identity`, as `fn(db_url, clock=now)` -> {"same", "tables": {name: {"differing",
-  "only_first", "only_second", "rows"}}}. On a version without it the invariant is "not measured", with
-  a note saying so, never a silent pass.
+- `story.rebuild_identity` and `story.id_changes`: a second full rebuild with no new posts writes the same rows
+  (table_rows), and no story's id changes.
+- `story.identity`: the incremental job equals a full rebuild, row by row. That check belongs to the incremental job
+  (`insight_core.scripts.story_identity.check`); this calls it, pluggable by `--identity`, as `fn(db_url, clock=now)`
+  -> {"same", "tables": {name: {"differing", "only_first", "only_second", "rows"}}}. On a version without it the
+  invariant is "not measured", never a silent pass.
 """
 from __future__ import annotations
 
@@ -73,7 +72,7 @@ def incremental_identity(db_url: str, now: datetime, spec: str = IDENTITY) -> Fo
                  examples[:EXAMPLES], round(time.monotonic() - started, 1), note=json.dumps({"by_table": differing, "same": result.get("same")}))
 
 
-CHECKSUM_WORKERS = 8   # 0253: the tables hashed at once, a connection each (Postgres does the work)
+CHECKSUM_WORKERS = 8   # the tables hashed at once, a connection each (Postgres does the work)
 
 
 def _checksum(cur: Any, table: str) -> tuple:
@@ -84,9 +83,8 @@ def _checksum(cur: Any, table: str) -> tuple:
 
 
 def table_checksums(cur: Any, db_url: Optional[str] = None, workers: int = CHECKSUM_WORKERS) -> Dict[str, tuple]:
-    """{table: (rows, md5 of its rows' md5s)} of every table but Mark X's mx_* (0079's per-table checksum). With
-    `db_url`, `workers` tables at once, each on a connection of its own, the largest first (0253: the same sums; the
-    server's copy has ~45 such tables, posts and story_keys most of the time)."""
+    """{table: (rows, md5 of its rows' md5s)} of every table but Mark X's mx_*. With `db_url`, `workers` tables at
+    once, each on a connection of its own, the largest first."""
     cur.execute("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' "
                 "AND relname NOT LIKE 'mx\\_%' ORDER BY pg_relation_size(oid) DESC, relname")
     tables = [t for (t,) in cur.fetchall()]
@@ -113,13 +111,11 @@ def _mx_rows(cur: Any) -> int:
 
 
 def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
-    """0086 Safety 1: Mark IX's tables are the same with Mark X on and off. With Mark X off the scheduler runs no Mark X
-    job and writes no Mark X row; then two decision runs with it on (the second must find the first's work done) leave
-    every table but mx_* row for row as it was. After the runs, the read-only Mark X invariants hold on what they wrote.
-    0206: the jobs process's runner also keeps the reader's pages (the unread counts, Discover: KeptView.markx False),
-    with Mark X on or off, through the kept views' machinery, whose state and pages live in mx_jobs and mx_kept_pages.
-    Those are the reader's, not Mark X's: a reader's view run with Mark X off is not a Mark X run, and its rows
-    (jobs.reader_rows: its mx_jobs row, its pages' rows) are not counted. Any other job, or any other mx_* row, is."""
+    """Mark IX's tables are the same with Mark X on and off. With Mark X off the scheduler writes no Mark X row; then
+    two decision runs with it on (the second must find the first's work done) leave every table but mx_* row for row
+    as it was, and the read-only Mark X invariants hold on what they wrote. The reader's kept views (unread counts,
+    Discover) run through the jobs runner either way; their rows (jobs.reader_rows) are the reader's and not counted.
+    Any other job, or any other mx_* row, is."""
     import os
     what = "Mark IX's tables (every table but mx_*) two decision runs with Mark X on change, or a run with it off"
     try:
@@ -127,11 +123,11 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     except ImportError:
         return [Found("markx.ix_unchanged", "mark x", what, -1, 0, note="not measured: this version has no decision job")]
     from insight_core.checks import invariants
-    try:   # 0206: the reader's kept views and their rows (a version before has none)
+    try:   # the reader's kept views and their rows (an older version has none)
         from insight_core.markx.jobs import reader_rows, readers
     except ImportError:
         reader_rows, readers = (lambda cur: 0), (lambda job: False)
-    took: Dict[str, float] = {}     # 0253: each part's seconds, in the note
+    took: Dict[str, float] = {}     # each part's seconds, in the note
     started = time.monotonic()
     with open_copy(db_url, writable=True) as conn, conn.cursor() as cur:
         before, mx_before, reader_before = table_checksums(cur, db_url), _mx_rows(cur), reader_rows(cur)
@@ -139,12 +135,11 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
     old = os.environ.get("INSIGHT_MARKX")
     try:
         os.environ["INSIGHT_MARKX"] = "off"
-        try:   # 0112 Decided 10: insight-ingestion's runner (markx/jobs.py); a version before has decide.Scheduler
+        try:   # insight-ingestion's runner (markx/jobs.py); an older version has decide.Scheduler
             from insight_core.markx import jobs as J
             from insight_core.markx.jobs import Runner
-            # 0253: a check reads no web (as resources.py runs the story job): the story run's originals and scouts
-            # fetched pages into posts, post_parts and story_originals here (+11 posts on the server's copy), which
-            # this invariant then counted as Mark IX tables changed, on both sides, whatever the code
+            # a check reads no web (as resources.py runs the story job): fetched pages would count as Mark IX tables
+            # changed, on both sides, whatever the code
             after_stories, reads = getattr(J.Jobs, "after_stories", None), os.environ.get("INSIGHT_DISCOVER_READS")
             if after_stories is not None:
                 J.Jobs.after_stories = lambda self: {"ok": True, "skipped": "the real-data check reads no web"}
@@ -179,8 +174,8 @@ def markx_unchanged(db_url: str, now: datetime) -> List[Found]:
         after = table_checksums(cur, db_url)
         took["checksums_after"] = round(time.monotonic() - started - sum(took.values()), 1)
         run = invariants.Run(db_url, cur, now)
-        # as run_all asks them: an invariant this version's schema can't answer (the checks package is the head's,
-        # run over the base's code too: 0119's mx_entity* tables on main) is not measured, never a failed job check
+        # as run_all asks them: an invariant this version's schema can't answer (the checks package is the head's, run
+        # over the base's code too) is not measured, never a failed job check
         mx = [f for f in invariants.run_all(run, only=[i.name for i in invariants.INVARIANTS
                                                        if i.name.startswith("markx.")]) if f.count >= 0]
     seconds = round(time.monotonic() - started, 1)
@@ -326,11 +321,11 @@ class _Api:
 
 
 def _measured(db_url: str, name: str, what: str, log_name: str, work: Callable[["_Api"], Dict[str, Any]]) -> Found:
-    """0112 Decided 13's measure, for any `work`: the API starts; the probes run; `work(api)` starts only after a quiet
-    10 s window (at most 1 request in 10 slow or failing; loaded windows are set aside, 20 s apart, for at most
-    QUIET_WAIT_S, then the invariant is NOT MEASURED); after it, a 5 s tail and 10 s more of probes. Each request
-    slower than 1 s, or failing, during the work counts, less the rate the same probes show before and after it
-    (added_by_run): what is measured is the work's slowdown, not the machine's load. `work` returns its notes."""
+    """The measure for any `work`: the API starts; the probes run; `work(api)` starts only after a quiet 10 s window
+    (at most 1 request in 10 slow or failing; loaded windows are set aside for at most QUIET_WAIT_S, then the
+    invariant is NOT MEASURED); after it, a 5 s tail and 10 s more of probes. Each request slower than 1 s, or failing,
+    during the work counts, less the rate the same probes show before and after it (added_by_run). `work` returns its
+    notes."""
     import threading
     started = time.monotonic()
     api = _Api(db_url, log_name)
@@ -385,12 +380,10 @@ def _measured(db_url: str, name: str, what: str, log_name: str, work: Callable[[
 
 
 def api_during_run(db_url: str, now: datetime) -> Found:
-    """0112 Decided 13: the reader's API answers while Mark X decides. The version's API (as many processes as its
-    start script runs, Mark X on) serves the copy; a full decision run with the entity-candidate flush happens where
-    the version runs it (insight-ingestion's job in a process of its own, or, before 0112 Decided 10, inside the API:
-    its start's run and POST /api/markx/decide); meanwhile /api/version and /api/feed are asked every 0.5 s. Each
-    request slower than 1 s, or failing, counts, less the rate the same probes show for 10 s before the run and 10 s
-    after it (added_by_run): what is measured is the run's slowdown, not the machine's load."""
+    """The reader's API answers while Mark X decides. The version's API serves the copy; a full decision run with the
+    entity-candidate flush happens where the version runs it (insight-ingestion's job in its own process, or in older
+    versions inside the API); meanwhile /api/version and /api/feed are asked every 0.5 s, measured as `_measured`
+    does (added_by_run)."""
     import importlib.util
     import subprocess
     import urllib.request
@@ -436,13 +429,11 @@ FORCED_RULES = "rules of another version (the real-data check's first start)"
 
 
 def api_during_rebuild(db_url: str, now: datetime) -> Found:
-    """0121 Decided 8: the reader's API answers during a deploy's first start after a rule change (the v10.0.1 review
-    saw 2.0-5.8 s stalls of the whole API then). The copy's stories are marked as of other rules, as a deploy of new
-    rules finds them; then the version's start work runs as its container runs it (the supervisor's child process:
-    the search refill and the start's story job, a rule change's rebuild, then Mark X's first run is asked for; 0216:
-    the start wants the story job and its first run follows in the same child, as the jobs runner runs it), while
-    the probes run as for markx.api_during_run, and with the same baseline (added_by_run). The rebuild is measured to
-    its end, or REBUILD_LIMIT_S, then stopped (the last check: the copy is scratch)."""
+    """The reader's API answers during a deploy's first start after a rule change. The copy's stories are marked as of
+    other rules, as a deploy of new rules finds them; then the version's start work runs as its container runs it (the
+    search refill, the start's story job and its rebuild, then Mark X's first run), while the probes run as for
+    markx.api_during_run (added_by_run). The rebuild is measured to its end, or REBUILD_LIMIT_S, then stopped (the last
+    check: the copy is scratch)."""
     import importlib.util
     import signal
     import subprocess
@@ -466,8 +457,8 @@ def api_during_rebuild(db_url: str, now: datetime) -> Found:
 
     def work(api: _Api) -> Dict[str, Any]:
         log = open("api_during_rebuild.start.log", "w", encoding="utf-8")
-        # 0216: the start only wants the story job and insight-ingestion's jobs runner runs it (its first slice here, in
-        # this child, as the start ran it before; a run that finds the last one resting skips)
+        # the start only wants the story job and insight-ingestion's jobs runner runs it (its first slice here, in
+        # this child; a run that finds the last one resting skips)
         child = subprocess.Popen([sys.executable, "-c", "from insight_core.scripts.api_supervisor import start_work; "
                                   "start_work(); import os; from insight_core.services.stories_service import "
                                   "StoriesService; StoriesService(os.environ['DATABASE_URL']).recompute_safely()"],
@@ -495,7 +486,7 @@ def check(db_url: str, now: datetime, identity: str = IDENTITY) -> List[Found]:
     found += markx_unchanged(db_url, now)
     found.append(incremental_identity(db_url, now, identity))   # it holds posts back and brings them in again
     found.append(api_during_run(db_url, now))                  # then: the API's own start may run the story job
-    found.append(api_during_rebuild(db_url, now))              # last: it leaves the copy rebuilt by its start (0121 D8)
+    found.append(api_during_rebuild(db_url, now))              # last: it leaves the copy rebuilt by its start
     return found
 
 

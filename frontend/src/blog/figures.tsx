@@ -1,10 +1,5 @@
-/*
- * The article's figures, drawn as inline SVG in the INSIGHT design language:
- * monochrome tokens only (so they follow the dark/light theme), hierarchy by
- * tone and weight, the loudest thing an inverted block. Numbers are real,
- * measured on the repository on 2026-10-10 (figures 1–6) and from its
- * history on 2026-10-28 (figures 7–9).
- */
+/* The article's figures, inline SVG in the INSIGHT design language (monochrome tokens, so they follow the
+ * theme). Numbers are real, measured on the repository. */
 
 const FG = 'rgb(var(--text))';
 const FG2 = 'rgb(var(--text-2))';
@@ -179,7 +174,6 @@ const KINDS = ['generic_rss', 'nitter_rss', 'reddit_subreddit', 'substack', 'tel
 export function DepthFigure() {
   return (
     <svg viewBox="0 0 640 300" role="img" aria-label="Two modules. The bridge: a very wide interface of 136 methods over a thin body that forwards calls and catches errors. SourceKind: a narrow interface of 8 methods over a deep body with 7 adapters, from generic RSS to Telegram and YouTube." className="h-auto w-full" fontFamily={FONT}>
-      {/* Shallow: wide interface, thin implementation. */}
       <text x={0} y={16} fontSize={12} fontWeight={650} fill={FG}>shallow</text>
       <text x={0} y={32} fontSize={11} fontFamily={MONO} fill={FG2}>insight_api_bridge.py</text>
       <rect x={0} y={48} width={290} height={34} rx={4} fill={RAISED} stroke={LINE_STRONG} />
@@ -189,7 +183,6 @@ export function DepthFigure() {
       <text x={0} y={136} fontSize={10.5} fill={FG3}>Delete it and the complexity vanishes:</text>
       <text x={0} y={151} fontSize={10.5} fill={FG3}>the routes can call the services themselves.</text>
 
-      {/* Deep: narrow interface, a lot behind it. */}
       <text x={350} y={16} fontSize={12} fontWeight={650} fill={FG}>deep</text>
       <text x={350} y={32} fontSize={11} fontFamily={MONO} fill={FG2}>SourceKind</text>
       <rect x={430} y={48} width={130} height={34} rx={4} fill={INV} />
@@ -207,7 +200,6 @@ export function DepthFigure() {
   );
 }
 
-/** A labelled horizontal bar list: the shared shape of figures 5 and 6. */
 function BarList({
   rows,
   unit,
@@ -281,7 +273,6 @@ export function DatabaseFigure() {
   );
 }
 
-/** One straight connector with its head at (x2, y2): horizontal, or vertical going down. */
 function Line({ x1, y1, x2, y2 }: { x1: number; y1: number; x2: number; y2: number }) {
   const down = x1 === x2;
   return (
@@ -319,7 +310,6 @@ export function WorkflowFigure() {
 
   return (
     <svg viewBox="0 0 640 262" role="img" aria-label="The issue workflow in nine steps. The owner notices something; it becomes an issue file with a Status line; it is measured and specified; implementer agents build it in parallel, one git worktree each, tests first; the branch is merged after tests, lint and build; two reviews check it, one for overengineering and one for correctness; their findings become an issue that is fixed; the result is checked on real sites and on a preview with real data; a VERSION bump names the release and the owner pushes." className="h-auto w-full" fontFamily={FONT}>
-      {/* Parallel agents: two cards stacked behind the one in front. */}
       <rect x={x1(3) + 8} y={18} width={w1 - 16} height={52} rx={6} fill="none" stroke={LINE_STRONG} />
       <rect x={x1(3) + 4} y={23} width={w1 - 8} height={52} rx={6} fill={RAISED} stroke={LINE_STRONG} />
       {FLOW_TOP.map((b, i) => (
@@ -328,7 +318,6 @@ export function WorkflowFigure() {
       {FLOW_TOP.slice(1).map((b, i) => (
         <Line key={b.title} x1={x1(i) + w1} y1={54} x2={x1(i + 1)} y2={54} />
       ))}
-      {/* From the agents down and back to the start of the second row. */}
       <line x1={agentsMid} y1={80} x2={agentsMid} y2={112} stroke={FG2} strokeWidth={1.25} />
       <line x1={agentsMid} y1={112} x2={w2 / 2} y2={112} stroke={FG2} strokeWidth={1.25} />
       <Line x1={w2 / 2} y1={112} x2={w2 / 2} y2={140} />

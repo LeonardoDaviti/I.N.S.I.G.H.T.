@@ -18,8 +18,8 @@ import SourcesToolbar from '../components/sources/SourcesToolbar';
 import BulkActionBar from '../components/sources/BulkActionBar';
 import IngestionPanel from '../components/sources/IngestionPanel';
 import SuggestedSources, { SUGGESTED_SOURCES_KEY } from '../components/sources/SuggestedSources';
-import TrackSourceLines from '../components/tracks/TrackSourceLines';   // 0145
-import ScoutSourceLines from '../components/tracks/ScoutSourceLines';   // 0148
+import TrackSourceLines from '../components/tracks/TrackSourceLines';
+import ScoutSourceLines from '../components/tracks/ScoutSourceLines';
 import { tracksApi } from '../services/tracks';
 import { useMarkxOn } from '../hooks/useMarkxOn';
 import { TRACK_COUNTS_KEY } from '../hooks/useTrackCounts';
@@ -57,7 +57,6 @@ import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
 import { sourceLabel } from '../lib/sourceLabel';
 
-// Voices (issue 0132 A): its own chunk, loaded the first time its tab opens.
 const VoicesPanel = lazy(() => import('../components/voices/VoicesPanel'));
 
 export const SOURCES_WITH_SETTINGS_KEY = ['sources-with-settings'] as const;
@@ -79,26 +78,20 @@ function fromHealthRow(row: SourceHealthRow): SourceWithSettings {
   };
 }
 
-/** History state on an entry the sheet pushed, so closing it goes Back instead of stacking entries. */
-/** The dev-only `?data=` health fixtures, imported on demand: a production build drops them. */
 const loadHealthFixtures = import.meta.env.DEV ? () => import('../components/ops/fixtures') : null;
 
 const SHEET_PUSHED = 'sourceSheetPushed';
-/** How long a deep-linked track group stays highlighted. */
 const TRACK_HIGHLIGHT_MS = 1600;
 
 /** The tabs besides the list (`?tab=`); any other value is a legacy URL. */
-const EXTRA_TABS = ['discover', 'voices', 'connections', 'ingestion', 'data'] as const;   // voices: issue 0132 A
+const EXTRA_TABS = ['discover', 'voices', 'connections', 'ingestion', 'data'] as const;
 type ExtraTab = (typeof EXTRA_TABS)[number];
 const isExtraTab = (value: string | null): value is ExtraTab => (EXTRA_TABS as readonly (string | null)[]).includes(value);
 
 /**
- * Settings → Sources: every source on one dense list (spec §9, reading-first).
- * The old Sources and Health tabs are one view now: the toolbar searches,
- * filters by status and groups (by track or platform), the column headers sort;
- * a row opens the detail sheet (settings, cadence, fetch now, delete) or the
- * reader on that source; checkboxes select for the bulk bar. `?tab=health`
- * still works: it opens the list, keeping its status filter.
+ * Settings → Sources: every source on one dense list. The toolbar searches, filters and groups, the headers
+ * sort; a row opens the detail sheet or the reader on that source; checkboxes select for the bulk bar.
+ * `?tab=health` still opens the list, keeping its status filter.
  */
 export default function SourcesConfig() {
   const api = useApi();
@@ -107,10 +100,8 @@ export default function SourcesConfig() {
   const view = readSourcesView(searchParams);
   const setView = (next: SourcesView) => setSearchParams(writeSourcesView(searchParams, next), { replace: true });
 
-  // The list, Discover, Connections (?tab=connections, spec §10.1), Ingestion
-  // (?tab=ingestion, reading-finish R3) and Data (?tab=data, the export, issue 0079). The legacy Health tab URL
-  // becomes the list view (readSourcesView).
-  // `?tab=suggested` (the tab's name until 2026-10-31) is Discover.
+  // The list, Discover, Connections, Ingestion and Data tabs; the legacy Health URL is the list and
+  // `?tab=suggested` is Discover.
   const tabParam = searchParams.get('tab') === 'suggested' ? 'discover' : searchParams.get('tab');
   const tab = isExtraTab(tabParam) ? tabParam : 'sources';
   useEffect(() => {
@@ -149,7 +140,6 @@ export default function SourcesConfig() {
     staleTime: 30_000,
   });
 
-  // Once a minute, so "fetched 3h ago" stays true.
   const now = useNow(60_000);
   const [shortcutsOn] = useShortcutPreference();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -162,13 +152,10 @@ export default function SourcesConfig() {
   const [focusToken, setFocusToken] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
 
-  // The URL owns the sheet (issue 0003): `?source=<id>` opens it, so a reader can
-  // link straight to a source's settings. Opening pushes a history entry (Back
-  // closes it); closing pops that entry, or drops the parameter of a deep link.
-  // A link out of the sheet ("add in Connections") switches the tab: the sheet closes with it.
+  // The URL owns the sheet: `?source=<id>` opens it (pushing a history entry Back closes); closing pops that entry,
+  // or drops the parameter of a deep link. A link out of the sheet switches the tab and closes it.
   const location = useLocation();
   const navigate = useNavigate();
-  // The list and Ingestion → sources (issue 0054) open the sheet.
   const opensSheets = tab === 'sources' || (tab === 'ingestion' && searchParams.get('sub') === 'sources');
   const openId = opensSheets ? searchParams.get('source') : null;
   const latestParams = useRef(searchParams);
@@ -198,9 +185,8 @@ export default function SourcesConfig() {
     setSearchParams(params, { replace: true });
   };
   const [showAddSource, setShowAddSource] = useState(false);
-  // Follow… on a suggestion (issue 0050): Add source opens on its address, through the feed finder.
   const [followAddress, setFollowAddress] = useState<string | undefined>(undefined);
-  // 0132 C2: a voice page's "Not followed: <channel> — Add" arrives as ?follow=<address>: Add source opens on it.
+  // A voice page's "Not followed: <channel> — Add" arrives as ?follow=<address>: Add source opens on it.
   const followParam = searchParams.get('follow');
   useEffect(() => {
     if (!followParam) return;
@@ -212,7 +198,6 @@ export default function SourcesConfig() {
   }, [followParam, searchParams, setSearchParams]);
   const [newTrackOpen, setNewTrackOpen] = useState(false);
   const [newTrackName, setNewTrackName] = useState('');
-  // v10.12.1: while Mark X is on, a new track may be described in the owner's words (0145): then it is a topic.
   const markxOn = useMarkxOn();
   const [newTrackBelongs, setNewTrackBelongs] = useState('');
   const [newTrackExcludes, setNewTrackExcludes] = useState('');
@@ -221,7 +206,6 @@ export default function SourcesConfig() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A dev fixture brings its own tracks (its rows name them); otherwise the real ones.
   const folders = useMemo(() => {
     if (!fixtureName) return foldersQuery.data ?? [];
     const seen = new Map<string, { id: string; name: string; sort_order: number }>();
@@ -245,7 +229,6 @@ export default function SourcesConfig() {
   const keys = useMemo(() => visibleRowKeys(groups, collapsed), [groups, collapsed]);
   const visibleIds = useMemo(() => new Set(rows.map((row) => row.source_id)), [rows]);
 
-  // Selection only holds sources that still exist.
   useEffect(() => {
     if (!health.data) return;
     const ids = new Set(allRows.map((row) => row.source_id));
@@ -267,7 +250,6 @@ export default function SourcesConfig() {
     ));
   };
 
-  /** Run one call per source; report the failures in one line. */
   const each = async (ids: string[], call: (id: string) => Promise<Envelope>, verb: string) => {
     setBusy(true);
     const results = await Promise.all(ids.map(call));
@@ -299,14 +281,12 @@ export default function SourcesConfig() {
 
   const removeFromTrack = async (ids: string[], folderId: string) => {
     const folder = folders.find((f) => f.id === folderId);
-    // Only the selected sources that are in the track: the others have nothing to remove.
     const members = ids.filter((id) => allRows.find((row) => row.source_id === id)?.folders.some((f) => f.id === folderId));
     const ok = await each(members, (id) => api.removeSourceFromFolder(folderId, id), 'remove');
     if (ok) toast(`Removed ${plural(members.length, 'source')} from ${folder?.name ?? 'the track'}`);
   };
 
-  // Tidy up (issue 0046): Keep hides the row's mark at once (it leaves the view), then
-  // refetches; Remove asks first and deletes exactly as any delete does (sources.json too).
+  // Tidy up: Keep hides the row's mark at once, then refetches; Remove asks first and deletes as any delete does.
   const tidyActions: TidyActions = {
     keep: (row) => {
       queryClient.setQueriesData<SourcesHealthResponse>({ queryKey: [...SOURCES_HEALTH_KEY] }, (current) => (
@@ -385,7 +365,6 @@ export default function SourcesConfig() {
     if (!name) return;
     const r = await api.createFolder({ name });
     if (!r.success) { setError(r.error || 'Could not create the track'); return; }
-    // What belongs, filled: the track is a topic, saved as the track sheet saves it (PUT /api/markx/tracks/{id}).
     const belongs = newTrackBelongs.trim();
     if (markxOn && belongs && r.folder?.id) {
       try {
@@ -414,7 +393,6 @@ export default function SourcesConfig() {
     }
   };
 
-  // Several at once (issue 0035): each is fetched now, as a single add is.
   const handleAddedMany = (added: AddedSource[], close: boolean) => {
     if (close) setShowAddSource(false);
     invalidate();
@@ -455,7 +433,6 @@ export default function SourcesConfig() {
   const openSource = openId
     ? sourcesQuery.data?.find((s) => s.id === openId) ?? (openRow ? fromHealthRow(openRow) : null)
     : null;
-  // A deep link to a source or track that is gone: the list, with a quiet note.
   const missingSource = Boolean(openId && health.data && !openSource && !sourcesQuery.isPending);
   const trackParam = tab === 'sources' ? searchParams.get('track') : null;
   const foldersKnown = Boolean(fixtureName ? health.data : foldersQuery.data);
@@ -588,7 +565,6 @@ export default function SourcesConfig() {
               <Notice tone="status" title="That track no longer exists" action={{ label: 'Dismiss', onClick: () => dropParam('track') }} className="mb-3" />
             ) : null}
             {stalledCount && view.status !== 'stalled' ? (
-              // Issue 0242: sources that stopped without anyone seeing, in front of the owner (not only an alert row).
               <Notice
                 tone="warning"
                 title={`${plural(stalledCount, 'source')} stopped`}

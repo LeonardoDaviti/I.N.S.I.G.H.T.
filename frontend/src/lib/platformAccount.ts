@@ -1,4 +1,4 @@
-// Its own module (issue 0109 B2): only Add source reads it, so the reader's first download doesn't.
+// Its own module: only Add source reads it, so the reader's first download doesn't.
 import { withScheme } from './addresses.ts';
 
 /** A platform INSIGHT follows by its own source kind. */
@@ -8,9 +8,8 @@ export type AccountPlatform = 'x' | 'telegram' | 'youtube' | 'reddit';
 const X_PAGES = new Set(['i', 'home', 'search', 'explore', 'hashtag', 'intent', 'share', 'settings', 'messages',
   'notifications', 'login', 'signup', 'tos', 'privacy']);
 
-/** The account an address names on a platform INSIGHT follows by a source kind (issue 0109 B2), with the
- * value its Add source template takes: x.com/<user>, t.me/<channel>, youtube.com/@<channel> (or
- * /channel/<id>, /c/, /user/), reddit.com/r/<sub>. Null for a site, a post or another page of the platform. */
+/** The account an address names on a platform INSIGHT follows by a source kind, with the value its Add source
+ * template takes (x.com/<user>, t.me/<channel>, youtube.com/@<channel>, reddit.com/r/<sub>). Null for anything else. */
 export function platformAccount(address: string): { platform: AccountPlatform; value: string } | null {
   let url: URL;
   try {
@@ -41,8 +40,7 @@ export function platformAccount(address: string): { platform: AccountPlatform; v
 
 const PLATFORM_HOSTS = new Set(['x.com', 'twitter.com', 't.me', 'telegram.me', 'youtube.com', 'reddit.com']);
 
-/** A page on a platform INSIGHT follows by account (x.com, t.me, youtube.com, reddit.com): followed by its account,
- *  never by its host. */
+/** A page on a platform INSIGHT follows by account: followed by its account, never by its host. */
 export function isPlatformHost(address: string): boolean {
   try {
     return PLATFORM_HOSTS.has(new URL(withScheme(address.trim())).hostname.toLowerCase().replace(/^(www|m|mobile|old|np)\./, ''));
@@ -51,9 +49,8 @@ export function isPlatformHost(address: string): boolean {
   }
 }
 
-/** The account a platform's page sits under (v10.15 c3), its address and its name: a tweet (x.com/<user>/status/<id>)
- *  is https://x.com/<user> "@user", a Telegram post (t.me/<channel>/<n>) its channel's, a page under
- *  youtube.com/@<channel>/… its channel's, a thread under reddit.com/r/<sub>/… "r/sub". Null when it names none. */
+/** The account a platform's page sits under, its address and name: a tweet's x.com/<user> "@user", a Telegram
+ *  post's channel, a YouTube page's channel, a Reddit thread's "r/sub". Null when it names none. */
 export function pageAccount(address: string): { url: string; label: string } | null {
   let url: URL;
   try {

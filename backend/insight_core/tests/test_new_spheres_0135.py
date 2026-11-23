@@ -1,5 +1,5 @@
-"""Issue 0135: feeds and channels that failed silently outside AI news. No network, no database:
-every request is a FakeHttp answer or a stub, every feed and caption a fixture with invented hosts."""
+"""Feeds and channels that failed silently outside AI news (0135). No network, no database: every request is a FakeHttp
+answer or a stub, every fixture on invented hosts."""
 from __future__ import annotations
 
 import asyncio
@@ -341,11 +341,11 @@ class RepairTests(unittest.TestCase):
         self.assertIsNone(repair_0135.needs_transcript(english))
         markup = {**english, "content": '<?xml version="1.0"?><transcript><text start="0">Hi</text></transcript>'}
         self.assertEqual(repair_0135.needs_transcript(markup), "markup")
-        # A WebVTT track stored with its header and inline tags (one on the server's copy).
+        # a WebVTT track stored with its header and inline tags
         vtt = {**english, "content": "Kind: captions\nLanguage: en\nHow <00:00:00.234><c> many</c>\nHow many"}
         self.assertEqual(repair_0135.needs_transcript(vtt), "markup")
         self.assertEqual(plain_transcript(vtt["content"]), "How many")
-        # An English title read as Portuguese by the stopword guess is no translation (44 on the server's copy).
+        # an English title read as Portuguese by the stopword guess is no translation
         self.assertIsNone(repair_0135.needs_transcript({**english, "title": "A total disaster para a casa"}))
 
 

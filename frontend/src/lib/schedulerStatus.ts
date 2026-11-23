@@ -1,8 +1,4 @@
-/**
- * The scheduler's clock as the Ingestion tab and a due source show it: whether
- * it looks stalled, and when it next ticks. The one place for that math. Pure;
- * `nowMs` is injected.
- */
+/** The scheduler's clock as the Ingestion tab and a due source show it: stalled or not, the next tick. Pure. */
 import type { SchedulerState } from '../services/api';
 import { toDate } from './dates.ts';
 import { formatTimeRemaining } from './duration.ts';

@@ -1,10 +1,7 @@
 /**
- * The chromeless frame route (Design Studio D4): `/design/frame/:page/:state`
- * with `?theme=dark|light` and `?data=fixtures|live`; a prototype (D6) renders
- * at `/design/frame/prototype/:id/:state`, on its page's fixtures for that state. It is not a `<Route>` in
- * App.tsx: the frame needs its own router and providers, set up after its
- * `fetch` is replaced, so App renders it instead of the app when the path
- * starts with the prefix.
+ * The chromeless frame route: `/design/frame/:page/:state` (or `/design/frame/prototype/:id/:state`) with
+ * `?theme=dark|light` and `?data=fixtures|live`. Not a `<Route>` in App.tsx: the frame needs its own router and
+ * providers, set up after its `fetch` is replaced, so App renders it instead of the app on this prefix.
  */
 import type { FrameData } from './transport';
 

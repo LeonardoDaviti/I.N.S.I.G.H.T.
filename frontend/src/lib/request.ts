@@ -1,14 +1,7 @@
 /**
- * The one HTTP call the API client makes (services/api.ts). Every failure throws
- * an `ApiError` whose message is a sentence fit for the screen:
- *
- * - the backend can't be reached: status 0;
- * - a non-2xx answer: its status and the server's `detail`;
- * - a 2xx answer with the `{success: false, error}` envelope: its status and `error`.
- *
- * An abort is not converted: it rejects with the `AbortError`.
- *
- * Pure (no DOM, no React) so `node --test` can exercise it directly.
+ * The one HTTP call the API client makes. Every failure throws an `ApiError` with a screen-fit sentence: status 0
+ * when unreachable; a non-2xx's status and `detail`; a 2xx `{success: false, error}`'s status and `error`. An
+ * abort rejects with the `AbortError`. Pure, so `node --test` can exercise it.
  */
 import { ApiError, apiErrorFromResponse, cleanErrorMessage, isAbortError, toApiError } from './apiError.ts';
 
@@ -20,7 +13,6 @@ export interface Envelope {
 
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  /** Sent as JSON. */
   body?: unknown;
   signal?: AbortSignal;
 }
@@ -28,7 +20,7 @@ export interface RequestOptions {
 // Relative by default (the Vite dev proxy forwards /api to the backend). VITE_API_URL overrides it.
 const API_BASE_URL: string = (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL || '';
 
-/** An API path as a link or a download opens it (the export, issue 0035). */
+/** An API path as a link or a download opens it. */
 export function apiUrl(path: string): string {
   return `${API_BASE_URL}${path}`;
 }
@@ -57,11 +49,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   return body;
 }
 
-/**
- * For the screens that read `{success: false, error}` instead of catching: any
- * failure resolves as that envelope (and only that: the answer's other fields are
- * absent). An abort still rejects.
- */
+/** For screens that read `{success: false, error}` instead of catching: any failure resolves as that envelope
+ *  alone (no other fields). An abort still rejects. */
 export async function settle<T extends Envelope>(call: Promise<T>): Promise<T> {
   try {
     return await call;

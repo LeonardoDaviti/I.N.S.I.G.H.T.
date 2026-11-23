@@ -1,11 +1,10 @@
-"""Read every post's entity addresses again with the 0229 rules, once, by hand (v10.25).
+"""Read every post's entity addresses again with the 0229 rules, once, by hand.
 
     python -m insight_core.scripts.repair_0229 [--seconds-a-chunk 20] [--dry-run]
 
-A row an older rule wrote as an entity's own paper, code, demo or release page becomes kind `cited` when its post,
-read again, gives it as a page the post cites (entity_addresses.stage: the one path the decision run's sweep takes;
-the next full pass does the same). A sweep of CHUNK posts a transaction, from the first post id, each committed;
-no row is removed. Prints each chunk's counts and the totals as JSON lines.
+A row an older rule wrote as an entity's own page becomes kind `cited` when its post, read again, cites it
+(entity_addresses.stage). CHUNK posts a transaction, each committed; no row is removed. Prints each chunk's
+counts and the totals as JSON lines.
 """
 from __future__ import annotations
 

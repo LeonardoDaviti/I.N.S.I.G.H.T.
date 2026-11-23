@@ -5,22 +5,15 @@
     python -m insight_core.scripts.repair_own_pages_0167 --no-fetch      # no request: the stored evidence only
     python -m insight_core.scripts.repair_own_pages_0167 --source <id>   # one owner source
 
-A page held by a source that doesn't own it (Hacker News, a link blog, a trending list: utils/own_pages.owns) whose
-site an enabled website source follows is a candidate. It moves to that source when the source lists it:
-  - **listed** (the default, one source at a time, PAGE_GAP_S between two requests): the source's own listing is
-    asked: a page watch's listing page and its section's sitemap (page_watch.discover), a feed's items and its
-    site's post sitemap. A page it lists is its page; one it doesn't is left (reported "not listed").
-  - **--no-fetch**: no request. The page is the source's when the stored row says the source's own fetch wrote it
-    (metadata.adapter, the page watch's), or 0084 B's rule (repo_linked's OwnPages, learned from the stored posts)
-    names it. Else it is left (reported "unsure").
-Of two followed sources of one site (a blog's feed, a page watch of a section), the one listing the page takes it.
-
-A move is PostsRepository.hand_over, as a live fetch does it: one row, its id kept (its stories, readings, labels,
-News rows, notes and reader state stay), and the holder keeps a post citing the page. Nothing is deleted.
-
-Resumable: each owner source is a transaction of its own; a page moved is no candidate any more, so a second run
-finds only what is left. --state FILE records the owners done (a stopped run resumes after them).
-Prints the report as JSON.
+A page held by a source that doesn't own it (utils/own_pages.owns) whose site an enabled website source follows
+is a candidate. It moves to that source when the source lists it:
+  - listed (default, one source at a time, PAGE_GAP_S apart): the source's own listing (page watch listing and
+    sitemap, or feed items and the site's post sitemap) is asked; a page it doesn't list is left.
+  - --no-fetch: the stored row says the source's own fetch wrote it, or repo_linked's OwnPages names it; else
+    it is left ("unsure").
+A move is PostsRepository.hand_over: one row, its id kept, the holder keeps a citing post. Nothing is deleted.
+Resumable: each owner source is a transaction of its own; --state FILE records the owners done. Prints the
+report as JSON.
 """
 from __future__ import annotations
 
@@ -144,7 +137,7 @@ async def listed_addresses(http: Any, owner: Owner) -> Set[str]:
 
 def stored_evidence(cur: Any, owners: Sequence[Owner], pages: Sequence[Held]) -> Dict[str, str]:
     """{post id: owner id} by what is stored (--no-fetch): the owner's page watch wrote the row (metadata.adapter),
-    else 0084 B's rule names one of these owners."""
+    else repo_linked's OwnPages names one of these owners."""
     from insight_core.db.repo_linked import _followed, _own_pages
 
     by_id = {o.id: o for o in owners}

@@ -1,12 +1,6 @@
-"""A deploy that finishes by itself (issue 0069).
-
-- The background fills (the search refill, the link reading) take their rows `FOR UPDATE SKIP LOCKED`.
-  While another worker holds rows, a batch comes back empty: each fill waits and goes on until no post
-  is pending, instead of stopping there (the rehearsal's run 3 left 311 posts un-indexed).
-- The stories setting records the rules version the stories were grouped by: when the code's differs,
-  the next story run is full, so a rule change reaches the frozen stories too.
-
-Both commit (the fills run their own transactions), so they run only on a `_test` database.
+"""A deploy that finishes by itself (0069): the background fills take rows `FOR UPDATE SKIP LOCKED` and wait out
+another worker's rows until no post is pending; the stories setting records the rules version, so a rule change makes
+the next story run full. Both commit, so they run only on a `_test` database.
 """
 from __future__ import annotations
 
@@ -74,7 +68,7 @@ class FillsFinishTests(unittest.TestCase):
             time.sleep(HELD_SECONDS)
             self.assertTrue(worker.is_alive(), "it waits while the posts are held, rather than stopping")
             other.rollback()
-        worker.join(timeout=180)   # minutes under a loaded database (v10.17); a fill that never ends still fails
+        worker.join(timeout=180)   # a fill that never ends still fails
         self.assertFalse(worker.is_alive())
         return result["filled"]
 
@@ -112,8 +106,7 @@ class FillsFinishTests(unittest.TestCase):
 
 @requires_test_db
 class RulesVersionTests(unittest.TestCase):
-    """A rule change regroups every post in batches (issue 0072 A), from the stories setting: what it
-    groups is the other suites'."""
+    """A rule change regroups every post in batches, from the stories setting (0072 A)."""
 
     def setUp(self):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
@@ -156,9 +149,8 @@ class RulesVersionTests(unittest.TestCase):
         self.assertEqual(self._kept()["rules"], rules_stamp(), "other rules: every post again")
 
     def test_a_rule_changes_rebuild_ends_by_making_news_again_over_its_window(self):
-        """0205: a rebuild's batches row News only around the stories they changed; a News rule change (news_rules)
-        left every other row as the old rules made it. Its names step makes News over the whole window at once (the
-        stories as stored), and its last step again (every story regrouped)."""
+        """A News rule change makes News over the whole window at its names step and again at its last step, not only
+        around the stories the batches changed (0205)."""
         self._setting({"computed_at": "2026-10-31T12:44:20+00:00", "full": True, "full_at": "2026-10-31T12:44:20+00:00",
                        "rules": "older rules"})
         with mock.patch.object(self.service, "_news_window", wraps=self.service._news_window) as window:

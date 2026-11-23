@@ -1,5 +1,5 @@
-/** An address's publication, as the backend's publication_of (issue 0071: one definition): its host
- * without www. ("example.com"), with or without its scheme; '' when it has none. */
+/** An address's publication, as the backend's publication_of: its host without www. ("example.com"), with or
+ * without its scheme; '' when it has none. */
 export function publicationOf(address: string): string {
   try {
     return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(address) ? address : `https://${address}`).hostname.replace(/^www\./, '');
@@ -33,5 +33,5 @@ export function withScheme(address: string): string {
   return /^https?:\/\//i.test(address) ? address : `https://${address}`;
 }
 
-/** The warning on following a site's home page (issue 0041). */
+/** The warning on following a site's home page. */
 export const HOMEPAGE_WARNING = 'This is the site\'s homepage: it may pick up product pages, not articles.';

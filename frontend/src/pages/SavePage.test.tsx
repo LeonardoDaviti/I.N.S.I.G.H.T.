@@ -35,7 +35,7 @@ describe('/save from the bookmarklet', () => {
     expect(await screen.findByText('Saved to INSIGHT')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Read it' })).toHaveAttribute('href', '/posts/p1');
     expect(screen.getByRole('link', { name: 'Saved' })).toHaveAttribute('href', '/read/source/s1');
-    // A save goes to Later (issue 0022, owner's decision).
+    // A save goes to Later.
     expect(screen.getByRole('link', { name: 'Read it' }).parentElement).toHaveTextContent('An essay is in Saved and in Later, unread. Read it');
     expect(screen.getByRole('link', { name: 'Later' })).toHaveAttribute('href', '/?filter=later');
     expect(screen.getByRole('button', { name: 'Close tab' })).toBeInTheDocument();

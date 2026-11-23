@@ -10,10 +10,9 @@ export const DISCOVERIES_KEY = ['source-discoveries'] as const;
 const SHOWN = 8;
 
 /**
- * "Discovered through this source" (issue 0143): on the source sheet, what INSIGHT found because of this source,
- * read from what Discover and Mark X already store: the sites and accounts it linked that Discover lists (what you
- * followed first, then the most voices), the sources you added after it linked them, the pages and originals
- * collected because of it, and the entities it named before any other source. One GET; quiet when there is nothing.
+ * "Discovered through this source", on the source sheet: what INSIGHT found because of this source, from what
+ * Discover and Mark X already store (sites and accounts it linked, sources added after it linked them, pages and
+ * originals collected, entities it named first). One GET; quiet when there is nothing.
  */
 export default function SourceDiscoveries({ sourceId }: { sourceId: string }) {
   const query = useQuery({

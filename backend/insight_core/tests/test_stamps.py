@@ -1,6 +1,5 @@
-"""Versions that keep themselves (issue 0071 B1): each stamp is what its rules make of the sample
-(utils/stamps.py). A change in what a rule makes changes its stamp; a rename doesn't; and the sample
-still exercises every rule, so a change there can't hide."""
+"""Versions that keep themselves (0071 B1, utils/stamps.py): each stamp is what its rules make of the sample; a change
+in what a rule makes changes its stamp, a rename doesn't, and the sample still exercises every rule."""
 from __future__ import annotations
 
 import sys
@@ -41,8 +40,7 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         self.assertTrue(any(s.mentions for s in stories), "a roundup mentions a story")
 
     def test_a_date_alone_and_a_late_fetch(self):
-        # Issue 0072: a date alone counts as that day's earliest timed post; a story keeps the id of its
-        # post stored first.
+        # a date alone counts as that day's earliest timed post; a story keeps the id of its post stored first (0072)
         stories = {p.id: s for s in sample_stories() for p in s.posts}
         update = stories["h7"]
         self.assertEqual(update.first_at, stamps._at(80), "the day's first timed post, not 00:00")
@@ -50,19 +48,19 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         self.assertEqual(stories["k1"].id, "k2", "the post stored first, not the first posted")
 
     def test_a_saved_page_long_before_its_reports_never_dates_its_story(self):
-        # 0263: a Saved page two months older than the two voices citing it stays a member, never the story's start
+        # a Saved page much older than the voices citing it stays a member, never the story's start (0263)
         stories = {p.id: s for s in sample_stories() for p in s.posts}
         self.assertEqual([p.id for p in stories["n4"].posts], ["n4", "n5", "n6"])
         self.assertEqual(stories["n4"].first_at, stamps._at(470))
 
     def test_a_reply_continues_the_own_tweet_it_quotes(self):
-        # Issue 0103: not the account's tweet right before it, which is about something else.
+        # not the account's tweet right before it, which is about something else (0103)
         stories = {p.id: s for s in sample_stories() for p in s.posts}
         self.assertEqual(stories["t9"].parents["t9"][:3:2], ("t7", "thread"))
         self.assertNotIn("t8", stories, "the tweet in between joins nothing")
 
     def test_one_owners_channels_are_one_news_voice(self):
-        # Issue 0111: a writer's X account and notes, the notes linking the account, are one owner
+        # a writer's X account and notes, the notes linking the account, are one owner (0111)
         sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS, stamps.LINKED)
         self.assertEqual(sources.owner, {"s-wx": "s-wx", "s-x1": "s-wx"})
         self.assertEqual(sources.owners, {"source:s-x1": "site:writerx.example", "reddit:writer_x": "site:writerx.example",
@@ -70,8 +68,7 @@ class SampleCoversTheRulesTests(unittest.TestCase):
                                           "reddit:author_y": "source:s-x2", "reddit:fan_z": "source:s-x3"})
 
     def test_a_side_posts_name_never_grows_its_storys_news_row(self):
-        # Issue 0203: the story (a link join of three posts) is about Quill Six; one member's title names Rho Kade,
-        # which surges with two other posts: they are a row of their own, not the story's
+        # a member's title names a name that surges with two other posts: they are a row of their own (0203)
         from insight_core.utils.news_rules import news, surges
         sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS, stamps.LINKED)
         posts = [StoriesService._story_post(row, sources) for row in stamps.posts()]
@@ -85,23 +82,23 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         self.assertFalse({"rk1", "rk2"} & {p.id for p in row.posts}, "the CEO's posts are not the release's row")
 
     def test_a_papers_abstract_and_pdf_are_one_page(self):
-        # Issue 0106: a paper id names one page on its host, whatever its path.
+        # a paper id names one page on its host, whatever its path (0106)
         [story] = [s for s in sample_stories() if s.origin_url == stamps.PAPER]
         self.assertEqual({p.id for p in story.posts}, {"q1", "q2"})
 
     def test_a_post_that_moved_is_one_page_with_where_it_moved(self):
-        # Issue 0108: a redirect stub's post is one page with the post at the address it points to.
+        # a redirect stub's post is one page with the post at the address it points to (0108)
         [story] = [s for s in sample_stories() if "m1" in {p.id for p in s.posts}]
         self.assertEqual({p.id for p in story.posts}, {"m1", "m2"})
 
     def test_a_mail_trackers_query_is_the_page_it_marks(self):
-        # Issue 0109 B1: two voices linking one page through their own ?_hsenc= are one story at the page.
+        # two voices linking one page through their own ?_hsenc= are one story at the page (0109)
         [story] = [s for s in sample_stories() if "w1" in {p.id for p in s.posts}]
         self.assertEqual({p.id for p in story.posts}, {"w1", "w2"})
         self.assertEqual(story.origin_url, stamps.JOURNAL)
 
     def test_a_gift_link_and_a_share_link_are_the_page_they_open(self):
-        # Issue 0126: two voices linking one article by a gift link and a share link are one story at the article.
+        # two voices linking one article by a gift link and a share link are one story at the article (0126)
         [story] = [s for s in sample_stories() if "tok1" in {p.id for p in s.posts}]
         self.assertEqual({p.id for p in story.posts}, {"tok1", "tok2"})
         self.assertEqual(story.origin_url, "https://paper.example/2026/03/10/the-budget-story")
@@ -127,39 +124,38 @@ class SampleCoversTheRulesTests(unittest.TestCase):
 class StampsFollowTheRulesTests(unittest.TestCase):
     def test_a_rule_that_makes_other_output_changes_its_stamp(self):
         stories, sites, bodies = stamps_now()
-        # 0068's miss, replayed: a github.io writer's site as before the Public Suffix List's private section
+        # a github.io writer's site without the Public Suffix List's private section (0068)
         with mock.patch.object(addresses, "_hosting_suffixes", lambda: frozenset()):
             self.assertNotEqual(discover_rules.address_rules(), sites)
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
-        # 0068's other miss: how an outside origin is titled
+        # how an outside origin is titled (0068)
         with mock.patch.object(tree_rules, "origin_title", lambda url, posts: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         with mock.patch.object(story_rules, "SAME_TITLE_MIN_WORDS", 4):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
-        # 0103's: a reply threaded under the account's previous tweet, not the one it quotes
+        # a reply threaded under the account's previous tweet, not the one it quotes (0103)
         with mock.patch.object(story_rules, "own_quote", lambda post: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
-        # 0106's: a paper's paths as two pages
+        # a paper's paths as two pages (0106)
         story_rules._page_key.cache_clear()
         with mock.patch.object(story_rules, "paper_id", lambda url: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         story_rules._page_key.cache_clear()
-        # 0108's: a post that moved as a page of its own
+        # a post that moved as a page of its own (0108)
         with mock.patch.object(StoriesService, "_story_post", staticmethod(
                 lambda row, sources, real=StoriesService._story_post: real({**row, "moved_to": None}, sources))):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
-        # 0109's: a mail tracker's query as another page
+        # a mail tracker's query as another page (0109)
         with mock.patch.object(url_normalization, "is_tracking_key", lambda key: key.startswith("utm_")):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
-        # 0111's: a date as a name
+        # a date as a name (0111)
         from insight_core.utils import news_rules
         with mock.patch.object(news_rules, "dated", lambda words: False):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         from insight_core.db import repo_stories
         with mock.patch.object(repo_stories, "channel_owners", lambda *args: {}):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
-        # 0263's miss (v10.31.1): a background page dating its story; no sample case showed it, so the stored stories
-        # were never re-dated. The grouping part sees it now (the stories regroup once with this case)
+        # a background page dating its story (0263)
         with mock.patch.object(story_rules, "background", lambda posts, times: set()):
             self.assertNotEqual(rules_stamp.__wrapped__()["grouping"], stories["grouping"])
         from insight_core.ingestion.kinds import parsing
@@ -182,7 +178,7 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         self.assertEqual(stamps.fingerprint({"b": {1, 2}, "a": [1]}), stamps.fingerprint({"a": [1], "b": {2, 1}}))
 
     def test_a_change_moves_only_the_parts_it_shows_in(self):
-        # 0216: three parts, each a fingerprint of its own outputs; a rule change redoes only what its parts need
+        # three parts, each a fingerprint of its own outputs; a rule change redoes only what its parts need
         from datetime import timedelta
         from insight_core.services.stories_service import PARTS, redo_for
         from insight_core.utils import news_rules
@@ -204,8 +200,8 @@ class StampsFollowTheRulesTests(unittest.TestCase):
             self.assertEqual(moved()[1], "grouping", "an edge rule: every post regrouped")
 
     def test_a_single_stamp_from_before_the_split_reads_as_its_parts(self):
-        # 0216: this code's own single stamp is its parts; a listed one is what it was measured to be; any other is
-        # every part changed
+        # this code's own single stamp is its parts; a listed one is what it was measured to be; any other is every
+        # part changed
         from insight_core.services.stories_service import LEGACY_RULES, redo_for, stored_rules, whole_stamp
         now = rules_stamp()
         self.assertEqual(stored_rules(whole_stamp()), now)

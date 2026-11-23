@@ -1,24 +1,12 @@
-"""The tools a track's practitioners use or build (issue 0207, Stealth v10.18).
+"""The tools a track's practitioners use or build: which tools a topic track's posts are about, counted by distinct
+voices and recency. Read by the track page's "Tools in use" panel (`panel`) and the track's `tool` finder (finders.py,
+`finder_ids`).
 
-One decision, owned here: which tools and products a topic track's posts are about, counted by the distinct voices
-(practitioners) that discuss them and how recently. Two readers: the track page's "Tools in use" panel (`panel`) and
-the track's `tool` finder (finders.py: a passive post naming one of these tools is put up for judging, `finder_ids`).
-
-**What counts** (`rows`): the entities of the track's posts placed in it (the owner's ✓, an active source's in, a
-join; v10.41: never a Discover suggestion; never a post the
-owner marked ✗ nor a switched-off source's) whose kind is a tool: the current identity facts' kind (0184,
-entity_facts.read, when on) else the entity's type, one of TOOL_KINDS; never a generic word (facts `generic`) nor a
-name the book marked not an entity. Each tool: its posts, its voices (Mark X's voice rule: a post counts as its
-followed author's, else its feed's, `tasks.Post.voice`), its newest post, its posts in RECENT_DAYS, its posts in the
-track itself (not only Discover), and how specific it is to the track (`share`: its posts among the track's judged-in
-posts over every post naming it, SPECIFIC at least: a platform, a language or an OS that every kind of post names is
-no track's tool).
-
-**The panel** (`panel`): tools with MIN_VOICES+ voices, the subject (or the actor, or compared) of one of the posts at
-least (STRONG_ROLES: not only named in passing), most voices first, then the newest; each linked to its entity
-page. **The finder** (`finder_ids`): the same tools when FINDER_MIN_VOICES+ voices in the track discuss them; the most
-FINDER_MAX by voices.
-
+What counts (`rows`): the entities of the track's posts placed in it (never a Discover suggestion, an owner's ✗ or a
+switched-off source's) whose kind is a tool (entity_facts' kind, else the entity's type, in TOOL_KINDS), never a
+generic word or a non-entity. Each tool: its posts, voices (Mark X's voice rule), newest post, recent posts, and how
+specific it is to the track (`share` at least SPECIFIC: a platform every post names is no track's tool). The panel:
+MIN_VOICES+ voices and a STRONG_ROLES post at least; the finder: FINDER_MIN_VOICES+ voices, the top FINDER_MAX.
 Read only.
 """
 from __future__ import annotations
@@ -36,26 +24,22 @@ RECENT_DAYS = 30
 PANEL_MAX = 24
 FINDER_MIN_VOICES = 2
 FINDER_MAX = 60
-# 0207: the panel is Shadow (shown, labelled) until a blind-labelled sample passes 97% with a Wilson lower bound of 0.90
+# the panel is Shadow (shown, labelled) until a blind-labelled sample passes its bar (0207)
 MEASURED = {"what": "tools right for the track", "right": 23, "of": 27, "lower": 0.675}
 POSTS_READ = 40         # the newest posts of a tool read for its voices
 
 
 def judged_in(items: Sequence[Dict[str, Any]]) -> List[str]:
     """The track's posts a tool can come from: placed in the track or joined (the owner's ✓, an active source's in, a
-    join); not out, not off. v10.41: never Discover's, a suggestion not decided yet (production, 2026-11-23: Security's
-    panel showed Railway, pnpm and RubyGems from Discover posts, 0 of them in the track)."""
+    join); not out, not off, never Discover's (a suggestion not decided yet)."""
     return [it["post_id"] for it in items if it.get("place") in ("track", "joined")]
 
 
 def rows(cur: Cursor, posts: Sequence[str], in_track: Sequence[str] = (), *, now: Optional[datetime] = None,
          min_posts: int = 1) -> List[Dict[str, Any]]:
-    """Every tool the posts name (`min_posts` of them at least): [{id, name, kind, what, posts, voices, last_at,
-    recent, in_track}], most voices first.
-
-    0270: the tool kinds and the post minimum are the query's own conditions. Before, it returned every entity the
-    track's posts name with the array of its posts and Python dropped the non-tools and the one-post names
-    (production, 2026-11-21: 6,229 calls returned 63M rows; each counted every name's posts everywhere)."""
+    """Every tool the posts name (`min_posts` of them at least): [{id, name, kind, what, posts, voices, last_at, recent,
+    in_track}], most voices first. The tool kinds and the post minimum are the query's own conditions (so it never
+    returns every name's posts)."""
     from insight_core.markx import entity_facts, pairing, tasks
     now = now or datetime.now(timezone.utc)
     if not posts:

@@ -1,8 +1,7 @@
-// The smart archiver's calls and shapes (issue 0143), beside createApi's: their own module, as the voices' are.
+// The smart archiver's calls and shapes, beside createApi's.
 import { request } from '../lib/request';
 
-/** settings.archive's coverage line (GET /api/archive/{id}/status `archive.coverage`, the catalog's `coverage`):
- *  what the smart archiver measured of a feed's site. */
+/** What the smart archiver measured of a feed's site (`archive.coverage`). */
 export interface ArchiveCoverage {
   stored: number;
   /** The site's posts, the largest trustworthy estimate (an API's total, the sitemap's, a listing's); null unknown. */
@@ -16,7 +15,7 @@ export interface ArchiveCoverage {
   exhausted: boolean;
   /** Each other strategy's outcome: why the rest is not stored (no_sitemap, listing_unread, api_refused:403, …). */
   reasons: Record<string, string>;
-  /** Posts each strategy gave, the last archive. */
+  /** Posts each strategy gave in the last archive. */
   worked?: Record<string, number>;
   /** The Web Archive's index is this source's last resort (opt-in). */
   web_archive?: boolean;

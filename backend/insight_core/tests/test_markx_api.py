@@ -1,10 +1,7 @@
-"""Mark X Shadow's worker API (issue 0086 C) over ASGI, against the run's own _test database: the switch
-(off answers 404), the bearer token, leases, answers checked and stored (valid, invalid, the third try, a
-second answer), releases, the status, the guides loaded by sha256, the tasks built from content only, and
-every kind round-tripped with synthetic answers.
+"""Mark X's worker API (0086 C) over ASGI: the switch, the bearer token, leases, answers checked and stored, releases,
+the status, the guides, tasks built from content only, and every kind round-tripped with synthetic answers.
 
-These suites commit (the API opens its own transactions), so they run only on a database whose name ends
-in _test; each test starts from empty mx_* tables there. Every post and source is synthetic."""
+These suites commit, so they run only on a _test database; each test starts from empty mx_* tables."""
 from __future__ import annotations
 
 import asyncio
@@ -31,25 +28,25 @@ from insight_core.markx import api, repo, schemas, tasks
 from insight_core.services import registry
 from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 
-MX_TABLES = ("mx_questions", "mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_refusals", "mx_story_posts", "mx_stories", "mx_runs",
+MX_TABLES = ("mx_interests", "mx_interest_weights", "mx_questions", "mx_later", "mx_later_stops", "mx_back", "mx_mention_sets", "mx_perspectives", "mx_sheets", "mx_labels", "mx_briefings", "mx_news", "mx_connections", "mx_refusals", "mx_story_posts", "mx_stories", "mx_runs",
              "mx_candidates", "mx_embeddings", "mx_mentions", "mx_readings", "mx_calls", "mx_tasks", "mx_guides",
              "mx_settings", "mx_jobs", "mx_candidate_posts", "mx_workers",
              "mx_entity_surges", "mx_entity_vectors", "mx_entity_pins", "mx_entity_facts", "mx_entity_queue", "mx_entity_redirects",
-             "mx_entity_aliases", "mx_entity_fixes", "mx_entities", "mx_entity_addresses",   # 0119; 0138; 0164
-             "mx_opinion_inputs",   # 0222
-             "mx_research_pairs", "mx_research_findings", "mx_research_runs",   # 0162
-             "mx_scout_items", "mx_scout_candidates", "mx_scout_runs", "mx_source_provenance",   # 0148
-             "mx_source_judgements",   # 0173
-             "mx_news_placements", "mx_news_place_asks",   # 0197
-             "mx_news_sections", "mx_news_section_asks",   # 0174
-             "mx_plan_marks", "mx_embed_skips",   # v10.14; 0110
-             "mx_entity_handles", "mx_handle_refs", "mx_handle_pairs", "mx_handle_scans",   # 0168
-             "mx_happenings",   # 0175
-             "mx_attach", "mx_units", "mx_roundups", "mx_roundup_issues",   # 0181
-             "mx_unit_types", "mx_unit_type_asks",   # 0181 round 2 (0125)
-             "mx_kept_pages",   # 0198 (0136)
-             "mx_news_significance_asks", "mx_news_rank",   # 0208 (0141)
-             "mx_track_field_dismissals", "mx_track_schemas", "mx_track_things", "mx_track_thing_reports", "mx_track_brief_asks")   # 0245 (0163)
+             "mx_entity_aliases", "mx_entity_fixes", "mx_entities", "mx_entity_addresses",
+             "mx_opinion_inputs",
+             "mx_research_pairs", "mx_research_findings", "mx_research_runs",
+             "mx_scout_items", "mx_scout_candidates", "mx_scout_runs", "mx_source_provenance",
+             "mx_source_judgements",
+             "mx_news_placements", "mx_news_place_asks",
+             "mx_news_sections", "mx_news_section_asks",
+             "mx_plan_marks", "mx_embed_skips",
+             "mx_entity_handles", "mx_handle_refs", "mx_handle_pairs", "mx_handle_scans",
+             "mx_happenings",
+             "mx_attach", "mx_units", "mx_roundups", "mx_roundup_issues",
+             "mx_unit_types", "mx_unit_type_asks",
+             "mx_kept_pages",
+             "mx_news_significance_asks", "mx_news_rank",
+             "mx_track_field_dismissals", "mx_track_schemas", "mx_track_things", "mx_track_thing_reports", "mx_track_brief_asks")
 
 
 def call(method: str, path: str, *, query: Optional[Dict[str, Any]] = None, body: Any = None,
@@ -92,7 +89,7 @@ async def _call(app, method, path, query, body, token):
     return status, (json.loads(data) if data else None)
 
 
-# Three texts of their own, for the check planner's stories: posts of one text are near-copies, never checked (0112).
+# Three texts of their own, for the check planner's stories: posts of one text are near-copies, never checked.
 OWN = ("Acme released Widget 4.1 today, with 27B parameters and a price of $20 a month for every user who signs up.",
        "I tried the new version on my old laptop for a day and the battery lasted longer than with any build before.",
        "The benchmark table puts it ahead on three of the five tests, behind on long documents and on code repair.")
@@ -118,7 +115,7 @@ class _Api(unittest.TestCase):
         api.token_store = api.TokenStore(box=SecretBox(SecretBox.generate_key()))
         schemas._ready.clear()
         api._contacts.clear()
-        api._PLAN_REST.clear()                                   # v10.13.3: no planner rests across tests,
+        api._PLAN_REST.clear()                                   # no planner rests across tests,
         self.addCleanup(setattr, api, "PLAN_REST_SECONDS", api.PLAN_REST_SECONDS)
         api.PLAN_REST_SECONDS = 0.0                              # nor within one unless it asks (PlannersRest)
         if not self.plan:
@@ -129,9 +126,9 @@ class _Api(unittest.TestCase):
         self.cur = self.conn.cursor()
         # a scratch _test database: each test starts from empty mx_* tables and no worker token
         clear_tables(self.cur, MX_TABLES)
-        self.cur.execute("DELETE FROM mx_inc_state")   # 0183: no pass's kept stamp (an empty table's) carries over
+        self.cur.execute("DELETE FROM mx_inc_state")   # no pass's kept stamp carries over
         self.cur.execute("DELETE FROM credentials WHERE provider = 'markx'")
-        # on: a source switched off feeds no suggestion (issue 0200); these stand for the sources you follow
+        # on: a source switched off feeds no suggestion; these stand for the sources you follow
         self.source = insert_scratch_source(self.cur, platform="telegram", enabled=True,
                                             settings_json=json.dumps({"display_name": "Example Channel"}))
         self.other = insert_scratch_source(self.cur, platform="rss", enabled=True,
@@ -233,9 +230,8 @@ class Leases(_Api):
         self.assertEqual(len(rest["tasks"]), 1)     # the third; the two leased are not leased again
 
     def test_v1035_a_join_or_pair_task_carries_its_judged_post(self):
-        """v10.35: two questions judging one post quote that post, so an answer the model wrote for one under the
-        other's id passed judge-read-v2's quote check; each carries the judged post (the POST block: join's `a`,
-        pair's `b`), which the worker never asks twice in one call (split_calls)."""
+        """Each question carries the judged post, which the worker never asks twice in one call, so an answer written
+        for one question cannot pass another's quote check (v10.35)."""
         judged, story_post, anchor = self.post(), self.post(title="Globex raised $300m"), self.post(title="Initech")
         with self.conn.transaction():
             join = tasks.add(self.cur, "join", "STORY\njoin question", a=judged)[0]
@@ -246,8 +242,7 @@ class Leases(_Api):
         self.assertEqual(got, {str(join): judged, str(pair): judged, str(read): None})
 
     def test_v1020_a_lease_sends_the_schema_the_server_checks_with_not_a_stale_stored_one(self):
-        # mx_guides keeps a guide's first schema; a set widened later (ent-v4.2's `published`) must reach the worker
-        # (mx_guides rows are never edited: the stored schema stays, and a widened code schema stands in for the change)
+        # mx_guides keeps a guide's first schema (rows never edited); a schema widened later must still reach the worker
         self.task()
         widened = {**schemas.READ_SCHEMA, "x-widened": True}
         real = schemas.schema_for
@@ -261,8 +256,7 @@ class Leases(_Api):
         self.assertEqual((none["tasks"], none["guides"]), ([], {}))
 
     def test_two_first_leases_at_once_on_a_fresh_database_both_succeed(self):
-        """0112 bug 4: the first lease marked the guides loaded before its transaction committed, so a second lease
-        planned tasks naming a guide not committed yet (a foreign-key failure, HTTP 500, worker exit 3)."""
+        """Guides are marked loaded only after their lease's transaction commits (0112)."""
         import threading
         import time
         from unittest import mock
@@ -270,7 +264,7 @@ class Leases(_Api):
         schemas._ready.clear()
         tasks.PLANNERS = {"read": lambda cur, **kw: tasks.plan_posts(cur, "read", **kw)}
         self.post(title="Globex raised $300m")
-        counts, first = repo.open_counts, threading.Event()   # v10.13.3: the lease's count
+        counts, first = repo.open_counts, threading.Event()   # the lease's count
 
         def slow_first(cur, kinds):                    # the first lease holds its transaction open after loading the guides
             if not first.is_set():
@@ -460,7 +454,7 @@ class Answers(_Api):
         self.assertEqual(set(body["guides"]), set(schemas.guide_ids()))
 
     def test_a_workers_last_contact_is_seen_by_the_other_api_process(self):
-        """0112 Decided 11: the worker reached one process; the page asks the other, which has nothing in memory."""
+        """The worker reached one process; the page asks the other, which has nothing in memory (0112)."""
         self.lease(worker="device-7")
         api._contacts.clear()                                    # the other process
         status, body = call("GET", "/api/markx/status", token=self.token)
@@ -484,7 +478,7 @@ class GuidesAndInputs(_Api):
                 repo.put_guide(self.cur, "read-v2", "read", "another body")
 
     def test_a_builder_called_before_any_request_loads_the_guides_itself(self):
-        """S2's and S5's jobs build tasks without the API having run: the first task loads the guides."""
+        """Jobs build tasks without the API having run: the first task loads the guides."""
         clear_tables(self.cur, MX_TABLES)
         schemas._ready.clear()
         task_id = self.task()
@@ -513,8 +507,8 @@ class GuidesAndInputs(_Api):
         self.assertIsNone(self.row(first)["b"])                                         # no Mark IX story id
 
     def test_checks_are_planned_from_mark_ix_stories_and_a_changed_story_is_counted_as_re_asked(self):
-        """F1's checks read Mark IX's stories (never writing them, never keying by their id); when a story changes
-        shape its check's input changes, and `reasked` counts it (build plan, corrections 4)."""
+        """Checks read Mark IX's stories, never writing or keying by their id; a story's change of shape changes its
+        check's input, and `reasked` counts it."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)
         origin = self.post(title="Acme ships Widget 4.1", text=OWN[0], source=self.other, at=t0)
         member = self.post(title="Widget 4.1 thoughts", text=OWN[1], at=t0 + timedelta(hours=1))
@@ -541,9 +535,8 @@ class GuidesAndInputs(_Api):
         self.assertEqual(got["would_change"], 1)     # the member's question now shows the late post too
 
     def test_a_one_report_storys_check_shows_its_other_members(self):
-        """0112 bug 2: a member that is its story's only report was checked against an empty story ("Headline: " and
-        no member); it is shown the story's other members (any role) and its card, and a story's only post is never
-        checked."""
+        """A story's only report is shown the story's other members (any role) and its card; a story's only post is
+        never checked (0112)."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)
         origin = self.post(title="Acme ships Widget 4.1", text="The release notes list every change in the new "
                            "version, from the faster start to the smaller memory footprint and the fixed crash.",
@@ -563,7 +556,7 @@ class GuidesAndInputs(_Api):
         self.assertNotIn("Headline: \n", text)
 
     def test_the_real_data_check_counts_a_waiting_check_that_shows_an_empty_story(self):
-        """0112 C: markx.check_empty_story, a check task still to be asked whose input shows a story with no member."""
+        """markx.check_empty_story: a check task to be asked whose input shows a story with no member (0112)."""
         from insight_core.checks import invariants
         a, b = self.post(title="Acme ships Widget 4.1", text=OWN[0]), self.post(title="Widget 4.1 thoughts", text=OWN[1])
         posts = tasks.load_posts(self.cur, [a, b])
@@ -578,7 +571,7 @@ class GuidesAndInputs(_Api):
         check, = [i for i in invariants.INVARIANTS if i.name == "markx.check_empty_story"]
         with self.conn.transaction():
             ids, of = check.count(invariants.Run(db_url(), self.cur, datetime.now(timezone.utc)))
-        self.assertEqual((ids, of), ([str(empty)], 2))      # waiting: the empty one and the shown one; answered: v10.0's
+        self.assertEqual((ids, of), ([str(empty)], 2))      # waiting: the empty one and the shown one
 
     def test_the_story_a_check_shows(self):
         a, b, c = (tasks.Post(id=x, kind="telegram", source=x, source_id=x, at=datetime(2100, 1, 1, n, tzinfo=timezone.utc),
@@ -588,8 +581,8 @@ class GuidesAndInputs(_Api):
         self.assertEqual(tasks.check_side(b, [b], {"b"}), [])                                   # alone: nothing to ask
 
     def test_a_near_copy_is_never_a_check_question(self):
-        """0112 bug 3: identical reposts were checked and removed (9 of 44 removals). A member whose folded text is
-        another member's, or whose 5-word shingles overlap one's by 0.6 or more, from any source, is never checked."""
+        """A member whose folded text is another's, or whose 5-word shingles overlap one's by 0.6+, from any source,
+        is never checked (0112)."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)
         teaser = ("Open meeting on Friday: a project with agents from the first idea to working code, "
                   "with a live demo and questions at the end, everyone is welcome to join us.")
@@ -624,7 +617,7 @@ class GuidesAndInputs(_Api):
         self.assertEqual(tasks.near_copies([ms[0], ms[3]]), set())
 
     def test_a_member_joined_by_thread_is_checked_unless_switched_off(self):
-        """The S5 review's W1: a thread Mark IX hung on a story by its root's citation is checked reply by reply."""
+        """A thread hung on a story by its root's citation is checked reply by reply."""
         t0 = datetime.now(timezone.utc) - timedelta(hours=3)
         origin = self.post(title="Acme ships Widget 4.1", text=OWN[0], source=self.other, at=t0)
         root = self.post(title="Benchmarks of many models", text=OWN[1], at=t0 + timedelta(hours=1))
@@ -654,8 +647,8 @@ class GuidesAndInputs(_Api):
         self.assertEqual([(str(a), p) for a, p in self.cur.fetchall()], [(fresh, 0), (older, 3)])
 
     def test_plan_posts_reaches_past_posts_that_repeat_an_asked_text(self):
-        # v10.4.1: posts whose input repeats a task's (media-only posts, reposts) never get a task of their own
-        # (the same input is one task); newest first they filled every LIMIT and the older posts were never planned.
+        # posts whose input repeats a task's (media-only posts, reposts) never get a task of their own, so newer
+        # repeats cannot crowd older posts out of LIMIT
         now = datetime.now(timezone.utc) + timedelta(days=3650)
         same = "Acme shared a picture."
         first = self.post(title="", text=same, at=now - timedelta(days=5))
@@ -671,8 +664,7 @@ class GuidesAndInputs(_Api):
 
 
 class ChecksOffTheLease(_Api):
-    """v10.13.2: with the story window past 30 days, planning the checks reads every story it reaches (over a minute
-    on the server), longer than a worker waits; a lease then leaves it to the decision job."""
+    """Planning the checks can outlast a worker's wait, so a lease leaves it to the decision job."""
 
     def test_a_wide_story_window_leases_without_planning_checks(self):
         from insight_core.markx import tasks
@@ -710,7 +702,7 @@ class ChecksOffTheLease(_Api):
 
 
 class PlannersRest(_Api):
-    """v10.13.3: a lease counts only its kinds' open tasks, and a planner that added nothing rests a minute."""
+    """A lease counts only its kinds' open tasks, and a planner that added nothing rests a minute."""
 
     def setUp(self):
         super().setUp()
@@ -754,8 +746,8 @@ class PlannersRest(_Api):
 
 
 class ReadingWindow(_Api):
-    """0112 Decided 9: the read, entities and embed planners' window is the owner's (the page's mx_settings row,
-    default 30 days, null for every post), and a lease may carry its own (`days`); the decision window stays 30."""
+    """The read, entities and embed planners' window is the page's mx_settings row (default 30 days, null for every
+    post); a lease may carry its own (`days`); the decision window stays 30 (0112)."""
     plan = True
 
     def setUp(self):
@@ -826,8 +818,7 @@ class ReadingWindow(_Api):
         return [t for t in titles if t in names.values()]
 
     def test_a_changed_window_is_planned_on_the_next_lease_even_with_tasks_waiting(self):
-        """0121 Decided 4 (the v10.0.1 review's W5): a change counted only once fewer than a lease's tasks waited, so
-        it could wait 24 leases. Now a lease plans again whenever the window it last planned differs from the page's."""
+        """A lease plans again whenever the window it last planned differs from the page's (0121)."""
         call("POST", "/api/markx/settings/reading-window", body={"days": 120})
         status, body = self.lease(None, limit=1)
         self.assertEqual(status, 200, body)
@@ -868,14 +859,14 @@ class ReadingWindow(_Api):
             world = D.load(self.cur, self.now, D.Config())
         self.assertEqual(world.since, self.now - timedelta(days=30))
         import inspect
-        self.assertIs(inspect.signature(tasks.plan_checks).parameters["days"].default, tasks.SETTING)   # 0144: the story window's
+        self.assertIs(inspect.signature(tasks.plan_checks).parameters["days"].default, tasks.SETTING)   # the story window's
         from insight_core.markx import story_window
         with self.conn.transaction():
             self.assertEqual(story_window.days_for_run(self.cur, self.now), 30)   # no row: 30, whatever the reading window
 
 
 class EveryKindRoundTrips(_Api):
-    """Each kind built by its builder, leased, answered with a valid answer, then the invalid cases 0086 C names."""
+    """Each kind built by its builder, leased, answered with a valid answer, then the invalid cases."""
 
     def setUp(self):
         super().setUp()
@@ -912,7 +903,7 @@ class EveryKindRoundTrips(_Api):
         "entities": {"entities": [{"span": "Widget 4.1 Pro", "name": "Widget 4.1 Pro", "type": "product", "role": "subject",
                                    "version": "4.1"}], "relations": []},
         "check": {"relation": "same_event", "confidence": 90, "reason": "Same launch."},
-        "join": {"relation": "reaction", "confidence": 70, "reason": "Reacts to it.",   # 0258: quotes its POST
+        "join": {"relation": "reaction", "confidence": 70, "reason": "Reacts to it.",   # quotes its POST
                  "post_quote": "Widget 4.1 Pro arrived today"},
         "pair": {"relation": "same_event", "confidence": 85, "reason": "Same launch.",
                  "post_quote": "Acme's Widget 4.1 Pro arrived today", "story_quote": "Acme ships Widget 4.1 Pro"},
@@ -930,7 +921,7 @@ class EveryKindRoundTrips(_Api):
         "entities": ({"entities": [{"span": "Widget 5", "name": "Widget 5", "type": "product", "role": "subject"}]},
                      "every entity was dropped: entities[0].span 'Widget 5' does not occur in the post"),
         "check": ({"relation": "related", "confidence": 50}, "answer.relation: 'related' is not one of"),
-        "join": ({"relation": "same_event", "confidence": 90,   # 0258: the story's post quoted as this POST's
+        "join": ({"relation": "same_event", "confidence": 90,   # the story's post quoted as this POST's
                   "post_quote": "Acme released Widget 4.1 Pro with 27B parameters"},
                  "post_quote: not in this question's POST"),
         "pair": ({"relation": "same_event"}, "answer: confidence missing"),
@@ -974,7 +965,7 @@ class EveryKindRoundTrips(_Api):
         _, got = self.answer((t, {"entities": [dict(one, span="Widget 4.1 Pro", version="4.2")]}))
         self.assertEqual(got["invalid"][0]["error"],
                          "every entity was dropped: entities[0].version '4.2' does not occur in the post")
-        # v10.20: past the 20th dropped, the first 20 stored; the call keeps the dropped entry with why
+        # past the 20th dropped, the first 20 stored; the call keeps the dropped entry with why
         _, got = self.answer((t, {"entities": [one] * 21}))
         self.assertEqual((got["valid"], got["invalid"]), (1, []))
         self.cur.execute("SELECT answer FROM mx_calls WHERE task_id = %s AND valid", (t,))

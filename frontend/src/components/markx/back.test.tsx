@@ -1,5 +1,4 @@
-// 0136 (back in the news, Shadow): the rows /markx shows, the lab's measured precision and the owner's running one,
-// and the four label buttons. Synthetic data only.
+// Back in the news (0136): the rows /markx shows, the measured and running precision, the label buttons. Synthetic.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

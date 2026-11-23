@@ -1,9 +1,6 @@
-"""Issue 0238: News read state. A row is its lead and its lines; `news.unread` counts the row's unread posts, the answer
-`rows` and `unread_rows`; `unread=true` lists only rows with an unread post; PUT /api/feed/read {news: true} marks
-every post of every row the scope lists, read only, keeping Later (its ids undo it exactly).
-
-The pure parts as functions; the routes over ASGI with fake services; the row's count on the database in one
-transaction per test, rolled back."""
+"""News read state (0238): a row is its lead and its lines; `news.unread` counts the row's unread posts;
+`unread=true` lists only rows with an unread post; PUT /api/feed/read {news: true} marks every post of every listed
+row read, keeping Later. Pure parts as functions, routes over ASGI with fakes, the count on the database."""
 from __future__ import annotations
 
 import sys

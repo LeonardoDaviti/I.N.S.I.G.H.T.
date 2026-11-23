@@ -1,113 +1,36 @@
-"""Mark X Shadow's worker API (issue 0086 C): an APIRouter, included by main.py in one line.
+"""Mark X's API: an APIRouter under /api/markx, included by main.py.
 
-INSIGHT_MARKX (default off) switches it: off, every path below answers 404 and nothing here runs (no
-guide is loaded, no task is planned, no row is written). On, the worker on the owner's device
-(scripts/markx-worker, 0086 D) leases tasks, asks Haiku, and posts the answers; the server checks each
-answer (markx/validate.py) and stores it.
+INSIGHT_MARKX (default off) switches it: off, every path answers 404 and nothing here runs. On, the worker on the
+owner's device (scripts/markx-worker) leases tasks, asks Haiku and posts the answers; the server checks each answer
+(markx/validate.py) and stores it.
 
-The contract (frozen 2026-11-05; scripts/markx-worker is built against it)
---------------------------------------------------------------------------
-Every worker request carries `Authorization: Bearer <token>`: the worker token, generated in Sources →
-Connections (POST /api/markx/token) and stored encrypted in the credentials table (provider "markx", key
-"worker_token"). No token, or another one: 401 {"detail"}. JSON bodies, UTF-8.
+The worker contract (scripts/markx-worker is built against it). Every worker request carries `Authorization: Bearer
+<token>` (the worker token, stored encrypted in the credentials table, provider "markx"); no token or another: 401.
 
 GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>
-    Leases up to n (1-100, default 20) open tasks of those kinds to the worker for 30 minutes, by priority
-    (0 first) then age; a task whose lease ran out is leased again. When a kind has fewer than n open tasks
-    and the server plans it (read, entities: the newest posts of the last 30 days; check: Mark IX's
-    uncertain members), it plans up to 500 more first.
-    200 {"lease_until": "<ISO 8601 with offset, UTC: 2026-11-05T12:30:00+00:00>",
-         "guides": {"<guide id>": {"sha256": "<hex of body>", "body": "<text>", "schema": {..}}},
-         "tasks": [{"id": "<uuid>", "kind": "<kind>", "guide": "<guide id>", "input": "<text>"}]}
-    Every task's guide is in "guides". No open task: "tasks": [] and "guides": {}. An unknown kind: 400.
-    0176 (additive): an entities task also carries "post": "<uuid>" (a long post is asked a task a window; the worker
-    never puts two tasks of one post in one call); v10.35: a join or pair task carries its judged post too
-    (POST_KINDS). Posts fetched in the last 24 hours are planned and leased first (the fresh lane, up to 3/4 of a
-    lease).
-
+    Leases up to n (1-100, default 20) open tasks of those kinds for 30 minutes, by priority then age (an expired
+    lease is leased again), planning more first when few are open. 200 {"lease_until": ISO with offset, "guides":
+    {id: {sha256, body, schema}}, "tasks": [{id, kind, guide, input, post?}]}. A task of a post's kind (POST_KINDS)
+    carries its post, so the worker never asks two tasks of one post in one call. Fresh posts are leased first
+    (the fresh lane). An unknown kind: 400.
 POST /api/markx/answers
-    {"worker": "<name>", "executor": "claude-code" | "api" | "api-batch", "model": "<model id>",
-     "answers": [{"task_id": "<uuid>", "answer": {..}, "tokens_in"?: int, "tokens_out"?: int, "ms"?: int,
-                  "cost_usd"?: float}]}
-    200 {"stored": int, "valid": int, "invalid": [{"task_id": "<uuid>", "error": "<why>"}], "repeated": int}
-    Each answer is checked (0086 C's table) and stored in mx_calls, valid or not, with its tokens. A valid
-    answer closes its task (and writes the post's reading or entities); an invalid one puts the task back to
-    open with its error, failed at the third try. An answer to a task already answered or failed is stored as
-    a call and changes nothing ("repeated" counts them; a valid one still counts in "valid"). An answer to a
-    task whose lease ended, or that another worker now holds, is taken like any other. A task id that names
-    no task is listed in "invalid" ("no such task") and not stored.
-
-GET /api/markx/ready?kinds=<k1,k2>[&days=<N|all>]   (v10.42, additive)
-    200 {"ready": [kinds with a task a lease takes now], "planned": [kinds a lease would plan first]}: the worker
-    leases only these. An older worker never asks it; an older server answers 404 and the worker leases every kind.
-
-POST /api/markx/release
-    {"worker": "<name>", "task_ids"?: ["<uuid>", ..]}
-    200 {"released": int}
-    The worker's leased tasks (those of task_ids, or all of them) go back to open; no try is counted.
-
-GET /api/markx/status
-    200 {"queue": {kind: {status: n}}, "answers_per_day": [{day, calls, valid, invalid, tokens_in, tokens_out,
-         cost_usd}], "tokens": {calls, tokens_in, tokens_out, cost_usd}, "workers": [{worker, last_contact,
-         leased}], "last_run": {..} | null, "guides": {id: sha256},
-         "jobs": {"decide" | "candidates": {running, started_at, stage, stage_at, wanted_at, finished_at, last}}}
-    (jobs: added by 0112 Decided 12; a running decision run shows its start and stage)
-
-S4's open points, settled: the answer is posted as {"task_id", "answer"} (and an answer the model wrapped in
-one key named for it, {"reading": {..}}, is unwrapped); ids are uuid strings, posted back as leased; "valid"
-is a count; release honours task_ids; late answers are taken as above; "schema" is JSON Schema in the
-worker's subset (markx/schemas.py), never null for these kinds; tokens are per answer; lease_until always
-has its offset.
-
-The owner's routes (no bearer: they are the app's own, like /api/credentials)
---------------------------------------------------------------------------------
-GET /api/markx/token    200 {"set": bool, "last4": str | null, "updated_at": ISO | null}
-POST /api/markx/token   200 {"token": "<new token, shown once>", "set": true, "last4", "updated_at"}
-                        A new token replaces the old one (a worker holding the old one gets 401).
-
-S5's routes, the Mark X page's (added 2026-11-05; the routes above are unchanged; no bearer: the app's own)
---------------------------------------------------------------------------------------------------------
-GET /api/markx/on                  200 {"on": true} (404 when off, as every path here: the menu item's probe)
-GET /api/markx/news?all=0|1        Mark X News beside Mark IX's (markx/news.py `page`): the newest written run's rows,
-                                   only the differences unless all=1, each {id, tag, headline {text, from}, first_at,
-                                   voices, score, posts [{id, title, source, kind, at, role, why, ix}], removed, ix};
-                                   and `gone`: the Mark IX rows no Mark X row holds. 0198: the jobs process keeps
-                                   both views after each run (news.keep_pages); sent as kept while their inputs are
-                                   the same, else built here as before; a conditional GET (ETag)
-GET /api/markx/posts/{post_id}     the post page's panel: {reading, entities, stories, connections}; 0131 adds
-                                   before [{post_id, relation, rule, p, reason, uncertain, at, title, source, label}]
-                                   (the older posts it connects to, oldest first, 10 at most) and before_more
-GET /api/markx/posts/{post_id}/related   v10.36: related reading, {post_id, vector, about, items [{id, title, source, at,
-                                   url, byline, cosine, guide, about, loose}]}: the nearest posts by the stored vector,
-                                   on request (~1.5 s); v10.37: a short report's page first, a few loose when few close
-POST /api/markx/labels/edge        0131: {newer, older, answer: right | wrong | undo, note?}: the owner's mark on an edge
-GET /api/markx/overview            {worker, briefing, entities}: the page's other tabs
-POST /api/markx/decide             asks for a decision run: {"wanted": true, "jobs"}; insight-ingestion runs it within a
-                                   minute, as it runs the hourly and after-upload ones (markx/jobs.py, 0112 Decided 10)
-
-S6's route, Mark X News' one-tap labels (added 2026-11-05; v10.22 0216: the Labels queue's routes removed)
---------------------------------------------------------------------------------------------------------------
-POST /api/markx/labels/news            {post, story, answer: wrong_story | not_about | ok, note?}: one tap on a Mark X
-                                       News member, stored as a label
-
-Adding a kind (S2's `embed`): one entry in schemas.KINDS. A route of its own (POST /api/markx/embeddings)
-is one more function on `router` below, or a router of S2's own included the same way; neither edits these.
-
-S2's route (added 2026-11-05; the routes above are unchanged)
-------------------------------------------------------------
-GET /api/markx/work?kinds=embed leases embed tasks as any kind (the server plans 500 more, newest posts first, when
-fewer than `limit` are open); each task's input is the exact text to embed (markx/embed.py), its guide `embed-v1`.
-
+    {"worker", "executor", "model", "answers": [{task_id, answer, tokens_in?, tokens_out?, ms?, cost_usd?}]}
+    -> 200 {stored, valid, invalid: [{task_id, error}], repeated}. Every answer is stored in mx_calls, valid or not.
+    A valid one closes its task; an invalid one reopens it with its error (failed at the third try). An answer to a
+    task already answered or failed changes nothing ("repeated"); a late answer is taken like any other; an unknown
+    task id is listed in "invalid" and not stored.
+GET /api/markx/ready?kinds=&days=   (v10.42) -> {"ready": kinds with a leasable task, "planned": kinds a lease would
+    plan first}: the worker leases only these; an older server's 404: every kind.
+POST /api/markx/release   {"worker", "task_ids"?} -> {"released"}: the leases go back to open, no try counted.
+GET /api/markx/status     the queue, answers a day, tokens, workers, last run, guides and jobs.
 POST /api/markx/embeddings
-    {"worker": "<name>", "model": "bge-m3", "model_sha256": "<the GGUF's sha256, 64 hex>",
-     "vectors": [{"task_id": "<uuid>", "vector": "<base64 of 1,024 little-endian float16, norm 1>", "ms"?: int}]}
-    200 {"stored": int, "invalid": [{"task_id", "error"}], "repeated": int}
-    Each vector is checked (2,048 bytes, finite, norm 1 within 0.01) and stored for its task's post; the task is
-    answered. An invalid one puts its task back to open with its error (failed at the third try). One for a task
-    already answered changes nothing. The candidates of the new vectors are found after the uploads go quiet.
-    400: another model, or not a sha256. 409 {"detail"}: the database holds vectors of another build (one build per
-    database; nothing of the request is stored). An embed task posted to /answers is invalid ("answered at
-    POST /api/markx/embeddings").
+    {"worker", "model": "bge-m3", "model_sha256", "vectors": [{task_id, vector (base64 of 1,024 float16, norm 1),
+    ms?}]} -> 200 {stored, invalid, repeated}; 400 another model; 409 the database holds another build's vectors
+    (nothing stored). An embed task posted to /answers is invalid.
+
+The owner's routes (no bearer: the app's own, like /api/credentials) are the rest: the token (GET/POST /token: a new
+token replaces the old one), the Mark X page (on, news, posts, overview, decide, settings), labels, the entities tab
+and its review queue, stories and perspectives. A new kind is one entry in schemas.KINDS.
 """
 from __future__ import annotations
 
@@ -123,8 +46,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, StrictInt
 
 from insight_core.markx import embed, jobs, labels, news, repo, schemas, tasks, validate
-from insight_core.markx import ent42   # 0133 v4.2
-from insight_core.markx import consumers, holds   # 0210
+from insight_core.markx import ent42
+from insight_core.markx import consumers, holds
 
 TOKEN_PROVIDER, TOKEN_KEY = "markx", "worker_token"
 MAX_LIMIT = 100
@@ -202,8 +125,8 @@ class TokenStore:
 
 token_store = TokenStore()
 
-# Each worker's last request is kept in mx_workers (0112 Decided 11: with two API processes each saw half of them);
-# this process writes a worker's row at most once every CONTACT_EVERY (its own last write, in _contacts).
+# Each worker's last request is kept in mx_workers (several API processes each see some of them); this process
+# writes a worker's row at most once every CONTACT_EVERY (its own last write, in _contacts).
 _contacts: Dict[str, datetime] = {}
 CONTACT_EVERY = timedelta(seconds=10)
 
@@ -254,41 +177,34 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 
 # ---- the worker's routes -------------------------------------------------------------------------
 
-# v10.14: kinds the decision run plans too (graph.stage, back.stage), in its one long transaction. A lease planning one
-# meanwhile picks the same newest pairs, and its insert of the same input waits on the run's uncommitted row until the
-# run ends (the server's relate leases: 6 to 57 s, every 5 minutes, the runs' gap). The run plans them; the lease leases.
+# kinds the decision run plans itself, in its one long transaction: a lease planning one meanwhile would wait on the
+# run's uncommitted rows until the run ends. The run plans them; the lease leases.
 PLANNED_BY_RUNS = ("relate", "back")
 
-PLAN_REST_SECONDS = 60.0   # v10.13.3: a planner that found nothing to add rests this long before a lease runs it again
+PLAN_REST_SECONDS = 60.0   # a planner that found nothing to add rests this long before a lease runs it again
 _PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (per API process)
-FRESH = "fresh:"                    # 0176 A: _PLAN_REST's key prefix for a kind's fresh-lane planner
+FRESH = "fresh:"                    # _PLAN_REST's key prefix for a kind's fresh-lane planner
 FRESH_REST_SECONDS = 30.0           # a fresh-lane planner that found nothing rests this long (a new post waits at most this)
-# 0176 B: kinds whose leased tasks carry their post, by the column it is in (a long post's windows); 0212: + reading.
-# v10.35: + join and pair, their JUDGED post (join's `a`, pair's `b`: the POST block; a pair's `a` is its STORY), so
-# the worker never asks two questions of one post in one call: both quote the same post, and an answer written for
-# one passed judge-read-v2's quote check (validate._judge_read) under the other's task id.
+# kinds whose leased tasks carry their post, by the column it is in (join's `a`, pair's `b`: the judged post), so
+# the worker never asks two questions of one post in one call: an answer written for one could pass the other's
+# quote check under the other's task id.
 POST_KINDS = {"entities": "a", "reading": "a", "join": "a", "pair": "b"}
 
 
 def _plan_resting(kind: str) -> bool:
-    """v10.13.3: most kinds' queues run near empty, so nearly every lease ran its kind's planner, and a planner that
-    finds nothing still reads its whole window (seconds a lease on the server); after a run that added nothing, the
-    lease skips it for PLAN_REST_SECONDS. New work still arrives within a minute."""
+    """Most queues run near empty, and a planner that finds nothing still reads its whole window: after a run that
+    added nothing, leases skip it for PLAN_REST_SECONDS. New work still arrives within a minute."""
     return _PLAN_REST.get(kind, 0.0) > time.monotonic()
 
 
 @router.get("/work", dependencies=[Depends(_worker_auth)])
 def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), worker: str = Query(...),
          days: Optional[str] = Query(None)):
-    """A lease. With `days` (a number, or "all"; `markx-worker cycle --days`), the read, entities and embed kinds
-    asked are planned for that window first, newest first and PLAN_LIMIT a call, whatever the page's reading window
-    (0112 Decided 9); without it, the page's window holds and a kind is planned when fewer than `limit` wait, or at
-    once when the window it was last planned for is not the page's (0121 Decided 4). Those kinds are leased inside
-    the window first, newest first, then the older tasks still queued (a narrowed window drops none).
-    0176 A, the fresh lane: before any of that, the posts fetched in the last tasks.FRESH_HOURS are planned for read,
-    entities and read3 whatever the queue holds, and a lease gives the fresh tasks up to tasks.FRESH_SHARE of its
-    slots first (repo.lease_tasks). A task of a post's kind carries its post ("post": the worker never asks two windows
-    of one post in one call)."""
+    """A lease. With `days` (a number, or "all"; `markx-worker cycle --days`), the read, entities and embed kinds asked
+    are planned for that window first, newest first, PLAN_LIMIT a call; without it, the page's window holds and a kind
+    is planned when fewer than `limit` wait, or at once when the page's window changed. Those kinds are leased inside
+    the window first, newest first, then the older tasks still queued. Before all that, the fresh lane: posts fetched in
+    the last tasks.FRESH_HOURS are planned and get up to tasks.FRESH_SHARE of the lease (repo.lease_tasks)."""
     worker = _name(worker)
     wanted = [k.strip() for k in kinds.split(",") if k.strip()]
     unknown = [k for k in wanted if k not in schemas.KINDS]
@@ -300,17 +216,17 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
         ensure_guides(cur)
         waiting = repo.open_counts(cur, wanted)
         setting = tasks.reading_window(cur)
-        for kind in wanted:   # 0176 A: the fresh lane is planned on every lease (FRESH_REST_SECONDS after a dry one)
+        for kind in wanted:   # the fresh lane is planned on every lease (FRESH_REST_SECONDS after a dry one)
             if kind in tasks.FRESH_PLANNERS and kind in tasks.PLANNERS and not _plan_resting(FRESH + kind):
                 if not tasks.FRESH_PLANNERS[kind](cur):
                     _PLAN_REST[FRESH + kind] = time.monotonic() + FRESH_REST_SECONDS
         for kind in wanted:
             if kind not in tasks.PLANNERS or not consumers.wanted(cur, kind):
-                continue                                          # 0210: no feature reads it: nothing planned
+                continue                                          # no feature reads it: nothing planned
             if tasks.planned_in_background(cur, kind):
-                continue                                          # v10.13.2/4: the decision job plans them
+                continue                                          # the decision job plans them
             if kind in PLANNED_BY_RUNS and jobs.decision_running(cur):
-                continue                                          # v10.14: never wait on a running decision run
+                continue                                          # never wait on a running decision run
             if window is not tasks.SETTING and kind in tasks.WINDOWED:
                 tasks.PLANNERS[kind](cur, days=window)
             elif kind in tasks.WINDOWED and tasks.planned_window(cur, kind) != setting:
@@ -327,10 +243,9 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
     until = max((t["lease_until"] for t in leased), default=datetime.now(timezone.utc)
                 + timedelta(minutes=repo.LEASE_MINUTES))
     return {"lease_until": _iso(until),
-            # v10.20: the schema the server checks with (schemas.schema_for), not the one stored with the guide's first
-            # load: mx_guides keeps a guide's first schema (a guide is never edited), so a set widened later (ent-v4.2's
-            # `published` relation, v10.10.1) reached the worker without it and 2,311 answers were refused and asked
-            # again for a value the server takes (worker logs since v10.17).
+            # the schema the server checks with (schemas.schema_for), not the one stored with the guide's first load: a
+            # guide is never edited, so a set widened later would reach the worker without its new values and valid
+            # answers be refused.
             "guides": {gid: {"sha256": g["sha256"], "body": g["body"],
                              "schema": schemas.schema_for(g["kind"], gid) or g["schema"]} for gid, g in guides.items()},
             "tasks": [dict({"id": str(t["id"]), "kind": t["kind"], "guide": t["guide"], "input": t["input"]},
@@ -370,7 +285,7 @@ def ready(kinds: str = Query(...), days: Optional[str] = Query(None)):
 
 
 def _model(kind: str) -> Dict[str, str]:
-    """v10.18: {"model": ...} when the kind is asked with another model than the worker's (identity.model_for)."""
+    """{"model": ...} when the kind is asked with another model than the worker's (identity.model_for)."""
     from insight_core.markx import identity
     m = identity.model_for(kind)
     return {"model": m} if m else {}
@@ -402,7 +317,7 @@ def store_answers(cur, *, executor: str, model: str, answers: List[Answer]) -> D
         if task is None:
             invalid.append({"task_id": a.task_id, "error": "no such task"})
             continue
-        if task["input"] is None:   # 0233: answered long ago, its input spent (tasks.spend): a repeat, not checked
+        if task["input"] is None:   # answered long ago, its input spent (tasks.spend): a repeat, not checked
             repeated += 1
             continue
         answer, error = validate.check(task["kind"], a.answer, task["input"], task.get("guide"))
@@ -434,7 +349,7 @@ def post_answers(body: Answers):
     with transaction() as cur:
         result = store_answers(cur, executor=body.executor, model=body.model.strip(), answers=body.answers)
         if result["valid"]:
-            jobs.want(cur, "decide")   # insight-ingestion decides (markx/jobs.py); never here (0112 Decided 10)
+            jobs.want(cur, "decide")   # insight-ingestion decides (markx/jobs.py); never in the request
     return result
 
 
@@ -460,7 +375,7 @@ def status():
         cur.execute("""SELECT created_at::date, count(*), count(*) FILTER (WHERE valid), count(*) FILTER (WHERE NOT valid),
                               COALESCE(sum(tokens_in), 0), COALESCE(sum(tokens_out), 0), COALESCE(sum(cost_usd), 0)
                          FROM mx_calls WHERE created_at >= COALESCE(%s, '-infinity'::timestamptz)
-                        GROUP BY 1 ORDER BY 1 DESC LIMIT 60""", (repo.calls_days_floor(cur, 60),))   # v10.14
+                        GROUP BY 1 ORDER BY 1 DESC LIMIT 60""", (repo.calls_days_floor(cur, 60),))
         days = [{"day": d.isoformat(), "calls": n, "valid": v, "invalid": i, "tokens_in": int(ti), "tokens_out": int(to),
                  "cost_usd": round(float(c), 6)} for d, n, v, i, ti, to, c in cur.fetchall()]
         cur.execute("SELECT count(*), COALESCE(sum(tokens_in), 0), COALESCE(sum(tokens_out), 0), "
@@ -472,7 +387,7 @@ def status():
         run = repo.last_run(cur)
         guide_hashes = {gid: g["sha256"] for gid, g in repo.guides(cur).items()}
         job_view = jobs.view(cur)
-        invariants = _entity_invariants(cur)   # 0164 C
+        invariants = _entity_invariants(cur)
     workers = []
     for w in sorted(set(seen_at) | set(leased)):
         seen = seen_at.get(w) or (leased[w][1] - timedelta(minutes=repo.LEASE_MINUTES))
@@ -495,7 +410,7 @@ class Vectors(BaseModel):
 
 @router.post("/embeddings", dependencies=[Depends(_worker_auth)])
 def post_embeddings(body: Vectors):
-    """S2: an embedder's vectors for embed tasks (markx/embed.py); their candidates follow (markx/candidates.py)."""
+    """An embedder's vectors for embed tasks (markx/embed.py); their candidates follow (markx/candidates.py)."""
     worker = _name(body.worker)
     _contact(worker)
     try:
@@ -527,7 +442,7 @@ def token_generate():
     return {"token": token, **view}
 
 
-# ---- the Mark X page's routes (S5, 0086 E) -------------------------------------------------------------
+# ---- the Mark X page's routes ----------------------------------------------------------------------------------
 
 MAX_DAYS = 36500
 
@@ -549,20 +464,20 @@ class WindowIn(BaseModel):
 def _window(cur) -> Dict[str, Any]:
     from insight_core.markx import story_window
     return {"reading_window_days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS,
-            "story_window_days": story_window.setting(cur),                               # 0144 A1
-            "entities_guide": _entities_guide(cur)}   # 0133
+            "story_window_days": story_window.setting(cur),
+            "entities_guide": _entities_guide(cur)}
 
 
-def _entities_guide(cur) -> Dict[str, Any]:   # 0133: the entities guide switch (Worker tab)
+def _entities_guide(cur) -> Dict[str, Any]:   # the entities guide switch (Worker tab)
     arm = schemas.entities_arm(cur)
     return {"guide": arm.guide, "chars": arm.chars, "rule": arm.rule, "default": schemas.DEFAULT_ARM,
             "arms": [{"guide": a.guide, "chars": a.chars, "rule": a.rule, "ready": not schemas.is_placeholder(a.guide),
-                      **({"note": ent42.LAB} if a.guide == ent42.GUIDE else {})}                   # 0133 v4.2
+                      **({"note": ent42.LAB} if a.guide == ent42.GUIDE else {})}
                      for a in schemas.ENTITY_ARMS.values()],
-            "labels": ent42.precision(cur)}                                                        # 0133 v4.2
+            "labels": ent42.precision(cur)}
 
 
-class MentionLabelIn(BaseModel):   # 0133 v4.2
+class MentionLabelIn(BaseModel):
     guide: str
     n: StrictInt
     answer: str
@@ -570,8 +485,8 @@ class MentionLabelIn(BaseModel):   # 0133 v4.2
 
 @router.post("/posts/{post_id}/mentions/label")
 def mx_label_mention(post_id: str, body: MentionLabelIn):
-    """0133 v4.2: the owner's right / wrong on one new entity of the post (a document, a source, a recommended, a
-    second-question one); the newest answer counts toward the running precision on the Worker tab."""
+    """The owner's right / wrong on one new entity of the post; the newest answer counts toward the running precision
+    on the Worker tab."""
     found = _uuid(post_id)
     if found is None:
         raise HTTPException(status_code=404, detail="No such post")
@@ -585,15 +500,14 @@ def mx_label_mention(post_id: str, body: MentionLabelIn):
         return {**got, "precision": ent42.precision(cur, body.guide)}
 
 
-class EntitiesGuideIn(BaseModel):   # 0133
+class EntitiesGuideIn(BaseModel):
     guide: str
 
 
 @router.post("/settings/entities-guide")
 def mx_set_entities_guide(body: EntitiesGuideIn):
-    """0133: the entities guide the planner asks new entities tasks under (ent-v3 at 1,500 characters by default;
-    ent-v4 at 6,000 with the citation rule; ent-v3-6k, the fallback). Counts from the next planner run; a placeholder
-    guide is refused (409) until the lab's frozen guide replaces it."""
+    """The entities guide the planner asks new entities tasks under (ent-v3, ent-v4 with the citation rule, ent-v3-6k).
+    Counts from the next planner run; a placeholder guide is refused (409)."""
     with transaction() as cur:
         try:
             schemas.set_entities_arm(cur, body.guide)
@@ -602,14 +516,14 @@ def mx_set_entities_guide(body: EntitiesGuideIn):
         return _window(cur)
 
 
-class ReadingGuideIn(BaseModel):   # 0212
+class ReadingGuideIn(BaseModel):
     mode: str
 
 
 @router.get("/reading5")
 def mx_reading5(limit: int = Query(40, ge=1, le=200)):
-    """0212: ent-v5's switch and its Shadow comparison: the newest posts it read, each beside the post's current
-    reading (kind, events, event type, origin, headline) and entity set, with the agreement over them."""
+    """ent-v5's switch and its Shadow comparison: the newest posts it read, each beside the post's current reading and
+    entity set, with the agreement over them."""
     from insight_core.markx import reading5
     with transaction() as cur:
         return reading5.compare(cur, limit=limit)
@@ -617,8 +531,8 @@ def mx_reading5(limit: int = Query(40, ge=1, le=200)):
 
 @router.post("/settings/reading-guide")
 def mx_set_reading_guide(body: ReadingGuideIn):
-    """0212: ent-v5's switch: `off` (nothing asked), `shadow` (new posts read by ent-v5 beside the old kinds, nothing
-    reads it but /markx's comparison), `on` (ent-v5 first wherever a reading is picked; its mention sets current)."""
+    """ent-v5's switch: `off` (nothing asked), `shadow` (read beside the old kinds, only /markx's comparison reads it),
+    `on` (ent-v5 first wherever a reading is picked; its mention sets current)."""
     from insight_core.markx import reading5
     with transaction() as cur:
         try:
@@ -629,15 +543,15 @@ def mx_set_reading_guide(body: ReadingGuideIn):
 
 @router.get("/settings")
 def mx_settings():
-    """The owner's Mark X settings (0112 Decided 9): the reading window of the read, entities and embed planners."""
+    """The owner's Mark X settings: the reading window of the read, entities and embed planners."""
     with transaction() as cur:
         return _window(cur)
 
 
 @router.post("/settings/reading-window")
 def mx_set_reading_window(body: WindowIn):
-    """The reading window from the page: a number of days, or null for every post. It counts from the next planner
-    run (the next lease), with no restart; the decision window is the story window's (0144)."""
+    """The reading window from the page: a number of days, or null for every post. It counts from the next planner run,
+    with no restart; the decision window is the story window's."""
     with transaction() as cur:
         tasks.set_reading_window(cur, body.days)
         return _window(cur)
@@ -645,9 +559,8 @@ def mx_set_reading_window(body: WindowIn):
 
 @router.post("/settings/story-window")
 def mx_set_story_window(body: WindowIn):
-    """0144 A1: the story window from the page: a number of days, or null for every post (the decision run makes Mark
-    X's own stories back that far, newest first, a step a run). It counts from the next decision run; News keeps its
-    own window."""
+    """The story window from the page: a number of days, or null for every post (the decision run makes Mark X's own
+    stories back that far, newest first, a step a run). It counts from the next decision run; News keeps its own."""
     from insight_core.markx import story_window
     with transaction() as cur:
         story_window.set_window(cur, body.days)
@@ -674,13 +587,12 @@ def switched_on():
 
 @router.get("/news")
 def mx_news_page(all: int = Query(0, ge=0, le=1)):
-    """0198: the view the jobs process kept for the page's inputs now (news.kept_page), sent as kept; none kept (the
-    first start, an input changed since the last build): built here as before."""
+    """The view the jobs process kept for the page's inputs now (news.kept_page), else built here."""
     with transaction() as cur:
         kept = news.kept_page(cur, only_differences=not all)
         if kept is not None:
             return Response(content=kept, media_type="application/json")
-        return news.reader_view(news.page(cur, only_differences=not all))   # 0215: what the page reads
+        return news.reader_view(news.page(cur, only_differences=not all))   # what the page reads
 
 
 @router.get("/posts/{post_id}")
@@ -690,12 +602,12 @@ def mx_post(post_id: str):
         raise HTTPException(status_code=404, detail="No such post")
     with transaction() as cur:
         panel = news.post_panel(cur, str(found))
-        # 0131: the edges between two posts are the Before list's (the older posts it connects to), not connections
+        # the edges between two posts are the Before list's (the older posts it connects to), not connections
         panel["connections"] = [c for c in panel["connections"] if not (c["from"] == "post" and c["other_kind"] == "post")]
         from insight_core.markx import graph
         got = graph.before(cur, str(found))
         panel["before"], panel["before_more"] = got["items"], got["more"]
-        # 0165 D: the post's subjects' previous events (birth, last release, first outside mention), from their timeline
+        # the post's subjects' previous events (birth, last release, first outside mention), from their timeline
         from insight_core.markx import timeline
         panel["before_timeline"] = timeline.before_post(cur, str(found), skip=[r["post_id"] for r in got["items"]])
         return panel
@@ -703,7 +615,7 @@ def mx_post(post_id: str):
 
 @router.get("/posts/{post_id}/related")
 def mx_post_related(post_id: str):
-    """v10.36: related reading, the posts nearest this one by its stored vector (news.related), on request."""
+    """Related reading: the posts nearest this one by its stored vector (news.related), on request."""
     found = _uuid(post_id)
     if found is None:
         raise HTTPException(status_code=404, detail="No such post")
@@ -717,22 +629,22 @@ def mx_overview():
         return {"worker": {**news.worker(cur, contacts(cur)), "jobs": jobs.view(cur)}, "briefing": news.briefings(cur),
                 "entities": news.entities(cur),
                 "reading_window": {"days": tasks.reading_window(cur), "default": tasks.PLAN_DAYS},
-                "story_window": _story_window_view(cur),   # 0144
-                "entities_guide": _entities_guide(cur),   # 0133
-                "entity_invariants": _entity_invariants(cur),   # 0164 C
-                "holds": holds.view(cur),   # 0210: the re-ask guard's holds
-                "consumers": consumers.view(cur)}   # 0210: the features that read each kind's answers
+                "story_window": _story_window_view(cur),
+                "entities_guide": _entities_guide(cur),
+                "entity_invariants": _entity_invariants(cur),
+                "holds": holds.view(cur),   # the re-ask guard's holds
+                "consumers": consumers.view(cur)}   # the features that read each kind's answers
 
 
-class HoldIn(BaseModel):   # 0210
+class HoldIn(BaseModel):
     key: str = Field(min_length=3, max_length=80)
     state: str
 
 
 @router.post("/holds")
 def mx_set_hold(body: HoldIn):
-    """0210: the owner's word on a hold of the re-ask guard: low (asked last, the default), stopped (not asked) or
-    released (asked as any task)."""
+    """The owner's word on a hold of the re-ask guard: low (asked last, the default), stopped (not asked) or released
+    (asked as any task)."""
     with transaction() as cur:
         try:
             got = holds.set_state(cur, body.key, body.state)
@@ -741,15 +653,15 @@ def mx_set_hold(body: HoldIn):
         return {**got, "holds": holds.view(cur)}
 
 
-class ConsumerIn(BaseModel):   # 0210
+class ConsumerIn(BaseModel):
     feature: str = Field(min_length=1, max_length=40)
     on: bool
 
 
 @router.post("/settings/consumers")
 def mx_set_consumer(body: ConsumerIn):
-    """0210: a feature that reads some kinds' answers switched on (its closed tasks open again) or off (its kinds'
-    planners add nothing, its open tasks are closed, kept)."""
+    """A feature that reads some kinds' answers switched on (its closed tasks open again) or off (its kinds' planners
+    add nothing, its open tasks are closed, kept)."""
     with transaction() as cur:
         try:
             got = consumers.set_on(cur, body.feature, body.on)
@@ -758,13 +670,13 @@ def mx_set_consumer(body: ConsumerIn):
         return {**got, "consumers": consumers.view(cur)}
 
 
-class GuardIn(BaseModel):   # 0210
+class GuardIn(BaseModel):
     per_day: Optional[StrictInt] = Field(default=None, ge=0, le=10_000_000)
 
 
 @router.post("/settings/reask-guard")
 def mx_set_reask_guard(body: GuardIn):
-    """0210: a kind's tasks a day before the rest is held (null: no guard)."""
+    """A kind's tasks a day before the rest is held (null: no guard)."""
     with transaction() as cur:
         holds.set_per_day(cur, body.per_day)
         return holds.view(cur)
@@ -782,14 +694,14 @@ def _story_window_view(cur) -> Dict[str, Any]:
 
 @router.post("/decide")
 def mx_decide():
-    """Asks for a decision run: insight-ingestion runs it within a minute (markx/jobs.py). Never one in the request
-    (0112 Decided 10): {"wanted": true, "jobs": the jobs' state}."""
+    """Asks for a decision run: insight-ingestion runs it within a minute (markx/jobs.py), never in the request.
+    {"wanted": true, "jobs": the jobs' state}."""
     with transaction() as cur:
         jobs.want(cur, "decide")
         return {"wanted": True, "jobs": jobs.view(cur)}
 
 
-# ---- the News members' one-tap labels (S6, 0086 F; v10.22 0216: the Labels queue and its tab removed) -----------
+# ---- the News members' one-tap labels ------------------------------------------------------------------------
 
 class FlagIn(BaseModel):
     post: str
@@ -812,15 +724,9 @@ def mx_labels_news(body: FlagIn):
             raise HTTPException(status_code=404, detail="No such member")
 
 
-# ---- the entities tab (0119 A3; added 2026-11-06; the routes above are unchanged; no bearer: the app's own) ---------
-# GET  /api/markx/entities                    the list (markx/entity_views.py): {window_days, total, items, accuracy, queue}
-# GET  /api/markx/entities/queue              the review queue: {open, answered, merges, counts, accuracy, view};
-#                                             0222: ?view=flagged (default: Claude's flags only) | all (the operator's)
-# POST /api/markx/entities/queue/{id}         {answer: same | other_version | different | not_entity, note?}: applied at
-#                                             once (a merge, a split, a merge undone) and stored as a label
-# POST /api/markx/entities/queue/{id}/flag    0222: {flag: true | false, note?, by?: claude | owner}: flagged for the owner
-# POST /api/markx/entities/merges/{id}/undo   {note?}: one merge undone from the history (a label 'different')
-# GET  /api/markx/entities/{id}               the entity's page (a merged entity's id opens its cluster's page)
+# ---- the entities tab (markx/entity_views.py; no bearer) ---------------------------------------------------------
+# list, review queue (?view=flagged | all), an answer to an item (applied at once, stored as a label), a flag for the
+# owner, a merge undone, and the entity's page (a merged entity's id opens its cluster's page)
 
 class EntityAnswerIn(BaseModel):
     answer: str
@@ -833,7 +739,7 @@ class UndoIn(BaseModel):
 
 @router.get("/entities")
 def mx_entities():
-    """0216 item 5, 0232: the list the jobs process kept (entity_views.kept_list), else built here as before."""
+    """The list the jobs process kept (entity_views.kept_list), else built here."""
     from insight_core.markx import entity_views
     with transaction() as cur:
         return Response(content=entity_views.kept_list(cur), media_type="application/json")
@@ -842,17 +748,16 @@ def mx_entities():
 @router.get("/entities/queue")
 def mx_entity_queue(limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0),
                     view: str = Query("flagged", pattern="^(flagged|all)$")):
-    """Issue 0195: `limit` open items (50) from `offset`; `next_offset` the next page's, null at the end (12,572 open
-    items answered 28.9 MB in 14.7 s on the server). 0222: `view` flagged (the default: only the items Claude's review
-    flagged for the owner) or all (the operator's view of every open item). 0216 item 5: the first flagged page (the
-    page's default) is the one the jobs process keeps (entity_views.kept_queue); any other is built here."""
+    """`limit` open items from `offset`; `next_offset` the next page's, null at the end. `view`: flagged (the default:
+    the items Claude's review flagged for the owner) or all. The first flagged page is the one the jobs process keeps
+    (entity_views.kept_queue); any other is built here."""
     from insight_core.markx import entity_views
     with transaction() as cur:
         got = entity_views.kept_queue(cur, limit=limit, offset=offset, view=view)
         return Response(content=got, media_type="application/json") if isinstance(got, bytes) else got
 
 
-class EntityFlagIn(BaseModel):   # 0222
+class EntityFlagIn(BaseModel):
     flag: bool = True
     note: Optional[str] = Field(default=None, max_length=2000)
     by: str = "claude"
@@ -860,8 +765,8 @@ class EntityFlagIn(BaseModel):   # 0222
 
 @router.post("/entities/queue/{item_id}/flag")
 def mx_entity_flag(item_id: str, body: EntityFlagIn):
-    """0222: an open review item flagged for the owner by Claude's review ({flag: true, note}), or unflagged
-    ({flag: false}). The owner's queue shows only the flagged items by default."""
+    """An open review item flagged for the owner by Claude's review ({flag: true, note}), or unflagged. The owner's
+    queue shows only the flagged items by default."""
     from insight_core.markx import entity_answers
     found = _uuid(item_id)
     if found is None:
@@ -906,15 +811,13 @@ def mx_entity_undo(redirect_id: str, body: UndoIn):
 @router.get("/entities/{entity_id}")
 def mx_entity_page(entity_id: str, by_limit: int = 50, replies: bool = False, stories_limit: int = 20,
                    loose_limit: int = 30, whole: bool = Query(False, alias="all")):
-    """The entity's page. 0144: `by_limit`, the by posts listed loose (the page's "Show all"); the visit offers the
-    old stories to label (10 a page, 30 a day). 0168: `replies`, the posts replying to its handles shown too.
-    Issue 0195: `stories_limit` story blocks (0277: 20) and `loose_limit` loose posts (0277: 30); stories_total,
-    loose_total. 0232: each limit clamped into its range (entity_views.limits: at most 200 stories, 500 loose and
-    500 by posts), every request cut from the entity's one kept page. 0277: `all`, every post of each story, every
-    citing post and work and every timeline event (else the first ones and their totals: entity_views._short)."""
+    """The entity's page. `by_limit`: the by posts listed loose; `replies`: the posts replying to its handles too;
+    `stories_limit` story blocks and `loose_limit` loose posts (with their totals), each clamped (entity_views.limits)
+    and cut from the entity's one kept page. `all`: every post of each story, every citing post and work and every
+    timeline event (else the first ones and their totals)."""
     from insight_core.markx import entity_views
     found = _uuid(entity_id)
-    with transaction() as cur:   # 0198: kept while its inputs are the same, else built as before and kept
+    with transaction() as cur:   # kept while its inputs are the same, else built and kept
         got = entity_views.kept_entity_page(cur, str(found), by_limit=by_limit, replies=replies,
                                             stories_limit=stories_limit, loose_limit=loose_limit,
                                             whole=whole) if found else None
@@ -923,21 +826,21 @@ def mx_entity_page(entity_id: str, by_limit: int = 50, replies: bool = False, st
     return Response(content=got, media_type="application/json")
 
 
-class EntitySourcesIn(BaseModel):   # 0144 B1
+class EntitySourcesIn(BaseModel):
     source_ids: List[str]
     answer: str
 
 
 @router.post("/entities/{entity_id}/sources")
 def mx_entity_sources(entity_id: str, body: EntitySourcesIn):
-    """0144 B1: the owner's yes / no on "These sources are <name>" (a source whose handle or name is the entity's)."""
+    """The owner's yes / no on "These sources are <name>" (a source whose handle or name is the entity's)."""
     from insight_core.markx import identity, person_page
     found = _uuid(entity_id)
     ids = [str(x) for x in (_uuid(s) for s in body.source_ids) if x]
     if found is None or not ids:
         raise HTTPException(status_code=404, detail="No such entity or source")
     with transaction() as cur:
-        book = identity.lazy_book(cur)   # v10.17 (0186): the entity's cluster, not the whole book
+        book = identity.lazy_book(cur)   # the entity's cluster, not the whole book
         if str(found) not in book.ents:
             raise HTTPException(status_code=404, detail="No such entity")
         try:
@@ -947,7 +850,7 @@ def mx_entity_sources(entity_id: str, body: EntitySourcesIn):
         return {"answered": n, "answer": body.answer}
 
 
-class EntityHandleIn(BaseModel):   # 0168
+class EntityHandleIn(BaseModel):
     platform: str
     handle: str
     answer: str = "yes"
@@ -955,14 +858,14 @@ class EntityHandleIn(BaseModel):   # 0168
 
 @router.post("/entities/{entity_id}/handles")
 def mx_entity_handle(entity_id: str, body: EntityHandleIn):
-    """0168: the owner says (yes) or denies (no) a handle of this person or org on a platform (x, github, telegram,
-    bluesky, hf). Never inferred from a name: this, a confirmed pair question, or the entity's own sources."""
+    """The owner says (yes) or denies (no) a handle of this person or org on a platform (x, github, telegram, bluesky,
+    hf). Never inferred from a name: this, a confirmed pair question, or the entity's own sources."""
     from insight_core.markx import handles, identity
     found = _uuid(entity_id)
     if found is None:
         raise HTTPException(status_code=404, detail="No such entity")
     with transaction() as cur:
-        book = identity.lazy_book(cur)   # v10.17 (0186): the entity's cluster, not the whole book
+        book = identity.lazy_book(cur)   # the entity's cluster, not the whole book
         if str(found) not in book.ents:
             raise HTTPException(status_code=404, detail="No such entity")
         try:
@@ -971,14 +874,14 @@ def mx_entity_handle(entity_id: str, body: EntityHandleIn):
             raise HTTPException(status_code=400, detail=str(e))
 
 
-class SampleLabelIn(BaseModel):   # 0144 C
+class SampleLabelIn(BaseModel):
     answer: str
 
 
 @router.post("/stories/{story_id}/sample")
 def mx_story_sample(story_id: str, body: SampleLabelIn):
-    """0144 C: right / wrong / missed on an old story the entity page offered; the old stories' precision decides
-    whether the story window stays at everything."""
+    """Right / wrong / missed on an old story the entity page offered; the old stories' precision decides whether the
+    story window stays at everything."""
     from insight_core.markx import person_page, story_window
     found = _uuid(story_id)
     if found is None:
@@ -993,14 +896,7 @@ def mx_story_sample(story_id: str, body: SampleLabelIn):
         return {**got, "precision": story_window.precision(cur)}
 
 
-# ---- perspectives and the story sheet (0119 B6-B7; added 2026-11-07; the routes above are unchanged; no bearer) ------
-# GET  /api/markx/stories/{id}             the story view (markx/perspective_views.py): {story, judged, sheet, header,
-#                                          members [{post, label, sign, by, worth, facts [{index, fact, span, mine}],
-#                                          claims, point, before, copies, mine}], counts, posts}
-# POST /api/markx/labels/perspective       {story, post, answer: right | wrong | original | new_facts | opinion | same |
-#                                          not_this_story, note?}: a label on a member's line
-# POST /api/markx/labels/fact              {story, post, index, answer: right | not_new | not_true | not_about, note?}
-# GET  /api/markx/labels/perspectives      the owner's labels on them scored, against the lab's numbers
+# ---- perspectives and the story sheet (markx/perspective_views.py; no bearer) -----------------------------------
 
 class PerspectiveLabelIn(BaseModel):
     story: Any = None
@@ -1019,8 +915,8 @@ class FactLabelIn(BaseModel):
 
 @router.get("/stories/{story_id}")
 def mx_story_view(story_id: str, as_of: Optional[datetime] = None):
-    """0219: `chain`, what led to the story and what followed (graph.chain), only the edges valid at `as_of` when
-    given; empty while the chains switch is off."""
+    """`chain`: what led to the story and what followed (graph.chain), only the edges valid at `as_of` when given;
+    empty while the chains switch is off."""
     from insight_core.markx import graph, perspective_views
     found = _uuid(story_id)
     if as_of is not None and as_of.tzinfo is None:
@@ -1028,7 +924,7 @@ def mx_story_view(story_id: str, as_of: Optional[datetime] = None):
     from insight_core.markx import units
     with transaction() as cur:
         got = perspective_views.story_view(cur, str(found)) if found else None
-        if got is not None:   # 0181: the round-ups carrying a member, display only (never a voice or a member)
+        if got is not None:   # the round-ups carrying a member, display only (never a voice or a member)
             got["roundups"] = units.also_in_story(cur, got["story"]["id"])
             on = graph.chain_config()["on"]
             got["chain"] = graph.chain(cur, got["story"]["id"], as_of=as_of) if on else \
@@ -1077,13 +973,13 @@ def mx_label_perspectives():
         return perspective_views.accuracy(cur)
 
 
-# ---- 0127 (v10.3): the fold's routes (markx/fold_api.py), under this router's prefix and switch ----
+# ---- the fold's routes (markx/fold_api.py), under this router's prefix and switch ---------------------------------
 from insight_core.markx import fold_api as _fold_api  # noqa: E402
 router.include_router(_fold_api.router)
 from insight_core.markx import translate as _translate; router.include_router(_translate.router)  # noqa: E402,E702  0130 D: translation
 
 
-# ---- 0131: the owner's right / wrong on an edge of the Before list (markx/graph.py) ----------------------------
+# ---- the owner's right / wrong on an edge of the Before list (markx/graph.py) -----------------------------------
 
 class EdgeLabelIn(BaseModel):
     newer: Any = None
@@ -1117,3 +1013,4 @@ from insight_core.markx import scout_api as _scout_api; router.include_router(_s
 from insight_core.markx import research_api as _research_api; router.include_router(_research_api.router)  # noqa: E402,E702  0162: research
 from insight_core.markx import source_judge_api as _source_judge_api; router.include_router(_source_judge_api.router)  # noqa: E402,E702  0173: is this worth it?
 from insight_core.markx import questions_api as _questions_api; router.include_router(_questions_api.router)  # noqa: E402,E702  0275: questions with citations
+from insight_core.markx import personal_api as _personal_api; router.include_router(_personal_api.router)  # noqa: E402,E702  v10.42: the reader's interest

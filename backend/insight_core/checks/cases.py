@@ -1,4 +1,4 @@
-"""The judged cases run (issue 0075 A): each case's `expect` is checked against what the pages show.
+"""The judged cases run: each case's `expect` is checked against what the pages show.
 
 A case (case.schema.json): {id, kind, now: "pass" | "fail", since, why, note, expect: [assertion, …]}.
 An assertion names a surface (`on`, surfaces.py), what to select there, a `path` into its answer and
@@ -20,7 +20,7 @@ from insight_core.checks import paths, refs
 from insight_core.checks.surfaces import SURFACES, Context, story_sets
 
 STATES = ("pass", "fail")
-# Kinds that need a browser, a process's start or a fetch: never checked here (issue 0075 A3 lists them).
+# Kinds that need a browser, a process's start or a fetch: never checked here.
 UNCHECKED_KINDS = {
     "layout": "needs a browser at a width",
     "deploy": "needs a start of the API on an older stories setting",

@@ -34,14 +34,14 @@ export interface FeedListProps {
   onHelpOpenChange?: (open: boolean) => void;
   /** Each local change applied to the cached unread counts (for the "N new posts" pill). */
   onUnreadDelta?: (change: UnreadChange) => void;
-  /** A topic track (0145, Mark X on): every post of its sources, not only its items (v10.12.1). */
+  /** A topic track (Mark X on): every post of its sources, not only its items. */
   allSources?: boolean;
 }
 
 const UNDO_MS = 5_000;
 
-// Opened by a key or a click, never on the first paint: their own chunks, loaded the first
-// time they open and kept mounted after, so closing still animates (the reader's JS budget).
+// opened by a key or a click, never on the first paint: own chunks, loaded on first open and kept mounted after,
+// so closing still animates (the reader's JS budget)
 const ShortcutHelp = lazy(() => import('./ShortcutHelp'));
 const ConfirmDialog = lazy(() => import('../ops/ConfirmDialog'));
 const PREFETCH_DELAY_MS = 150;
@@ -66,36 +66,30 @@ export interface PostListProps extends Omit<FeedListProps, 'fixture'> {
   feed: PostListData;
   /** The dev fixtures: nothing is written and nothing prefetched. */
   dryRun?: boolean;
-  /**
-   * Search results (issue 0040): rows show their matching line and their date (no day
-   * headers), open with no feed context, and Shift+A does not mark through.
-   */
+  /** Search results: rows show their matching line and date (no day headers), open with no feed context, and
+   *  Shift+A does not mark through. */
   search?: boolean;
-  /**
-   * A ranked list (News, issue 0051): its rows in the order given, under the headings
-   * `sectionOf` names (not days); each row shows its date and opens on its own (no feed
-   * context), and Shift+A does not mark through.
-   */
+  /** A ranked list (News): rows in the order given under the headings `sectionOf` names; each row shows its date
+   *  and opens on its own, and Shift+A does not mark through. */
   ranked?: {
     name: string; sectionOf: (item: FeedItemData) => string; storyLine: (item: FeedItemData) => string | undefined;
-    /** Issue 0238 (News): a row is read when every post of it is; `m` and opening its lead mark them all. */
+    /** A row is read when every post of it is; `m` and opening its lead mark them all. */
     rows?: boolean;
-    /** Issue 0238: Shift+A asks to mark the whole list read (News: "Mark all News read"). */
+    /** Shift+A asks to mark the whole list read ("Mark all News read"). */
     markAll?: () => void;
   };
 }
 
-/** The reader list (spec §F.3, §F.5, §F.6): FeedList loads the feed; the search page hands its results to PostList. */
+/** The reader list: FeedList loads the feed; the search page hands its results to PostList. */
 function FeedList({ fixture = null, ...props }: FeedListProps) {
   const feed = useFeed({ scope: props.scope, filter: props.filter, view: props.view, fixture, allSources: props.allSources });
   return <PostList feed={feed} dryRun={Boolean(fixture)} {...props} />;
 }
 
 /**
- * The list itself: renders the posts in either view, owns the j/k selection (by post id, through the pure `feedNavigation` reducer), the
- * optimistic read, Later and Keep toggles, mark-read-through with its confirmation and Undo,
- * and infinite loading (an IntersectionObserver sentinel plus a visible "Load
- * more" button). Results are announced in the page's live region.
+ * The list itself: renders the posts, owns the j/k selection (by post id, through `feedNavigation`), the optimistic
+ * read, Later and Keep toggles, mark-read-through with its confirmation and Undo, and infinite loading (an
+ * IntersectionObserver sentinel plus a "Load more" button).
  */
 function PostListBody({
   feed, scope, filter, view, dryRun = false, search = false, ranked, emptyTitle, emptyDescription, emptyAction,
@@ -110,23 +104,18 @@ function PostListBody({
   const help = helpOpen ?? internalHelp;
   const setHelp = onHelpOpenChange ?? setInternalHelp;
   const [confirm, setConfirm] = useState<{ through: FeedItemData; count: number } | null>(null);
-  // The lazy dialogs mount the first time they open, and stay (see ShortcutHelp above).
   const [helpUsed, setHelpUsed] = useState(help);
   const [confirmUsed, setConfirmUsed] = useState(false);
   if (help && !helpUsed) setHelpUsed(true);
   if (confirm && !confirmUsed) setConfirmUsed(true);
 
   const { items, groups, entries } = feed;
-  // A read or star patch replaces `items` but not its ids: key the ids on their
-  // joined value so the selection reducer is not re-synced (and the list not
-  // re-rendered once more) on every toggle.
+  // a read or star patch replaces `items` but not its ids: key the ids on their joined value so the selection
+  // reducer is not re-synced on every toggle
   const idsKey = useMemo(() => items.map((item) => item.id).join('\n'), [items]);
   const ids = useMemo(() => (idsKey ? idsKey.split('\n') : []), [idsKey]);
-  // Day headers for the stream: each row's day heading, and whether the row is the
-  // first of its day (where the header is drawn), computed once per items array.
-  // Later is in the order saved, not by day: no headers, and each row shows its date.
-  // History's `sort_at` is the last open (issue 0052), so it groups by the day you opened it.
-  // A ranked list (News) heads its own sections instead.
+  // day headers for the stream, computed once per items array. Later (order saved) and ranked lists have none;
+  // History's `sort_at` is the last open, so it groups by the day you opened it.
   const byDay = filter !== 'later' && !search && !ranked;
   const sectionOf = ranked?.sectionOf;
   const days = useMemo(() => {
@@ -144,7 +133,7 @@ function PostListBody({
   const pageCursorById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry.pageCursor])), [entries]);
 
   const contextFor = useCallback((item: FeedItemData): FeedContext | null => {
-    // A search result, or a News story, is not a place in a feed: it opens on its own.
+    // a search result or a News story is not a place in a feed: it opens on its own
     if (search || ranked) return null;
     // A group's posts are the newest of their source, so they sit on that source's first page.
     if (view === 'by_source') return { scope: `source:${item.source_id}`, filter, cursor: null };
@@ -156,7 +145,7 @@ function PostListBody({
   const rows = Boolean(ranked?.rows);
   const toggleRead = useCallback((item: FeedItemData) => {
     if (rows) {
-      // Issue 0238: a News row's every post, one request; Undo restores each post as it was.
+      // a News row's every post, one request; Undo restores each post as it was
       const read = !newsReadState(item).read;
       mutations.setRowRead(item, read).then(
         (changed) => {
@@ -218,14 +207,12 @@ function PostListBody({
   }, [announce, mutations]);
 
   const openItem = useCallback((item: FeedItemData) => {
-    // Coming back to the feed (u, Back) selects the post that was read last.
     rememberSelection(item.id);
     if (!item.read_at) {
-      // Opening is not finishing: a post in Later stays there (issue 0022).
-      // Issue 0238: a News row read for the first time is read whole (its lines with it), so a post that joins it
-      // later is what shows as new; a lead already read leaves its new lines unread.
+      // opening is not finishing: a post in Later stays there. A News row read for the first time is read whole,
+      // so a post that joins later shows as new; a lead already read leaves its new lines unread.
       (rows ? mutations.setRowRead(item, true) : mutations.setRead(item, true, { keepLater: true })).catch(() => {
-        // Opening the post records the open (and sets read_at) server-side as well.
+        // opening the post records the open (and read_at) server-side as well
       });
     }
   }, [mutations, rows]);
@@ -237,8 +224,7 @@ function PostListBody({
       return;
     }
     if (view === 'by_source' || filter === 'later' || filter === 'history' || search || ranked) {
-      // Later, History (by when you opened it), a search and News are not in the feed's order:
-      // "up to here" would mean something else.
+      // Later, History, a search and News are not in the feed's order: "up to here" would mean something else
       let message = 'Mark read up to here works in the Stream view.';
       if (filter === 'later') message = 'Mark read up to here does not work in Later.';
       if (filter === 'history') message = 'Mark read up to here does not work in History.';
@@ -354,8 +340,7 @@ function PostListBody({
   }, { enabled: !confirm && !help, singleKeys: shortcutsOn });
 
   // Prefetch the selected post and the one after it, so `o` opens from cache.
-  // Debounced: a held j passes through rows faster than they could be read, and
-  // fetching each of them would only churn the network and the query cache.
+  // Debounced: a held j passes rows faster than they could be read.
   const selectedId = nav.selectedId;
   useEffect(() => {
     if (dryRun || !selectedId) return undefined;
@@ -408,15 +393,13 @@ function PostListBody({
     body = (
       <>
         {view === 'by_source' ? (
-          // One section per source, each with its heading; the rows are articles inside.
           <div aria-label="Posts by source" role="region" aria-busy={isFetchingNextPage} className="flex flex-col gap-6">
             {groups.map((group) => (
               <FeedGroup key={group.source_id} group={group} tabbableId={tabbableId} itemHref={itemHref} {...shared} />
             ))}
           </div>
         ) : (
-          // An ARIA feed owns articles only: the day headers are drawn for the eye
-          // (aria-hidden) and each row reads its own day out with its time.
+          // an ARIA feed owns articles only: the day headers are aria-hidden and each row reads its own day out
           <div role="feed" aria-label={search ? 'Search results' : ranked?.name ?? 'Posts'} aria-busy={isFetchingNextPage} className={"flex flex-col gap-2"}>
             {items.map((item, index) => (
               <Fragment key={item.id}>

@@ -1,21 +1,12 @@
-"""The topic tracks' placements, kept (issue 0195, migration 0133).
+"""The topic tracks' placements, kept (mx_track_*), so readers don't place every track per request.
 
-tracks.placed places every judged post of a track (its newest verdict, the owner's labels, the active sources, the
-calibration). The sidebar's counts placed every topic track per request, the source suggestions too, and a track's
-page twice: 0.5-1.9 s on the server, and 100-230 MiB more in the API per request. The placements are kept here and
-read; a track that was never placed is placed live, exactly as before. `refresh` (after each ingestion run, the
-planner and the jobs process's "tracks" view) places the changed tracks again. The planner is not touched: the
-placement is tracks.placed itself.
-
-Issue 0264 (migration 0168): the triggers on a track's inputs log whose change it is (mx_track_changes.owner).
-  - The owner's own (a track label, the folder's sources, a source switched on or off): the track is placed live
-    until placed again, as before: a read is never wrong for the owner's own action. `refresh` places it at its
-    next call, whatever REFRESH_GAP says.
-  - The worker's and the ingestion's (a verdict or a blind check answered, a post deleted or moved): the readers read
-    the last kept placement, at most REFRESH_GAP plus the refresh's own pace old. Since v10.29 the blind check
-    updates thousands of backlog items, and one track (65,000 items) was placed live on every sidebar count and
-    page: 0.8 s and 2-5 s, the DB's CPU doubled. `refresh` places such a track again once its placement is
-    REFRESH_GAP old.
+tracks.placed places every judged post of a track; its result is kept here and read, and a track never placed is
+placed live. `refresh` (after each ingestion run, the planner and the jobs process's "tracks" view) places the changed
+tracks again. The triggers on a track's inputs log whose change it is (mx_track_changes.owner):
+  - the owner's own (a label, the folder's sources, a source switched on or off): the track is placed live until
+    placed again (a read is never wrong for the owner's own action), and `refresh` places it at its next call;
+  - the worker's and the ingestion's (a verdict answered, a post deleted or moved): readers read the kept placement,
+    and `refresh` places it again once it is REFRESH_GAP old (a large track placed live on every read is too slow).
 """
 from __future__ import annotations
 
@@ -27,7 +18,7 @@ from psycopg import Cursor
 from insight_core.db.repo_post_parts import shown_title
 
 REFRESH_LOCK = 0x7472_0195   # one refresh at a time; a second skips (the tracks stay as they are until the next)
-REFRESH_GAP = 300.0          # 0264: a track changed by the worker only is placed again at most every 5 minutes
+REFRESH_GAP = 300.0          # a track changed by the worker only is placed again at most every 5 minutes
 
 _COLS = ("post_id", "place", "rank", "calibrated", "label", "active", "verdict", "confidence", "subtopic",
          "answered_at", "found_by")
@@ -35,7 +26,7 @@ _COLS = ("post_id", "place", "rank", "calibrated", "label", "active", "verdict",
 
 def calibration(cur: Cursor, track_id: str) -> Optional[Dict[str, Any]]:
     """The track's kept calibration, or None when it is not kept or the owner changed its inputs since (read it live).
-    A change of the worker's or the ingestion's alone reads the kept placement (0264)."""
+    A change of the worker's or the ingestion's alone reads the kept placement."""
     cur.execute("""SELECT s.calibration FROM mx_track_places_state s
                     WHERE s.track_id = %s
                       AND NOT EXISTS (SELECT 1 FROM mx_track_changes c WHERE c.track_id = s.track_id AND c.owner)""",
@@ -69,7 +60,7 @@ def fill(cur: Cursor, track: Dict[str, Any], items: Sequence[Dict[str, Any]]) ->
     ids = [it["post_id"] for it in items if "title" not in it]
     if not ids:
         return
-    # The title every page shows (v10.35: a title-less post's, a toot's, is its first line, never "")
+    # The title every page shows (a title-less post's, a toot's, is its first line, never "")
     cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.why, {shown_title()}, p.url,
                           COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
                                    s.handle_or_url)
@@ -83,8 +74,8 @@ def fill(cur: Cursor, track: Dict[str, Any], items: Sequence[Dict[str, Any]]) ->
 
 
 def posts_in(cur: Cursor, track: Dict[str, Any], places: Sequence[str]) -> Optional[List[str]]:
-    """The posts placed in `places` from what is kept (by post id), or None (place it live). 0270: the track's
-    reading views read this (track_feed), not a live placement of every judged item a request."""
+    """The posts placed in `places` from what is kept (by post id), or None (place it live). The track's reading views
+    read this (track_feed)."""
     if calibration(cur, track["folder_id"]) is None:
         return None
     cur.execute("""SELECT k.post_id::text FROM mx_track_places k JOIN posts p ON p.id = k.post_id
@@ -98,7 +89,7 @@ def counts(cur: Cursor, track: Dict[str, Any], inside_places: Sequence[str]) -> 
     inside = posts_in(cur, track, inside_places)
     if inside is None:
         return None
-    # 0264: Discover counted where it is kept (only a number is sent: the rows were most of the counts' traffic)
+    # Discover counted where it is kept (only a number is sent)
     cur.execute("""SELECT count(*) FROM mx_track_places k JOIN posts p ON p.id = k.post_id
                     WHERE k.track_id = %s AND k.place = 'discover'""", (track["folder_id"],))
     return inside, cur.fetchone()[0]
@@ -106,7 +97,7 @@ def counts(cur: Cursor, track: Dict[str, Any], inside_places: Sequence[str]) -> 
 
 def suggestible(cur: Cursor, track: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
     """The items tracks.suggestions counts (judged in or labelled in, not labelled out, from a passive source not
-    switched off: issue 0200), each {source_id, source, at}, in placed()'s order; None: place it live."""
+    switched off), each {source_id, source, at}, in placed()'s order; None: place it live."""
     if calibration(cur, track["folder_id"]) is None:
         return None
     from insight_core.db.repo_stories import suggestable_sql
@@ -123,10 +114,9 @@ def suggestible(cur: Cursor, track: Dict[str, Any]) -> Optional[List[Dict[str, A
 
 
 def write_places(cur: Cursor, tid: str, items: Sequence[Dict[str, Any]]) -> Dict[str, int]:
-    """Make the track's kept rows these placed items, writing only what differs (0270): a row whose post is no longer
-    placed is deleted, a new or changed one upserted, an unchanged one not written. Before, every refresh deleted and
-    inserted every row of the track (production, 2026-11-21: 2,086 refreshes wrote 85.6M rows, ~41k a refresh, while
-    a refresh changes a few). The same rows result. {deleted, written}."""
+    """Make the track's kept rows these placed items, writing only what differs: a row whose post is no longer placed is
+    deleted, a new or changed one upserted, an unchanged one not written (a refresh changes a few rows of many). The
+    same rows result. {deleted, written}."""
     # One statement, one snapshot: `y` the rows the placement makes (a post with a judged item), `gone` the kept rows
     # it no longer makes, `up` the new rows and the rows that differ (compared by a read; an ON CONFLICT ... WHERE
     # alone would still lock, and so write, every unchanged row).
@@ -169,8 +159,8 @@ def write_places(cur: Cursor, tid: str, items: Sequence[Dict[str, Any]]) -> Dict
 
 
 def due(cur: Cursor, *, gap: float = REFRESH_GAP) -> bool:
-    """Whether `refresh` would place a kept track again now (0264: the jobs process's "tracks" view looks): the owner
-    changed its inputs, or the worker did and its placement is `gap` old. A few indexed reads."""
+    """Whether `refresh` would place a kept track again now (the jobs process's "tracks" view looks): the owner changed
+    its inputs, or the worker did and its placement is `gap` old. A few indexed reads."""
     cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_track_changes c JOIN mx_track_places_state s USING (track_id)
                                    WHERE c.owner OR s.placed_at <= now() - make_interval(secs => %s))""", (gap,))
     return bool(cur.fetchone()[0])
@@ -178,9 +168,9 @@ def due(cur: Cursor, *, gap: float = REFRESH_GAP) -> bool:
 
 def refresh(cur: Cursor, *, gap: float = REFRESH_GAP) -> Optional[int]:
     """Place again every topic track that was never placed, whose inputs the owner changed, or whose inputs the worker
-    or the ingestion changed and whose placement is `gap` seconds old or more (0264); the tracks placed, or None when
-    another refresh runs. The change rows taken are read before the placement, and only those are removed: a change
-    committed meanwhile stays logged (until the next refresh). The caller commits."""
+    or the ingestion changed and whose placement is `gap` seconds old or more; the tracks placed, or None when another
+    refresh runs. Only the change rows read before the placement are removed: a change committed meanwhile stays logged.
+    The caller commits."""
     from insight_core.markx import tracks
     cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (REFRESH_LOCK,))
     if not cur.fetchone()[0]:
@@ -200,10 +190,15 @@ def refresh(cur: Cursor, *, gap: float = REFRESH_GAP) -> Optional[int]:
         if owner:
             owners.add(tid)
     placed_n = 0
-    for t in topics:
+    from insight_core.markx import track_subtracks
+    again = set()   # v10.42: a sub-track is placed again with its parent or a sibling (it holds their posts)
+    for t in track_subtracks.order(topics):
         tid = t["folder_id"]
-        if tid in kept and (tid not in taken or (tid not in owners and not kept[tid])):
+        moved = t.get("parent_id") in again or any(
+            s["folder_id"] in again for s in topics if s.get("parent_id") and s.get("parent_id") == t.get("parent_id"))
+        if not moved and tid in kept and (tid not in taken or (tid not in owners and not kept[tid])):
             continue   # unchanged, or changed by the worker only and placed less than `gap` ago (its rows stay)
+        again.add(tid)
         got = tracks.placed(cur, t, shown=False)
         items = got["items"]
         write_places(cur, tid, items)

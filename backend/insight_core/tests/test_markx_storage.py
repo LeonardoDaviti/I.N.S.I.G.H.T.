@@ -1,7 +1,5 @@
-"""Mark X Shadow's storage (issue 0086 A, migration 0068): the 14 mx_* tables, their keys and uniques,
-closing with valid_to (keep everything), and the migration itself (additive, idempotent, no key to
-Mark IX's stories). Every test runs in one transaction rolled back at its end, so it is safe on any
-database and leaves nothing behind."""
+"""Mark X's storage (0086 A, migration 0068): the mx_* tables, their keys and uniques, closing with valid_to (keep
+everything), and the migration (additive, idempotent, no key to Mark IX's stories). Every test rolls back."""
 from __future__ import annotations
 
 import sys
@@ -20,7 +18,7 @@ from insight_core.markx import repo
 from insight_core.tests._db import db_url, requires_db
 
 MIGRATION = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0068_markx_shadow.sql"
-TABLES = {"mx_track_field_dismissals", "mx_questions", "mx_guides", "mx_tasks", "mx_calls", "mx_readings", "mx_mentions", "mx_embeddings", "mx_candidates",
+TABLES = {"mx_interests", "mx_interest_weights", "mx_track_field_dismissals", "mx_questions", "mx_guides", "mx_tasks", "mx_calls", "mx_readings", "mx_mentions", "mx_embeddings", "mx_candidates",
           "mx_runs", "mx_stories", "mx_story_posts", "mx_connections", "mx_news", "mx_briefings", "mx_labels"}
 
 
@@ -61,49 +59,49 @@ class MigrationTests(_Rollback):
         self.cur.execute("SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace "
                          "AND relkind = 'r' AND relname LIKE 'mx\\_%'")
         self.assertEqual({r[0] for r in self.cur.fetchall()},
-                         TABLES | {"mx_settings"} | {"mx_jobs", "mx_candidate_posts", "mx_workers"}   # 0069, 0070
+                         TABLES | {"mx_settings"} | {"mx_jobs", "mx_candidate_posts", "mx_workers"}
                          | {"mx_entities", "mx_entity_aliases", "mx_entity_redirects", "mx_entity_queue",
-                            "mx_entity_pins", "mx_entity_vectors", "mx_entity_surges"}   # 0072 (0119)
-                         | {"mx_perspectives", "mx_sheets"}                              # 0074 (0119 B)
-                         | {"mx_mention_sets"}                                          # 0082 (0133)
-                         | {"mx_back"}                                                  # 0085 (0136)
-                         | {"mx_entity_addresses"}                                     # 0089 (0138)
-                         | {"mx_post_search"}                                           # 0090 (0139)
-                         | {"mx_entity_sources", "mx_story_samples", "mx_story_sample_labels"}   # 0092 (0144)
-                         | {"mx_tracks", "mx_track_items", "mx_track_subtopics"}       # 0093 (0145)
-                         | {"mx_track_probes", "mx_track_models"}                       # 0094 (0147)
-                         | {"mx_later", "mx_later_stops"}                               # 0102 (0163)
-                         | {"mx_entity_fixes"}                                          # 0104 (0164)
+                            "mx_entity_pins", "mx_entity_vectors", "mx_entity_surges"}
+                         | {"mx_perspectives", "mx_sheets"}
+                         | {"mx_mention_sets"}
+                         | {"mx_back"}
+                         | {"mx_entity_addresses"}
+                         | {"mx_post_search"}
+                         | {"mx_entity_sources", "mx_story_samples", "mx_story_sample_labels"}
+                         | {"mx_tracks", "mx_track_items", "mx_track_subtopics"}
+                         | {"mx_track_probes", "mx_track_models"}
+                         | {"mx_later", "mx_later_stops"}
+                         | {"mx_entity_fixes"}
                          | {"mx_scout_runs", "mx_scout_candidates", "mx_scout_items",
-                            "mx_source_provenance"}                                       # 0106 (0148)
-                         | {"mx_research_runs", "mx_research_findings", "mx_research_pairs"}   # 0107 (0162)
-                         | {"mx_plan_marks"}                                            # 0108 (v10.14)
-                         | {"mx_embed_skips"}                                           # 0110 (embed text v2)
-                         | {"mx_handle_scans", "mx_handle_refs", "mx_handle_pairs", "mx_entity_handles"}   # 0112 (0168)
+                            "mx_source_provenance"}
+                         | {"mx_research_runs", "mx_research_findings", "mx_research_pairs"}
+                         | {"mx_plan_marks"}
+                         | {"mx_embed_skips"}
+                         | {"mx_handle_scans", "mx_handle_refs", "mx_handle_pairs", "mx_entity_handles"}
                          | {"mx_inc_state", "mx_inc_posts", "mx_inc_inputs", "mx_inc_copies",
-                            "mx_inc_tasks"}                                               # 0113 (0169)
-                         | {"mx_source_judgements"}                                    # 0116 (0173)
-                         | {"mx_news_sections", "mx_news_section_asks"}             # 0117 (0174)
-                         | {"mx_happenings"}                                          # 0118 (0175)
-                         | {"mx_roundups", "mx_units", "mx_attach", "mx_roundup_issues"}   # 0123 (0181)
-                         | {"mx_unit_types", "mx_unit_type_asks"}                           # 0125 (0181)
-                         | {"mx_counts", "mx_counts_delta"}                                 # 0132 (0195)
-                         | {"mx_track_places", "mx_track_places_state", "mx_track_changes"}   # 0133 (0195)
-                         | {"mx_news_placements", "mx_news_place_asks"}                     # 0134 (0197)
-                         | {"mx_kept_pages"}                                                 # 0136 (0198)
-                         | {"mx_entity_facts"}                                             # 0137 (0184)
+                            "mx_inc_tasks"}
+                         | {"mx_source_judgements"}
+                         | {"mx_news_sections", "mx_news_section_asks"}
+                         | {"mx_happenings"}
+                         | {"mx_roundups", "mx_units", "mx_attach", "mx_roundup_issues"}
+                         | {"mx_unit_types", "mx_unit_type_asks"}
+                         | {"mx_counts", "mx_counts_delta"}
+                         | {"mx_track_places", "mx_track_places_state", "mx_track_changes"}
+                         | {"mx_news_placements", "mx_news_place_asks"}
+                         | {"mx_kept_pages"}
+                         | {"mx_entity_facts"}
                          | {"mx_official_channels", "mx_official_lookups", "mx_official_runs",
-                            "mx_official_events"}                                           # 0138 (0196)
-                         | {"mx_track_subtopic_members", "mx_track_subtopic_asks", "mx_track_seen"}   # 0140 (0207)
-                         | {"mx_news_significance_asks", "mx_news_rank"}                  # 0141 (0208)
-                         | {"mx_holds"}                                                     # 0143 (0210)
-                         | {"mx_post_stamps", "mx_table_changes"}                           # 0147 (0216)
-                         | {"mx_word_days", "mx_word_days_dirty"}                           # 0148 (0216)
-                         | {"mx_refusals"}                                                  # 0153 (0217)
-                         | {"mx_opinion_inputs"}                                            # 0156 (0222)
-                         | {"mx_page_opens"}                                                # 0158 (0232)
+                            "mx_official_events"}
+                         | {"mx_track_subtopic_members", "mx_track_subtopic_asks", "mx_track_seen"}
+                         | {"mx_news_significance_asks", "mx_news_rank"}
+                         | {"mx_holds"}
+                         | {"mx_post_stamps", "mx_table_changes"}
+                         | {"mx_word_days", "mx_word_days_dirty"}
+                         | {"mx_refusals"}
+                         | {"mx_opinion_inputs"}
+                         | {"mx_page_opens"}
                          | {"mx_track_schemas", "mx_track_things", "mx_track_thing_reports",
-                            "mx_track_brief_asks"})                                         # 0163 (0245)
+                            "mx_track_brief_asks"})
 
     def test_a_setting_is_stored_replaced_and_read(self):
         key = f"test_{uuid.uuid4().hex}"
@@ -114,9 +112,8 @@ class MigrationTests(_Rollback):
         self.assertIsNone(repo.get_setting(self.cur, key, default=30))
 
     def test_no_mx_table_keys_to_a_mark_ix_table(self):
-        """Corrections 2: a Mark IX story's row is deleted and rewritten when it changes shape, so Mark X is keyed
-        by posts and content. No foreign key leaves the mx_* tables, so no Mark IX write can cascade into Mark X
-        or be blocked by it."""
+        """No foreign key leaves the mx_* tables: Mark IX rewrites a story's row when it changes shape, so Mark X is
+        keyed by posts and content and no Mark IX write can cascade into it or be blocked by it."""
         self.cur.execute("""SELECT child.relname, parent.relname FROM pg_constraint k
                               JOIN pg_class child ON child.oid = k.conrelid JOIN pg_class parent ON parent.oid = k.confrelid
                              WHERE k.contype = 'f' AND (child.relname LIKE 'mx\\_%' OR parent.relname LIKE 'mx\\_%')""")
@@ -124,22 +121,20 @@ class MigrationTests(_Rollback):
         self.assertEqual(outside, [])
 
     def test_it_runs_again_and_changes_nothing(self):
-        """Idempotent like every migration here: a second run on a migrated database is a no-op."""
+        """A second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 102)      # 0173 one (v10.41); 0171 one (0275); 0163 four (0245); 0158 one (0232); 0156 one (0222); 0153 one (0217); 0147 two, 0148 two, 0150 drops two (v10.22); 0143 one; 0141 two; 0140 three; 0138 four; 0137 one; 0136 one; 0134 two; 0133 three; 0132 two; 0125 two; 0124 two; 0123 four; 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0106 four, 0107 three, 0108 one, 0110 one, 0112 four, 0113 five, 0116 one, 0117 two, 0118 one
+        self.assertEqual(self.cur.fetchone()[0], 104)      # the mx_* tables every migration adds (0175: two)
 
     def test_only_the_names_vectors_have_an_hnsw_cosine_index(self):
-        """0149 (v10.22): the posts' vectors lost theirs (nothing ordered by it); the names' keep theirs
-        (identity.vector_neighbours)."""
+        """The posts' vectors have no index; the names' keep theirs (identity.vector_neighbours)."""
         for table, has in (("mx_embeddings", False), ("mx_entity_vectors", True)):
             self.cur.execute("SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = %s::regclass", (table,))
             defs = " ".join(r[0] for r in self.cur.fetchall())
             self.assertEqual("USING hnsw (v halfvec_cosine_ops)" in defs, has, table)
 
     def test_it_only_adds(self):
-        """Additive: the migration's statements create mx_* things only (no ALTER, DROP, UPDATE or DELETE of
-        another table)."""
+        """Additive: the migration creates mx_* things only (no ALTER, DROP, UPDATE or DELETE of another table)."""
         sql = "\n".join(l for l in MIGRATION.read_text(encoding="utf-8").splitlines() if not l.lstrip().startswith("--"))
         for word in ("ALTER TABLE", "DROP ", "UPDATE ", "DELETE ", "TRUNCATE"):
             for line in sql.splitlines():
@@ -181,8 +176,7 @@ class TaskTests(_Rollback):
                               "SELECT kind, guide, subject_kind, input, input_hash FROM mx_tasks WHERE id = %s", (first,))
 
     def test_the_input_hash_is_the_inputs_alone(self):
-        """Corrections 2: a re-rooted Mark IX story with the same members has the same input, so it is never asked
-        twice, whatever its subject ids say."""
+        """A re-rooted Mark IX story with the same members has the same input, so it is never asked twice."""
         g = self.guide(kind="check")
         first, _ = self.task(g, "post + members", kind="check", subject_kind="post_story", a=uuid.uuid4(), b=uuid.uuid4())
         again, created = self.task(g, "post + members", kind="check", subject_kind="post_story", a=uuid.uuid4(), b=uuid.uuid4())
@@ -310,7 +304,7 @@ class ValidToTests(_Rollback):
                               (post,))
 
     def test_a_post_in_several_stories(self):
-        """0074's edge model: one post may be current in two Mark X stories."""
+        """One post may be current in two Mark X stories."""
         other = repo.add_story(self.cur, first_at=datetime.now(timezone.utc), run_id=self.run)
         post = uuid.uuid4()
         repo.open_membership(self.cur, story_id=self.story, post_id=post, role="member", reason="rule:link", run_id=self.run)
@@ -328,7 +322,7 @@ class ValidToTests(_Rollback):
         self.assertTrue(repo.open_connection(self.cur, **key, p=0.9, rule="test:rule", run_id=self.run))
         self.cur.execute("SELECT count(*) FROM mx_connections WHERE a = %s", (self.story,))
         self.assertEqual(self.cur.fetchone()[0], 2)
-        self.savepoint_raises(errors.CheckViolation,   # every connection names a rule or a call (0086 Safety 3)
+        self.savepoint_raises(errors.CheckViolation,   # every connection names a rule or a call
                               "INSERT INTO mx_connections (a_kind, a, b_kind, b, relation) VALUES ('post', %s, 'post', %s, 'same_topic')",
                               (uuid.uuid4(), uuid.uuid4()))
 
@@ -360,8 +354,7 @@ BUG1 = "answer.mentions[{}]: name missing"
 
 
 class ReopenTests(_Rollback):
-    """0112 Decided 5 (migration 0069): the read tasks that failed only from bug 1 (read-v2 never names the mention
-    field) are opened again once, with their tries back; their failed answers stay recorded."""
+    """The read tasks that failed only from bug 1 are opened again once, tries back, failed answers kept (0112)."""
 
     def failed(self, kind, errors, status="failed", text=None):
         g = self.guide(f"test-{kind}-v1", kind)
@@ -398,8 +391,7 @@ class ReopenTests(_Rollback):
         self.assertEqual(self.row(mixed)[:2], ("failed", 3))
 
     def test_a_waiting_check_that_shows_an_empty_story_is_never_asked(self):
-        """0112 C: v10.0 queued checks against an empty story; v10.0.1 never reads their answers, so the waiting ones
-        are closed as failed, with the reason, not asked. An answered one stays as it was."""
+        """Waiting checks against an empty story are closed as failed with the reason; an answered one stays (0112)."""
         from insight_core.markx import tasks
         empty = "STORY\nHeadline: \n\nPOST\nPlatform: telegram | Source: S\nTitle: T\nText: words"
         shown = ("STORY\nHeadline: H\nMembers (earliest first):\n- [S, telegram] H — t\n\n"

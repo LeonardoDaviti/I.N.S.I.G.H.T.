@@ -6,7 +6,7 @@ import type { FrameData } from './transport';
 export interface FrameProps {
   /** A page doc's name: `reader`, `post`, `sources`, `shell`. */
   page: string;
-  /** A prototype's folder name (D6): the frame shows it, on the page's fixtures for `state`. */
+  /** A prototype's folder name: the frame shows it, on the page's fixtures for `state`. */
   prototype?: string;
   /** One of the page's states (design/fixtures/scenarios.ts). */
   state: string;
@@ -28,12 +28,8 @@ export interface FrameProps {
   className?: string;
 }
 
-/**
- * A specimen (Design Studio D4): the real page in an iframe at a real viewport
- * width, so breakpoints and `100dvh` behave as on a device, scaled down to fit
- * its box (never up). The iframe loads lazily, so a wall of frames only renders
- * what is on screen. Its box takes the scaled height, so frames stack cleanly.
- */
+/** A specimen: the real page in a lazily loaded iframe at a real viewport width (so breakpoints and `100dvh` behave
+ *  as on a device), scaled down to fit its box, never up; the box takes the scaled height. */
 export default function Frame({
   page, prototype, state, width = 1400, height, theme = 'dark', data = 'fixtures', interactive = false, walk = false, iframeRef, title, className,
 }: FrameProps) {

@@ -6,11 +6,8 @@ import { sourceLabel } from '../../lib/sourceLabel';
 /** The Add-source flow's entry for an address (the feed finder, prefilled): Sources with ?follow=<address>. */
 export const followPath = (url: string) => `/sources?follow=${encodeURIComponent(url)}`;
 
-/**
- * "Not followed: <channel> — Add" (issue 0132 C2): a voice's or a source's other channels you don't follow, each with
- * why (its profile links it, its own posts link it, Discover). Add opens the Add-source flow on its address; nothing
- * is ever added without you.
- */
+/** "Not followed: <channel> — Add": a voice's or a source's other channels you don't follow, each with why. Add opens
+ *  the Add-source flow on its address; nothing is ever added without you. */
 export default function NotFollowed({ channels, onFollow }: { channels: NotFollowedChannel[]; onFollow?: (url: string) => void }) {
   if (!channels.length) return null;
   return (

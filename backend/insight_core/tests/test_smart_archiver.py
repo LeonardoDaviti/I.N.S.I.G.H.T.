@@ -1,9 +1,7 @@
-"""The smart archiver (issue 0143): the platform fingerprint, the ladder of strategies, coverage, the learned order,
-the re-run of what was called archived, and what each source discovered.
-
-Every fixture is hand-written in its platform's shape (a feed of the latest posts, the platform's paging, API,
-sitemap, listing pages) on invented hosts; no request leaves the test (FakeHttp). Each site holds SITE_POSTS posts,
-its feed the newest FEED_POSTS: the archive must store all of them.
+"""The smart archiver (0143): the platform fingerprint, the ladder of strategies, coverage, the learned order, the
+re-run of what was called archived, and what each source discovered. Hand-written fixtures in each platform's shape on
+invented hosts, no request leaves the test (FakeHttp); each site holds SITE_POSTS posts, its feed the newest
+FEED_POSTS: the archive must store all of them.
 """
 from __future__ import annotations
 

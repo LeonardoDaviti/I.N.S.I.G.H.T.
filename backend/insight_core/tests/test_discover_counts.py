@@ -1,13 +1,7 @@
-"""Discover counts in the database (issue 0062): the list is exactly the one the Python walk over
-every kept link gave (0050, 0051), and discover_addresses is filled by the story job, by Discover
-when an address is missing, and again when the rules change.
-
-The oracle is the old walk itself (`reference_discover`, kept here as it was): every test compares
-the service's whole list with it, on the whole test database, after adding rows that hit the edges
-(platform accounts and pages that name none, lowercasing beyond ASCII, a host with a port, the
-40% share exactly and just under, Reddit authors as voices, a site two sources share, titles by the
-evidence an origin is titled by (issue 0070), more than 20 articles, a classic, a followed site and a
-hidden key).
+"""Discover counts in the database (0062): the list is exactly the one the Python walk over every kept link gave, and
+discover_addresses is filled by the story job, by Discover when an address is missing, and again when the rules
+change. The oracle is the old walk (`reference_discover`): every test compares the service's whole list with it on
+the whole test database, after adding rows that hit the edges.
 """
 from __future__ import annotations
 
@@ -42,8 +36,8 @@ LINK_FIELDS = ("key", "url", "voices", "voice_names", "article_count", "link_cou
 
 
 def assert_links_as_walked(test: unittest.TestCase, got, reference) -> None:
-    """The service's list holds the walk's, by links: the same suggestions with the same counts; the
-    ones no story starts from (issue 0065) in the walk's order, and only stories' origins add any."""
+    """The service's list holds the walk's: the same suggestions with the same counts; the ones no story starts from
+    (0065) in the walk's order, and only stories' origins add any."""
     walked = {s["key"]: s for s in reference}
     test.assertEqual({s["key"]: {k: s[k] for k in LINK_FIELDS} for s in got if s["key"] in walked}, walked)
     test.assertEqual([s["key"] for s in got if s["key"] in walked and not s["origins"] and not s.get("follow_test")],
@@ -53,12 +47,9 @@ def assert_links_as_walked(test: unittest.TestCase, got, reference) -> None:
 
 
 def reference_discover(url: str):
-    """Discover as 0050/0051 computed it: every kept link read into Python and walked; with 0067's
-    roundups (v10.17, 0190: the posts markx/units.py tags a round-up, mx_roundups) and tweet
-    mirrors (TWEET_HREF in every post's HTML); and 0080's: the platforms the data finds, no voice for a
-    self-link or Saved's, a reference or a paper source no suggestion, its sources counted as Discover
-    names them (a Reddit source once), titles never a slug, ranked by discover_rules.score; and 0235's: an @mention
-    (post_links kind 'mention') is a link of its account, whose key needs no article, and the score's growth term."""
+    """Discover as the Python walk computes it: every kept link read and walked, with round-ups (mx_roundups) and
+    tweet mirrors, the platforms the data finds, no voice for a self-link or Saved's, reference and paper sources no
+    suggestion, titles never a slug, ranked by discover_rules.score; an @mention is a link of its account (0235)."""
     now = datetime.now(timezone.utc)
     with psycopg.connect(url) as conn, conn.cursor() as cur:
         sources = SourceFacts(cur)
@@ -99,7 +90,7 @@ def reference_discover(url: str):
          else "source:" + link["source_id"], link["url"]) for link, off in zip(links, voiceless) if not off))
     triples, names, source_of = [], {}, {}
     linked_by, linking, last = defaultdict(set), defaultdict(dict), defaultdict(lambda: None)
-    first_by = defaultdict(dict)   # 0235: key -> source -> its first link (every link, as the activity query reads)
+    first_by = defaultdict(dict)   # key -> source -> its first link (every link, as the activity query reads)
     for link in links:
         key = discover_address(link["url"], platforms)[0]
         was = first_by[key].get(link["source_id"])
@@ -110,7 +101,7 @@ def reference_discover(url: str):
             own_site=sources.own_site(link["source_id"]), t=datetime.min, author=link["author"],
             links=post_links[link["post_id"]]))
         names.setdefault(p.voice, sources.voice_name(p.voice, link["source_id"]))
-        # a Reddit author's voice is its source in "linked by N of your sources" (issue 0080)
+        # a Reddit author's voice is its source in "linked by N of your sources" (0080)
         source_of.setdefault(p.voice, "source:" + link["source_id"] if p.voice.startswith("reddit:") else p.voice)
         names.setdefault(source_of[p.voice], sources.name.get(link["source_id"], ""))
         triples.append((None if off else p.voice, link["url"], link["post_id"] in roundups))
@@ -212,7 +203,7 @@ class DiscoverCountsTests(unittest.TestCase):
         for author in ("Alice", "bob"):
             html = f'submitted by &#32; <a href="https://www.reddit.com/user/{author}"> /u/{author} </a>'
             self._post(reddit, f"reddit.com", [(cited[0], "Story"), (cited[1], "")], html=html)
-        # 0235: an account @mentioned (no link, no article) by 3 voices is suggested; by 2, not
+        # an account @mentioned (no link, no article) by 3 voices is suggested; by 2, not (0235)
         for n, named in enumerate((("named", "twice"), ("named", "twice"), ("named",))):
             post = self._post(self._source(f"Mentioner {n} {m}"), f"mentioner{n}-{m}.example", [])
             for k, who in enumerate(named):
@@ -228,7 +219,7 @@ class DiscoverCountsTests(unittest.TestCase):
         return StoriesService(db_url()).discover()["suggestions"]
 
     def _rules(self):
-        """The rules the rows are written by: the data's platforms on the test database too (issue 0080)."""
+        """The rules the rows are written by: the data's platforms on the test database too (0080)."""
         kept = DiscoverRepository.kept(self.cur) or {}
         return address_stamp({h: tuple(p) for h, p in (kept.get("platforms") or {}).items()})
 
@@ -287,7 +278,7 @@ class DiscoverCountsTests(unittest.TestCase):
     def test_the_story_job_fills_them_after_reading_links(self):
         self._edges()
         self.cur.execute("DELETE FROM discover_addresses WHERE url LIKE %s", (f"%{self.mark}%",))
-        # Rows deleted by hand are no post's change: the next full count (no kept counts) fills them (0072 A).
+        # rows deleted by hand are no post's change: the next full count (no kept counts) fills them (0072 A)
         self.cur.execute("DELETE FROM system_settings WHERE key = 'discover_counts'")
         self.conn.commit()
         StoriesService(db_url()).recompute()

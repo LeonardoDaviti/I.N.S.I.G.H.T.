@@ -1,19 +1,12 @@
 /**
- * The fixture transport (Design Studio D4): a `fetch` that answers the app's
- * API calls from fixtures, so a frame renders the real page on sample data.
- * Installed on the frame's own window only; the studio's `fetch` is never
- * touched. Every API call in the app goes through `fetch` (lib/request.ts),
- * so the page code doesn't change.
+ * The fixture transport: a `fetch` that answers the app's API calls from fixtures, so a frame renders the real page
+ * on sample data. Installed on the frame's own window only (the studio's `fetch` is never touched).
  *
- * - A GET answers from the first route whose method and path match.
- * - A GET with no route is reported (`unmocked`) and answered 501, or, with
+ * - A GET answers from the first matching route; with none it is reported (`unmocked`) and answered 501, or, with
  *   `data: 'live'`, passed through to the real API.
- * - A write (POST, PUT, PATCH, DELETE) never reaches the network, in either
- *   mode and to any origin: it is reported (`write`) and answered by its route
- *   or a fake OK.
- * - An API call is `/api/…` on the frame's origin or under `VITE_API_URL`
- *   (`apiBase`), where lib/request.ts sends it when that is set.
- * - A read outside the API passes through untouched.
+ * - A write never reaches the network, in either mode and to any origin: it is reported (`write`) and answered by
+ *   its route or a fake OK.
+ * - An API call is `/api/…` on the frame's origin or under `VITE_API_URL` (`apiBase`); other reads pass through.
  */
 
 export type FrameData = 'fixtures' | 'live';
@@ -29,10 +22,7 @@ export interface FixtureRequest {
   body: unknown;
 }
 
-/**
- * A route answers with a `Response` (status, never-resolving promise, …) or with
- * any other value, which is sent as a 200 JSON body.
- */
+/** A route answers with a `Response` (status, never-resolving promise, …) or any other value, sent as 200 JSON. */
 export interface FixtureRoute {
   /** GET when omitted. */
   method?: string;
@@ -141,7 +131,7 @@ export function createFixtureTransport(options: TransportOptions): typeof fetch 
 
     if (path === null) {
       if (isRead) return realFetch(input, init);
-      // Not the API, but a write all the same: it never leaves the frame.
+      // not the API, but a write all the same: it never leaves the frame
       const shown = url.origin === bases[0].origin ? `${url.pathname}${url.search}` : url.href;
       onEvent({ kind: 'write', method, path: shown });
       return json({ success: true });

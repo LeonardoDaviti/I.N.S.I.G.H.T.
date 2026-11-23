@@ -1,8 +1,7 @@
-"""0208 (Stealth v10.19): News ranked for the reader. The significance question (its input from the existing signals,
-which members it shows, the counts in buckets), the answer's checks and score, when a row is asked (once, again only
-when its posts changed and the gap passed, never while one waits), the reader's fit, the rank and the Notable lane,
-the kept ranks (the jobs process), the Mark X page's and the reader's News order (the switch, `order=coverage`).
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""News ranked for the reader (0208): the significance question and its checks and score, when a row is asked (once,
+again only when its posts changed and the gap passed, never while one waits), the rank and the Notable lane, the
+reader's order, the kept ranks, and the Mark X page's and reader's News order (`order=coverage`). Synthetic data; DB
+tests only on a _test database."""
 from __future__ import annotations
 
 import unittest
@@ -84,8 +83,7 @@ class TheQuestion(unittest.TestCase):
 
 
 class TheResultsGuide(unittest.TestCase):
-    """0260 (v10.30): significance-v3, a result scored by what it changes in the field, behind entity_bands.json
-    `significance.results`."""
+    """significance-v3: a result scored by what it changes in the field, behind `significance.results` (0260)."""
 
     def switched(self, on):
         bands = dict(identity.bands(), significance={"results": on})
@@ -167,16 +165,16 @@ class TheRank(unittest.TestCase):
 
     def test_significance_lifts_a_quiet_row_over_a_loud_minor_one(self):
         rows = [row("loud", 25), row("quiet", 3), row("plain", 6)]
-        got = R.rank(rows, {"loud": 0.0, "quiet": 1.0, "plain": None}, {}, NOW)
+        got = R.rank(rows, {"loud": 0.0, "quiet": 1.0, "plain": None}, NOW)
         self.assertEqual([x.row_id for x in got], ["quiet", "plain", "loud"])
         self.assertEqual(got[1].significance, None)                               # not answered: the middle
-        self.assertEqual(got[1].score, R.combine(None, R.coverage(6), 0.0))
+        self.assertEqual(got[1].score, R.combine(None, R.coverage(6)))
 
     def test_the_lane_holds_significant_rows_coverage_would_bury(self):
         rows = [row(f"r{n}", 100 - n) for n in range(30)] + [row("buried", 2), row("old", 2, hours=24 * 8)]
         sig = {r["id"]: 0.3 for r in rows}
         sig.update({"r1": 0.9, "buried": 0.9, "old": 0.95})
-        got = {x.row_id: x for x in R.rank(rows, sig, {}, NOW)}
+        got = {x.row_id: x for x in R.rank(rows, sig, NOW)}
         self.assertTrue(got["buried"].notable)
         self.assertFalse(got["r1"].notable)                                       # already near the top
         self.assertFalse(got["old"].notable)                                      # older than NOTABLE_DAYS
@@ -185,27 +183,15 @@ class TheRank(unittest.TestCase):
     def test_the_lane_is_small(self):
         rows = [row(f"r{n}", 100 - n) for n in range(40)]
         sig = {r["id"]: (0.9 if n >= 25 else 0.1) for n, r in enumerate(rows)}
-        self.assertEqual(sum(x.notable for x in R.rank(rows, sig, {}, NOW)), R.NOTABLE_MAX)
+        self.assertEqual(sum(x.notable for x in R.rank(rows, sig, NOW)), R.NOTABLE_MAX)
 
 
-class TheFit(unittest.TestCase):
-    PROFILE = R.Profile(reads=40, posts=4000, sources={"fav": (20, 200), "busy": (2, 2000), "new": (1, 2)},
-                        entities={"q-means": 6, "acme": 1}, tracked={"p9"})
-
-    def test_a_source_read_more_than_its_share(self):
-        self.assertGreater(R.source_fit(self.PROFILE, "fav"), 0.9)               # read 10x its share
-        self.assertEqual(R.source_fit(self.PROFILE, "busy"), 0.0)                # read less than its share
-        self.assertLess(R.source_fit(self.PROFILE, "new"), 0.5)                  # 1 of 2: smoothed toward the rate
-        self.assertEqual(R.source_fit(R.Profile(), "fav"), 0.0)                  # nothing read: no fit
-
-    def test_the_thing_read_most_and_the_tracks(self):
-        value, why = R.fit(self.PROFILE, sources=["busy"], things=["acme", "q-means"], posts=["p9"])
-        self.assertEqual(why, {"source": 0.0, "entity": 0.75, "thing": "q-means", "track": True})
-        self.assertAlmostEqual(value, R.FIT_PARTS["entity"] * 0.75 + R.FIT_PARTS["track"])
-
-    def test_fit_weighs_nothing_in_the_order_it_is_a_shadow(self):
-        self.assertEqual(R.W_FIT, 0.0)
-        self.assertEqual(R.combine(0.5, 0.5, 1.0), R.combine(0.5, 0.5, 0.0))
+class TheReadersOrder(unittest.TestCase):
+    def test_personal_is_the_global_score_times_the_factor(self):
+        self.assertEqual(R.personal_score(0.5, 2.0), 1.0)
+        self.assertEqual(R.personal_score(0.5, None), 0.5)                     # no personal: the global score
+        self.assertEqual(R.DEFAULT_ORDER, "personal")
+        self.assertEqual(R.ORDERS, ("personal", "ranked", "coverage"))          # global only one click away
 
 
 class Ranked(_Api):
@@ -262,8 +248,8 @@ class Ranked(_Api):
         self.assertEqual(len([r for r, *_ in self.asks() if r == b]), 2)
 
     def test_the_results_guide_asks_new_and_changed_rows_only(self):
-        """0260: switching the guide asks no row again by itself (no mass re-ask): a row is asked under the new
-        guide when it is new, or when its posts changed past the gap."""
+        """Switching the guide re-asks no row by itself: a row is asked under the new guide when it is new, or when its
+        posts changed past the gap (0260)."""
         bands_off = dict(identity.bands(), significance={"results": False})
         bands_on = dict(identity.bands(), significance={"results": True})
         a, b = self.post(title="An old result"), self.post(title="Its follow-up")
@@ -302,8 +288,9 @@ class Ranked(_Api):
         # the Mark X page: ranked by default (the measure passed its bar), the rank on each row
         status, page = call("GET", "/api/markx/news", query={"all": 1})
         self.assertEqual(status, 200)
-        self.assertEqual(page["order"], "ranked")
+        self.assertEqual(page["order"], "personal")
         self.assertEqual([i["id"] for i in page["items"]], [quiet, plain, loud])
+        self.assertIn("personal", ranks[quiet]["why"])                          # v10.42: its things, kind, sources
         self.assertEqual(page["items"][0]["rank"]["significance"], 1.0)
         # the switch: by coverage (a Shadow): the old order, the ranks still shown
         with self.conn.transaction():
@@ -341,8 +328,8 @@ class Ranked(_Api):
 
 
 class Analysis(Ranked):
-    """0208: a row's expert breakdowns: named by its answer, read as commentary, long; kept in the rank, shown on the
-    reader's News only when Analysis is on (a Shadow by default: under its bar)."""
+    """A row's expert breakdowns: named by its answer, read as commentary, long; kept in the rank, shown on the reader's
+    News only when Analysis is on (0208)."""
 
     def reading(self, post, kind):
         from insight_core.markx import tasks
@@ -377,7 +364,7 @@ class Analysis(Ranked):
         self.assertNotIn("analysis", got["news"])                                     # a Shadow: not on News
         with self.conn.transaction():
             R.set_analysis_mode(self.cur, "shown")
-        self.assertEqual(R.mode(self.cur), "ranked")                                  # the order kept
+        self.assertEqual(R.mode(self.cur), "personal")                                # the order kept
         got = NewsService.ranked(self.cur, [dict(item, news=dict(item["news"]))])["items"][0]
         self.assertEqual(got["news"]["analysis"], [{"id": deep, "title": "How its attention works",
                                                     "source": "Example Channel", "author": "Example Channel"}])
@@ -407,7 +394,7 @@ class TheReadersNews(_Api):
         self.keep(ids[2], sig=1.0, score=0.7, notable=True)
         items = self.items((ids[0], "recent", 9), (ids[1], "recent", 3), (ids[2], "earlier", 2), (ids[3], "recent", 1))
         got = NewsService.ranked(self.cur, [dict(i, news=dict(i["news"])) for i in items])
-        self.assertEqual(got["order"], "ranked")
+        self.assertEqual(got["order"], "personal")
         self.assertEqual([i["story"]["id"] for i in got["items"]], [ids[2], ids[1], ids[0], ids[3]])
         self.assertEqual([i["news"]["notable"] for i in got["items"]], [True, False, False, False])
         self.assertEqual(got["items"][0]["news"]["rank"]["event"], "new_method")

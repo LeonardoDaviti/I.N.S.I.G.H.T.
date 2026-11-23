@@ -4,10 +4,8 @@ import type { AlsoOnLine } from '../../services/api';
 import { feedDateLabel } from '../../lib/dates';
 import { sourceLabel } from '../../lib/sourceLabel';
 
-/**
- * "Also on <channel>" (issue 0132 A): the same post on another channel of one voice, within 72 hours, shows once.
- * The earliest is the row; each other is one quiet line under it, a link to that post.
- */
+/** "Also on <channel>": the same post on another channel of one voice, within 72 hours, shows once: the earliest is
+ *  the row, each other one quiet line under it. */
 export default function AlsoOn({ lines, now }: { lines: AlsoOnLine[]; now?: Date }) {
   if (!lines.length) return null;
   return (

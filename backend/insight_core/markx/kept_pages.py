@@ -1,39 +1,11 @@
-"""Kept pages (issue 0198): a page's answer kept as the bytes the API sends, with the stamp of the inputs it was built
-from (migration 0136, mx_kept_pages).
+"""Kept pages (mx_kept_pages): a page's answer kept as the bytes the API sends, with the stamp of its inputs.
 
-A page that changes only when a job writes its inputs is built once and sent many times: the owning module says what
-the page reads (its `stamp`: a sha256 of a few indexed reads, taken in the request's own transaction) and builds it
-(its own function, the one path); this module only keeps the bytes and gives them back while the stamp is the same.
-A request whose stamp has no kept row builds the page as before (never fails, never stale): the kept bytes are the
-JSON the route would have answered, byte for byte (`encode`: FastAPI's own encoding of a route's dict).
-
-Nothing is held in a process between requests: the bytes live in Postgres (TOAST-compressed) and a request reads one
-row by its primary key.
-
-Issue 0206 (wave 2: the topic tracks' pages, the unread counts, the sources' anatomy, Discover's main source):
-  - **A page of no decision run** is kept over `NO_RUN` (its stamp alone says whether it stands).
-  - **Kept inputs** (`changes`, migration 0139): the stamp of a page whose inputs many writers write (posts, the read
-    state, stories, folders, sources) is a count per input of its committed writing transactions (each logs one row,
-    by a trigger; `compact` folds them into a base in the jobs process without changing a count): exact whatever
-    order the writes commit in, one indexed read, and no writer ever waits on another for it.
-  - **A bound and what a page may lag behind within it**: a row's `until` (as an entity page's clock) and its `loose`
-    part (stored, not compared by a request): a page is sent while its stamp is the same and before its `until`; the
-    jobs process builds it again when its loose part moved or its `until` comes near (`has(..., loose, until_after)`).
-  - **The API keeps what it built** (`kept_or_build`): a request finding nothing kept builds the page as before and
-    keeps it when its stamp did not move meanwhile, so the next request (either process) sends it; the jobs process
-    builds the pages its views keep before anyone asks.
-  - **The newest kept, whatever its stamp** (`newest`): for a page too long to build in a request (Discover's main
-    source: 17-20 s on the server), sent with when it was built while the jobs process builds it again.
-
-Issue 0232 (v10.25):
-  - **The code apart from the inputs** (migration 0158, mx_kept_pages.code): a row's stamp is its inputs' alone and
-    its `code` the code stamp it was built with. `get` and `has` want the current code's row; a page whose module
-    says so (`get(..., any_code=True)`: News, the entity list and queue, an entity's page) is sent from the previous
-    code's row while its inputs are the same, until the jobs process builds it again after the deploy (before, every
-    deploy made every kept page cold). Such a page names its answer's shape in its key (`shaped`): a deploy that
-    changes what the page answers (a field the frontend reads) changes the key, so an older shape is never sent.
-  - **Opens** (`opened`, `most_opened`; mx_page_opens): a count a page and key, so the jobs process builds the most
-    opened pages before anyone asks.
+The owning module says what the page reads (`stamp`, taken in the request's transaction) and builds it; this module
+keeps the bytes (`encode`: exactly what the route would answer) and hands them back while the stamp is the same, so a
+miss just builds the page (never fails, never stale). Entry points: `kept_or_build` (API side), `get`/`has`/`put`
+(jobs side), `newest` (a page too slow for a request), `changes`/`compact` (per-input write counts kept by triggers),
+`opened`/`most_opened`. A row's `code` is the code stamp it was built with; `any_code` lets a `shaped` key's page
+survive a deploy until rebuilt. Nothing is held in process memory.
 """
 from __future__ import annotations
 
@@ -46,8 +18,8 @@ from typing import Any, Callable, List, NamedTuple, Optional, Tuple
 
 _code: Optional[str] = None
 
-NO_RUN = "00000000-0000-0000-0000-000000000000"   # 0206: a page kept over no decision run (its stamp says it all)
-COMPACT_AT = 200                                   # 0206: an input's logged changes folded into its base past this
+NO_RUN = "00000000-0000-0000-0000-000000000000"   # a page kept over no decision run
+COMPACT_AT = 200                                   # an input's logged changes folded into its base past this
 
 
 def encode(content: Any) -> bytes:
@@ -58,15 +30,13 @@ def encode(content: Any) -> bytes:
 
 
 def recut(body: bytes, change: Callable[[Any], Any]) -> bytes:
-    """0232: kept bytes (`encode`'s) read back, `change`d, and answered as the route answers them: the JSON is already
-    the encoder's output (plain types), so it is rendered as JSONResponse renders it, without walking it again."""
+    """Kept bytes read back, `change`d and re-rendered as JSONResponse does (already plain types: no re-encoding)."""
     from fastapi.responses import JSONResponse
     return JSONResponse(content=change(json.loads(body))).body
 
 
 def code_stamp() -> str:
-    """The sha256 of the backend's Python sources (insight_core, not its tests), read once a process: a row's `code`
-    (0232: kept apart from its input stamp; a page of other code is sent only by `get(..., any_code=True)`)."""
+    """The sha256 of insight_core's Python sources (not tests), once a process: a row's `code`."""
     global _code
     if _code is None:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -83,28 +53,25 @@ def code_stamp() -> str:
 
 
 def stamp(*parts: Any) -> str:
-    """A page's input stamp: the page's reads (`parts`, JSON-able), hashed (0232: the code is the row's `code`)."""
+    """A page's input stamp: its reads (`parts`, JSON-able), hashed."""
     return hashlib.sha256(json.dumps(list(parts), default=str, separators=(",", ":")).encode()).hexdigest()
 
 
 def shaped(key: str, shape: str) -> str:
-    """0232: a key that names its answer's shape (the owning module's SHAPE): a row of another shape is never sent,
-    by `get(..., any_code=True)` nor by `newest`."""
+    """A key naming its answer's shape, so a row of another shape is never sent (by `any_code` nor `newest`)."""
     return f"{key}#{shape}"
 
 
 def changes(cur: Any, inputs: Any) -> List[List[Any]]:
-    """0206: [[input, count]] of these kept inputs (migration 0139: posts, reads, stories, parts, folders, sources),
-    each the committed transactions that wrote it so far: a page's stamp part. One indexed read."""
+    """[[input, count]]: each kept input's committed writing transactions so far (a stamp part). One indexed read."""
     cur.execute("""SELECT k.input, k.base + (SELECT count(*) FROM kept_input_changes c WHERE c.input = k.input)
                      FROM kept_inputs k WHERE k.input = ANY(%s) ORDER BY k.input""", (sorted(set(inputs)),))
     return [list(r) for r in cur.fetchall()]
 
 
 def compact(cur: Any, at_least: int = COMPACT_AT) -> int:
-    """0206, the jobs process: an input with `at_least` logged changes or more has them folded into its base, in one
-    statement an input (the rows it sees deleted and counted into the base, a row still uncommitted stays), so every
-    count stays as it was and no kept page is lost to it. The changes folded."""
+    """Jobs process: fold an input's logged changes into its base once it has `at_least`; every count stays the same
+    (uncommitted rows stay), so no kept page is lost. Returns the changes folded."""
     cur.execute("SELECT input FROM kept_input_changes GROUP BY input HAVING count(*) >= %s ORDER BY input", (at_least,))
     folded = 0
     for (name,) in cur.fetchall():
@@ -119,9 +86,8 @@ def compact(cur: Any, at_least: int = COMPACT_AT) -> int:
 
 def get(cur: Any, page: str, key: str, run_id: Any, stamp_: str, *, now: Any = None,
         any_code: bool = False) -> Optional[bytes]:
-    """The kept bytes of (page, key) built over `run_id` with this stamp by the current code (and, kept with an
-    `until`, `now` before it), or None. 0232: `any_code`, also a row of another code (a deploy's previous one: the
-    same inputs, the key's shape), until the jobs process builds it again."""
+    """The kept bytes of (page, key) over `run_id` with this stamp by the current code (and before its `until`), or
+    None. `any_code`: also a row built by other code (the previous deploy's)."""
     if run_id is None:
         return None
     cur.execute("""SELECT body FROM mx_kept_pages WHERE page = %s AND key = %s AND run_id = %s AND stamp = %s
@@ -133,9 +99,8 @@ def get(cur: Any, page: str, key: str, run_id: Any, stamp_: str, *, now: Any = N
 
 def has(cur: Any, page: str, key: str, run_id: Any, stamp_: str, *, loose: Optional[str] = None,
         until_after: Any = None) -> bool:
-    """Whether (page, key) is kept over `run_id` with this stamp (True before any run: nothing to keep). 0206: with
-    `loose`, kept with that loose part too (else it lags: the jobs process builds it again); with `until_after`, sent
-    until after that moment (a row whose bound comes first is built again in time). 0232: by the current code."""
+    """Whether (page, key) is kept over `run_id` with this stamp by the current code (True before any run). With
+    `loose`, also that loose part; with `until_after`, its bound lies after that moment (else rebuild in time)."""
     if run_id is None:
         return True
     cur.execute("""SELECT 1 FROM mx_kept_pages WHERE page = %s AND key = %s AND run_id = %s AND stamp = %s
@@ -147,8 +112,7 @@ def has(cur: Any, page: str, key: str, run_id: Any, stamp_: str, *, loose: Optio
 
 
 def newest(cur: Any, page: str, key: str) -> Optional[Tuple[bytes, Any, str]]:
-    """0206: (body, built_at, stamp) of (page, key)'s newest kept row, whatever its stamp and code, or None. A key
-    that names its shape (`shaped`) never hands another shape's page."""
+    """(body, built_at, stamp) of (page, key)'s newest kept row, whatever its stamp and code, or None."""
     cur.execute("""SELECT body, built_at, stamp FROM mx_kept_pages WHERE page = %s AND key = %s
                     ORDER BY built_at DESC LIMIT 1""", (page, key))
     row = cur.fetchone()
@@ -156,22 +120,17 @@ def newest(cur: Any, page: str, key: str) -> Optional[Tuple[bytes, Any, str]]:
 
 
 class Inputs(NamedTuple):
-    """What a page reads, split (0206): `strict`, stamped (a request sends the kept page only while it is the same),
-    and `loose`, stored with the page (the jobs process builds it again when it moved: what the page may lag behind
-    within its `until`)."""
+    """What a page reads: `strict` is stamped (sent only while it is the same); `loose` is stored, and the jobs
+    process rebuilds when it moved (what the page may lag behind within its `until`)."""
     strict: Any
     loose: Optional[str]
 
 
 def kept_or_build(cur: Any, page: str, key: str, inputs: Callable[[], Any], build: Callable[[], Any], *,
                   run_id: Any = NO_RUN, until: Any = None, now: Any = None, any_code: bool = False) -> bytes:
-    """0206, the API's side of a kept page: the bytes kept for (page, key) while the stamp of `inputs()` (the owning
-    module's few reads; an `Inputs`: its strict part) is the same and before the row's `until`; else `build()` (the
-    route's answer, the page's one path) encoded and kept (with `until` and the loose part read before the build) when
-    `inputs()` read again after the build is the same (a page built while an input changed is answered, not kept).
-    Kept in a savepoint of the caller's transaction, committed with it; a failure to keep still answers. 0232:
-    `any_code`, as `get`'s (a shaped key's page kept by the code before a deploy is sent while its inputs are the
-    same)."""
+    """The API side: the kept bytes while `inputs()`'s stamp is the same, else `build()` encoded, and kept only when
+    `inputs()` read again after the build is unchanged. Kept in a savepoint of the caller's transaction; a failure to
+    keep still answers. `any_code` as in `get`."""
     def read() -> Tuple[str, Optional[str]]:
         got = inputs()
         if isinstance(got, Inputs):
@@ -195,10 +154,8 @@ def kept_or_build(cur: Any, page: str, key: str, inputs: Callable[[], Any], buil
 
 def put(cur: Any, page: str, key: str, run_id: Any, stamp_: str, body: bytes, *, seconds: Optional[float] = None,
         until: Any = None, replace_older: bool = False, loose: Optional[str] = None) -> None:
-    """Keep `body` as (page, key)'s answer over `run_id` (one row a run: a rebuild within the run replaces it), sent
-    only before `until` when given; `loose` (0206): what it may lag behind, for the jobs process (`has`); 0232: with
-    the current code's stamp (`code`).
-    `replace_older`: the key's rows of other runs go (an entity's page keeps one)."""
+    """Keep `body` as (page, key)'s answer over `run_id` (one row a run), sent only before `until`; `loose` as in
+    `has`. `replace_older`: the key's rows of other runs go."""
     if run_id is None:
         return
     if replace_older:
@@ -229,8 +186,7 @@ def prune_rows(cur: Any, page: str, keep: int) -> int:
 
 
 def opened(cur: Any, page: str, key: str) -> None:
-    """0232: one open of (page, key) counted (mx_page_opens), in a savepoint: a count that fails never fails the
-    page."""
+    """Count one open of (page, key) in a savepoint: a failed count never fails the page."""
     try:
         with cur.connection.transaction():
             cur.execute("""INSERT INTO mx_page_opens AS o (page, key, opens) VALUES (%s, %s, 1)
@@ -240,18 +196,15 @@ def opened(cur: Any, page: str, key: str) -> None:
 
 
 def most_opened(cur: Any, page: str, n: int, *, days: int = 14) -> List[str]:
-    """0232: the `n` keys of `page` most opened among those opened in the last `days` (most opens, then the newest
-    open, then the key)."""
+    """The `n` keys of `page` most opened among those opened in the last `days`."""
     cur.execute("""SELECT key FROM mx_page_opens WHERE page = %s AND last_at >= now() - make_interval(days => %s)
                     ORDER BY opens DESC, last_at DESC, key LIMIT %s""", (page, days, n))
     return [k for (k,) in cur.fetchall()]
 
 
 def owner_marks(cur: Any) -> list:
-    """What the owner (or an answer applied at once) changed between decision runs that the pages read: the labels
-    (every one-tap answer: News flags, folds, entity answers, ...), the merges and their undoing, the pins, an
-    entity's sources and handles, the identity fixes. Each a count and its newest time (and the undone ones'): a
-    write that commits after a newer one still changes a count."""
+    """A stamp part for the owner's changes between runs (labels, merges and undos, pins, entity sources and handles,
+    fixes): counts plus newest times, so a write committing out of order still changes it."""
     cur.execute("""SELECT (SELECT json_build_array(count(*), max(created_at)) FROM mx_labels),
                           (SELECT json_build_array(count(*), count(undone_at), max(at), max(undone_at))
                              FROM mx_entity_redirects),

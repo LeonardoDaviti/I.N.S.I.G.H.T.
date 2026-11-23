@@ -22,7 +22,7 @@ const DERIVED: Array<[string, string]> = [
   ['https://t.me/s/durov', '@durov'],
   ['https://medium.com/@nn_teacher/feed', '@nn_teacher'],
   ['https://feeds.feedburner.com/oreilly/radar', 'oreilly'],
-  // The Nitter and Telegram RSS templates' addresses (issue 0027): one name per account, not the host.
+  // The Nitter and Telegram RSS templates' addresses: one name per account, not the host.
   ['https://nitter.local/nn_teacher/rss', '@nn_teacher'],
   ['https://nitter.net/sw_notes/rss', '@sw_notes'],
   ['https://telegram.local/rss/seeall_notes?limit=50', '@seeall_notes'],

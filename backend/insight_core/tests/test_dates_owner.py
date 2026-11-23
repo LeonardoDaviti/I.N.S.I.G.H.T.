@@ -1,5 +1,5 @@
-"""One owner for a post's date (v10.17, issue 0190): Pairing names the four meanings (markx/pairing.py, "the dates"),
-and no other module writes a COALESCE of a post's date columns. A grep, no database."""
+"""One owner for a post's date (0190): Pairing names the four meanings (markx/pairing.py, "the dates"), and no other
+module writes a COALESCE of a post's date columns. A grep, no database."""
 import re
 import unittest
 from pathlib import Path
@@ -26,7 +26,7 @@ class NoInlineDates(unittest.TestCase):
             if rel.startswith("tests/") or path == OWNER:
                 continue
             n = _inline(path)
-            if n:   # 0189's merge moved the Voice slice's last nine to pairing.ix_date / ordinary_date
+            if n:   # the Voice slice's last ones moved to pairing.ix_date / ordinary_date
                 found[rel] = n
         self.assertEqual(found, {}, "a post's date is pairing.post_date / ordinary_date / published_date / ix_date "
                                     "(markx/pairing.py, 'the dates'), never an inline COALESCE")

@@ -1,17 +1,7 @@
-"""0180 (Stealth v10.16 slice J): anchors (0166 step 3).
-
-  - Pairing's `develops` row: E6's windows per group (deal 3-120 days, legal 3-30, funding and people never, release
-    unmeasured: never), 2+ separate shared parties, no money clash; back's gates (and the long-lived rule's) read
-    from the row.
-  - anchors.of: Mark IX stories, Mark X stories (current members, not merged), happening anchors (posts of one
-    happening no story holds, chained within the first gap); 2+ voices for a story.
-  - (The later engine went with Later developments in v10.18, 0203.)
-  - The back engine: an H burst, and its first gap instead of 14/7 days.
-  - Shadow: back.stage writes both engines' rows (engine, anchor_kind, anchor_id), the pages show the
-    engine `anchors.shown` names (old by default), the comparison (only old, only new, both), an error in the anchors
-    engine leaves the old rows standing, a concurrent update still defers the stage.
-  - Migration 0122: old rows read as ix_story; one story and window may have a row of each engine.
-Synthetic data and invented names only; the DB tests run on a database whose name ends in _test."""
+"""Anchors (0180): Pairing's `develops` row (windows per group, 2+ separate shared parties, no money clash),
+anchors.of (Mark IX stories, Mark X stories, happening anchors; 2+ voices for a story), the back engine's first gap,
+the Shadow comparison of the two engines (an error in the anchors engine leaves the old rows standing), and migration
+0122. Synthetic data; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import unittest
@@ -66,7 +56,7 @@ class TheDevelopsRow(unittest.TestCase):
 
 
 class _Anchors(_Later):
-    shadow = True        # the anchors engine runs beside the old one (turned on: off by default since v10.17)
+    shadow = True        # the anchors engine runs beside the old one (off by default)
 
     def read(self, post, action, actors, obj, names, numbers=()):
         """A read-v2 reading of the post and its ent-v3 mentions [(name, type, role)], recorded as the worker's
@@ -181,7 +171,7 @@ class Shadow(_Anchors):
         self.cur.execute("SELECT engine, anchor_kind, story::text, anchor_id::text FROM mx_back ORDER BY engine")
         self.assertEqual(self.cur.fetchall(), [("anchors", anchors.IX, sid, sid), ("old", anchors.IX, sid, sid)])
         self.cur.execute("SELECT count(*) FROM mx_later")
-        self.assertEqual(self.cur.fetchone()[0], 0)          # 0203: no Later row from either engine
+        self.assertEqual(self.cur.fetchone()[0], 0)          # no Later row from either engine
         self.assertEqual(anchors.shown(self.cur), anchors.OLD)
         status, body = call("POST", "/api/markx/anchors/shown", body={"engine": "anchors"})
         self.assertEqual((status, body), (200, {"engine": "anchors"}))
@@ -196,7 +186,7 @@ class Shadow(_Anchors):
                          {"old": 1, "new": 1, "only_old": 0, "only_new": 0, "both": 1})
         status, got = call("GET", "/api/markx/anchors/compare", query={"which": "back"})
         self.assertEqual(status, 200, got)
-        self.assertEqual(call("GET", "/api/markx/anchors/compare", query={"which": "later"})[0], 400)   # 0203
+        self.assertEqual(call("GET", "/api/markx/anchors/compare", query={"which": "later"})[0], 400)
 
     def test_an_error_in_the_anchors_engine_leaves_the_old_rows(self):
         self.world()
@@ -220,7 +210,7 @@ class Shadow(_Anchors):
             self.assertEqual(back.stage(self.cur, now=NOW, open_cap=0)["anchors"], {"off": True})
 
     def test_off_by_default(self):
-        """v10.17 (0190): with no setting the anchors engine does not run (0180: 20% against an 85% bar)."""
+        """With no setting the anchors engine does not run (0190)."""
         self.world()
         self.cur.execute("DELETE FROM mx_settings WHERE key = %s", (anchors.SHADOW_KEY,))
         self.assertFalse(anchors.shadow_on(self.cur))

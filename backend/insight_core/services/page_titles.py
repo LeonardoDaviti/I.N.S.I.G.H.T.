@@ -1,15 +1,8 @@
-"""One title for a page you don't follow (issue 0106; 0080's decision 2, made one function): Discover's
-article, origin and archive lines and Classics are titled the same way.
+"""One title for a page you don't follow, the same for Discover and Classics; nothing here fetches.
 
-1. the stored post's title, as every place shows it (post_title);
-2. else the evidence of every post linking it, or another path of it (a paper's PDF, issue 0106):
-   tree_rules.origin_title without the slug (the page's own words as a post quotes them, link words 2+
-   voices agree on, a link post's title, ...); a tweet only by its own words, as a post quotes them;
-3. else the page's own title, read once (services/discover_reads.py, stored with its date in
-   system_settings `discover_reads`): it fills only a page the stored data leaves untitled; a read title
-   that 2+ pages of one host share is its site's name, not the page's (issue 0109 W7), and no title;
-4. else none: Discover shows "site · section", Classics the address.
-Nothing here fetches.
+1. the stored post's title; 2. else the evidence of the posts linking it or another path of it
+(tree_rules.origin_title without the slug; a tweet only by its own quoted words); 3. else the page's own title as
+read once (services/discover_reads.py), unless 2+ pages of its host share it (the site's name); 4. else none.
 """
 from __future__ import annotations
 
@@ -39,9 +32,7 @@ def evidence(cur: Any, sources: SourceFacts, urls: Sequence[str], *,
     every = sorted(wanted | {alias for alias, named in aliases.items() if named in wanted})
     if not every:
         return {}
-    # v10.25 (0231): the linking posts read LOAD_BATCH at a time, each kept only as these pages' evidence
-    # (`_as_evidence`). Was: every linking post whole at once, with every link it holds (Discover's 13.5k articles on the server-shaped
-    # copy: 17.9k posts holding 359k links), the job's peak (Discover 553-561 MB on the server).
+    # linking posts read LOAD_BATCH at a time and kept only as these pages' evidence: bounds the job's peak (0231)
     linking: Dict[str, Dict[str, StoryPost]] = defaultdict(dict)
     ids = StoriesRepository.linking_posts(cur, every)
     for start in range(0, len(ids), LOAD_BATCH):
@@ -53,8 +44,7 @@ def evidence(cur: Any, sources: SourceFacts, urls: Sequence[str], *,
     stored = DiscoverRepository.stored_titles(cur, urls)
 
     def title(url: str) -> Optional[str]:
-        # In time order, as a story's are (issue 0071: link words written two ways as often are a tie the
-        # first one wins, and the database returns rows in any order).
+        # in time order: a tie between link words goes to the first, and rows come in any order
         posts = sorted(linking[url].values(), key=lambda p: (p.t, p.id))
         if is_tweet(url):
             posts = [p for p in posts if p.quoted_words.get(url)]
@@ -64,9 +54,8 @@ def evidence(cur: Any, sources: SourceFacts, urls: Sequence[str], *,
 
 
 def _as_evidence(post: StoryPost, wanted: Set[str]) -> StoryPost:
-    """A linking post as tree_rules.origin_title reads it for the `wanted` pages, nothing else held (0231): its links,
-    link words and quoted words of those pages; of its other links only the first, so that "this link alone" (a share's
-    title, origin_title 4) is what it is of the whole post. A roundup's hundred other links are let go."""
+    """A linking post reduced to what origin_title reads for the `wanted` pages: their links, link words and quoted
+    words, and only the first of its other links (so "this link alone" still means the same)."""
     links, other = [], None
     for target, stored_post in post.links:
         if target in wanted:
@@ -82,8 +71,7 @@ def _as_evidence(post: StoryPost, wanted: Set[str]) -> StoryPost:
 
 def shared_titles(reads: Mapping[str, Any]) -> Set[Tuple[str, str]]:
     """The read titles 2+ pages of one host (www. aside) share: (host, title), pages told apart by their last
-    segment (_last_segment). Measured on the server's answer: a newspaper's name on 5 of its articles, an app's
-    on 8 of its pages."""
+    segment (_last_segment)."""
     pages: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
     for url, read_ in (reads or {}).items():
         title = (read_ or {}).get("title")
@@ -96,9 +84,8 @@ _TRACKING = re.compile(r"^(?:_|utm_|mc_|fbclid$|gclid$)", re.I)
 
 
 def _last_segment(url: str) -> str:
-    """A page as told apart from another of its host: its last path segment and its query, a tracking query's
-    keys aside (one page at two paths, /blog/x and /news/blog/x, or with a mail tracker's query, is one page:
-    the title they share is its own; /blog?id=a and /blog?id=b are two)."""
+    """A page as told apart from another of its host: its last path segment and its query without tracking keys
+    (/blog/x and /news/blog/x are one page; /blog?id=a and /blog?id=b are two)."""
     rest = url.split("://", 1)[-1].partition("/")[2].split("#", 1)[0]
     path, _, query = rest.partition("?")
     kept = sorted(q for q in query.split("&") if q and not _TRACKING.match(q))

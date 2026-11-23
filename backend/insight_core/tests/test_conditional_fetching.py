@@ -1,8 +1,6 @@
-"""Conditional fetching (issue 0044): an unchanged feed costs nothing.
-
-The HTTP layer against a real local server (urllib's own 304, redirect and gzip handling),
-AddressMemory's rules, generic RSS and page watch with a memory, the runner end to end over
-in-memory ports, and the validators' table in the database.
+"""Conditional fetching (0044): an unchanged feed costs nothing. The HTTP layer against a real local server, the
+AddressMemory rules, generic RSS and page watch with a memory, the runner end to end over in-memory ports, and the
+validators' table in the database.
 """
 from __future__ import annotations
 

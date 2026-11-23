@@ -6,8 +6,8 @@ import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 import type { ConnectedRow, PostConnectedSeries, PostSeries, SeriesPart } from '../../services/api';
 
-// The Series line above Connected (issue 0134): "Part 3 of 4 in <name>", the stored parts, prev / next; a column's
-// issue and the previous one; series navigation links shown there, not as Earlier rows.
+// The Series line above Connected (0134): "Part 3 of 4 in <name>", prev / next, a column's issues; series navigation
+// links shown there, not as Earlier rows.
 
 const id = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
 const POST = id(3);

@@ -1,12 +1,8 @@
 /**
- * The design docs' coverage rules (spec D7.6), as pure functions over file
- * text, so the test can run them on inline examples and on the real files.
- *
- * Every doc may open with a fenced `meta` block of `key: a, b, c` lines:
- *   kind: page | parked | system | principles | log
- *   routes: the App.tsx route paths the doc claims (page and parked docs)
- *   redirects: route paths that only redirect (the information architecture)
- *   states: the specimen states a page must render (S3 reads these)
+ * The design docs' coverage rules, as pure functions over file text (the test runs them on inline examples and on
+ * the real files). A doc may open with a fenced `meta` block of `key: a, b, c` lines: `kind` (page | parked | system
+ * | principles | log), `routes` (the App.tsx paths it claims), `redirects`, `states` (the specimen states a page
+ * must render).
  */
 
 export interface DesignDoc {
@@ -45,11 +41,8 @@ export function parseDoc(path: string, text: string): DesignDoc {
   return { path, text, meta };
 }
 
-/**
- * Every `<Route path="…">` in the router source, in order. Throws when a
- * `<Route>` has no literal path (`path={…}`, `index`): the test could not
- * check that a doc claims it.
- */
+/** Every `<Route path="…">` in the router source, in order. Throws when a `<Route>` has no literal path: the test
+ *  could not check that a doc claims it. */
 export function appRoutes(source: string): string[] {
   const paths = [...source.matchAll(/<Route\s+path="([^"]+)"/g)].map((match) => match[1]);
   const total = [...source.matchAll(/<Route\b/g)].length;
@@ -118,7 +111,7 @@ export function unknownCitations(docs: readonly DesignDoc[]): string[] {
     .map((number) => `${doc.path} cites P${number}, which principles.md does not define`));
 }
 
-/** principles.md fits one screen (D7.5): its lines and its words outside the meta block. */
+/** principles.md fits one screen: its lines and its words outside the meta block. */
 export const PRINCIPLES_MAX_LINES = 40;
 export const PRINCIPLES_MAX_WORDS = 450;
 
@@ -131,7 +124,7 @@ export function principlesSizeProblems(principles: DesignDoc): string[] {
   ];
 }
 
-/** The fixed page-doc template (spec D7.4), as `## ` headings, in order. */
+/** The fixed page-doc template, as `## ` headings, in order. */
 export const PAGE_SECTIONS = [
   'Purpose',
   'Entry & URL',
@@ -158,11 +151,8 @@ export function pageDocProblems(doc: DesignDoc): string[] {
   return problems;
 }
 
-/**
- * Every `components/ui` primitive has a specimen in `specimens/components/`
- * under the same file name, and no specimen outlives its primitive (S2).
- * Takes the two globs' paths; test files are not primitives.
- */
+/** Every `components/ui` primitive has a specimen of the same file name in `specimens/components/`, and no specimen
+ *  outlives its primitive. Takes the two globs' paths; test files are not primitives. */
 export function specimenProblems(primitivePaths: readonly string[], specimenPaths: readonly string[]): string[] {
   const primitives = primitivePaths.filter((path) => !/\.test\.tsx$/.test(path)).map(fileStem);
   const specimens = specimenPaths.map(fileStem);

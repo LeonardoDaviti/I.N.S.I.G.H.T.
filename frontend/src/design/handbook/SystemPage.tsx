@@ -4,11 +4,8 @@ import { SYSTEM_SPECIMENS } from '../live';
 import DocView from './DocView';
 import NotFound from './NotFound';
 
-/**
- * /design/system: the system as the running page draws it (D3). Every value
- * is read from the page, so nothing here is a copy that can go stale; each
- * section links to the doc with its rules.
- */
+/** /design/system: the system as the running page draws it (every value read from the page, never a stale copy),
+ *  each section linking to its doc. */
 export function SystemOverview() {
   return (
     <div className="mx-auto w-full max-w-3xl">

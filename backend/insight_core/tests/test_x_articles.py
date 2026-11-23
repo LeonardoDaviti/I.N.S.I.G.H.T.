@@ -1,6 +1,4 @@
-"""X Articles read for a tweet the Nitter bridge gives as its link alone (v10.13.10). No network: FakeHttp.
-
-The accounts, ids and texts are made up.
+"""X Articles read for a tweet the Nitter bridge gives as its link alone. No network: FakeHttp; made-up accounts.
 """
 from __future__ import annotations
 

@@ -1,8 +1,5 @@
-"""Paywalls named right, a Substack on its own domain read as one, and following a feed fetching its archive
-(issue 0167, parts 3 and 2).
-
-No network: every page, feed and API answer is FakeHttp's. The follow-archive tests commit rows (sources, the
-queued job), so they run only against a `_test` database; they own the sources on the invented sites below.
+"""Paywalls named right, a Substack on its own domain read as one, and following a feed fetching its archive (0167,
+parts 3 and 2). No network (FakeHttp). The follow-archive tests commit rows, so only against a `_test` database.
 """
 from __future__ import annotations
 

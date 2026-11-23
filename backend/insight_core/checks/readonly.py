@@ -1,6 +1,6 @@
-"""Make every connection this process opens read-only (issue 0075: the checks only read the copy they
-are given). Postgres refuses any write in a read-only transaction, so a service that tried to write
-while a check reads it fails loudly instead of changing the copy."""
+"""Make every connection this process opens read-only (the checks only read the copy they are given). Postgres refuses
+any write in a read-only transaction, so a service that tried to write while a check reads it fails loudly instead of
+changing the copy."""
 from __future__ import annotations
 
 from insight_core.db import database

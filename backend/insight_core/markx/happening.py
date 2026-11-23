@@ -1,48 +1,25 @@
-"""The Happening (issue 0166 step 2): a post's reading as a key, so two posts the model read as one happening can be
-paired whatever their words, their language or their entity types. Pairing's fifth source (`happening`), off unless
-mx_settings `pairing_happening` is on (pairing.HAPPENING_KEY). Its defaults are E1's measured rules
-(plan/research/exp-2026-11-12/e1: company keys sharing 2+ separate parties were right 49 of 52, 94%; with one
-participant 8 of 21, so one participant makes no key).
+"""The Happening: a post's reading as a key, so two posts the model read as one happening can be paired whatever their
+words, language or entity types. Pairing's `happening` source, off unless mx_settings `pairing_happening` is on
+(measured: plan/research/exp-2026-11-12/e1).
 
-`key(reading, mentions)` is a pure function of the read-v2 reading's main {action, actors, object, numbers, date} and
-the post's ent-v3 mentions (each {name, span, name_key, type, role, maker, root}: root the entity's root through
-merges and pins, or None while the mention is not linked):
-  - group: the action's group, through the event-type seam (markx/event_types.action_group: read-v2's ACTIONS and
-    a few verbs the model writes outside them, SYNONYMS): release, deal, funding, legal, people, pricing, research,
-    announcement. Announcing or leaking a thing is its release; a people move with no person in it ("B joins A") is a deal. `reported` and `other` name no
-    happening: no key. (E1: grouping on the verb alone misses happenings read under another verb, a filing read as
-    filed, published or announced; the fix is a closed event type in the read guide, never a word list: 0166's next
-    step.)
-  - parties: the actors and the object resolved to the post's mentions (`resolve`: the mention whose name key the
-    name is, else the one whose name key is a run of its words, the earliest, then the longest), unordered, so
-    "A acquired B" and "B joins A" have one set. A party is the mention's root entity, else "name:<name key>". A name
-    resolving to no mention is free text, no party; a place and a venue (where it appeared) are no party; a thing
-    (model, product, software, ...) whose maker is another party is that party (a company and its own product are
-    one: E1's three wrong pairs of 52). Fewer than 2 separate parties: no key (one maker's release has one; the
-    72-hour sources keep it).
-  - stage: where the action says it (rumored, announced, released, closed), else None. Not compared: a later stage of
-    one happening is a development, for the judge to tell.
-  - date: the reading's stated date when it is a day (YYYY-MM-DD), else None.
-  - numbers: the money amounts among the reading's numbers (a currency named), in units.
-A roundup has no key (it is many happenings: until Pairing compares units). The headline and the language are never
-read: a Russian and an English post with the same main have the same key.
+`key(reading, mentions)` is pure, from the reading's main {action, actors, object, numbers, date} and the post's
+mentions (each {name, span, name_key, type, role, maker, root}):
+  - group: the action's group (markx/event_types.action_group): release, deal, funding, legal, people, pricing,
+    research, announcement. `reported` and `other` name no happening.
+  - parties: the actors and the object resolved to the post's mentions (`resolve`), unordered ("A acquired B" and "B
+    joins A" have one set); a party is the mention's root entity, else "name:<name key>". Free text, a place and a
+    venue are no party; a thing whose maker is another party is that party. Fewer than 2 separate parties: no key.
+  - stage (rumored, announced, released, closed; not compared), date (a stated day) and numbers (money amounts).
+A roundup has no key. The headline and the language are never read.
 
-Two keys are one happening (`same`) when their groups are one, they share 2+ parties, and neither their money amounts
-(when both name some: no pair within MONEY_TOLERANCE, E1's 30%) nor their stated days (when both state one: farther
-apart than the group's window) disagree. `pairs(cur, posts, new)` is the source: the posts whose keys are one
-happening with a `new` post's, of another source and both voices, dated within the group's window (Pairing's policy
-row: deal 30 days, people 14, legal 7, every other group 72 hours), not already in one Mark IX story; stored as
-mx_candidates (post_post, source 'happening'), a question for the judge, never a rule. Only the groups E1 measured
-are paired (the policy's happening_groups: deal, funding, legal, people); the other groups' keys wait for theirs.
+`same`: one group, 2+ shared parties, and neither money amounts (MONEY_TOLERANCE) nor stated days (the group's window)
+disagree. `pairs` is the source: posts one happening with a `new` post's, of another source and both voices, within the
+group's window, not already in one Mark IX story; stored as mx_candidates (a question for the judge, never a rule).
+Only the measured groups (the policy's happening_groups) are paired.
 
-**Stored** (issue 0175, mx_happenings): every read post's key is kept with the basis it was computed from (the code's
-version, the reading's call, each current mention's guide, number and root); `keys(cur, ids)` reads the stored keys and
-computes again only the posts whose basis moved (a new reading or mention set, a merge, a pin, a relink) or that have
-none, so it returns what `compute` (the recompute) returns. A changed key adds a row, old rows stay; readers take the
-newest. Written when a reading or a post's mentions land (`note`, from tasks.record), and by `backfill`, a resumable
-step of the candidates job (posts never keyed by this code, newest first; then the longest-unchecked rows again).
-`stored(cur, ids)` reads the newest rows as they are. The mentions are read in (guide, n) order (0166 read them in the
-table's order, which is the insertion order, n's).
+**Stored** (mx_happenings): each read post's key with the basis it was computed from; `keys` computes again only the
+posts whose basis moved or that have none, so it equals `compute`. A changed key adds a row (old rows stay; readers
+take the newest). Written by `note` (tasks.record) and `backfill` (a resumable step of the candidates job).
 """
 from __future__ import annotations
 
@@ -61,11 +38,11 @@ NOT_PARTY_TYPES = frozenset({"place"})       # where it happened is no party to 
 NOT_PARTY_ROLES = frozenset({"venue"})       # nor where it appeared
 MIN_PARTIES = 2
 
-# The action -> (group, stage) mapping is the event-type seam's (markx/event_types.py, 0175): named here for callers.
+# The action -> (group, stage) mapping is the event-type seam's (markx/event_types.py): named here for callers.
 ACTION_GROUPS = event_types.ACTION_GROUPS
 SYNONYMS = event_types.SYNONYMS
 GROUPS = event_types.GROUPS
-MONEY_TOLERANCE = 0.30      # E1: amounts more than ~30% apart are two happenings
+MONEY_TOLERANCE = 0.30      # amounts more than ~30% apart are two happenings (e1)
 
 
 @dataclass(frozen=True)
@@ -229,21 +206,18 @@ READING_GUIDE = "read-v2"
 
 
 def reading_guides(cur: Any) -> List[str]:
-    """0212: the readings a key is read from, preferred first: read-v2's, with ent-v5's first while its switch is on
-    (reading5's one preference list)."""
+    """The readings a key is read from, preferred first: read-v2's, with ent-v5's first while its switch is on."""
     from insight_core.markx import reading5
     return reading5.guides(cur, READING_GUIDE)
 
 
-# ---- stored keys (0175) -----------------------------------------------------------------------------------------
+# ---- stored keys -----------------------------------------------------------------------------------------------
 #
-# mx_happenings (migration 0118) keeps each read post's key with the `basis` it was computed from: the code's version,
-# the reading's call and each current mention's (guide, n, root). A reading is never changed once written and a
-# mention set's rows are written once, so those name every input of `key`; a root moves with a merge, a pin or a
-# relink, and the basis with it. `keys` (every caller's) reads the stored row and computes again only the posts whose
-# basis moved or that have none: what it returns is what `compute` (the recompute) returns, by construction
-# (tests/test_markx_happenings_stored.py). `stored` reads the newest rows as they are, for a reader that can take a key
-# one backfill step old.
+# mx_happenings keeps each read post's key with the `basis` it was computed from: the code's version, the reading's
+# call and each current mention's (guide, n, root). Readings and mention sets are written once, so those name every
+# input of `key`; a root moves with a merge, a pin or a relink, and the basis with it. `keys` reads the stored row and
+# computes again only the posts whose basis moved or that have none: what it returns is what `compute` returns, by
+# construction (tests/test_markx_happenings_stored.py). `stored` reads the newest rows as they are.
 
 KEY_VERSION = "happening-v1"   # bump with any change to what a key is made of outside this module and the seam
                                # (tasks.name_key, schemas.entity_type, schemas.mention_guides)
@@ -383,7 +357,7 @@ def note(cur: Any, ids: Iterable[str]) -> None:
 
 def compute(cur: Any, ids: Sequence[str]) -> Dict[str, Happening]:
     """{post: its happening} computed from the readings and the mentions now, nothing read from or written to
-    mx_happenings (0166's `keys`; what `keys` equals)."""
+    mx_happenings (what `keys` equals)."""
     from insight_core.markx import repo
     from insight_core.markx import reading5
     readings = {k: v["reading"] for k, v in reading5.pick(cur, ids, (READING_GUIDE,)).items()}

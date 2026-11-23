@@ -33,11 +33,8 @@ function RailLink({ item, pathname, nested = false }: { item: RailItem; pathname
   );
 }
 
-/**
- * The Handbook rail, like the reader's: lowercase group words in the third
- * tone, places as quiet rows, the current one a surface row in weight 600.
- * System and Components open their children while you are inside them.
- */
+/** The Handbook rail, like the reader's: lowercase group words, places as quiet rows, the current one in weight 600;
+ *  System and Components open their children while you are inside them. */
 export function Rail({ groups }: { groups: readonly RailGroup[] }) {
   const { pathname } = useLocation();
   return (

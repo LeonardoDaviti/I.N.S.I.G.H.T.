@@ -1,7 +1,5 @@
-"""SystemSettingsRepository and JobRunsRepository against the real database (rollback pattern).
-
-One transaction per test, rolled back in tearDown, with scratch keys and job types, so this
-is safe on any database.
+"""SystemSettingsRepository and JobRunsRepository against the real database: one transaction per test, rolled back,
+with scratch keys and job types, so this is safe on any database.
 """
 from __future__ import annotations
 

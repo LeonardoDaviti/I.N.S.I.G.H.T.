@@ -1,7 +1,6 @@
-"""0163 A (Stealth v10.13.11), what stays of later developments: long-lived stories, a story whose main subject is
-one specific entity (its type and level), which back in the news and the anchors engine read. The follow-up trigger,
-its questions, the pages and the follow switch were dropped in v10.18 (0203). Synthetic data only; the DB tests run on
-a database whose name ends in _test."""
+"""What stays of later developments (0163 A): long-lived stories, a story whose main subject is one specific entity
+(its type and level), which back in the news and the anchors engine read. Synthetic data; DB tests on a _test
+database."""
 from __future__ import annotations
 
 import json

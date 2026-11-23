@@ -1,6 +1,6 @@
-"""One owner for voices and for "RT by @" (issue 0189): Voice (utils/voice.py) counts voices and Byline
-(utils/byline.py) holds Nitter's repost pattern; no other module counts distinct sources by hand or writes the
-pattern again. A grep, no database (as tests/test_dates_owner.py for the dates)."""
+"""One owner for voices and for "RT by @" (0189): Voice (utils/voice.py) counts voices and Byline (utils/byline.py)
+holds Nitter's repost pattern; no other module counts distinct sources by hand or writes the pattern again. A grep, no
+database."""
 import re
 import unittest
 from pathlib import Path

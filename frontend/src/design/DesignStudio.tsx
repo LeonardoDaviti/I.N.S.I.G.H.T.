@@ -16,13 +16,8 @@ function withMode(params: URLSearchParams, mode: StudioMode): URLSearchParams {
   return next;
 }
 
-/**
- * The Design Studio at /design (plan/INSIGHT_design_studio_plan.md): one home
- * for the principles, the system, every page and the prototypes, read from
- * the files in src/design. A lazy route chunk, so the reader never pays for
- * it (D8). The header holds the mode toggle; ← → step modes from anywhere but
- * a field.
- */
+/** The Design Studio at /design: the principles, the system, every page and the prototypes, read from src/design.
+ *  A lazy route chunk, so the reader never pays for it; ← → step modes from anywhere but a field. */
 export default function DesignStudio() {
   const [params, setParams] = useSearchParams();
   const mode = parseMode(params.get('mode'));

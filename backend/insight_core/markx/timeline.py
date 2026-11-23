@@ -1,36 +1,14 @@
-"""A thing's timeline (issue 0165 C-D): one dated line of what INSIGHT holds about an entity, read only from stored rows
-(posts, mentions, merges, stories, back-in-the-news rows; nothing fetched).
+"""A thing's timeline: one dated line of what INSIGHT holds about an entity, read only from stored rows (posts,
+mentions, merges, stories, back-in-the-news rows; nothing fetched).
 
-`of_entity` (the entity page's Timeline block, shown when it has 2+ dated events), each event {at, kind, post, ...}:
-  - `birth`: the oldest post about it (subject or actor) under any of its names, else the oldest naming it (as which
-    name; `named_since` when an older post only names it);
-  - `earlier_name` / `renamed`: each earlier name (a rename merge, markx/rename.py) at its last post, and the first post
-    under the name it has now;
-  - `release`: a post about it (role subject or actor) whose reading says it is a release, by its maker (a source
-    that is the maker, a site whose name is the maker's, one of its own addresses itself, or a saved copy of the
-    maker's post), and its stored original; with none, its first release report (`releases`, v10.35); a family's
-    versions at their release by the same rule, never any post naming them. The birth and the first outside mention
-    are about it by their reading (0234) and never a background page (story_rules.background); the first outside
-    mention never before the birth, never a saved copy of the maker's post;
-  - `first_outside` / `outside`: the posts by anyone else, the first one about it (or linking back) marked, the rest
-    grouped by month (the month's first post about it; a month whose posts only name it is `named_only`, never among the
-    top; how many posts and sources); a post linking back to one of its posts (0131's post edges) counts as an outside
-    mention though it names it otherwise. 0250 (stops.config `outside_roles`, on): only the posts whose role says the
-    thing is their subject, actor or compared (OUTSIDE_ROLES) are outside events, never a post that only names it;
-  - `story`: each Mark X or Mark IX story about it (a stop on its line, markx/stops.py), at its first post, with its
-    `stop` (what happened to it there: launch, benchmark, ranking, weights...: the stored stop-v1 answer, `stop_by`
-    "asked"; else its story type's, `stop_by` "type") and its `share` of the story's members; `in_story`: a story that
-    only names it (an answer saying so, or no answer and too few of its members about it), never among the top;
-  - `analysis`: a breakdown of it hung on the line: a post about it (subject or actor) by anyone but its maker, read
-    as commentary, news_rank.ANALYSIS_CHARS+ characters of its own (News' Analysis rule), with `on` = the stop it
-    belongs to (the stop whose story holds it, else the latest stop before it);
-  - `back`: 0136's back in the news (judged development). (0163's `later` rows left the line with Later, 0203.)
-Each post event inside a stop's story carries that story as `on`.
-Each event has its importance (`rank`); the TOP most important (birth, renames, the first and last release, the first
-outside mention, stories, then the rest) are `top` (shown by default); "all" shows every one, oldest first.
-
-`before_post` (the post page's "before", D): the post's subjects' previous events, up to BEFORE (the birth, the last
-release before it, the first outside mention), oldest first.
+`of_entity` (the entity page's Timeline block, 2+ dated events): events {at, kind, post, ...} of kinds `birth`,
+`earlier_name` / `renamed`, `release` (by its maker or its stored original, else its first release report; a
+family's versions by the same rule), `first_outside` / `outside` (posts by anyone else, grouped by month; a post
+linking back counts), `story` / `in_story` (a stop on its line, markx/stops.py), `analysis` (a breakdown, News'
+Analysis rule) and `back`. Birth, releases and the first outside mention are about the thing by their reading
+(`about_by_reading`) and never a background page. Each post event inside a stop's story carries it as `on`; the TOP
+most important events are `top`. `before_post`: the post page's "before" from its subjects' timelines. `version_line`:
+the entity page's version line.
 """
 from __future__ import annotations
 
@@ -51,7 +29,7 @@ TOP = 8
 BEFORE = 3
 MIN_EVENTS = 2
 ABOUT = ("subject", "actor")
-OUTSIDE_ROLES = ABOUT + ("compared",)   # 0250: the roles an outside event's post gives the thing (stops.config outside_roles)
+OUTSIDE_ROLES = ABOUT + ("compared",)   # the roles an outside event's post gives the thing (stops.config outside_roles)
 RANK = {"birth": 0, "renamed": 1, "earlier_name": 1, "release": 2, "first_outside": 3, "story": 4, "analysis": 5,
         "later": 5, "back": 5, "outside": 6, "in_story": 7}
 SECOND_LEVEL = ("co", "com", "org", "net", "ac", "gov", "edu")
@@ -130,7 +108,7 @@ def lines_of(cur: Any, book: I.Book, members: Iterable[str]) -> Lines:
     out = Lines()
     if not ids:
         return out
-    # 0232: the linked mentions by the entity index, the pinned ones apart (one OR read all of mx_mentions: 0.75 s)
+    # the linked mentions by the entity index, the pinned ones apart (one OR is a full scan of mx_mentions)
     sql = f"""SELECT m.post_id::text, m.guide, m.n, m.entity_id::text, m.role,
                      {pairing.post_date('p')}, p.source_id::text, p.url,
                      (SELECT s.platform FROM sources s WHERE s.id = p.source_id)
@@ -182,10 +160,9 @@ def about_by_reading(kind: Optional[str], reading: Optional[Dict[str, Any]], hea
 
 
 def named_only(cur: Any, book: I.Book, members: Iterable[str], rows: Dict[str, Dict[str, Any]]) -> Set[str]:
-    """0220: the posts whose role says they are about the thing (subject or actor) but whose reading says they only
-    name it (about_by_reading: a round-up; the extractor marked the thing subject of a post about another thing) lose
-    that role here (`named`): never its birth, a release, its first outside mention or a month's lead, never counted
-    in a story's share of it. A post with no reading keeps its role. Which ones, returned."""
+    """The posts whose role says they are about the thing but whose reading says they only name it (a round-up; a post
+    about another thing) lose that role here (`named`): never its birth, a release, its first outside mention or a
+    month's lead, never counted in a story's share. A post with no reading keeps its role. Returns which ones."""
     about = sorted(p for p, r in rows.items() if r["roles"] & set(ABOUT))
     if not about:
         return set()
@@ -206,12 +183,10 @@ FIRST_CHUNK = 50      # outside posts read at a time while looking for the first
 
 def _first_about(cur: Any, book: I.Book, members: Iterable[str], rows: Dict[str, Dict[str, Any]],
                  order: List[str], roles: Tuple[str, ...] = ("subject",)) -> Optional[str]:
-    """0234 (#5): the first outside mention, of `order` (oldest first): a post linking back to its posts, or one whose
-    main subject is the thing: the thing is its `subject` (an actor is in it, not what it is about) and its reading
-    says so (about_by_reading: no round-up, its main event names the thing; a post with no reading keeps its role).
-    A post about another thing that names this one as a subject (a method shown on another maker's model) is never
-    it. The readings are read a chunk at a time, oldest first, until one is found. v10.35: `roles`, the roles a
-    candidate may hold (the birth asks subject or actor, the same reading rule)."""
+    """The first outside mention, of `order` (oldest first): a post linking back to its posts, or one whose main subject
+    is the thing (`roles`, by its reading: about_by_reading). A post about another thing that names this one as a
+    subject (a method shown on another maker's model) is never it. The readings are read a chunk at a time until one is
+    found."""
     from insight_core.markx import reading5
     forms: Optional[Set[str]] = None
     cand = [p for p in order if "links" in rows[p]["roles"] or rows[p]["roles"] & set(roles)]
@@ -230,7 +205,7 @@ def _first_about(cur: Any, book: I.Book, members: Iterable[str], rows: Dict[str,
 
 
 def _maker_sources(cur: Any, book: I.Book, maker: Optional[str]) -> Set[str]:
-    """The sources that are the maker (0144 B1: its voice, or the owner's yes)."""
+    """The sources that are the maker (its voice, or the owner's yes)."""
     if not maker or maker not in book.ents:
         return set()
     from insight_core.markx import person_page as PP
@@ -265,8 +240,8 @@ class _Kinded:
 
 
 def _background(rows: Dict[str, Dict[str, Any]], posts: List[str]) -> Set[str]:
-    """v10.35: the posts of `posts` that are background to the thing (story_rules.background, 0263: a Saved page dated
-    more than BACKGROUND_BEFORE before its first post of a voice): never its birth, a release or its first outside."""
+    """The posts of `posts` that are background to the thing (story_rules.background: a Saved page dated well before its
+    first post of a voice): never its birth, a release or its first outside."""
     from insight_core.utils.story_rules import background
     return background([_Kinded(p, rows[p].get("kind")) for p in posts], {p: rows[p]["at"] for p in posts})
 
@@ -291,14 +266,11 @@ def maker_copy(row: Dict[str, Any], t: Any) -> bool:
 def releases(cur: Any, book: I.Book, members: Iterable[str], rows: Dict[str, Dict[str, Any]], about: List[str],
              types: Dict[str, Any], from_maker: Any, original_post: Optional[str],
              reports_too: bool = True) -> List[str]:
-    """v10.35: a thing's release posts, oldest first, of `about` (its posts about it, oldest first, background left
-    out): each post about it whose reading says it is a release (is_release) and that is its maker's (its sources,
-    its sites, its own addresses: `from_maker`; or a saved copy of its post: `maker_copy`), and its stored original
-    (`original_post`) when about it. Each about it by its reading (about_by_reading: no round-up, its main event
-    names it); a saved copy also by its main object. With none (and `reports_too`: never a family's own line, its
-    versions are what is released), its first release report: a release-typed post whose subject it is, not a
-    saved page, about it by its reading (0234's rule). A maker post that is no release (a guide, a customer story)
-    and a post that only names it are never one."""
+    """A thing's release posts, oldest first, of `about` (its posts about it, oldest first, background left out): each
+    release-typed post (is_release) about it by its reading that is its maker's (`from_maker`, or a saved copy:
+    `maker_copy`), and its stored original (`original_post`) when about it. With none (and `reports_too`: never a
+    family's own line, its versions are what is released), its first release report: a release-typed post whose subject
+    it is, not a saved page. A maker post that is no release and a post that only names it are never one."""
     from insight_core.markx import reading5
     # a maker post not read yet keeps its place (nothing to tell by, as about_by_reading keeps an unread post's role)
     cand = [p for p in about if (from_maker(rows[p]) and p not in types)
@@ -342,19 +314,19 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
     if not lines.rows:
         return []
     from insight_core.markx import stops as ST
-    if ST.config().get("by_reading"):   # 0220: a round-up, or a post about another thing, only names it (off: under its bar)
+    if ST.config().get("by_reading"):   # a round-up, or a post about another thing, only names it (off: under its bar)
         named_only(cur, book, members, lines.rows)
     earlier = rename.earlier(cur, book, root)
     early = {m for x in earlier for m in x["members"]}
     from insight_core.markx import entity_facts
-    fact = entity_facts.read(cur, [root]).get(root)   # 0184: the maker the facts give, else by identity
+    fact = entity_facts.read(cur, [root]).get(root)   # the maker the facts give, else by identity
     maker = (book.root(fact.maker_id) if fact and fact.maker_id else None) or maker_of(book, root)
     sites = maker_names(book, root, maker)
     by_maker = _maker_sources(cur, book, maker)
     from insight_core.markx import entity_addresses as EA
     from insight_core.utils.url_normalization import normalize_url
-    # v10.35: a post at one of its own addresses (the address itself, never any page of its host: a release address on
-    # youtube.com, x.com or a newsletter made every post there the maker's)
+    # a post at one of its own addresses (the address itself, never any page of its host: a release address on
+    # youtube.com would make every post there the maker's)
     own_urls = {normalize_url(u) or u for kind, u, *_ in EA.current(cur, book, [root]).get(root, ())
                 if kind in ("release", "demo", "work") and u}
 
@@ -368,10 +340,9 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
     name = lambda e: book.ents[e].name if e in book.ents else None
     about = [p for p in order if rows[p]["roles"] & set(ABOUT)]
     types = _types(cur, about)
-    bg = _background(rows, about)                    # v10.35: an old Saved page neither dates nor starts it
+    bg = _background(rows, about)                    # an old Saved page neither dates nor starts it
     dated = [p for p in about if p not in bg]
-    # 0165 v10.23: the oldest post about it, else naming it; v10.35: about it by its reading (0234's rule: no round-up,
-    # its main event names it), never a background page
+    # the oldest post about it by its reading, else naming it; never a background page
     first = _first_about(cur, book, members, rows, dated, ABOUT) or (dated or about or order)[0]
     out.append(_event("birth", rows[first]["at"], first, name=name(sorted(rows[first]["as"])[0]),
                       **({"named_since": rows[order[0]]["at"]} if order[0] != first else {})))
@@ -385,7 +356,7 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         now_posts = [p for p in order if rows[p]["as"] - early]
         if now_posts:
             out.append(_event("renamed", rows[now_posts[0]]["at"], now_posts[0], name=book.label(root)))
-    # releases (v10.35, `releases`): a release-typed post about it by its maker, or its stored original
+    # releases (`releases`): a release-typed post about it by its maker, or its stored original
     orig = original_post if original_post is not ... else _original_post(cur, book, root)
     rel = releases(cur, book, members, rows, dated, types, from_maker, orig,
                    reports_too=book.ents[root].level != "family")   # a family is released by its versions
@@ -393,7 +364,7 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         out.append(_event("release", rows[p]["at"], p, name=name(sorted(rows[p]["as"])[0]),
                           rank=RANK["release"] if k in (0, len(rel) - 1) else RANK["outside"]))
     if book.ents[root].level in ("family", "thing"):
-        kids = sorted({book.root(x) for x in book.with_parent_in(root)   # v10.17 (0186): asked, not walked
+        kids = sorted({book.root(x) for x in book.with_parent_in(root)   # asked, not walked
                        if (e := book.ents[x]).level in I.VERSION_LEVELS and e.parent in members and book.root(x) != root})
         if kids:
             kl = lines_of(cur, book, {m for k in kids for m in book.cluster(k)})
@@ -402,7 +373,7 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
             k_types = _types(cur, k_about)
             k_bg = _background(kl.rows, k_about)
             firsts: Dict[str, str] = {}
-            for k in kids:   # v10.35: a version's release by the same rule (its first), never any post naming it
+            for k in kids:   # a version's release by the same rule (its first), never any post naming it
                 mine = [p for p in k_about if p not in k_bg and k in {book.root(e) for e in kl.rows[p]["as"]}]
                 got = releases(cur, book, set(book.cluster(k)), kl.rows, mine, k_types, from_maker, None)
                 if got:
@@ -410,14 +381,14 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
             for k, p in sorted(firsts.items(), key=lambda kv: (kl.rows[kv[1]]["at"], kv[0])):
                 if p not in rows:
                     out.append(_event("release", kl.rows[p]["at"], p, name=book.label(k), version=k))
-    # outside mentions: the first marked, the rest by month; posts linking back to its posts count. v10.35: a post
-    # whose reading's origin is the maker (a saved copy of its own post) is not outside
+    # outside mentions: the first marked, the rest by month; posts linking back to its posts count. A saved copy of the
+    # maker's own post is not outside
     outside = [p for p in order if not from_maker(rows[p]) and p not in rel
                and not (p in types and maker_copy(rows[p], types[p]))]
     about_roles = set(OUTSIDE_ROLES) if ST.config().get("outside_roles") else set(ABOUT)
     if ST.config().get("outside_roles"):
-        # 0250: an outside event is a post about the thing (its subject, actor or compared), never one that only names
-        # it (a namesake, the plain word); the posts linking back are added below
+        # an outside event is a post about the thing (its subject, actor or compared), never one that only names it; the
+        # posts linking back are added below
         outside = [p for p in outside if rows[p]["roles"] & set(OUTSIDE_ROLES)]
     linked = _linking_back(cur, set(rows))
     seen = set(rows)
@@ -427,13 +398,12 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
             outside.append(p)
     outside.sort(key=lambda p: (rows[p]["at"], p))
     if outside:
-        # 0165 v10.23: the first outside post about it (subject or actor) or linking back to its posts; a post that
-        # only names it is counted in its month, never marked first. v10.35: never before its birth (a page linking
-        # to a later post under an archive's date), never a background page
+        # the first outside post about it or linking back to its posts; a post that only names it is counted in its
+        # month, never marked first. Never before its birth (an archive's date), never a background page
         born = rows[first]["at"]
         firsts = [p for p in outside if rows[p]["roles"] & (set(ABOUT) | {"links"}) and p not in bg
                   and rows[p]["at"] >= born]
-        p0 = _first_about(cur, book, members, rows, firsts)   # 0234: its main subject, never a post about another
+        p0 = _first_about(cur, book, members, rows, firsts)   # its main subject, never a post about another
         if p0 is not None:
             out.append(_event("first_outside", rows[p0]["at"], p0, linked="links" in rows[p0]["roles"]))
         months: Dict[str, List[str]] = defaultdict(list)
@@ -449,7 +419,7 @@ def events(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[str
         return _dedupe(out)
     stops = _stories(cur, book, root, stories or [], rows)
     out += stops
-    out += _analysis(cur, rows, outside) if ST.config()["analysis"] else []   # 0165: off, under its bar
+    out += _analysis(cur, rows, outside) if ST.config()["analysis"] else []   # off, under its bar
     out = _dedupe(out)
     _hang(out, stops)
     out += _back(cur, set(rows))
@@ -482,10 +452,10 @@ def _stories(cur: Any, book: I.Book, root: str, stories: List[Dict[str, Any]],
 
 def stops_of(cur: Any, book: I.Book, root: str, members: Dict[str, List[str]], at: Dict[str, datetime],
              about_posts: Set[str]) -> Dict[str, Tuple[bool, Optional[str], str, Any]]:
-    """{story: (about the thing, its stop, "asked" or "type", its stops.Share)} of the stories (`members`: their
-    posts; `at`: the posts' dates; `about_posts`: the posts whose subject or actor the thing is): the stored stop
-    answer decides, else the thing's share of the members (stops.candidate); a story without members is about it
-    (the caller knows no better). The timeline's stops and in_story, and (v10.35) the entity page's story order."""
+    """{story: (about the thing, its stop, "asked" or "type", its stops.Share)} of the stories (`members`: their posts;
+    `at`: the posts' dates; `about_posts`: the posts whose subject or actor the thing is): the stored stop answer
+    decides, else the thing's share of the members (stops.candidate); a story without members is about it. The
+    timeline's stops and in_story, and the entity page's story order."""
     from insight_core.markx import event_types, stops as ST
     on = ST.config()
     answers = ST.of(cur, book, root, list(members))
@@ -499,7 +469,7 @@ def stops_of(cur: Any, book: I.Book, root: str, members: Dict[str, List[str]], a
             about, stop, by = got.about, got.stop, "asked"
         else:
             about, stop, by = (ST.candidate(sh) if ps else True), ST.coarse(types.get(sid)), "type"
-        about = about or not on["stops"]                  # the split off: every story a stop, as before 0165's case 2
+        about = about or not on["stops"]                  # the split off: every story a stop
         stop = stop if on["stop_types"] else None         # the word off: kept in the answers, not shown
         out[sid] = (about, stop, by, sh)
     return out
@@ -571,8 +541,8 @@ def _dedupe(evs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _linking_back(cur: Any, posts: Set[str]) -> Dict[str, Tuple[datetime, str]]:
-    """{post: (at, source)}: the posts with a current post edge back to one of `posts` (0131: the newer one links
-    or refers back to the older)."""
+    """{post: (at, source)}: the posts with a current post edge back to one of `posts` (the newer links or refers back
+    to the older)."""
     if not posts:
         return {}
     cur.execute(f"""SELECT DISTINCT x.a::text, {pairing.post_date('p')}, p.source_id::text
@@ -583,11 +553,11 @@ def _linking_back(cur: Any, posts: Set[str]) -> Dict[str, Tuple[datetime, str]]:
 
 
 def _back(cur: Any, posts: Set[str]) -> List[Dict[str, Any]]:
-    """0136's rows judged development whose old story holds one of `posts`, at their window."""
+    """The back-in-the-news rows judged development whose old story holds one of `posts`, at their window."""
     from insight_core.markx import back
     if not posts:
         return []
-    from insight_core.markx import anchors   # 0180: the engine shown's rows
+    from insight_core.markx import anchors   # the engine shown's rows
     cur.execute("""SELECT b.id::text, b.story::text, b.window_at, b.task_id::text, b.posts::text[] FROM mx_back b
                     WHERE b.engine = %s AND (b.members && %s::uuid[]
                           OR b.story IN (SELECT story_id FROM story_posts WHERE post_id = ANY(%s::uuid[])))""",
@@ -639,9 +609,9 @@ def of_entity(cur: Any, book: I.Book, root: str, *, stories: Optional[List[Dict[
 def before_post(cur: Any, post_id: str, *, book: Optional[I.Book] = None, limit: int = BEFORE,
                 skip: Iterable[str] = ()) -> List[Dict[str, Any]]:
     """The post page's "before" from its subjects' timelines: for each thing the post is about (its subject mentions'
-    entities, not an org or person), up to `limit` previous events (the birth, the last release before it, the
-    first outside mention before it) and its last STOPS_BEFORE stops before it (v10.23: the stories about it, as the
-    entity page's line has them), oldest first: [{entity: {id, name}, items}]. `skip`: posts already listed."""
+    entities, not an org or person), up to `limit` previous events (the birth, the last release before it, the first
+    outside mention before it) and its last STOPS_BEFORE stops before it, oldest first: [{entity: {id, name}, items}].
+    `skip`: posts already listed."""
     from insight_core.markx import schemas
     cur.execute(f"""SELECT m.guide, m.n, m.entity_id::text, {pairing.post_date('p')}
                      FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
@@ -650,7 +620,7 @@ def before_post(cur: Any, post_id: str, *, book: Optional[I.Book] = None, limit:
     rows = cur.fetchall()
     if not rows:
         return []                                   # no subject linked: the book is not read
-    book = book or I.lazy_book(cur)   # v10.17 (0186): what the post's subjects ask of the book
+    book = book or I.lazy_book(cur)   # what the post's subjects ask of the book
     skip = set(skip) | {post_id}
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()
@@ -691,8 +661,8 @@ STOPS_BEFORE = 3
 
 def _stops_before(cur: Any, book: I.Book, root: str, post_id: str, at: datetime,
                   limit: int = STOPS_BEFORE) -> List[Dict[str, Any]]:
-    """D, the second case: the thing's stops before a post (its stored stop answers saying about; the stories the post
-    is in left out), the newest `limit`, as `story` events at their first member's date. Nothing is asked here."""
+    """The thing's stops before a post (its stored stop answers saying about; the stories the post is in left out), the
+    newest `limit`, as `story` events at their first member's date. Nothing is asked here."""
     from insight_core.markx import stops as ST
     on = ST.config()
     if not on["stops"]:
@@ -711,33 +681,26 @@ def _stops_before(cur: Any, book: I.Book, root: str, post_id: str, at: datetime,
                    stop=got[sid].stop if on["stop_types"] else None, stop_by="asked") for sid, first, head in rows[-limit:]]
 
 
-# ---- 0220 / 0234: the version line ----------------------------------------------------------------------------------
-# A family's versions on lines ("Orbit 2 -> Orbit 2.5 -> Orbit 3"; a product line of its own each: "Orbit Coder 2 ->
-# Orbit Coder 3"), the order graph.next_version_edges joins posts by. What failed was a class each (0220 on the
-# server's families, then the owner's review of 2026-11-17, 0234):
-#   - two lines told apart by a letter (DeepSeek-style R1 / V3, MiniMax-style M3 / H3) read as one: the letter is the
-#     line (`line_key`); a number written without its letter joins the only lettered line that has it, unless the
-#     family's unlettered numbers are a line of their own;
-#   - product lines inside a family (a maker's Max / Plus / Coder / VL, or tiers Opus / Sonnet / Haiku): the version's
-#     line word (`line_word`: its variant without a stage word such as preview or instruct) is a line of its own; a
-#     line word one number ever has, that the plain line also has, is that number's code name ("Orbit 10.12 Sierra" is
-#     10.12): its stop's other name, not a line;
-#   - another maker's thing filed under the family's name ("Zentra Orbit 5" under Vantor's Orbit): its stated maker;
-#   - a rumoured version shown as real (a guess at the next number, a leak, one account's many posts): a stop is real
-#     only when its maker announced it (a post about it whose reading's origin is the maker, never a leak) or, when
-#     the maker never speaks for itself here, RELEASE_VOICES independent voices report its release (a release-typed,
-#     never leak_rumour, post about it: one voice a source however many posts it writes). Once the maker speaks here,
-#     a version it never announced is no stop (a nickname the community gave it, a rumour), unless it is older than
-#     the maker's first post here;
-#   - a stop's date from a sighting (any post naming it) or an archive's wrong date: the maker's first announcement,
-#     else its first release report;
-#   - year-named versions ordered by their numbers (95, 98 after 10): a line is ordered by its stops' release dates;
+# ---- the version line ----------------------------------------------------------------------------------------------
+# A family's versions on lines ("Orbit 2 -> Orbit 2.5 -> Orbit 3"; a product line each: "Orbit Coder 2 -> 3"), the
+# order graph.next_version_edges joins posts by. The classes it handles (0220, 0234):
+#   - lines told apart by a letter (R1 / V3): the letter is the line (`line_key`); a number written without its letter
+#     joins the only lettered line that has it, unless the unlettered numbers are a line of their own;
+#   - product lines inside a family (Max / Plus / Coder, or tiers Opus / Sonnet / Haiku): the version's line word
+#     (`line_word`: its variant without a stage word) is a line of its own; a line word only one number has, that the
+#     plain line also has, is that number's code name ("Orbit 10.12 Sierra" is 10.12), not a line;
+#   - another maker's thing filed under the family's name: its stated maker;
+#   - a rumoured version: a stop is real only when its maker announced it (never a leak) or, when the maker never
+#     speaks for itself here, RELEASE_VOICES independent voices report its release. Once the maker speaks here, a
+#     version it never announced is no stop, unless it is older than the maker's first post here;
+#   - a stop's date: the maker's first announcement, else its first release report (never a sighting);
+#   - year-named versions (95, 98 after 10): a line is ordered by its stops' release dates;
 #   - a series or a phrase read as a version ("Orbit 40 Series", "Orbit 4 in Copilot"): `name_shape`;
-#   - a build or date number in a family numbered 1, 2, 3 (2512, 407): BUILD_FROM (a year, 1980-2039, is a name);
-#     a dot left out (46 for 4.6) is the dotted version's stop;
-#   - a one-letter family ("X-33", "X-45" under "x"): no line.
+#   - a build or date number in a family numbered 1, 2, 3: BUILD_FROM (a year, 1980-2039, is a name); a dot left out
+#     (46 for 4.6) is the dotted version's stop;
+#   - a one-letter family ("X-33" under "x"): no line.
 LINE_ABOUT = 1        # posts whose subject or actor it is, at least
-LINE_POSTS = 4        # 0220: posts naming a name before it may date its stop (a stray name filed under the number never)
+LINE_POSTS = 4        # posts naming a name before it may date its stop (a stray name filed under the number never)
 RELEASE_VOICES = 2    # independent voices reporting its release, when its maker never speaks here
 BUILD_FROM = 100      # a first number this big is a build or a date when the family's other numbers are small
 YEARS = (1980, 2039)  # a four-digit first number in this range is a year-name (Windows 2000), never a build
@@ -753,16 +716,15 @@ PHRASE_WORDS = frozenset({"in", "for", "on", "with", "vs", "versus", "and", "or"
 
 @dataclass(frozen=True)
 class Version:
-    """One version entity of a family, as the line reads it."""
     id: str
     name: str
     key: Optional[Tuple[Any, ...]]   # its version tuple (names.vt: "K3.1" -> ('k', 3, 1); a leading v dropped)
-    maker: Optional[str]             # its stated maker (same_maker compares)
-    posts: int                       # posts naming it
+    maker: Optional[str]
+    posts: int
     about: int                       # posts whose subject or actor it is
-    first: Optional[datetime]        # its first post about it
+    first: Optional[datetime]
     first_post: Optional[str]
-    variant: Optional[str] = None    # its variant field (the line word comes from it)
+    variant: Optional[str] = None
     maker_first: Optional[datetime] = None   # its maker's first post about it (origin maker, never a leak)
     maker_post: Optional[str] = None
     release_first: Optional[datetime] = None  # its first release report about it (release-typed, never a leak)
@@ -831,7 +793,7 @@ def _lettered(k: Optional[Tuple[str, Tuple[int, ...]]], name: Optional[str]) -> 
 def _stop(key: Tuple[str, Tuple[int, ...]], vs: List[Version], word: str = "") -> LineStop:
     vs = sorted(vs, key=lambda v: (line_word(v.variant) != word, -v.posts, -v.about, line_key(v.key) != key, v.name, v.id))
     # its date: the maker's first post about it, else its first release report; a stray name (fewer than LINE_POSTS
-    # posts, not the stop's own name) never dates it (0220 dev: a third of such names were another thing)
+    # posts, not the stop's own name) never dates it (often another thing)
     own = [v for n, v in enumerate(vs) if n == 0 or v.posts >= LINE_POSTS]
     maker = sorted((v.maker_first, v.maker_post or "") for v in own if v.maker_first is not None)
     report = sorted((v.release_first, v.release_post or "") for v in own if v.release_first is not None)
@@ -999,12 +961,12 @@ def line_versions(rows: Iterable[Tuple[Any, ...]], counts: Dict[str, Counts]) ->
 
 
 def version_line(cur: Any, book: I.Book, root: str) -> Optional[Dict[str, Any]]:
-    """The entity page's version line (0220, 0234): the lines of its family (the entity's own family, or itself when it
-    is one), the one holding this entity first. {family {id, name}, lines: [[{id, name, version, first, by, posts,
-    current}]], words: [each line's product line word, "" the plain line], grid} (each stop by the name most posts
-    use; the other names filed under its number are not shown: 0220 dev, a third of them were another thing); `grid`:
-    when two product lines or more share two numbers or more (tiers of one maker's generations), {tiers, rows:
-    [{generation, cells: {tier: stop id}}]} in release order. None when the family has no line."""
+    """The entity page's version line: the lines of its family (the entity's own family, or itself when it is one), the
+    one holding this entity first. {family {id, name}, lines: [[{id, name, version, first, by, posts, current}]], words:
+    [each line's product line word, "" the plain line], grid} (each stop by the name most posts use; the other names
+    filed under its number are not shown: often another thing); `grid`: when two product lines or more share two numbers
+    or more, {tiers, rows: [{generation, cells: {tier: stop id}}]} in release order. None when the family has no
+    line."""
     e = book.ents[root]
     fam = root if e.level in ("family", "thing") else (book.root(e.parent) if e.parent and e.level in I.VERSION_LEVELS else None)
     if not fam or fam not in book.ents:

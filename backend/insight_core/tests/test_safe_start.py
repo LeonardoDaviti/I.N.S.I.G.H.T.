@@ -1,4 +1,4 @@
-"""A start that doesn't fail for something non-fatal, and a /health that reads (issue 0071)."""
+"""A start that doesn't fail for something non-fatal, and a /health that reads (0071)."""
 from __future__ import annotations
 
 import os
@@ -44,7 +44,7 @@ class StartScriptTests(unittest.TestCase):
 
 
 class TwoProcessesTests(unittest.TestCase):
-    """0112 Decided 11: two API processes by default, under the supervisor that does the start's work once."""
+    """Two API processes by default, under the supervisor that does the start's work once."""
 
     def test_the_api_starts_two_processes_under_the_supervisor(self):
         result, calls = run_start("start-backend.sh", env={"WEB_CONCURRENCY": "4"})

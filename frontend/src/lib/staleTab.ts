@@ -1,7 +1,6 @@
 /**
- * A tab left open across a deploy (issue 0061): its lazy chunks are gone, so the
- * first one it asks for fails. The app reloads once to pick up the new build;
- * the guard in sessionStorage makes sure a reload that doesn't help never loops.
+ * A tab left open across a deploy: its lazy chunks are gone, so the first one it asks for fails. The app reloads
+ * once to pick up the new build; the sessionStorage guard stops a reload that doesn't help from looping.
  */
 
 const KEY = 'insight.staleReload';

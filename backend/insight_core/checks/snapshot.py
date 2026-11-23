@@ -1,4 +1,4 @@
-"""What one version of the code derives from a copy (issue 0075 C), as one JSON file `diff` compares.
+"""What one version of the code derives from a copy, as one JSON file `diff` compares.
 
     python -m insight_core.checks.snapshot --db <dsn> --out snap.json [--now ISO] [--parts posts,links,stories,news,classics,discover]
 
@@ -51,7 +51,7 @@ def _links(ctx) -> Dict[str, Any]:
         for item in items:
             try:
                 link = PostDetailService.link(cur, facts[item["id"]]["link"], item.get("story"), urls.get(item["id"]))
-            except TypeError:   # before 0072 D4 the post's own address wasn't asked
+            except TypeError:   # an older version doesn't ask the post's own address
                 link = PostDetailService.link(cur, facts[item["id"]]["link"], item.get("story"))
             out[item["id"]] = plain(link)
     return out
@@ -73,8 +73,8 @@ def _stories(ctx) -> Dict[str, Any]:
 
 
 def _news_rows(cur, news_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Each News row's names (the surging names its posts joined by, most posts first), its origins (posts
-    that start their 0050 story) and its first post, as the job stored them (issue 0104)."""
+    """Each News row's names (the surging names its posts joined by, most posts first), its origins (posts that
+    start their story) and its first post, as the job stored them."""
     cur.execute("""SELECT np.news_id::text, np.post_id::text, np.name, np.position,
                           bool_or(sp.post_id IS NOT NULL AND sp.parent_reason IS NULL)
                    FROM news_posts np LEFT JOIN story_posts sp ON sp.post_id = np.post_id

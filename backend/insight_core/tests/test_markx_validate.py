@@ -1,8 +1,6 @@
-"""Mark X Shadow's answer checks (issue 0086 C's table): the shape and sets from each kind's schema, and
-what only the input can tell: spans and versions in the post, figures and versions in the members, the
-keys a briefing cites, a card's odd members, a translation's numbers and length. No database.
-
-Every fixture is synthetic (made-up sources and posts; product and company names only)."""
+"""Mark X's answer checks (0086 C): the shape and sets from each kind's schema, and what only the input can tell (spans
+and versions in the post, figures in the members, cited keys, a translation's numbers and length). No database;
+synthetic fixtures only."""
 from __future__ import annotations
 
 import re
@@ -106,7 +104,7 @@ class TheSchemaAndSets(unittest.TestCase):
 
     def test_every_judge_kind_takes_a_relation_from_its_set_and_a_confidence_in_0_100(self):
         for kind in ("check", "join", "pair", "merge", "connect"):
-            g = "judge-read-v1" if kind in ("join", "pair") else None   # 0258: v2 also quotes (JudgeQuotes0258)
+            g = "judge-read-v1" if kind in ("join", "pair") else None   # v2 also quotes (JudgeQuotes0258)
             with self.subTest(kind=kind):
                 self.assertIsNone(check(kind, judge(), "STORY ...", g)[1])
                 self.assertIn("relation", check(kind, judge(relation="related"), "x", g)[1])
@@ -126,7 +124,7 @@ class Entities(unittest.TestCase):
         self.assertEqual(len(answer["entities"]), 2)
 
     def test_a_span_not_in_the_post_is_refused(self):
-        # v10.20: the only entity dropped, so nothing is left: refused (asked again), saying why
+        # the only entity dropped, so nothing is left: refused (asked again), saying why
         error = check("entities", {"entities": [entity(span="Widget 5 Pro")]}, POST)[1]
         self.assertEqual(error, "every entity was dropped: entities[0].span 'Widget 5 Pro' does not occur in the post")
 
@@ -143,7 +141,7 @@ class Entities(unittest.TestCase):
         self.assertTrue(version_occurs("Widget 4.1", "the Widget-4.1 notes"))
 
     def test_the_folded_input_is_kept_and_each_input_read_as_its_own(self):
-        # 0243: the input's folded forms are kept between one answer's checks; a different input is folded anew
+        # the input's folded forms are kept between one answer's checks; a different input is folded anew
         from insight_core.markx.validate import occurs
         texts = [f"post {n}: Widget-{n}.1 notes" for n in range(20)]
         for _ in range(2):
@@ -157,7 +155,7 @@ class Entities(unittest.TestCase):
     def test_type_and_role_come_from_their_sets(self):
         self.assertIn("type", check("entities", {"entities": [entity(type="company")]}, POST)[1])
         self.assertIn("role", check("entities", {"entities": [entity(role="main")]}, POST)[1])
-        # v10.20: a relation outside the set is dropped (relations have no reader), the answer stands
+        # a relation outside the set is dropped (relations have no reader), the answer stands
         answer, error = check("entities", {"entities": [], "relations": [{"a": "A", "rel": "likes", "b": "B"}]}, POST)
         self.assertIsNone(error)
         self.assertEqual(answer["relations"], [])
@@ -165,7 +163,7 @@ class Entities(unittest.TestCase):
 
     def test_at_most_twenty_entities(self):
         self.assertIsNone(check("entities", {"entities": [entity()] * 20}, POST)[1])
-        # v10.20: the first 20 stored (the guide puts subjects, actors and versions first), the 21st dropped
+        # the first 20 stored (the guide puts subjects, actors and versions first), the 21st dropped
         answer, error = check("entities", {"entities": [entity()] * 20 + [entity(name="Gadget")]}, POST)
         self.assertIsNone(error)
         self.assertEqual(len(answer["entities"]), 20)
@@ -177,7 +175,7 @@ class Entities(unittest.TestCase):
 
 
 class Salvage(unittest.TestCase):
-    """v10.20: an entity list's bad entries are dropped (kept under "dropped" with why), the rest stored."""
+    """An entity list's bad entries are dropped (kept under "dropped" with why), the rest stored."""
     ACME = entity(span="Acme", name="Acme", type="org", role="actor", maker=None, family=None, version=None,
                   variant=None)
 
@@ -255,18 +253,17 @@ class StoryAnswers(unittest.TestCase):
         self.assertIn("17 words", check("headline", {"headline_en": " ".join(["w"] * 17)}, MEMBERS)[1])
 
     def test_a_headline_has_two_words_of_slack_over_the_guides_14(self):
-        """0121 Decided 2: 9 of 165 recorded headline answers were refused for one word over 14, where readings
-        have slack (guide 20, check 25). A card keeps its 14: its headline is the judge's, not the page's."""
+        """A card keeps its 14-word headline limit: its headline is the judge's, not the page's (0121)."""
         self.assertIsNone(check("headline", {"headline_en": " ".join(["w"] * 16)}, MEMBERS)[1])
         self.assertIn("more than 16", check("headline", {"headline_en": " ".join(["w"] * 17)}, MEMBERS)[1])
         self.assertIn("15 words", check("card", self.card(headline_en=" ".join(["w"] * 15)), MEMBERS)[1])
 
     def test_a_card_that_numbers_its_odd_members_is_kept_as_given(self):
-        """6 of the 43 recorded cards named odd members by position; nothing reads `odd`, so it is not refused."""
+        """Nothing reads `odd`, so odd members named by position are not refused."""
         self.assertIsNone(check("card", self.card(odd=[2]), MEMBERS)[1])
 
     def test_a_headline_version_is_found_by_its_number(self):
-        """A recorded headline wrote "GPT-5.6" where its members said "their 5.6 versions": right, not invented."""
+        """A headline's "GPT-5.6" where its members say "their 5.6 versions" is right, not invented."""
         members = MEMBERS + "\n- id 11111111 [Example Blog, site, 2026-11-02T13:00] Cheaper than their 5.6 versions | x"
         self.assertIsNone(check("headline", {"headline_en": "Acme prices Widget 4.1 Pro below Widget 5.6"}, members)[1])
         self.assertIn("'Widget 5.7'", check("headline", {"headline_en": "Acme prices it below Widget 5.7"}, members)[1])
@@ -338,7 +335,7 @@ class TheHelpers(unittest.TestCase):
         self.assertEqual(fold("Ёлка  —  Widget‑4"), "елка - widget-4")
 
     def test_typographic_apostrophes_and_quotes_fold_as_plain_ones(self):
-        """0121 Decided 6: a valid name was refused for an apostrophe ("Where's" against the post's "Where’s")."""
+        """An apostrophe's form ("Where's" against the post's "Where’s") does not refuse a name (0121)."""
         self.assertEqual(fold("Where’s ‘it’ “now”"), fold("Where's 'it' \"now\""))
         post = POST.replace("Title: Acme выпустила Widget‑4.1 Pro", "Title: Acme’s “Widget‑4.1 Pro” is out")
         for span in ("Acme's", "Acme’s", '"Widget-4.1 Pro"', "“Widget-4.1 Pro”"):
@@ -349,39 +346,38 @@ class TheHelpers(unittest.TestCase):
 class TheKindsAndGuides(unittest.TestCase):
     def test_twelve_kinds_each_with_a_guide_file_and_a_schema(self):
         self.assertEqual(set(schemas.KINDS), {"read", "entities", "check", "join", "pair", "card", "merge", "connect",
-                                              "headline", "briefing", "translate", "embed",   # embed: S2
-                                              "alias", "collide", "embed_name",                # 0119 A1
-                                              "alias2", "alias3", "alias4",                     # 0130 A2; 0201
-                                              "rename", "stop", "chain", "derive",              # 0165 B, C; 0219; 0234
-                                              "perspective", "sheet", "read3", "dispute",              # 0119 B; 0273
-                                              "relate", "stance",                               # 0131, 0132 B
-                                              "back",                                           # 0136
-                                              "cite",                                           # 0133 v4.2
-                                              "track", "subtopics", "probes",                   # 0145, 0147
-                                              "digest", "subtopic_place",                       # 0207
-                                              "scout", "identity",                              # 0148, 0162
-                                              "websearch",                                      # 0171
-                                              "source_judge", "question",                       # 0173, 0275
-                                              "news_sections",                                  # 0174
-                                              "reading",                                        # 0212
-                                              "news_place",                                     # 0197
-                                              "unit_types",                                     # 0181
-                                              "significance",                                   # 0208
-                                              "track_schema", "track_things", "track_same"})    # 0245
+                                              "headline", "briefing", "translate", "embed",
+                                              "alias", "collide", "embed_name",
+                                              "alias2", "alias3", "alias4",
+                                              "rename", "stop", "chain", "derive",
+                                              "perspective", "sheet", "read3", "dispute",
+                                              "relate", "stance",
+                                              "back",
+                                              "cite",
+                                              "track", "subtopics", "probes",
+                                              "digest", "subtopic_place",
+                                              "scout", "identity",
+                                              "websearch",
+                                              "source_judge", "question",
+                                              "news_sections",
+                                              "reading",
+                                              "news_place",
+                                              "unit_types",
+                                              "significance",
+                                              "track_schema", "track_things", "track_same"})
         for kind in schemas.KINDS.values():
             with self.subTest(kind=kind.name):
                 self.assertTrue((schemas.GUIDES_DIR / f"{kind.guide}.md").is_file())
                 self.assertIsInstance(kind.schema, dict)
                 self.assertIn(kind.subject, ("post", "post_story", "post_post", "story", "story_story", "day",
                                              "entity", "entity_entity", "source", "track", "post_track",
-                                             "research_pair", "research_run",   # 0132 B: source; 0145; 0162; 0171
-                                             "source_candidate", "question",    # 0173, 0275
-                                             "news_run",                         # 0174
-                                             "thing_thing"))                    # 0245
+                                             "research_pair", "research_run",
+                                             "source_candidate", "question",
+                                             "news_run",
+                                             "thing_thing"))
 
     def test_the_guides_name_no_channel_account_or_subreddit(self):
-        """Scrubbed copies (the build plan's rule): no handle, channel or subreddit address in any guide (persp-v1's "@x"
-        is its placeholder for a repost's author)."""
+        """No handle, channel or subreddit address in any guide (persp-v1's "@x" is a placeholder)."""
         for path in sorted(schemas.GUIDES_DIR.glob("*.md")):
             with self.subTest(guide=path.name):
                 text = path.read_text(encoding="utf-8")
@@ -389,10 +385,8 @@ class TheKindsAndGuides(unittest.TestCase):
 
 
 class JudgeQuotes0258(unittest.TestCase):
-    """0258 (judge-read-v2, join and pair): an answer quotes the POST it judged. Asked in batches, Haiku once answered a
-    question from another one's content (an invented copy of the server's case below: a physics post judged
-    same_event with a story about a model's benchmark, its reason describing the story's post). Its quote is not in
-    this question's POST, so the check refuses it; a quote of the post's own words passes."""
+    """judge-read-v2 (join and pair): an answer quotes the POST it judged, so an answer written from another question's
+    content is refused; a quote of the post's own words passes (0258)."""
 
     @staticmethod
     def question(kind="pair"):
@@ -476,7 +470,7 @@ class JudgeQuotes0258(unittest.TestCase):
 
 
 class HeadlineMembers(unittest.TestCase):
-    """v10.39: a headline reads the story's core, not its earliest 6 posts regardless."""
+    """A headline reads the story's core, not its earliest 6 posts regardless."""
 
     def post(self, i, source, title, hours):
         from datetime import datetime, timedelta, timezone

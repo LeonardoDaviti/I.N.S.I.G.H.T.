@@ -1,24 +1,11 @@
-"""Mark X v10.3 (issue 0127): duplicates folded. Inside a Mark X story, the posts that retell the same happening (the same
-announcement reposted, translated, summarised) fold under one, so the happening shows once.
+"""Duplicates folded: inside a Mark X story, posts retelling the same happening (reposted, translated, summarised)
+fold under one head, so the happening shows once.
 
-**The reading** (kind `read3`, guide `read-v3`): read-v2's fields plus `type_why`, `event_type` (14 types) and `origin`
-(maker / relay / other), the lab's frozen rv3d guide without `confirms_earlier` and with invented examples. Asked only of
-the current members of Mark X stories with 2+ members, in the reading window, once a post (`plan`); 5 a call (the
-worker's PER_CALL). Stored as a reading under `read-v3` in mx_readings, beside the post's read-v2 one; `read` and the
-decisions are unchanged.
-
-**The rule** (`roles`, ported from the lab's rv3_rules.rv3_roles, round 1: F1 0.70 on 60 unseen clusters, one run
-0.68-0.72): over a story's members with a read-v3 reading, in published order,
-  1. the story's type: the most common news type of its members (a tie: the first to appear);
-  2. originals: a member of that type by its maker, or the first relay of it while no original came before;
-  3. leaks: a leak_rumour with a later member of the story's type (never folded, not shown as a leak);
-  4. retellings: the other members of the story's type whose origin is other or relay.
-**The group** (`group`): the head is the earliest original, else the earliest retelling; every other retelling folds
-under it. The owner's answers (mx_labels, item kind `fold`, the newest per story and post; `undo` takes one back) beat
-the rule: `not_same` unfolds a post, `same` folds one under the head. The head is never answered away.
-
-**Nothing is stored of its own:** the fold is a function of the readings (never changed), the members (closed with
-valid_to) and the owner's answers, computed when a page is built (`story_folds`). Only mx_* tables are read or written.
+`plan` asks the `read3` reading (event_type, origin) of current members of 2+-member stories. The rule (`roles`,
+`group`, pure): the story's type is its members' most common news type; originals are that type by its maker (or the
+first relay before any); the other members of that type with origin other/relay are retellings, folded under the
+earliest original (else the earliest retelling). The owner's answers (mx_labels kind `fold`, `answer`) beat the rule;
+the head is never answered away. Nothing is stored of its own: `story_folds` computes the fold when a page is built.
 """
 from __future__ import annotations
 
@@ -31,8 +18,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from insight_core.markx import event_types, pairing, repo, tasks
 
 KIND, GUIDE = "read3", "read-v3"
-PER_CALL = 5                     # the lab's rv3d batch size (the worker's PER_CALL names it)
-NEWS_TYPES = event_types.NEWS_TYPES   # the seam's lists (0190)
+PER_CALL = 5                     # posts a call (the worker's PER_CALL names it)
+NEWS_TYPES = event_types.NEWS_TYPES
 LEAK = event_types.LEAK
 ANSWERS = ("same", "not_same", "undo")
 LAB = {"f1": 0.70, "single_runs": [0.68, 0.72, 0.71], "set": "60 unseen lab clusters, 214 members", "date": "2026-11-06"}
@@ -137,8 +124,8 @@ def group(members: Sequence[Member], answers: Optional[Mapping[str, str]] = None
 # ---- the reading's input and task --------------------------------------------------------------------
 
 def read3_input(p: Any, *, url: Optional[str], repost: Optional[Mapping[str, Any]]) -> str:
-    """read-v2's input (markx text v1) with the lines the lab's rv3 block added after its first: the address, who
-    wrote a repost, the published time (UTC, minutes)."""
+    """read-v2's input with the address, who wrote a repost and the published time (UTC, minutes) after its first
+    line."""
     head, _, rest = tasks.read_input(p).partition("\n")
     extra = [f"Address: {url or ''}"]
     if repost and repost.get("author"):
@@ -148,7 +135,7 @@ def read3_input(p: Any, *, url: Optional[str], repost: Optional[Mapping[str, Any
 
 
 def _extras(cur: Any, ids: Sequence[str]) -> Dict[str, Tuple[Optional[str], Optional[dict]]]:
-    """{post: (its url, its repost {by, author} or None)} as the reader names a repost (issue 0066)."""
+    """{post: (its url, its repost {by, author} or None)} as the reader names a repost."""
     from insight_core.utils.byline import repost_of
     if not ids:
         return {}
@@ -175,14 +162,14 @@ def read3_task(cur: Any, post_id: Any, priority: int = 0):
 
 def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] = None,
          fetched_since: Optional[datetime] = None) -> int:
-    """`read3` tasks for the current members of Mark X stories with 2+ members, posted in the last `days` (default:
-    the owner's reading window; None: every post) that have none, newest first: how many were added.
-    `fetched_since` (0176 A, the fresh lane): the members fetched or surfaced since then (tasks.fresh_sql) instead."""
+    """`read3` tasks for current members of 2+-member stories posted in the last `days` (default: the reading window;
+    None: every post) that have none, newest first: how many were added. `fetched_since` (the fresh lane): the
+    members fetched or surfaced since then instead."""
     if fetched_since is not None:
         days = None
     elif days is tasks.SETTING:
         days = tasks.reading_window(cur)
-    from insight_core.markx import reading5   # 0212
+    from insight_core.markx import reading5
     cur.execute(
         f"""SELECT p.id::text, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now())
                                     - {pairing.ordinary_date('p')})) / 86400))::int
@@ -225,8 +212,7 @@ def owner_answers(cur: Any, pairs: Iterable[Tuple[str, str]], labeller: str = "o
 
 
 def story_folds(cur: Any, story_ids: Iterable[str]) -> Dict[str, Group]:
-    """{story: its Group} over each story's current members (role member) and their read-v3 readings, in published
-    order (0128: built.PUBLISHED, a post's own date before the time it was received)."""
+    """{story: its Group} over each story's current members and their read-v3 readings, in published order."""
     story_ids = sorted({str(s) for s in story_ids if s})
     if not story_ids:
         return {}
@@ -288,7 +274,7 @@ def answer(cur: Any, *, story: str, post: str, answer: str, note: Optional[str] 
 
 
 def story_view(cur: Any, story: str) -> Dict[str, Any]:
-    """GET /api/markx/stories/{id}/folds: the story's members with their fold, in published order (0119 B6's view)."""
+    """GET /api/markx/stories/{id}/folds: the story's members with their fold, in published order."""
     g = story_folds(cur, [story]).get(story)
     if g is None:
         raise KeyError(story)

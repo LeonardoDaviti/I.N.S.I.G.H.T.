@@ -12,11 +12,10 @@ const LANGS: Record<string, string> = {
 const langName = (lang: string | null) => (lang ? LANGS[lang] ?? lang : 'another language');
 
 /**
- * 0130 D (Stealth v10.5): a non-English post's translation by Haiku, only while Mark X is on (its own chunk).
- * `where="post"`, under the original on the post page: the Translate button, then "asked" until the next worker run
- * answers it, then the English, marked "Translated by Haiku", with ✓ / ✗ (stored as Mark X labels; tap again to take
- * it back). `where="panel"`, in the Mark X panel: the same button and state in one line; the English shows under the
- * post. Nothing at all on an English post or one whose language is unknown.
+ * A non-English post's translation by Haiku, only while Mark X is on (its own chunk). `where="post"`, under the
+ * original: Translate, then "asked" until the next worker run answers, then the English, "Translated by Haiku", with
+ * ✓ / ✗ (Mark X labels; tap again to take it back). `where="panel"`: the same button and state in one line. Nothing
+ * on an English post or one whose language is unknown.
  */
 export default function MarkXTranslation({ postId, where = 'post' }: { postId: string; where?: 'post' | 'panel' }) {
   const api = markxTranslationApi(useApi());

@@ -1,20 +1,12 @@
-"""A story's tree (issue 0064), and an outside origin's title (issue 0068): pure functions over the
-posts of one story (story_rules groups them, then draws each one's tree here).
+"""A story's tree (`tree`), and an outside origin's title (`origin_title`): pure functions over the posts of one
+story (story_rules groups them, then draws each one's tree here).
 
-- **A story is a tree (issue 0064):** each post gets a parent, the post (or the outside page) it
-  came from, or none for the origin, by evidence in order of certainty, never one signal alone:
-  1. `address`: a post at an address on its source's own site is that address's origin; the
-     other posts at the address hang from it, and a link to the address is a link to it;
-  2. `citation`: a post linking another post of the story, or a page outside INSIGHT 2+ of its
-     posts link (not as a roundup's mentions), is its child, whatever the dates say; the more
-     voices link a node, the more it is the parent (in-degree);
-  3. `copy`: the same text or title, the earlier time the parent, when both times are trustworthy;
-  4. `time`: the posts 1-3 leave unrelated hang from the origin, `time` when both times are
-     trustworthy (a time of day, not a Saved page, not a page updated since) and 10+ minutes
-     apart, the origin first; else `none` (no claim of order).
-  The origin is the root linked by the most voices, a post at its own site first, then the
-  earlier trustworthy time. One parent per post, no cycles. Mark X adds `meaning` and
-  `attribution` to the reasons without changing the shape.
+Each post gets a parent, the post (or the outside page) it came from, or none for the origin, by evidence in order
+of certainty, never one signal alone: `address` (a post at an address on its source's own site is that address's
+origin), `citation` (a post linking another post of the story, or a page 2+ of its posts link, is its child,
+whatever the dates say), `copy` (the same text or title, the earlier trustworthy time the parent), else `time` (both
+times trustworthy and TIME_APART apart) or `none`. The origin is the root linked by the most voices, a post at its
+own site first, then the earlier trustworthy time. One parent per post, no cycles.
 """
 from __future__ import annotations
 
@@ -34,12 +26,10 @@ from insight_core.utils.post_links import titled_link_text
 if TYPE_CHECKING:   # story_rules imports this module: it draws each story's tree
     from insight_core.utils.story_rules import StoryPost
 
-# Why a post hangs from its parent (issue 0064; repost, thread, quote: 0066), most certain first.
-# Mark X adds meaning, attribution.
+# Why a post hangs from its parent, most certain first. Mark X adds meaning, attribution.
 PARENT_REASONS = ("address", "repost", "thread", "quote", "citation", "copy", "time", "none")
 TIME_APART = timedelta(minutes=10)         # two trustworthy times closer than this make no order; not measured
-# An outside page 2+ of a story's posts link can be its origin. Measured, the rule: 358 of the lab's
-# 465 stories of 2+ voices have such a page (0064); no other count compared.
+# An outside page 2+ of a story's posts link can be its origin (measured as a rule: plan/issues/0064).
 PAGE_ORIGIN_MIN_POSTS = 2
 
 @dataclass
@@ -61,8 +51,8 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
     """Each post's parent in its story, by evidence in order of certainty (the module's notes).
     `posts`: one story's. `every` / `focused`: each post's anchors resolved to the address's own
     page (`group`): all of them, and those it is about (a roundup: its first only). `origin_of`:
-    address -> its own page. `replies` / `quotes` (issue 0066): a thread's reply -> the post it
-    continues, a quoting tweet -> the stored tweet it quotes."""
+    address -> its own page. `replies` / `quotes`: a thread's reply -> the post it continues, a quoting tweet -> the
+    stored tweet it quotes."""
     from insight_core.utils.story_rules import _time_key   # story_rules imports this module
 
     by_id = {p.id: p for p in posts}
@@ -74,7 +64,7 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
         if own and own != p.id and own in by_id and by_id[own].source_id != p.source_id:
             edges.append((p.id, own, "repost" if p.reposted else "address"))
             about[own].add(p.voice)
-    # On X (issue 0066): a reply continues the post before it; a quote is about the tweet it quotes.
+    # On X: a reply continues the post before it; a quote is about the tweet it quotes.
     for child, parent in (replies or {}).items():
         if child in by_id and parent in by_id:
             edges.append((child, parent, "thread"))
@@ -124,9 +114,8 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
         own = 0 if not node.startswith(_PAGE) and by_id[node].on_own_site else 1
         return (-len(about[node]), own, *node_key(node))
 
-    # The origin is chosen first, among every post and every page 2+ posts are about: the node
-    # most voices are about is where the story starts, even when it links a page itself (Google's
-    # Gemini post links a benchmark page two of its copies link too). Only the origin may be a page.
+    # The origin is chosen first, among every post and every page 2+ posts are about: the node most voices are about
+    # is where the story starts, even when it links a page itself. Only the origin may be a page.
     pages = sorted(_PAGE + url for url, pids in page_posts.items() if len(pids) >= PAGE_ORIGIN_MIN_POSTS)
     origin = min([p.id for p in posts] + pages, key=origin_key)
     edges.sort(key=lambda e: (_RANK[e[2]], -len(about[e[1]]), node_key(e[1]), node_key(e[0])))
@@ -157,8 +146,8 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
         else:
             out[p.id] = (node, None, reason)
     if first is not None and first.kind == "saved":
-        # A Saved page is no voice (issue 0070): when it is the origin it is shown as the page everyone
-        # links, never as the first post; the Saved row is that page.
+        # A Saved page is no voice: when it is the origin it is shown as the page everyone links, never as the first
+        # post; the Saved row is that page.
         under = {pid for pid, (node, _, _) in out.items() if node == first.id}
         for pid in under:
             out[pid] = (None, first.url, out[pid][2])
@@ -178,11 +167,9 @@ def _origin_node(shape: Tree) -> Optional[str]:
     return next((pid for pid, parent in shape.parents.items() if parent == (None, None, None)), None)
 
 
-# An outside origin's title (issue 0068): an address's slug names its page with 3+ words of
-# letters (claude-fable-5-mythos-5); words with digits (a version, an id) are kept but not counted.
-# A leading id (5+ digits: help.openai.com's 20001626-api-credits-...) or date (2026-01-13-pocket-tts)
-# is no word of it (issue 0070); a short number is ("16-charts-that-explain", "2025-ai-index-report").
-# Measured, the order of evidence: 81 -> 188 of the lab's 415 outside origins titled (0068); 3 not compared.
+# An outside origin's title: an address's slug names its page with 3+ words of letters (claude-fable-5-mythos-5);
+# words with digits are kept but not counted. A leading id (5+ digits) or date (2026-01-13-pocket-tts) is no word of
+# it; a short number is ("16-charts-that-explain"). Measured: plan/issues/0068.
 SLUG_MIN_WORDS = 3
 _SLUG = re.compile(r"[-_+]+")
 _SLUG_ID = re.compile(r"^(?:\d{5,}|(?:19|20)\d\d[-_]\d\d(?:[-_]\d\d)?)(?:[-_+]|$)")
@@ -199,7 +186,7 @@ def _slug_words(url: str) -> Tuple[str, ...]:
 
 def slug_title(url: str) -> Optional[str]:
     """An address's slug made readable (origin_title's step 5), when it holds SLUG_MIN_WORDS words of
-    letters: "Ai jobs white collar unemployment". Discover never shows one (issue 0080)."""
+    letters: "Ai jobs white collar unemployment". Discover never shows one."""
     words = _slug_words(url)
     if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) >= SLUG_MIN_WORDS:
         text = " ".join(words)
@@ -208,25 +195,17 @@ def slug_title(url: str) -> Optional[str]:
 
 
 def origin_title(url: str, posts: Sequence[StoryPost], *, slug: bool = True) -> Optional[str]:
-    """An outside page's title (issue 0068), from evidence, nothing fetched: a story's outside origin,
-    and Discover's articles (issue 0070). `posts`: those linking it. A page that is stored is no
-    outside origin: it is the root, with its own title. Measured on the lab (30 roots checked by
-    hand): link words that 2+ voices agree on are often a bare word ("Блогпост", "Веса", "Video"),
-    and a slug loses a title's case and dots ("Introducing chatgpt images 2 5"), so each signal of
-    other people's words needs another's support:
-    1. the page's own words, as a post quotes them (post_links.quoted_words: a quoted tweet's text,
-       a link preview's title), as the reader titles a post's text (display_title); those most
-       posts quote (issue 0070);
-    2. link words 2+ voices agree on (copies of one text are one voice) that read as a title
-       (0051's rule, titled_link_text);
-    3. else link words the address's slug confirms (the same words): the words, as written;
-    4. else the title of a link post that is only this link: a Reddit or HN post with few words of
-       its own (StoryPost.link_post, a share) and no other kept link is titled for it (issue 0070);
+    """An outside page's title, from evidence, nothing fetched: a story's outside origin, and Discover's articles.
+    `posts`: those linking it. A page that is stored is no outside origin: it is the root, with its own title. Each
+    signal of other people's words needs another's support (bare link words and slugs mislead), so in order:
+    1. the page's own words as posts quote them (post_links.quoted_words), the ones most posts quote;
+    2. link words 2+ voices agree on (copies of one text are one voice) that read as a title (titled_link_text);
+    3. else link words the address's slug confirms, as written;
+    4. else the title of a link post that is only this link (a Reddit or HN share with no other kept link);
     5. else the slug made readable, when it holds SLUG_MIN_WORDS words of letters;
     6. else one voice's link words that read as a title;
     7. else None: the reader shows the address.
-    Without `slug` (Discover's lines, issue 0080), step 5 is skipped: a title rebuilt from the address
-    is never shown."""
+    Without `slug` (Discover's lines), step 5 is skipped: a title rebuilt from the address is never shown."""
     quoted = Counter(display_title(None, p.quoted_words[url]) for p in posts if p.quoted_words.get(url))
     shared = Counter(" ".join(p.title.split()) for p in posts if p.title and p.link_post
                      and {target for target, _ in p.links} == {url})

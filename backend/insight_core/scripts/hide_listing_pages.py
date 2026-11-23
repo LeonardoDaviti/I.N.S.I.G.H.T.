@@ -1,16 +1,11 @@
-"""Hide the listing pages stored as posts before v10.35 (once): kept, never deleted.
+"""Hide the listing pages stored as posts before new reads refused them (once): kept, never deleted.
 
     python -m insight_core.scripts.hide_listing_pages [--dry-run] [--source ID]
 
-A feed's archive read a WordPress sitemap's taxonomy files and stored each tag page (a listing of one article, its
-title, opening and date) as a post; page watch stored a few category and author pages. New reads refuse them
-(page_watch.not_post, listing_address); this hides the ones stored before, through the source's item filter: each
-source with a stored listing page (page_watch.stored_listing decides: a page its archive or page watch read as an
-article, at a /tag/, /category/, /topic/, /author/ address; never a feed's item, a saved page or a release's tag)
-gets the `listing` flag on its rule (item_filter.put_listing, `by` insight; its other patterns kept), and its posts
-are marked again: filtered_by set, so the feeds, unread counts and Mark X's planners skip them. Nothing is deleted;
-a post's stories, readings and track verdicts stay. --dry-run reads in a read-only transaction and writes nothing.
-JSON summary: per source, whether a rule was added (or the flag joined its rule), the posts hidden, three samples.
+Tag, category, topic and author listing pages stored as posts (page_watch.stored_listing decides) are hidden
+through their source's item filter: the `listing` flag joins the source's rule (item_filter.put_listing) and its
+posts are marked again (filtered_by), so feeds, unread counts and Mark X's planners skip them. Nothing is
+deleted. --dry-run reads in a read-only transaction. JSON summary per source: rule added, posts hidden, samples.
 """
 from __future__ import annotations
 
@@ -24,8 +19,7 @@ import psycopg
 from insight_core.ingestion.kinds.page_watch import LISTING_SEGMENTS, SITE_PAGE_ADAPTERS
 from insight_core.utils import item_filter
 
-# The candidates, narrowed in SQL (a listing word among the path's segments, a site page's row); the decision is
-# page_watch.stored_listing's, in Python.
+# the candidates, narrowed in SQL; the decision is page_watch.stored_listing's, in Python
 _WORDS = "|".join(sorted(LISTING_SEGMENTS))
 CANDIDATES_SQL = f"""
     SELECT {item_filter._FIELDS_SQL}, p.source_id::text,

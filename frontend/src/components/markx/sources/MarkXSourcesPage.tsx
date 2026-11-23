@@ -8,18 +8,17 @@ import { markxSourcesApi } from '../../../services/api';
 import { COLUMN_TITLES, cellText, sortRows, sourceHref, type Sort } from './format';
 
 /**
- * The source analysis list (0132 B, `/markx/sources`): one row per voice, and per source with no voice; the role, posts
- * a week, first to report, News yield, cited by and solo share, each sortable (the ranker is the sort). There is no
- * overall score (the owner's decision 5). A number counted over too few says "too few". On a phone each row is a block.
- * 0266: the track record's columns (firsts, lead, signal, noise and opened shares, last 30 days) and "Switch off?",
- * the suggestions for sources of high noise and no first.
+ * The source analysis list (`/markx/sources`): one row per voice, and per source with no voice, with role, posts a
+ * week, first to report, News yield, cited by, solo share and the track record (last 30 days), each sortable; no
+ * overall score. A number counted over too few says "too few". "Switch off?" suggests sources of high noise and no
+ * first. On a phone each row is a block.
  */
 export default function MarkXSourcesPage() {
   const api = markxSourcesApi(useApi());
   const query = useQuery({ queryKey: ['markx-sources'], queryFn: () => api.getMarkxSources(), staleTime: 60_000 });
   const [sort, setSort] = useState<Sort>({ by: 'name', desc: false });
   const rows = useMemo(() => (query.data ? sortRows(query.data.rows, sort) : []), [query.data, sort]);
-  // 0266: the suggestions, most posts first (a suggestion only: nothing is switched)
+  // the suggestions, most posts first (a suggestion only: nothing is switched)
   const suggested = useMemo(() => rows.filter((r) => r.switch_off)
     .sort((a, b) => (b.switch_off?.posts ?? 0) - (a.switch_off?.posts ?? 0)), [rows]);
   if (query.isPending) return <Page><LoadingState label="Loading" rows={8} /></Page>;

@@ -4,7 +4,7 @@ import { screen } from '@testing-library/react';
 import { baseApi, renderPost, rssPost } from './PostDetailPage.testkit';
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
 
-// A teaser (issue 0140): a post left as its feed's summary says so under its text, why, and links the page.
+// A teaser (0140): a post left as its feed's summary says so under its text, why, and links the page.
 
 beforeEach(() => {
   window.localStorage.clear();

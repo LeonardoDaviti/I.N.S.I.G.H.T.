@@ -1,31 +1,13 @@
-"""A track's brief (issue 0245, the general track briefer; built: 0249, Stealth v10.27): the weekly issue, the quick
-look and the tables, read from the things markx/track_things.py keeps.
+"""A track's brief: the weekly issue, the quick look and the tables, read from markx/track_things.py's things
+(issue 0245, the general track briefer).
 
-**"What changed"** is 0207's `digest` kind deepened, not a second summariser: its second guide digest-v2 (`plan`, the
-digest planner's part) is asked over a period's rows, numbered [1]..[n] (the things and practices with a report from
-a post of the period, each "new" when first reported in it); 2-4 points about the things and practices only, never
-authors or sources, each citing the rows it rests on (validate: only the question's rows, and every figure a point
-gives is one of its rows'). A week's question is asked again only when its rows change (the same rows are the same
-question: repo.add_task's one task), the week in progress at most every BRIEF_EVERY. Code writes the rest: the
-sections (one a kind, in the schema's order, the practices last), their counts and headers, and the posts of the
-period that gave no row ("also in the track").
-
-**The weekly issue** (`issue`): a Monday-Sunday week (UTC), its things and points as of the week's end, kept as a page
-per track and week (kept_pages, page PAGE, key "<track>:<monday>"), built in the jobs process (`keep_issues`, the
-"tracks" job) for the closed weeks, ISSUE_WEEKS at most back; never deleted. A closed issue built again whose things
-or points differ from the kept one says `updated` (keep everything: the reader sees a correction, not a silent edit).
-
-**The quick look** (`quick_look`): the things found since the track's seen state (0207's mx_track_seen look, or a
-given time; never looked: the week in progress), by kind with counts; the newest brief's points that cite one of them
-(`as_of` its time, `stale` when a thing came after it); the posts joined since that gave no row. Read live (it depends
-on the look): a few indexed reads.
-
-**The tables** (`table`): every current thing of one kind, newest first, filtered by its own fields' values: number
-and money `<field>.min` / `<field>.max` (and money `<field>.currency`), enum `<field>=a,b`, text `<field>=words`
-(its words, numbers whole: v10.41), link `<field>=any`; v10.41 (FIX 5) a search across a row (`q`: words ANDed over its
-fields and its posts' titles) and the entities its posts name (`entity`, `entity_type`; `chips` offers them).
-
-Behind entity_bands.json `tracks.briefs` (track_things.on): off, nothing is planned or kept and every read is empty.
+"What changed" is the `digest` kind under BRIEF_GUIDE (`plan`): asked over a period's rows numbered [1]..[n], 2-4
+points about the things and practices only, each citing its rows (validated: only the question's rows, every figure
+one of theirs); asked again only when the rows change. Code writes the rest (sections, counts, "also in the track").
+`issue` is a Monday-Sunday week (UTC), kept per track and week by the jobs process (`keep_issues`), never deleted; a
+closed issue built again with other things says `updated`. `quick_look` is read live since the track's last look.
+`table` filters a kind's current things by their fields, words (`q`) and named entities. Behind entity_bands.json
+`tracks.briefs` (track_things.on): off, nothing is planned or kept and every read is empty.
 """
 from __future__ import annotations
 
@@ -37,7 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from insight_core.db.repo_post_parts import shown_title
 from insight_core.markx import track_things as TT
 
-DIGEST_KIND, BRIEF_GUIDE = "digest", "digest-v3"   # v10.29: v2 asked again under v3
+DIGEST_KIND, BRIEF_GUIDE = "digest", "digest-v3"
 BRIEF_MIN = 2                 # a period with fewer rows has no "what changed"
 BRIEF_ROWS = 60               # rows a brief question shows at most (new ones first)
 BRIEF_EVERY = timedelta(hours=12)
@@ -46,7 +28,7 @@ PAGE = "track_brief"
 KEPT_LAG = timedelta(minutes=15)
 LINE_CHARS = 160
 PRACTICE_HEADER = "Practices and claims"
-QUIET_ROWS = 5        # a section with this many rows or more hides its quiet columns (v10.29)
+QUIET_ROWS = 5        # a section with this many rows or more hides its quiet columns
 QUIET_FILLED = 0.2    # a column filled in fewer rows than this share is quiet
 QUIET_SAME = 0.6      # a choice column whose one value fills more rows than this share is quiet (most rows alike)
 EMPTY_CHOICES = ("other", "unknown", "none", "n/a")
@@ -117,7 +99,7 @@ def row_line(kind: Dict[str, Any], t: Dict[str, Any], n_posts: int) -> str:
 
 def brief_input(track: Dict[str, Any], kinds: Dict[str, Dict[str, Any]], period: str, rows: Sequence[Dict[str, Any]],
                 rs: Dict[str, List[Dict[str, Any]]]) -> Tuple[str, List[str]]:
-    """A digest-v2 question: the track, the period, the kinds, the rows [1]..[n] (new ones first, BRIEF_ROWS at most):
+    """A brief question: the track, the period, the kinds, the rows [1]..[n] (new ones first, BRIEF_ROWS at most):
     (the question, the thing ids in its order)."""
     shown = sorted(rows, key=lambda t: not t["new"])[:BRIEF_ROWS]
     lines = TT.header(track)[:2] + [f"PERIOD: {period}", "", "KINDS:"]
@@ -148,9 +130,9 @@ def _weeks(cur: Any, track_id: str, now: datetime) -> List[date]:
 
 
 def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
-    """The digest planner's part (tasks.PLANNERS["digest"]): a digest-v2 question for each week of each topic track
-    with BRIEF_MIN+ rows whose rows differ from its last question's (the week in progress at most every BRIEF_EVERY;
-    none while one is waiting): how many were added."""
+    """The digest planner's part (tasks.PLANNERS["digest"]): a brief question for each week of each topic track with
+    BRIEF_MIN+ rows whose rows differ from its last question's (the week in progress at most every BRIEF_EVERY; none
+    while one is waiting): how many were added."""
     from insight_core.markx import schemas, tracks
     if not TT.on():
         return 0
@@ -176,7 +158,7 @@ def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
                 continue
             loaded = loaded or track_rows(cur, tid)
             rows, rs = rows_between(cur, tid, *bounds(w), loaded=loaded)
-            # the week in progress at most every BRIEF_EVERY, unless most rows its brief cites left it (0269)
+            # the week in progress at most every BRIEF_EVERY, unless most rows its brief cites left it
             if was is not None and w == this and now - was[1] < BRIEF_EVERY and not _cites_left(cur, tid, w, rows):
                 continue
             added += _ask(cur, t, kinds, w, _period(w), rows, rs)
@@ -185,7 +167,7 @@ def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
 
 def _ask(cur: Any, t: Dict[str, Any], kinds: Dict[str, Dict[str, Any]], week: date, period: str,
          rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]) -> int:
-    """One digest-v3 question over `rows` (BRIEF_MIN at least), kept with its week and rows: 1 when new."""
+    """One brief question over `rows` (BRIEF_MIN at least), kept with its week and rows: 1 when new."""
     from insight_core.markx import repo
     if len(rows) < BRIEF_MIN:
         return 0
@@ -198,8 +180,8 @@ def _ask(cur: Any, t: Dict[str, Any], kinds: Dict[str, Dict[str, Any]], week: da
 
 
 def plan_subject(cur: Any, t: Dict[str, Any], *, now: datetime, period: str) -> int:
-    """0261: one "what changed" over every row of a subject that is not a week's (an entity: entity_brief), asked
-    again when its rows change, at most every BRIEF_EVERY, none while one waits (the asks keyed by this week)."""
+    """One "what changed" over every row of a subject that is not a week's (an entity: entity_brief), asked again
+    when its rows change, at most every BRIEF_EVERY, none while one waits (the asks keyed by this week)."""
     from insight_core.markx import schemas
     schemas.ensure_guides(cur)
     cur.execute("""SELECT a.created_at, k.status FROM mx_track_brief_asks a JOIN mx_tasks k ON k.id = a.task_id
@@ -234,9 +216,8 @@ def _answered(cur: Any, track_id: str, week: Optional[date]) -> Optional[Tuple[L
 def points(cur: Any, track_id: str, week: Optional[date] = None, *,
            within: Optional[Sequence[str]] = None) -> Optional[Dict[str, Any]]:
     """The newest valid brief of the week (None: of any week): {points: [{text, cites: [thing ids]}], at, week}, each
-    cite its thing's current root; a point left with no cite is not shown. 0269 `within` (a week's issue: the rows
-    its sections show): a point is shown only when every row it cites is one of them (the week's rows change when
-    posts are dated again: a point about rows that left the week is not the week's)."""
+    cite its thing's current root; a point left with no cite is not shown. `within` (a week's issue's rows): a point
+    is shown only when every row it cites is one of them."""
     got = _answered(cur, track_id, week)
     if got is None:
         return None
@@ -255,8 +236,8 @@ def points(cur: Any, track_id: str, week: Optional[date] = None, *,
 
 
 def _cites_left(cur: Any, track_id: str, week: date, rows: Sequence[Dict[str, Any]]) -> bool:
-    """0269: whether most of the rows the week's newest brief cites are no longer its rows (posts dated again, things
-    dropped): its points would be about another week, so it is asked again whatever BRIEF_EVERY says."""
+    """Whether most of the rows the week's newest brief cites are no longer its rows: then it is asked again whatever
+    BRIEF_EVERY says."""
     got = _answered(cur, track_id, week)
     cited = {c for p in (got[0] if got else []) for c in p["cites"]}
     if not cited:
@@ -280,8 +261,7 @@ def _posts(cur: Any, track_id: str, ids: Sequence[str]) -> Dict[str, Dict[str, A
 
 
 def sources_of(rs: Sequence[Dict[str, Any]], posts: Dict[str, Dict[str, Any]]) -> int:
-    """How many independent sources reported a thing (its reports' posts' sources; a post not loaded counts as its
-    own): the brief's rank (v10.29, owner 2026-11-21: what several of your sources report comes first)."""
+    """How many independent sources reported a thing (a post not loaded counts as its own): the brief's rank."""
     return len({(posts.get(r["post"]) or {}).get("source_id") or r["post"] for r in rs})
 
 
@@ -301,9 +281,9 @@ def _says_nothing(f: Dict[str, Any], v: Any) -> bool:
 
 def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, Any]],
                posts: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """A row: its fields in the schema's order (each value typed, in words, with its quote and the post it came
-    from; 0257: the post's linked page it was quoted from, `page`), every post that reported it (newest first), its dates. Not shown (kept in the row, v10.29): a choice of
-    "other", and a practice's evidence that only repeats its result's figures."""
+    """A row: its fields in the schema's order (each value typed, in words, with its quote, its post and the linked
+    `page` it was quoted from), every post that reported it (newest first), its dates. Not shown (kept in the row): a
+    choice of "other", and a practice's evidence that only repeats its result's figures."""
     fields = {}
     for f in kind["fields"]:
         v = (t["fields"] or {}).get(f["name"])
@@ -322,9 +302,9 @@ def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, A
 
 
 def _quiet(fields: Sequence[Dict[str, Any]], views: Sequence[Dict[str, Any]]) -> set:
-    """The columns that tell a section's rows apart too little to show (v10.29, the reader's ease): with QUIET_ROWS+
-    rows, a column (never the first: the name) filled in under QUIET_FILLED of them, or a choice whose one value
-    fills over QUIET_SAME of them. The values stay in each row and in the tables."""
+    """The columns that tell a section's rows apart too little to show: with QUIET_ROWS+ rows, a column (never the
+    name) filled in under QUIET_FILLED of them, or a choice whose one value fills over QUIET_SAME. The values stay in
+    each row and in the tables."""
     from collections import Counter
     n = len(views)
     if n < QUIET_ROWS:
@@ -341,10 +321,9 @@ def _quiet(fields: Sequence[Dict[str, Any]], views: Sequence[Dict[str, Any]]) ->
 
 def _fold_practices(rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]
                     ) -> Tuple[Dict[str, str], set]:
-    """(practice -> the thing it is shown inside, the practices not shown) (v10.29). A practice every post of which
-    also gave a thing of the track's own kinds is about that thing (a project's feature, a setup's finding): shown
-    inside the newest such thing, not in its own list. A practice with only its `what` (no result, no evidence)
-    says nothing to try or check: not shown here (kept, and in the tables)."""
+    """(practice -> the thing it is shown inside, the practices not shown). A practice every post of which also gave
+    a thing of the track's own kinds is shown inside the newest such thing; one with only its `what` is not shown
+    here (kept, and in the tables)."""
     by_post: Dict[str, str] = {}
     for t in rows:                      # rows: newest first within a kind, so the first thing a post gave is kept
         if t["kind"] != TT.PRACTICE_KIND:
@@ -401,9 +380,8 @@ def _hosts(sections: Sequence[Dict[str, Any]]) -> Dict[str, str]:
 
 def _also(cur: Any, track: Dict[str, Any], start: Optional[datetime], end: Optional[datetime], *,
           joined: bool = False, fresh: Optional[datetime] = None) -> List[str]:
-    """The posts in the track published in [start, end) that gave no row (no report of any thing); `joined`: joined
-    in [start, end) and published since `fresh` (v10.41: by the post's publication, as the things are: a feed that
-    surfaces a 2015 post this week does not make it this week's), newest published first."""
+    """The posts in the track published in [start, end) that gave no row; `joined`: joined in [start, end) and
+    published since `fresh` (by publication, as the things are), newest published first."""
     from insight_core.markx import track_subtopics
     items = track_subtopics.in_track(cur, track)
     ids = [it["post_id"] for it in items]
@@ -474,7 +452,7 @@ def issue(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = Non
     posts = _posts(cur, tid, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])} | set(also)))
     sections = _sections(kinds, rows, rs, posts)
     shown = [x["id"] for s in sections for x in s["things"]]
-    got = points(cur, tid, week, within=shown + list(_hosts(sections)))   # 0269: only points about the week's rows
+    got = points(cur, tid, week, within=shown + list(_hosts(sections)))   # only points about the week's rows
     body = {**base, "points": _point_views(got, shown, _hosts(sections)), "points_at": _iso(got["at"]) if got else None,
             "sections": sections, "also": [posts[p] for p in also if p in posts],
             "counts": {"things": len(rows), "new": sum(1 for x in rows if x["new"]),
@@ -580,9 +558,8 @@ def issues(cur: Any, folder_id: Any, *, now: Optional[datetime] = None) -> List[
 # ---- the quick look --------------------------------------------------------------------------------------------
 
 def fresh_from(since: datetime, now: datetime) -> datetime:
-    """New since a look (v10.29; the quick look and the rail's count): a thing found since it whose first post is
-    dated since it or in the week in progress. A thing read since the look from an older post (a new schema re-reading
-    the track, a backlog) is not news: it is in its week's issue and the tables."""
+    """New since a look: a thing found since it whose first post is dated since it or in the week in progress (a
+    thing re-read from an older post is in its week's issue, not news)."""
     return min(since, bounds(monday(now))[0])
 
 
@@ -624,19 +601,17 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
             "nothing_new": not rows and not also and not pts, "last_issue": closed[0] if closed else None, "weeks": weeks}
 
 
-SINCE_LINES = 3   # 0271: a track's top lines in "Since you looked"
+SINCE_LINES = 3   # a track's top lines in "Since you looked"
 
 
 def since_lines(cur: Any, folder_id: Any, since: datetime, *, now: Optional[datetime] = None,
                 n: int = SINCE_LINES) -> Dict[str, Any]:
-    """0271: a track in "Since you looked", read from its quick look since `since` (no second path): {id, name, since,
-    new (things found since), also (posts joined since that gave no row), lines: the top `n`, the things most
-    independent sources reported first, those first reported after the look before the rest (each {text: its name,
-    kind, sources, post}), then the joined posts}.
-    KeyError: not a topic track."""
+    """A track in "Since you looked", read from its quick look since `since`: {id, name, since, new, also, lines: the
+    top `n` (things first reported after the look first, then by independent sources; each {text, kind, sources,
+    post}), then the joined posts}. KeyError: not a topic track."""
     q = quick_look(cur, folder_id, since, now=now)
-    # first reported after the look first (a thing re-read from an older post of the week is new to the track, not
-    # to the reader), then by sources; stable
+    # first reported after the look first (a thing re-read from an older post is not new to the reader), then by
+    # sources; stable
     things = sorted((t for s in q["sections"] for t in s["things"]),
                     key=lambda t: (not (t["first_at"] and datetime.fromisoformat(t["first_at"]) > since), -t["sources"]))
     lines: List[Dict[str, Any]] = []
@@ -667,10 +642,10 @@ def _match(f: Dict[str, Any], v: Any, op: str, want: str) -> bool:
         return TT.fold(v) in {TT.fold(w) for w in want.split(",") if w.strip()}
     if t == "link":
         return bool(v)
-    return has_words(words(want), words(TT.shown_value(f, v)))   # v10.41: the field's words, numbers whole
+    return has_words(words(want), words(TT.shown_value(f, v)))   # the field's words, numbers whole
 
 
-# ---- v10.41 (FIX 5): search inside a track's table ---------------------------------------------------------------
+# ---- search inside a track's table -------------------------------------------------------------------------------
 
 _THOUSANDS = re.compile(r"(?<=\d)[,\u00a0\u202f'](?=\d{3}(?!\d))")   # not a space: "Qwen3 235B" is two figures
 _GLUED = re.compile(r"(?<=\d)(?=[^\W\d_])|(?<=[^\W\d_])(?=\d)")
@@ -751,10 +726,9 @@ def entity_chips(ents: Dict[str, Dict[str, Dict[str, Any]]], rows: Sequence[str]
 def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit: int = 100, offset: int = 0,
           q: str = "", entity: str = "", entity_type: str = "") -> Dict[str, Any]:
     """GET .../things?kind=&filters: every current thing of `kind`, newest first, filtered by its fields (see the
-    module); v10.41: `q` words ANDed across a row's fields and its posts' titles (`has_words`: numbers whole),
-    `entity` a name the row's posts name (its words in order inside the entity's name), `entity_type` a type of one
-    they name; `chips` the entities and types the rows' posts name (before the entity filters).
-    ValueError: an unknown kind, field or operator, or a bad number; KeyError: not a topic track."""
+    module); `q` words ANDed across a row's fields and its posts' titles (`has_words`), `entity` a name the row's
+    posts name, `entity_type` a type of one they name; `chips` the entities and types the rows' posts name (before the
+    entity filters). ValueError: an unknown kind, field or operator, or a bad number; KeyError: not a topic track."""
     t = _track(cur, folder_id)
     tid = t["folder_id"]
     kinds = TT._kinds(cur, tid) if TT.on() else {}

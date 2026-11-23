@@ -1,10 +1,7 @@
-"""The substack kind (Mark IX §10): paid posts read with the owner's substack.sid cookie.
-
-No network: FakeHttp answers the archive and posts API. The JSON shapes follow what a real
-publication answered on 2026-10-10: the archive list has empty body_html; a paid
-post fetched without access returns a truncated body_html (270 of 1367 words) with HTTP 200,
-the same as with a bogus cookie, so an expired cookie can only be seen in the body.
-The subscriptions API's shape is assumed (issue 0084), see paid_publication_hosts.
+"""The substack kind: paid posts read with the owner's substack.sid cookie. No network: FakeHttp answers the archive
+and posts API in a real publication's shapes: the archive list has empty body_html, and a paid post fetched without
+access returns a truncated body_html with HTTP 200, as with a bogus cookie, so an expired cookie shows only in the
+body. The subscriptions API's shape is assumed (0084), see paid_publication_hosts.
 """
 from __future__ import annotations
 
@@ -67,7 +64,7 @@ def _post(slug: str, audience: str = "everyone", wordcount: int = 100, body_word
 
 
 def _archive_url(offset: int, limit: int) -> str:
-    # The first page carries no offset: the API answered offset=0 with HTTP 400 (issue 0130 B1).
+    # the first page carries no offset: the API answers offset=0 with HTTP 400 (0130 B1)
     return f"{BASE}/api/v1/archive?sort=new&offset={offset}&limit={limit}" if offset else \
         f"{BASE}/api/v1/archive?sort=new&limit={limit}"
 
@@ -90,7 +87,7 @@ class SubstackResolutionTests(unittest.TestCase):
         self.assertEqual(registry.resolve(_src("https://www.other-news.com/")).name, "generic_rss")
 
     def test_substack_itself_is_never_a_publication(self):
-        # A profile (substack.com/@<handle>) or an app link saved as is: never read as Substack's own feed (v10.13.10).
+        # a profile (substack.com/@<handle>) or an app link saved as is: never read as Substack's own feed
         registry = self._registry()
         kind = SubstackKind(FakeHttp(), sid="")
         for url in ("https://substack.com/@examplewriter", "https://substack.com/@examplewriter/posts",
@@ -188,7 +185,7 @@ class SubstackFetchTests(unittest.IsolatedAsyncioTestCase):
         posts = await SubstackKind(http, sid="s3cret").fetch_latest(_src(), 1)
         self.assertTrue(posts[0]["metadata"]["paywalled"])
 
-    # Issue 0084: the cookie only where you pay ------------------------------------------
+    # the cookie only where you pay (0084) ------------------------------------------
 
     def _teaser(self, extra=None) -> FakeHttp:
         return self._http({
@@ -223,9 +220,8 @@ class SubstackFetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(http.headers_for(f"{base}/api/v1/posts/paid")["Cookie"], "substack.sid=s3cret")
 
     async def test_the_cookie_never_goes_to_a_site_that_only_looks_like_substack(self):
-        # Issue 0187: settings.substack comes from a feed's generator line, which any site can write. When the
-        # subscriptions answer can't be read (the cookie used to go everywhere) or names other publications,
-        # such a domain is read without the cookie; Substack's own hosts still get it.
+        # settings.substack comes from a feed's generator line, which any site can write: when the subscriptions answer
+        # can't be read or names other publications, such a domain is read without the cookie (0187)
         base = "https://lookalike.example"
         for answer in ({"unexpected": True}, ValueError("HTTP 500"), PAYS_HERE):
             with self.subTest(answer=answer):

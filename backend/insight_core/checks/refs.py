@@ -1,6 +1,5 @@
-"""A case names its posts by reference (case.schema.json, `ref`): an address, or a source and words of
-its title for a post whose address the case doesn't hold. A reference resolves to the stored posts it
-names, first seen first (the order 0049's "first seen" uses)."""
+"""A case names its posts by reference (case.schema.json, `ref`): an address, or a source and words of its title for
+a post whose address the case doesn't hold. A reference resolves to the stored posts it names, first seen first."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Union

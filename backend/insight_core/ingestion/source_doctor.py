@@ -2,61 +2,15 @@
 
     await doctor.after_failure(source, kind, state, error, progress)
 
-The runner calls it after every failed fetch, with the fetch state that failure wrote and
-the exception the fetch raised. It looks when a source of a kind that reads a feed or a page
-(generic_rss, page_watch; never one a kind or site adapter reads directly) has failed
-FAILURES_BEFORE_LOOKING times in a row, or at once on a clear signal: HTTP 404/410 (gone) or
-an answer that does not parse as a feed. At most once a day per source, and not again in a
-streak whose finding the owner dismissed; a fetch that works clears the finding.
-
-A server error (HTTP 5xx) or a timeout is no move (issue 0072): the site is there and failing.
-That is recorded ("server error, not moved", with its HTTP status: the source sheet says the server
-is failing and INSIGHT keeps retrying, issue 0072 D3); nothing is looked at and nothing is offered,
-so an offer stored before is replaced (an aggregator's 502 was offered a feed tool's changelog).
-
-First it reads the old address itself: when it reads again (a feed that parses; a followed
-page that still lists articles), the error was temporary. That is recorded ("temporary error,
-working again": no replacement, nothing to suggest) and nothing else is looked at.
-
-Otherwise it looks the way every source add does: the feed finder (issue 0026) on the source's
-address (which reads its section and home page too) and on a deeper section ("/a/b/rss" ->
-"/a/b/"); no feed: page watching (issue 0028) previews the section (for a source at the site's
-root, the site's own blog or news page with the most articles first, issue 0041). A feed on the source's site
-must stay within its section (the address less its last segment: "/oldnewthing/" for
-"/oldnewthing/feed"), so the home page's feed of every blog on the site is never taken for one
-of them; a source at the site's root ("/rss") takes any feed of the site. Then:
-  - a feed on the same site (www. ignored) while the old address is gone: switch the source
-    to it (store.switch keeps its id, name, tracks, read state and posts, clears its failures
-    and keeps sources.json in step) and say so in the job: "Arena: feed moved, now following
-    arena.ai/blog/feed.xml";
-  - anything else found (another site, a page to follow, a feed that is flaky, not gone): the
-    finding is stored as a suggestion, for the Sources list and sheet to offer;
-  - nothing: the finding says so ("Broken: no replacement found").
-A candidate at another address must hold the source's own items (issue 0072): one of its items
-has the address or the title of one of the source's latest stored posts (`shared`). One that
-holds none is never offered nor switched to, so a source with no stored post can be offered
-only its own address read as a page. The finding carries the candidate's latest titles
-(`latest`), which the source sheet shows before Switch.
-Nothing is re-fetched: the next fetch reads the new address, posts match by URL, and an
-archive brings the older ones.
-
-A dead host (issue 0242): a source whose host gives no answer (it does not resolve, refuses or has no route, or
-times out) and has not worked for DEAD_AFTER (since its last success, else since it was added) is marked dead
-({dead: True, host, since, reason}), any kind with an address, at most once a LOOK_EVERY, not again in a streak the
-owner dismissed. The mark suggests switching it off or replacing it; nothing is switched off, nothing deleted. Under
-DEAD_AFTER an unreachable host is an ordinary failure (FAILURES_BEFORE_LOOKING), so a DNS blip is no finding.
-
-A silent source (issue 0178): its fetches work, yet nothing new came for far longer than its own rhythm
-(silent_beyond_rhythm: over max(SILENT_GAPS x its measured mean gap, SILENT_FLOOR); a source whose cadence
-is not measured is never silent here: source hygiene's "quiet" mark covers it). A newsletter that moved
-domains keeps answering at its old feed, so no failure ever wakes the doctor; after a fetch that worked and
-brought nothing new, the runner shows it the source (after_success), at most once a LOOK_SILENT_EVERY. For a
-kind whose address can move (SILENT_KINDS) it looks where the source went (where_it_went): where its address,
-its home page and its newest posts' own pages now land (a redirect to another site is recorded, `moved`),
-then the feed finder on each such landing and on its home page; a feed offered must publish after the
-source's last post (it is alive) and, on the source's own site, stay within its section. The finding is kept
-apart from the failure finding (source_fetch_state.silent_finding): Switch (the existing switch path) or
-"It stopped" is the owner's; the doctor never switches a silent source by itself.
+The runner calls `after_failure` after every failed fetch of a feed or page source (DOCTOR_KINDS). It looks after
+FAILURES_BEFORE_LOOKING failures in a row, or at once on 404/410 or an answer that is no feed; at most once a day,
+never again in a streak the owner dismissed. A server error or timeout is recorded, never a move. If the old address
+reads again the error was temporary; otherwise it searches as a source add does (feed finder, then page watching),
+a same-site feed staying within the source's section. A same-site feed for a gone address is switched to
+(store.switch keeps id, posts and state); anything else found is a suggestion. A candidate at another address must
+hold the source's own items (`shared`). A host with no answer for DEAD_AFTER is marked dead (never switched off or
+deleted). `after_success` looks where a source silent far beyond its rhythm went (where_it_went) and records it
+apart (silent_finding); the doctor never switches a silent source itself.
 """
 from __future__ import annotations
 
@@ -85,14 +39,12 @@ DOCTOR_KINDS = ("generic_rss", "page_watch")   # the kinds whose address can mov
 FAILURES_BEFORE_LOOKING = 3
 GONE_STATUSES = (404, 410)
 LOOK_EVERY = timedelta(days=1)
-# Issue 0242: a host with no answer this long is dead. Not measured: two weeks is past any outage a site comes back
-# from on its own (the two dead hosts on the server had been unreachable for weeks), and short of the owner's wait.
+# A host with no answer this long is dead; not measured: past any outage a site recovers from on its own (0242).
 DEAD_AFTER = timedelta(days=14)
 STORED_ITEMS = 50          # the source's latest stored posts a candidate is compared with; not measured
 LATEST_TITLES = 5          # the candidate's titles shown before Switch (page watching's preview has 5)
 
-# Issue 0178: silent far beyond its own rhythm. Not measured: 5 gaps is a run of misses no rhythm has by
-# chance often (a daily source silent 5 days), and the floor keeps a busy source's quiet fortnight from counting.
+# Silent far beyond its own rhythm; not measured: 5 gaps is rarely chance, the floor spares a busy source's lull.
 SILENT_GAPS = 5
 SILENT_FLOOR = timedelta(days=14)
 LOOK_SILENT_EVERY = timedelta(days=7)
@@ -109,10 +61,10 @@ WORKING_AGAIN: Dict[str, Any] = {"replacement": None, "dismissed": False, "worki
 # Recorded with the error's `status` (None for a timeout).
 SERVER_ERROR: Dict[str, Any] = {"replacement": None, "dismissed": False, "server_error": True,
                                 "note": "server error, not moved"}
-# The finding on a fetch that worked and stored nothing (issue 0135, kinds.base.EmptyFetch): the address
-# answers, so it is never "working again" and nothing replaces it; recorded with the fetch's reason (note).
+# The finding on a fetch that worked and stored nothing (kinds.base.EmptyFetch): recorded with its reason, never
+# "working again", nothing replaces it.
 EMPTY_FETCH: Dict[str, Any] = {"replacement": None, "dismissed": False, "empty_fetch": True}
-# The finding on a dead host (issue 0242), with its host, since when and why; the owner switches it off or replaces it.
+# The finding on a dead host, with its host, since when and why; the owner switches it off or replaces it.
 DEAD: Dict[str, Any] = {"replacement": None, "dismissed": False, "dead": True}
 
 
@@ -125,9 +77,8 @@ class DoctorStore(Protocol):
 
 
 def failure_signal(error: Optional[BaseException]) -> Optional[str]:
-    """"gone" (HTTP 404/410), "server_error" (HTTP 5xx or a timeout), "not_feed" (the answer
-    does not parse as a feed), "empty" (it answered and nothing was stored, issue 0135), "unreachable" (the host
-    does not resolve or has no route, issue 0242), else None."""
+    """"gone" (404/410), "server_error" (5xx or a timeout), "not_feed", "empty" (nothing stored), "unreachable"
+    (no resolve or no route), else None."""
     if isinstance(error, EmptyFetch):
         return "empty"
     if isinstance(error, HttpError) and getattr(error, "unreachable", False):
@@ -150,7 +101,7 @@ def should_look(kind_name: str, state: FetchStateRow, signal: Optional[str], now
 
 
 def no_answer(error: Optional[BaseException]) -> Optional[str]:
-    """Why the host gave no answer (issue 0242): "does not resolve or has no route", "times out", else None."""
+    """Why the host gave no answer: "does not resolve or has no route", "times out", else None."""
     if not isinstance(error, HttpError):
         return None
     if getattr(error, "unreachable", False):
@@ -160,9 +111,9 @@ def no_answer(error: Optional[BaseException]) -> Optional[str]:
 
 def dead_finding(source: Mapping[str, Any], state: FetchStateRow, error: Optional[BaseException],
                  now: datetime) -> Optional[Dict[str, Any]]:
-    """The dead-host finding (issue 0242) when the source's host gave no answer and the source has not worked for
-    DEAD_AFTER (since its last success, else since it was added), else None. Not in a streak the owner dismissed,
-    and at most once a LOOK_EVERY; a bare handle (no host) is never dead here."""
+    """The dead-host finding when the host gave no answer and the source has not worked for DEAD_AFTER (since its
+    last success, else its add), else None. Not in a dismissed streak, at most once a LOOK_EVERY; a bare handle is
+    never dead here."""
     reason = no_answer(error)
     address = str(source.get("handle_or_url") or "")
     host = host_of(address) if "://" in address else ""
@@ -195,9 +146,8 @@ def _same(a: str, b: str) -> bool:
 
 
 def within_section(candidate: str, address: str) -> bool:
-    """A feed on the source's site stays within its section ("/oldnewthing/" for
-    "/oldnewthing/feed"); for a source at the root ("/rss") that is the whole site. A feed on
-    another site is never switched to (only suggested), so it is not judged here."""
+    """A feed on the source's site stays within its section ("/oldnewthing/" for "/oldnewthing/feed"); for a
+    source at the root that is the whole site. Another site's feed is only suggested, so not judged here."""
     if publication_of(host_of(candidate)) != publication_of(host_of(address)):
         return True
     scope = urllib.parse.urlparse(section(address)).path
@@ -205,8 +155,7 @@ def within_section(candidate: str, address: str) -> bool:
 
 
 def shared(stored: Sequence[Item], urls: Sequence[str], titles: Sequence[str]) -> int:
-    """How many of a candidate's items are the source's own: the same address, or the same
-    title (utils/titles.title_key), as one of its stored posts; the larger of the two counts."""
+    """How many of a candidate's items are the source's own, by address or by title_key; the larger count."""
     addresses = {normalize_url(url) for url, _ in stored} - {None}
     keys = {title_key(title) for _, title in stored} - {""}
     return max(sum(normalize_url(url) in addresses for url in dict.fromkeys(urls)),
@@ -239,11 +188,10 @@ async def reads_again(http: KindHttp, address: str, page_watch_settings: Optiona
 
 async def find_replacement(http: KindHttp, registry: KindRegistry, address: str, *,
                            follows_page: bool = False, stored: Sequence[Item] = ()) -> Optional[Replacement]:
-    """A feed for the address's site (other than the address, within its section), else a page
-    to follow, else None; at another address, only one holding the source's own items (`stored`,
-    its latest posts). `follows_page`: the source already follows the address as a page."""
-    # The finder on the address reads its first-segment section and home page itself; a
-    # deeper section ("/a/b/") needs a search of its own.
+    """A feed for the address's site (other than the address, within its section), else a page to follow, else
+    None; at another address, only one holding the source's own items (`stored`). `follows_page`: the source
+    already follows the address as a page."""
+    # the finder reads the first-segment section and home page itself; a deeper section needs its own search
     pages: List[str] = [address] + ([section(address)] if len(path_segments(section(address))) >= 2 else [])
     blog_pages: List[str] = []
     menu: List[str] = []
@@ -259,12 +207,9 @@ async def find_replacement(http: KindHttp, registry: KindRegistry, address: str,
             logger.info("Source doctor: %s holds none of %s's items", feed.url, address)
         blog_pages += finding.pages
         menu += finding.menu
-    # The section's page; for a source at the root that is the address itself: a site whose
-    # address answers a page, not a feed (incompleteideas.net), is followed as that page.
+    # the section's page; for a source at the root, the address itself (followed as a page)
     listing = section(address)
-    # At the root, the whole site is the section: its own blog or news page with the most
-    # articles comes before its home page (issue 0041), else a menu link that reads as an
-    # article list (issue 0047), as for any source add.
+    # at the root: the site's blog or news page with the most articles, else an article-list menu link
     offered = await page_watch.offers(http, blog_pages, menu) if page_watch.is_home(listing) else []
     for offer in offered:
         if (candidate := _page(offer["url"], offer, stored))["shared"]:
@@ -285,9 +230,8 @@ async def find_replacement(http: KindHttp, registry: KindRegistry, address: str,
 
 def silent_beyond_rhythm(last_post_at: Optional[datetime], mean_gap_seconds: Any, cadence_tier: Any,
                          now: datetime) -> Optional[timedelta]:
-    """How long a source has been silent, when that is far beyond its own rhythm (issue 0178): over
-    max(SILENT_GAPS x its mean gap, SILENT_FLOOR) since its newest post; None when it is not, has no post, or
-    its cadence is not measured (no mean gap, or the "unknown" tier: too few posts to have a rhythm)."""
+    """How long a source has been silent, when over max(SILENT_GAPS x its mean gap, SILENT_FLOOR) since its newest
+    post; None when it is not, has no post, or its cadence is not measured."""
     tier = getattr(cadence_tier, "value", cadence_tier)
     if last_post_at is None or mean_gap_seconds is None or tier in (None, "", "unknown"):
         return None
@@ -312,12 +256,10 @@ def _elsewhere(url: str, landed: str) -> bool:
 
 async def where_it_went(http: KindHttp, registry: KindRegistry, address: str, *, last_post_at: Optional[datetime],
                         newest_posts: Sequence[str] = ()) -> Dict[str, Any]:
-    """Where a silent source went (issue 0178): {moved: [{via, from, to}], replacement: {kind: feed, url, title,
-    latest, newest, via} | None}. `moved`: its address, its home page or one of its newest posts' own pages
-    (`newest_posts`, newest first) now landing on another site. The feed finder runs on each such landing, then
-    on its home page; the first feed that is not the source's own address, publishes after `last_post_at` (it is
-    alive) and, on the source's own site, stays within its section (within_section) is the replacement.
-    Never raises for a site's failure."""
+    """Where a silent source went: {moved: [{via, from, to}], replacement: {kind: feed, url, title, latest,
+    newest, via} | None}. `moved`: its address, home page or newest posts' pages landing on another site. The
+    replacement is the first feed found there (then on its home page) that is not its own address, publishes after
+    `last_post_at` and, on its own site, stays within its section. Never raises for a site's failure."""
     probes: List[Tuple[str, str]] = [("address", address), ("home page", home_of(address))]
     probes += [("post", url) for url in list(dict.fromkeys(u for u in newest_posts if u))[:NEWEST_PROBED]]
     moved: List[Dict[str, str]] = []
@@ -375,14 +317,14 @@ class SourceDoctor:
                              error: Optional[BaseException], progress: Any) -> None:
         signal, now = failure_signal(error), self.clock()
         if signal == "empty" and state is not None:
-            # Any kind (a channel whose every video was skipped too): its reason, nothing looked for.
+            # any kind: its reason, nothing looked for
             await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now,
                                     finding={**EMPTY_FETCH, "note": str(error)})
             logger.info("Source doctor: %s: %s", source.get("handle_or_url"), error)
             return
         dead = dead_finding(source, state, error, now) if state is not None else None
         if dead is not None:
-            # Any kind with an address: switched off or replaced by the owner, never here (issue 0242).
+            # any kind with an address: switched off or replaced by the owner, never here
             await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding=dead)
             logger.warning("Source doctor: %s is dead: %s", source.get("handle_or_url"), dead["note"])
             return
@@ -402,7 +344,7 @@ class SourceDoctor:
         name = str(settings.get("display_name") or address)
         followed = settings.get("page_watch") if isinstance(settings.get("page_watch"), dict) else None
         if followed is None and settings.get("substack") is not True and hasattr(self.store, "merge_settings"):
-            # Issue 0167: a Substack publication on its own domain read as a plain feed: read by its kind from now.
+            # a Substack publication on its own domain read as a plain feed: read by its kind from now
             why = await substack.recognise(self.http, address)
             if why:
                 await asyncio.to_thread(self.store.merge_settings, str(source["id"]), {"substack": True})
@@ -412,7 +354,7 @@ class SourceDoctor:
                 logger.info("Source doctor: %s is a Substack publication on its own domain (%s)", name, why)
                 return
         if await reads_again(self.http, address, followed):
-            # A temporary error (devblogs.microsoft.com's SSL on the server): nothing to replace.
+            # a temporary error: nothing to replace
             await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding=WORKING_AGAIN)
             logger.info("Source doctor: %s: temporary error, working again (%s)", name, address)
             return
@@ -441,8 +383,8 @@ class SourceDoctor:
 
     async def after_success(self, source: Mapping[str, Any], kind: Any, state: Optional[FetchStateRow],
                             new_posts: int = 0) -> None:
-        """After a fetch that worked (issue 0178): a source silent far beyond its rhythm has where it went looked
-        for and recorded; one that posts again has its silence cleared. Never switches; never raises."""
+        """After a fetch that worked: a source silent far beyond its rhythm has where it went recorded; one that
+        posts again has its silence cleared. Never switches; never raises."""
         try:
             await self._after_success(source, kind, state, new_posts)
         except Exception:  # noqa: BLE001 - the doctor is never worth the run
@@ -505,7 +447,7 @@ class DbDoctorStore:
         return self._switch(source_id, url, page_watch)
 
     def merge_settings(self, source_id: str, settings: Dict[str, Any]) -> None:
-        """What the doctor learned the source is (issue 0167: {"substack": True}), into its settings."""
+        """What the doctor learned the source is ({"substack": True}), into its settings."""
         from insight_core.db.repo_sources import SourcesRepository
 
         with db.connection(self.db_url) as conn:
@@ -514,7 +456,7 @@ class DbDoctorStore:
             conn.commit()
 
     def record_silence(self, source_id: str, *, checked_at: datetime, finding: Optional[Dict[str, Any]]) -> None:
-        """Where a silent source went (issue 0178); None clears it."""
+        """Where a silent source went; None clears it."""
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 FetchStateRepository().record_silence(cur, source_id, checked_at=checked_at, finding=finding)

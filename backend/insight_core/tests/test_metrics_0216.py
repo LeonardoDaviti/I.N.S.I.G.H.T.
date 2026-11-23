@@ -1,5 +1,5 @@
-"""0216: process monitoring. Each process's own memory and CPU (utils/peak, the heartbeats), each job's runs counted
-in mx_jobs (migration 0151), and GET /metrics in Prometheus' text format (services/metrics.py)."""
+"""Process monitoring (0216): each process's own memory and CPU, each job's runs counted in mx_jobs, and GET /metrics
+in Prometheus' text format (services/metrics.py)."""
 from __future__ import annotations
 
 import json
@@ -129,9 +129,8 @@ class TheBeatsCarryTheNumbers(_Folder):
         self.assertIn("cpu_s", p)
 
     def test_an_ended_api_process_is_listed_no_more(self):
-        """0233 (0225 #18): the supervisor's beat is the API processes alive now: a process that ended (a gone pid,
-        the previous container's, uvicorn's own before its workers) leaves the list at the next beat, not an hour
-        later; the loops' beats are not the supervisor's."""
+        """The supervisor's beat lists the API processes alive now: an ended process leaves at the next beat; the
+        loops' beats are not the supervisor's (0233)."""
         from insight_core.scripts import api_supervisor
         t = time.time()
         heartbeat.beat("api-4000001", now=t - 5, stats={"rss_mb": 300.0})        # ended a moment ago

@@ -12,16 +12,12 @@ import { useMarkxOn } from '../../hooks/useMarkxOn';
 
 type Option = Destination | { id: 'toggle-theme' | 'reading-settings'; label: string; group: string; to?: undefined };
 
-/**
- * The quick switcher: the places to go, then "Search posts…", which searches every post
- * for what was typed (issue 0040). It opens
- * many times a day, so it never animates (emil: frequency decides motion).
- * Combobox + listbox semantics; ↑/↓ move, Enter goes, Esc closes.
- */
+/** The quick switcher: the places to go, then "Search posts…" for what was typed. Opens many times a day, so it
+ *  never animates. Combobox + listbox semantics; ↑/↓ move, Enter goes, Esc closes. */
 export default function QuickSwitcher({ open, onOpenChange, onOpenReadingSettings }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Opens the reading settings (font, size, width; issue 0045). */
+  /** Opens the reading settings (font, size, width). */
   onOpenReadingSettings?: () => void;
 }) {
   const navigate = useNavigate();
@@ -50,7 +46,7 @@ export default function QuickSwitcher({ open, onOpenChange, onOpenReadingSetting
     if (onOpenReadingSettings && (!q || q.split(/\s+/).every((word) => readingWords.includes(word)))) {
       matches.push({ id: 'reading-settings', label: 'Reading settings: font, size, width', group: 'settings' });
     }
-    // Always last, so a typed place still comes first; with nothing else matching it is the one option.
+    // always last, so a typed place still comes first; with nothing else matching it is the one option
     const typed = query.trim();
     matches.push({
       id: 'search-posts',

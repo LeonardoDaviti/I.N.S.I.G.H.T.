@@ -1,11 +1,6 @@
-"""Names that surge, joins that hold (issue 0070, part A).
-
-- A name's burst is made of the sources followed for the whole 30 days before it: a newer source's
-  posts join it but don't start it, make it or age the name; 2+ of its voices didn't say it then.
-- A later burst of 3+ voices new to a name surges too, unless a few voices keep saying it.
-- Titles are compared as plain letters (NFKC), and a word glued to another script's capital splits.
-
-The rules as pure functions; the job on the database in one transaction per test, rolled back.
+"""Names that surge, joins that hold (0070 A): a name's burst is made of the sources followed for the 30 days before
+it; a later burst of 3+ new voices surges too unless a few voices keep saying it; titles compare as NFKC letters. The
+rules as pure functions; the job on the database, rolled back.
 """
 from __future__ import annotations
 
@@ -43,7 +38,7 @@ def launch(*sources, hours=0, title="Gemini 4 Carbon is here"):
 
 class NameEvidenceTests(unittest.TestCase):
     def test_a_newer_source_joins_a_burst_but_doesnt_make_or_age_it(self):
-        # ravi_codes, added 13 days before, leaked the name 11 times; then the launch.
+        # a source added 13 days before leaked the name 11 times; then the launch
         leaks = said("ravi", -24 * 9, n=11)
         everyone = {**followed("s1", "s2", "s3"), "ravi": T0 - timedelta(days=13)}
         [found] = [s for s in surges(leaks + launch("s1", "s2", "s3", "ravi"), everyone) if s.name == "gemini 4 carbon"]
@@ -62,7 +57,7 @@ class NameEvidenceTests(unittest.TestCase):
 
 class NameWaveTests(unittest.TestCase):
     def test_a_later_wave_of_three_new_voices_surges(self):
-        # Mistral Large 4: launched on 6 Oct, open weights on 29 Oct.
+        # a launch, then open weights three weeks later
         everyone = followed(*[f"s{i}" for i in range(1, 8)])
         first = launch("s1", "s2", "s3", title="Mistral Large 4 is out")
         weights = launch("s4", "s5", "s6", "s7", hours=24 * 23, title="Mistral Large 4 is now open weight")
@@ -76,7 +71,7 @@ class NameWaveTests(unittest.TestCase):
                          "two new voices and one that said it: no wave")
 
     def test_a_series_a_few_voices_keep_saying_is_no_wave(self):
-        # "Notes from May 2026", "rose bud thorn - may 2026": monthly posts of the same voices.
+        # monthly posts of the same voices
         everyone = followed(*[f"s{i}" for i in range(1, 9)])
         month = [p for i in range(1, 6) for p in said(f"s{i}", -24 * (25 - i), title="Notes from May 2026")]
         end = launch("s6", "s7", "s8", title="Notes from May 2026")
@@ -163,8 +158,7 @@ class PostAboutOneStoryTests(unittest.TestCase):
         self.assertEqual(story.parents["c"], (None, self.ORIGIN, "citation"))
 
     def test_a_release_post_listing_links_joins_a_saved_origin_too(self):
-        """0113: its story's origin is a page you saved, saved days later: the post still joins (0123's measure:
-        the post left its story when the saved page was its origin as a post, not as the page)."""
+        """Its story's origin is a page you saved, saved days later: the post still joins (0113)."""
         saved = trees.post("s", "saved-source", kind="saved", url=self.ORIGIN, hours=24 * 6, title="Mistral Large 4")
         links = [("https://huggingface.co/ggml-org/Mistral-Large-4-GGUF", None), ("https://huggingface.co/unsloth/m-GGUF", None),
                  (self.ORIGIN, "s"), (self.MODEL, None)]
@@ -236,8 +230,8 @@ class SavedIsNoVoiceTests(unittest.TestCase):
         self.assertEqual(tally(story.posts, story.roles, []), (2, 0, 0), "News counts the two voices")
 
     def test_a_page_saved_long_after_its_links_keeps_its_story(self):
-        """0113's measure: a page saved, and dated, days after the posts linking it pulled its story apart
-        (31 of 50). Its linkers keep the page's link join; the saved page joins them whatever its date."""
+        """A page saved, and dated, days after the posts linking it: its linkers keep the page's link join; the saved
+        page joins them whatever its date (0113)."""
         for hours in (24 * 10, -24 * 365):   # saved ten days later; a page dated a year before
             saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=hours, title="GitHub - unslothai/unsloth")
             posts = [saved, trees.post("dh", "account-x", kind="x", links=[(self.PAGE, "saved")]),
@@ -260,9 +254,8 @@ class SavedIsNoVoiceTests(unittest.TestCase):
         self.assertEqual({p.id for p in story.posts}, {"saved", "dh", "tg"})
 
     def test_a_saved_page_dated_by_its_first_link_joins_by_its_date(self):
-        """No link join (two posts one story by their title, linking the page four days apart): a page that states
-        no date is dated by its first link (the save path), and joins the post linking it within 72 hours of it,
-        so it is in their story (0113's measure: a video page)."""
+        """With no link join, a page that states no date is dated by its first link and joins the post linking it
+        within 72 hours, so it is in their story (0113)."""
         title = "A new open video model ships today"
         saved = trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=0)
         posts = [saved, trees.post("a", "channel-a", kind="telegram", title=title, links=[(self.PAGE, "saved")]),

@@ -1,38 +1,12 @@
-"""The event-type seam (issue 0175, v10.16 slice H): what kind of happening a post reports, whichever guide read it.
+"""The event-type seam: what kind of happening a post reports, whichever guide read it.
 
-Every module that asks "what type of event is this post (or this story)?" asks here, never the readings' raw fields,
-so a read guide can change (a closed event-type field, 0166's next step) without touching a consumer.
-
-The interface (what a caller must know):
-  - `of_posts(cur, post_ids) -> {post: EventType}`: the posts with a reading under any guide this seam reads (a post
-    with none is absent). `EventType` has
-      - `type`: the post's closed event type (schemas.EVENT_TYPES), None when no reading gave one;
-      - `origin`: who tells it (maker, relay, other), from the same reading as `type`;
-      - `group` and `stage`: the happening group of the reading's main action (release, deal, funding, legal, people,
-        pricing, research, announcement; None for reported / other / no main) and its stage (rumored, announced,
-        released, closed). A happening's parties may refine the group (happening.key): the seam gives the action's.
-  - `of_stories(cur, {story: [post ids]}) -> {story: type or None}`: the story's kind of happening (folds.story_type
-    over its posts' types, in their own-date order: the most common news type, a tie to the first).
-  - `types_of(cur, post_ids) -> {post: (type, origin)}`: every post asked, (None, None) when none read.
-  - `typed_sql(post_column, types_placeholder)`: a SQL condition "this post has one of these types", for a query over
-    a window too wide to fetch every post's type first.
-  - `action_group(action) -> (group, stage)` and `from_reading(reading, guide) -> EventType`: the pure mapping, for a
-    caller that already holds a reading (happening.key).
-  - A round-up's items (units, markx/units.py) are typed by their own question (kind `unit_types`): `of_units(cur,
-    post_ids) -> {(post, text sha): UnitType}` (type, headline, continues) and `UNIT_NEWS` / `unit_is_news`: the types
-    an own round-up keeps (the News types: no promotion, opinion, explainer, community post, promo or other).
-  - The type lists (v10.17, 0190), each made from schemas.EVENT_TYPES: `NEWS_TYPES` (a confirmed happening: what
-    makes a story News), `LEAK`, `ANNOUNCED` (Discover's main source: an actor's own announcement) and `UNIT_NEWS`.
-  - `main_objects(cur, post_ids) -> {post: object}`: the thing the main action is about, as GROUP_GUIDE's reading
-    says it (components reads it to tell a component from its product).
-
-Which guide gives what (the adapters; a new guide is one entry here, its consumers unchanged):
-  - `type` / `origin`: the first of TYPE_GUIDES with a reading (today read-v3's `event_type` and `origin`, asked of
-    Mark X stories' members only).
-  - `group` / `stage`: GROUP_GUIDE's main.action (today read-v2's) through ACTION_GROUPS and SYNONYMS (verbs the model
-    writes outside read-v2's list). A future closed type would map to a group in TYPE_GROUPS, preferred over the verb.
-Readings are never changed once written (repo.add_reading: the first stays), so a post's EventType changes only when a
-new reading lands.
+Every module that asks "what type of event is this post (or story)?" asks here, never the readings' raw fields, so a
+read guide can change without touching a consumer. Entry points: `of_posts` ({post: EventType}: `type`, `origin`,
+`group`, `stage`, `subtype`: the type's finer kind from ent-v6, None before it), `of_stories`, `types_of`, `typed_sql` (a SQL condition for a window too wide to fetch), the pure
+`action_group` and `from_reading`, `of_units` / `unit_is_news` (a round-up's items), `main_objects`, and the type lists
+made from schemas.EVENT_TYPES (NEWS_TYPES, LEAK, ANNOUNCED, UNIT_NEWS). `type` / `origin` come from the first of
+TYPE_GUIDES with a reading; `group` / `stage` from GROUP_GUIDE's main.action (ACTION_GROUPS, SYNONYMS). A new guide is
+one entry here. Readings are never changed once written, so a post's EventType changes only when a new reading lands.
 """
 from __future__ import annotations
 
@@ -44,11 +18,11 @@ from insight_core.markx import pairing, schemas
 
 TYPE_GUIDES: Tuple[str, ...] = ("read-v3",)   # readings with a closed event type, preferred first
 GROUP_GUIDE = "read-v2"                       # the reading whose main action names the happening group
-V5 = "ent-v5"                                 # 0212: ent-v5's reading carries both (read-v3's type, read-v2's main)
+V5 = "ent-v5"                                 # ent-v5's reading carries both (read-v3's type, read-v2's main)
 
 
 def type_guides(cur: Any) -> List[str]:
-    """0212: TYPE_GUIDES through reading5's one preference list (ent-v5 first while its switch is on)."""
+    """TYPE_GUIDES through reading5's one preference list (ent-v5 first while its switch is on)."""
     from insight_core.markx import reading5
     return reading5.guides(cur, *TYPE_GUIDES)
 
@@ -80,19 +54,19 @@ SYNONYMS: Dict[str, Tuple[Optional[str], Optional[str]]] = {
     "departed": ("people", "announced"),
 }
 # A closed event type -> its happening group, once a guide's type is trusted to name one (none yet: read-v3's types
-# are a story's kind, too coarse for a happening; 0166's guide change fills this, measured first).
+# are a story's kind, too coarse for a happening).
 TYPE_GROUPS: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
 
 
-# The type lists every consumer reads, each made here from the closed types (schemas.EVENT_TYPES; v10.17, 0190: they
-# were three hand-written copies in folds, event_types and Discover's main source).
+# The type lists every consumer reads, each made here from the closed types (schemas.EVENT_TYPES).
 LEAK = "leak_rumour"              # a reported, unconfirmed happening
+RELEASES = frozenset({"model_release", "product_release"})   # a release itself (news.launch_order)
 NOT_HAPPENINGS = ("opinion_analysis", "tutorial_explainer", "digest", "community_post", "other")
 # A confirmed happening's types: what makes a story News (folds.story_type, built), in EVENT_TYPES' order.
 NEWS_TYPES: Tuple[str, ...] = tuple(t for t in schemas.EVENT_TYPES if t != LEAK and t not in NOT_HAPPENINGS)
-# Discover's main source (0170): a happening its actor announces itself, never a lawsuit's or a regulator's.
+# Discover's main source: a happening its actor announces itself, never a lawsuit's or a regulator's.
 ANNOUNCED: FrozenSet[str] = frozenset(NEWS_TYPES) - {"policy_legal"}
-# 0181: a round-up item's types (schemas.UNIT_TYPES) and those an own round-up keeps: the News types (promotion_event
+# a round-up item's types (schemas.UNIT_TYPES) and those an own round-up keeps: the News types (promotion_event
 # is no unit type: an item's promotion is `promo`) and LEAK.
 UNIT_TYPES: Tuple[str, ...] = tuple(schemas.UNIT_TYPES)
 UNIT_NEWS: Tuple[str, ...] = tuple(t for t in NEWS_TYPES if t != "promotion_event") + (LEAK,)
@@ -126,6 +100,7 @@ class EventType:
     origin: Optional[str] = None   # maker / relay / other, with the type
     group: Optional[str] = None    # the happening group of the main action, None: names none
     stage: Optional[str] = None
+    subtype: Optional[str] = None  # v10.42: the type's finer kind (schemas.SUBTYPES), with the type; None: none given
 
 
 NONE = EventType()
@@ -144,10 +119,11 @@ def from_reading(reading: Optional[Mapping[str, Any]], guide: str) -> EventType:
     typ = origin = None
     if guide in TYPE_GUIDES or guide == V5:
         typ, origin = reading.get("event_type"), reading.get("origin")
+    subtype = reading.get("subtype") if guide == V5 else None
     group, stage = TYPE_GROUPS.get(typ or "", (None, None))
     if group is None and guide in (GROUP_GUIDE, V5):
         group, stage = action_group((reading.get("main") or {}).get("action"))
-    return EventType(typ, origin, group, stage)
+    return EventType(typ, origin, group, stage, subtype)
 
 
 def of_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, EventType]:
@@ -157,30 +133,30 @@ def of_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, EventType]:
         return {}
     types, groups = type_guides(cur), group_guides(cur)
     guides = sorted(set(types) | set(groups))
-    cur.execute("""SELECT post_id::text, guide, reading->>'event_type', reading->>'origin', reading->'main'->>'action'
-                     FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND guide = ANY(%s)""", (ids, guides))
+    cur.execute("""SELECT post_id::text, guide, reading->>'event_type', reading->>'origin', reading->'main'->>'action',
+                          reading->>'subtype' FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND guide = ANY(%s)""", (ids, guides))
     got: Dict[str, Dict[str, Tuple]] = {}
-    for pid, guide, typ, origin, action in cur.fetchall():
-        got.setdefault(pid, {})[guide] = (typ, origin, action)
+    for pid, guide, typ, origin, action, subtype in cur.fetchall():
+        got.setdefault(pid, {})[guide] = (typ, origin, action, subtype)
     out = {}
     for pid, by in got.items():
-        typ = origin = None
+        typ = origin = subtype = None
         for g in types:
             if g in by:
-                typ, origin = by[g][0], by[g][1]
+                typ, origin, subtype = by[g][0], by[g][1], by[g][3]
                 break
         group, stage = TYPE_GROUPS.get(typ or "", (None, None))
         for g in groups:
             if group is None and g in by:
                 group, stage = action_group(by[g][2])
                 break
-        out[pid] = EventType(typ, origin, group, stage)
+        out[pid] = EventType(typ, origin, group, stage, subtype)
     return out
 
 
-# 0217: a reading's kind and main action as a closed type, for a consumer that groups by kind of happening and has a
-# reading but no closed type (read-v2, the post panel's view): a round-up a digest, a commentary an opinion, a tool an
-# explainer; a report by its action's happening group, an announcement still rumoured a leak.
+# a reading's kind and main action as a closed type, for a consumer that has a reading but no closed type (read-v2):
+# a round-up a digest, a commentary an opinion, a tool an explainer; a report by its action's happening group, an
+# announcement still rumoured a leak.
 KIND_TYPES = {"roundup": "digest", "commentary": "opinion_analysis", "tool": "tutorial_explainer"}
 GROUP_TYPES = {"release": "model_release", "pricing": "product_release", "deal": "business_event",
                "funding": "business_event", "legal": "policy_legal", "people": "public_statement",
@@ -239,7 +215,7 @@ def typed_sql(post: str, types: str, guides: Sequence[str] = TYPE_GUIDES) -> str
     text[] placeholder, e.g. "%(types)s"), by the same guide order as `of_posts`. For a query over many posts (a
     window of stories) that can't fetch every post's type first."""
     conds = []
-    for n, g in enumerate(guides):   # 0212: `guides` = type_guides(cur) at the caller (ent-v5 first when on)
+    for n, g in enumerate(guides):   # `guides` = type_guides(cur) at the caller (ent-v5 first when on)
         earlier = "".join(f" AND NOT EXISTS (SELECT 1 FROM mx_readings e WHERE e.post_id = {post} AND e.guide = '{h}')"
                           for h in guides[:n])
         conds.append(f"EXISTS (SELECT 1 FROM mx_readings t WHERE t.post_id = {post} AND t.guide = '{g}'"

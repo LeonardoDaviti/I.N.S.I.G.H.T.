@@ -1,14 +1,8 @@
-"""FetchGates: the one place a politeness profile becomes concurrency acquisitions (spec §D.3).
+"""FetchGates: the one place a politeness profile becomes concurrency acquisitions.
 
-Moved from scripts/safe_ingest.py, where the same four objects (global semaphore, yt-dlp
-semaphore, yt-dlp start spacer, host limiter) travelled as a data clump through every
-fetch, and the archive-refresh phase re-implemented the acquisition order by hand.
-
-Gate order is load-bearing: the narrow gate (host lock, yt-dlp budget) is taken BEFORE
-the global semaphore. Taken inside it, a run of same-host sources parks every global slot
-on tasks that are merely waiting for one host lock or for the 2-slot yt-dlp budget, and
-effective concurrency collapses to 1-2. Waiting for a narrow gate must never cost a global
-slot. (interleave_by_host attacks the same problem from the other end.)
+Holds the global semaphore, the yt-dlp pool and start spacer, and the per-host limiter. Gate order is load-bearing:
+the narrow gate (host lock, yt-dlp budget) is taken BEFORE the global semaphore, so a run of same-host sources never
+parks every global slot on tasks waiting for one host (interleave_by_host attacks the same problem from the other end).
 """
 from __future__ import annotations
 
@@ -31,25 +25,22 @@ from insight_core.utils.env import env_float, env_int
 
 logger = logging.getLogger("insight.ingestion.gates")
 
-# Seconds between request STARTS to one host key. Keyed by host, not by kind, because many
-# kinds share a host: the 10 reddit .rss feeds are generic_rss, r/<sub> handles are
-# reddit_subreddit, and both must be spaced. Keys are source_host_key values (www. stripped,
-# HOST_ALIASES applied) or "platform:<p>" for bare handles.
+# Seconds between request STARTS to one host key. Keyed by host, not kind, since kinds share hosts. Keys are
+# source_host_key values (www. stripped, HOST_ALIASES applied) or "platform:<p>" for bare handles.
 HOST_FLOORS: Mapping[str, float] = {
     # The self-hosted bridge answers "Too many requests" even under a sequential cycle.
     **{host: 5.0 for host in TELEGRAM_RSS_HOSTS},
     **{host: 10.0 for host in NITTER_HOSTS},
     "reddit.com": 8.0,                 # the .rss reddit feeds (kind generic_rss)
     "platform:reddit": 8.0,            # bare r/<sub> handles (kind reddit_subreddit)
-    TELEGRAM_HOST_KEY: 2.0,            # every telegram_mtproto source (one shared client, B8)
-    SUBSTACK_HOST_KEY: 2.0,            # every substack source (one Substack backend, §10)
-    BLUESKY_HOST_KEY: 2.0,             # every bluesky source (one public AppView, issue 0137 B10)
+    TELEGRAM_HOST_KEY: 2.0,            # every telegram_mtproto source (one shared client)
+    SUBSTACK_HOST_KEY: 2.0,            # every substack source (one Substack backend)
+    BLUESKY_HOST_KEY: 2.0,             # every bluesky source (one public AppView)
 }
 
-# The learned pace (issue 0016). A host that limits us (HTTP 429) or times out is waited
-# out (its Retry-After, else DEFAULT_WAIT_S; never more than MAX_WAIT_S) and its gap doubles
-# within [MIN_LIMITED_GAP_S, MAX_GAP_S]. SHRINK_AFTER successes in a row take a quarter off
-# the gap, never below the host's floor. Kept for the life of the process.
+# The learned pace: a host that limits us (429) or times out is waited out (Retry-After, else DEFAULT_WAIT_S, at
+# most MAX_WAIT_S) and its gap doubles within [MIN_LIMITED_GAP_S, MAX_GAP_S]; SHRINK_AFTER successes in a row take a
+# quarter off, never below the floor. Kept for the life of the process.
 MAX_WAIT_S = 120.0
 DEFAULT_WAIT_S = 60.0
 MIN_LIMITED_GAP_S = 5.0
@@ -62,12 +53,8 @@ Clock = Callable[[], float]
 
 
 class HostLimiter:
-    """One in-flight request per host, request starts spaced by the host's learned gap.
-
-    A global sleep between sources buys nothing under asyncio.gather - every task sleeps at
-    the same time - while sources cluster hard by host (12 github.com, 10 reddit.com, 6
-    arxiv). Spacing belongs per host. The gap starts at the host's floor and learns from
-    limited() and succeeded().
+    """One in-flight request per host, request starts spaced by the host's learned gap (starting at its floor,
+    learning from limited() and succeeded()). Spacing is per host: a global sleep buys nothing under gather.
     """
 
     def __init__(
@@ -127,11 +114,8 @@ class HostLimiter:
 
 
 class StartSpacer:
-    """Minimum wall-clock gap between the *starts* of successive operations.
-
-    Not a HostLimiter: that holds its lock for the whole call, which would serialise the
-    youtube.com channels into one at a time and undo the yt-dlp budget. This only hands out
-    start slots, so N calls may overlap - they just cannot begin together.
+    """Minimum wall-clock gap between the *starts* of successive operations; calls may overlap. Not a HostLimiter,
+    which would serialise the youtube.com channels and undo the yt-dlp budget.
     """
 
     def __init__(self, min_interval: float, *, clock: Clock = time.monotonic, sleep: Sleep = asyncio.sleep) -> None:
@@ -156,12 +140,8 @@ class StartSpacer:
 
 
 def interleave_by_host(sources: list[dict], host_key: Callable[[dict], str] = source_host_key) -> list[dict]:
-    """Round-robin the fetch queue across hosts, keeping priority tiers in order.
-
-    asyncio.gather starts tasks in list order, so a contiguous run of ~32 youtube.com
-    channels would have every early task wanting the same gate. Interleaving makes tasks
-    that start together mostly want different gates. Within a tier the input order is
-    preserved per host, so priority still decides who goes first.
+    """Round-robin the fetch queue across hosts, keeping priority tiers in order, so tasks that start together
+    mostly want different gates. Within a tier the input order is kept per host.
     """
     tiers: dict = {}
     for source in sources:
@@ -179,11 +159,8 @@ def interleave_by_host(sources: list[dict], host_key: Callable[[dict], str] = so
     return ordered
 
 
-# One run gives a host at most this much of its spacing (issue: every source at its own pace,
-# 2026-11-11): at a host's floor that is far more sources than any host has (the Telegram bridge
-# at 5 s: 180), so it only binds when the host has limited us and its learned gap grew (120 s: 7
-# a run). The rest wait for the next tick, oldest due first, instead of stretching one tick past
-# the next.
+# One run gives a host at most this much of its spacing: it binds only once a host's learned gap grew; the rest wait
+# for the next tick, oldest due first, instead of stretching one tick past the next.
 RUN_HOST_BUDGET_S = env_float("INSIGHT_RUN_HOST_BUDGET_SECONDS", 15 * 60, minimum=0.0)
 
 
@@ -240,13 +217,12 @@ class FetchGates:
         self.host_limiter = HostLimiter(host_floors, clock=clock, sleep=sleep)
         self.sleep = sleep   # the wait a limiting host asked for, before the one retry
         self.clock = clock
-        # Each host's budget, learned from the limits archives meet (issue 0107).
+        # each host's budget, learned from the limits archives meet
         self.budgets = budgets if budgets is not None else HostBudgets()
 
     @classmethod
     def from_env(cls) -> "FetchGates":
-        # The default executor is min(32, cpu + 4) threads and every kind's I/O runs through
-        # asyncio.to_thread, so a global budget far above that only queues invisibly.
+        # every kind's I/O runs through asyncio.to_thread (min(32, cpu + 4) threads): a larger budget only queues
         db_url = os.getenv("DATABASE_URL")
         if db_url:
             from insight_core.ingestion.ports import DbHostBudgetStore   # ports imports the DB layer
@@ -257,19 +233,15 @@ class FetchGates:
         return cls(
             budgets=budgets,
             max_concurrency=env_int("INSIGHT_FETCH_MAX_CONCURRENCY", 8, minimum=1),
-            # yt-dlp's budget is per IP, not per channel: 2026-07-23 one video spent 7.5 min
-            # retrying "Sign in to confirm you're not a bot" with 22 channels in flight.
+            # yt-dlp's budget is per IP, not per channel (too many in flight trigger bot checks)
             ytdlp_concurrency=env_int("INSIGHT_YTDLP_CONCURRENCY", 2, minimum=1),
             ytdlp_min_start_interval_s=env_float("INSIGHT_YTDLP_MIN_INTERVAL", 3.0, minimum=0.0),
         )
 
     @classmethod
     def shared(cls) -> "FetchGates":
-        """The process-wide gates for the running event loop (env-configured).
-
-        asyncio primitives bind to the loop that first uses them, so the singleton is kept
-        per loop: the API process has one loop and therefore one set of gates; a CLI run or a
-        test gets its own.
+        """The process-wide gates for the running event loop (env-configured); kept per loop, since asyncio
+        primitives bind to the loop that first uses them.
         """
         loop = asyncio.get_running_loop()
         gates = cls._shared.get(loop)

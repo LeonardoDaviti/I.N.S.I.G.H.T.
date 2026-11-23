@@ -1,23 +1,9 @@
-"""Export everything (issue 0079): the whole database as one zip, streamed to the browser.
+"""Export everything: the whole database as one zip streamed to the browser, nothing kept on the server.
 
-The zip (`insight-YYYY-MM-DD-HHMM.zip`, written as it streams; nothing is kept on the server):
-  - one CSV per table (`posts.csv`, …), written by `COPY … TO STDOUT (FORMAT csv, HEADER)` and
-    read in chunks, so no table is ever held whole; every table in the app's schema but the
-    migrations' bookkeeping, which goes in the manifest;
-  - schema.sql: the migrations it was made at, in order;
-  - manifest.json: the version and commit, the migrations, the time, each table's rows, whether
-    logins are included;
-  - README.txt: how to restore it (db/import_export.py) and how to explore it alone.
-All of it reads one snapshot (a repeatable-read, read-only transaction on a connection of its
-own, with no statement timeout), so the tables agree with each other.
-
-One export runs at a time, across the API's processes (issue 0187): its connection holds a session advisory lock
-(EXPORT_LOCK) for as long as it streams, and a second asked meanwhile is ExportBusy (the API's 400), before any
-byte. The lock ends with the connection, however the export ends.
-
-Logins (the `credentials` table: the Substack cookie, the Telegram API id, hash and sign-in
-session) are written as an empty CSV unless asked for; even then they are the stored ciphertext,
-which reads only with this server's secret key.
+The zip holds one CSV per table (COPY in chunks, never a whole table in memory), schema.sql, manifest.json and
+README.txt, all read from one repeatable-read snapshot so the tables agree. One export at a time across the API's
+processes (a session advisory lock, EXPORT_LOCK; a second is ExportBusy before any byte). Logins (`credentials`)
+are an empty CSV unless asked for, and even then only the ciphertext, readable with this server's secret key.
 """
 from __future__ import annotations
 
@@ -44,12 +30,8 @@ logger = logging.getLogger(__name__)
 LOGIN_TABLES = ("credentials",)
 LOGINS_INCLUDE = ("the Substack session cookie and the Telegram API id, hash and sign-in session, "
                   "encrypted: they work after a restore only with this server's secret key")
-# The estimate before the click (issue 0105), from the live rows: the bytes their values are stored in
-# (pg_column_size, read off each row without opening TOAST), never the tables' size, which counts the dead
-# space a rewrite leaves (the lab's posts: 652 MB on disk, 404 MB in live values). Measured 2026-11-05 on
-# the lab and a restored copy of it (issue 0105's Built section): 499 MB of live values on both, the zip
-# 243 MB (0.487 of it) in 27-34 s (~18 MB of it a second). Once an export has run, the last one's real
-# size and time instead, scaled by how the live rows grew since.
+# The estimate before the click: the live rows' stored bytes (never the tables' size, which counts dead space)
+# at these rates, or the last export's real size and time scaled by the rows' growth. measured: plan/issues/0105
 SIZE_RATIO = 0.49
 STORED_BYTES_PER_SECOND = 18e6
 LAST_EXPORT_KEY = "last_export"   # system_settings: {bytes, seconds, stored_bytes, logins_included, at}
@@ -133,9 +115,8 @@ def schema_sql(versions: List[str]) -> str:
 
 
 def live_bytes(cur: Any, tables: List[str]) -> int:
-    """The bytes the live rows' values are stored in, over `tables` (issue 0105): each column's
-    pg_column_size, which reads a TOASTed value's stored size off its pointer without opening it.
-    Dead rows (the space a rewrite left) are not counted. One scan of each table's heap."""
+    """The bytes the live rows' values are stored in, over `tables` (pg_column_size: TOAST is not opened; dead
+    rows not counted). One scan of each table's heap."""
     if not tables:
         return 0
     cur.execute("SELECT c.relname, a.attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
@@ -152,10 +133,8 @@ def live_bytes(cur: Any, tables: List[str]) -> int:
     return total
 
 
-# An export's progress, as GET /api/export/progress/<token> reads it, is also kept in a file per token here
-# (issue 0112 Decided 11): with two API processes the progress is asked of the one that isn't streaming.
-# v10.17 (0188): in the logs volume (INSIGHT_LOG_DIR, /app/logs in the containers), never /tmp: the app's working
-# state lives on a volume. INSIGHT_RUNTIME_DIR still overrides it.
+# An export's progress is also kept in a file per token: with two API processes, the progress may be asked of the
+# one that isn't streaming. On the logs volume, never /tmp (INSIGHT_RUNTIME_DIR overrides).
 PROGRESS_DIR = os.path.join(os.getenv("INSIGHT_RUNTIME_DIR") or os.path.join(shared_dir(), "runtime"),
                             "export-progress")
 PUBLISH_EVERY = 1.0               # seconds between two writes of a running export's progress file
@@ -170,10 +149,8 @@ class ExportService:
         self._lock = threading.Lock()
 
     def info(self) -> Dict[str, Any]:
-        """Shown before the click: the database's size, and the zip's estimated size and time, with what
-        the estimate is from (`estimate_basis`, issue 0105): `last_export`, the last whole export's real
-        size and time scaled by how the live rows grew since (`last_export`: its bytes, seconds, time and
-        logins), else `live_rows`, the live rows' stored bytes at the ratio measured on the lab."""
+        """Shown before the click: the database's size and the zip's estimated size and time; `estimate_basis` is
+        "last_export" (the last export scaled by the rows' growth) or "live_rows"."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             tables = tables_in_load_order(cur)
             cur.execute("SELECT pg_database_size(current_database())")
@@ -330,8 +307,7 @@ class ExportService:
             conn.close()
 
     def _remember(self, size: int, seconds: float, stored: int, include_logins: bool, at: datetime) -> None:
-        """A whole export's real size and time, kept for the next estimate (issue 0105). It never fails
-        the export: the zip is already sent."""
+        """Keep a whole export's real size and time for the next estimate; never fails (the zip is already sent)."""
         try:
             with db.transaction(self.db_url) as cur:
                 SystemSettingsRepository.upsert(cur, LAST_EXPORT_KEY, {

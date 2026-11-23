@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { bylineName, bylineText, carried, carriedLine } from './byline.ts';
 
-// Issue 0185: one formatter for who wrote a post, via whom, quoting whom. Synthetic names only.
+// One formatter for who wrote a post, via whom, quoting whom (0185). Synthetic names only.
 const own = { author: null, via: 'Example Feed', quoting: null };
 const repost = { author: '@acme', via: 'Example Feed', quoting: null };
 const forward = { author: 'Acme News', via: 'Example Channel', quoting: null };
