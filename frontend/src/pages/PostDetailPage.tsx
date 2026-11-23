@@ -60,6 +60,7 @@ import { useMarkxOn } from '../hooks/useMarkxOn';
 // Mark X's folded panel (issue 0086 E): its own chunk, fetched only while Mark X is on.
 const MarkXPanel = lazy(() => import('../components/markx/MarkXPanel'));
 const MarkXRelated = lazy(() => import('../components/markx/MarkXRelated'));   // v10.36
+const PostTeach = lazy(() => import('../components/post/PostTeach'));   // v10.42: More / Less like this
 // Connected (issue 0125): Earlier, Later and Outside INSIGHT, its own chunk, loaded after the post.
 const Connected = lazy(() => import('../components/post/Connected'));
 const MarkXTranslation = lazy(() => import('../components/markx/MarkXTranslation'));   // 0130 D
@@ -1411,6 +1412,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       {markxOn && !fixture ? <Suspense fallback={null}><MarkXPanel postId={postId} url={post.url} /></Suspense> : null}
       {/* v10.36: related reading, the posts nearest by the stored vector; folded, asked only when opened */}
       {markxOn && !fixture ? <Suspense fallback={null}><MarkXRelated postId={postId} /></Suspense> : null}
+      {/* v10.42: teach INSIGHT More / Less of this post's things, its kind of news, its source */}
+      {markxOn && !fixture ? <Suspense fallback={null}><PostTeach postId={postId} /></Suspense> : null}
 
       {post.story?.thread ? <ThreadPosts story={post.story} postId={postId} /> : null}
 

@@ -151,7 +151,7 @@ describe('News (issue 0051)', () => {
     await waitFor(() => expect(screen.queryByText('Notable for you')).not.toBeInTheDocument());
     expect(within(screen.getByRole('feed', { name: 'News' })).getAllByRole('article')
       .map((row) => within(row).getByRole('heading').textContent)).toEqual(['The loud launch', 'The quiet method']);
-    await user.click(screen.getByRole('button', { name: 'Ranked for you' }));
+    await user.click(screen.getByRole('button', { name: 'Global only' }));
     expect(await screen.findByText('Notable for you')).toBeInTheDocument();
   });
 

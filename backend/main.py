@@ -1146,7 +1146,7 @@ NEWS_PAGE, CLASSICS_PAGE = 50, 100   # issue 0195: the first page is the top row
 @error_detail("load News")
 async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=1000), cursor: str | None = None,
                    mark: str = Query("main", pattern="^(main|ix)$"),
-                   order: str | None = Query(None, pattern="^(ranked|coverage)$"),
+                   order: str | None = Query(None, pattern="^(personal|ranked|coverage)$"),
                    unread: bool = False):
     """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 30
     days, with a post from the scope's sources (all | folder:<uuid> | source:<uuid>; the score
@@ -1159,6 +1159,8 @@ async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=10
     `mark=ix` asks for the older News (Mark IX's rows).
     Issue 0208: Mark X's rows are ranked for the reader (significance, coverage) with a "Notable for you" lane first
     (`news.notable`), as the switch says (`order` in the answer); `order=coverage` asks for the old order by score.
+    v10.42: `order=personal` (the default) is that order times the reader's interest (`news.personal`: its factor,
+    why and what can be taught), `order=ranked` the global order only.
     Issue 0238: each row's `news.unread` (its posts unread), `rows` and `unread_rows` over the scope; `unread=true`
     lists only the rows with an unread post (News's Unread view)."""
     from insight_core.services.news_service import reader_view   # 0215: the fields the page reads

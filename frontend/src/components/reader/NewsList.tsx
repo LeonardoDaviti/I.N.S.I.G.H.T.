@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useMemo, useState } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useMemo, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
@@ -48,6 +48,8 @@ function storyLine(item: FeedItem): string | undefined {
 }
 
 const RANKED = { name: 'News', sectionOf, storyLine };
+const ORDERS: NewsOrder[] = ['personal', 'ranked', 'coverage'];
+const ORDER_WORDS: Record<NewsOrder, string> = { personal: 'For you', ranked: 'Global only', coverage: 'By coverage' };
 
 /**
  * View news (issues 0051, 0077): the stories that 2 or more of your sources covered, of the
@@ -60,6 +62,7 @@ const RANKED = { name: 'News', sectionOf, storyLine };
  * Mark X has no rows yet the API answers Mark IX's itself and the page says so in one line.
  * Issue 0208: Mark X's rows come ranked for the reader (significance, then coverage), the significant rows coverage
  * alone would bury first under "Notable for you"; "By coverage" shows the score's order, one click away, and back.
+ * v10.42: "For you" (the default) is that order times your interest; "Global only" the order without it.
  */
 export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenChange, onUnreadDelta }: {
   scope: string;
@@ -99,7 +102,8 @@ export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenCh
   const canSwitch = older || (first !== undefined && first.mark === 'x');
   // Issue 0208: the other order of Mark X's rows, when the API says which one it sent.
   const shownOrder = !older && first?.mark === 'x' ? first.order : undefined;
-  const otherOrder: NewsOrder | undefined = shownOrder === 'ranked' ? 'coverage' : shownOrder === 'coverage' ? 'ranked' : undefined;
+  // v10.42: For you (global x your interest), Global only, By coverage: the orders not shown, one click each.
+  const otherOrders: NewsOrder[] = shownOrder ? ORDERS.filter((o) => o !== shownOrder) : [];
   const unreadCount = useMemo(() => unreadRows(query.data?.pages ?? []), [query.data]);
 
   // Issue 0238: "Mark all News read" (the button, and Shift+A in News): every row the scope lists, after a confirm,
@@ -164,14 +168,18 @@ export default function NewsList({ scope, unread = false, helpOpen, onHelpOpenCh
             onClick={() => setMark(older ? 'main' : 'ix')}>
             {older ? 'Back to News' : 'Older News view'}
           </button>
-          {otherOrder ? (
+          {otherOrders.length ? (
             <>
               {' · '}
-              {shownOrder === 'coverage' ? 'By coverage. ' : null}
-              <button type="button" className="underline underline-offset-2 hover:text-fg-1"
-                onClick={() => setOrder(otherOrder)}>
-                {otherOrder === 'coverage' ? 'By coverage' : 'Ranked for you'}
-              </button>
+              {shownOrder && shownOrder !== 'personal' ? `${ORDER_WORDS[shownOrder]}. ` : null}
+              {otherOrders.map((o, n) => (
+                <Fragment key={o}>
+                  {n ? ' · ' : null}
+                  <button type="button" className="underline underline-offset-2 hover:text-fg-1" onClick={() => setOrder(o)}>
+                    {ORDER_WORDS[o]}
+                  </button>
+                </Fragment>
+              ))}
             </>
           ) : null}
         </p>

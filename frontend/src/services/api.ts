@@ -170,7 +170,27 @@ export interface NewsScore {
   analysis?: { id: string; title: string; source: string; author: string }[];
   /** Issue 0238: the row's posts unread (its lead and its lines) when the API answered. */
   unread?: number;
+  /** v10.42: the reader's interest in it (its things, kind, source): its factor, why, and what can be taught. */
+  personal?: NewsPersonal | null;
 }
+/** v10.42: what a tap teaches: one thing (an entity), one kind of news, one source. */
+export type InterestDim = 'thing' | 'kind' | 'source';
+/** "more" / "less"; "none": not a reason; "undo": back to what INSIGHT learned from your reads. */
+export type InterestAnswer = 'more' | 'less' | 'none' | 'undo';
+export interface InterestReason {
+  dim: InterestDim; key: string; name: string; amount: number; words: string;
+  by: 'reader' | 'seed' | 'learned'; beaten: boolean;
+}
+/** v10.42: what a row (or a post) offers to teach, each with the reader's tap on it (null: none). */
+export interface InterestTeach {
+  things: { id: string; name: string; type: string | null; answer: InterestAnswer | null }[];
+  kind: { key: string; words: string; answer: InterestAnswer | null } | null;
+  source: { id: string; name: string | null; answer: InterestAnswer | null } | null;
+}
+export interface NewsPersonal {
+  p: number; factor: number; why: string | null; reasons: InterestReason[]; teach: InterestTeach;
+}
+export interface PostInterest extends InterestTeach { post: string; row: string | null; }
 /** A page your sources keep citing (issue 0051): a stored post (`post_id`) or an outside page. */
 export interface Classic {
   url: string;
@@ -280,7 +300,8 @@ export interface SinceLooked {
   tracks: SinceTrack[];
 }
 export type NewsMark = 'main' | 'ix';
-export type NewsOrder = 'ranked' | 'coverage';
+/** v10.42: personal (global x your interest, the default), ranked (global only), coverage (the score). */
+export type NewsOrder = 'personal' | 'ranked' | 'coverage';
 /** Issue 0208: a Mark X News row's kept rank: its significance (the worker's answer), coverage and fit, each 0..1. */
 export interface NewsRank {
   significance: number | null; coverage: number; fit: number; score: number;
@@ -1674,6 +1695,10 @@ export function createApi() {
     getMarkxPost: (postId: string) => request<MarkxPostPanel>(`/api/markx/posts/${enc(postId)}`),
     /** v10.36: related reading, on request (~1.5 s: a scan of every stored vector). */
     getMarkxRelated: (postId: string) => request<MarkxRelated>(`/api/markx/posts/${enc(postId)}/related`),
+    // v10.42: the reader's interest: one tap (kept; News orders by it at once), and a post page's teach panel
+    teachInterest: (body: { dim: InterestDim; key: string; answer: InterestAnswer; name?: string | null; row?: string | null; post?: string | null }) =>
+      request<{ id: string; dim: InterestDim; key: string; answer: InterestAnswer }>('/api/markx/interests', { method: 'POST', body }),
+    getPostInterest: (postId: string) => request<PostInterest>(`/api/markx/posts/${enc(postId)}/interest`),
     getMarkxOverview: () => request<MarkxOverview>('/api/markx/overview'),
     runMarkxDecisions: () => request<Record<string, unknown>>('/api/markx/decide', { method: 'POST' }),
     /** The reading window from the Worker tab: days, or null for every post; counts from the next planner run. */

@@ -146,7 +146,7 @@ function Row({ row, now, rows }: { row: MarkxRow; now: Date; rows: Map<string, M
                   {row.rank.notable ? ' · notable' : ''}
                   {` · significance ${row.rank.significance === null ? 'not asked yet' : row.rank.significance.toFixed(2)}`}
                   {row.rank.why?.effect ? ` (effect ${row.rank.why.effect}/5)` : ''}
-                  {` · fit ${row.rank.fit.toFixed(2)} (Shadow)`}
+                  {` · personal ${row.rank.fit.toFixed(2)}`}{/* v10.42: the reader's interest p (markx/personal.py) */}
                 </span>
               ) : null}
               {row.surging?.length ? (
