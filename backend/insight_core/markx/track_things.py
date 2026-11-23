@@ -719,10 +719,27 @@ def roots(cur: Any, track_id: str) -> Dict[str, str]:
     return out
 
 
+def _joined(root: Dict[str, str], keep: str, gone: str) -> None:
+    """`root` (a `roots` map read once by the caller) after `gone` joined `keep`: every thing whose root was `gone`."""
+    for t, r in root.items():
+        if r == gone:
+            root[t] = keep
+    root[gone] = keep
+
+
+def _one_thing_posts(alias: str = "one") -> str:
+    """SQL (params: track id, PRACTICE_KIND): a CTE of the track's posts that gave one thing of its kinds (practices
+    aside), read once a statement: such a post's address is its thing's own page."""
+    return f"""{alias} AS (SELECT r2.post_id FROM mx_track_thing_reports r2 JOIN mx_track_things t2 ON t2.id = r2.thing_id
+                             WHERE t2.track_id = %s AND t2.kind <> %s GROUP BY r2.post_id
+                            HAVING count(DISTINCT r2.thing_id) = 1)"""
+
+
 def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> int:
-    """A things answer as reports: each thing joined to a current thing of its kind that shares a key value (a
-    practice: one of the same post's), else a new thing; its fields merged again. How many reports were added. A call
-    already applied adds nothing."""
+    """A things answer as reports: each thing joined to a current thing of its strong identity (`_match`; a practice:
+    one of the same post's), else a new thing; each touched thing's fields merged again once. How many reports were
+    added. A call already applied adds nothing. v10.44: the track's roots and each kind's reports are read once an
+    answer (a thing of the answer is matched against its earlier things too)."""
     tid, version, _k, _shown = parse_input(task.get("input") or "")
     post = str(task["a"])
     if tid is None or str(task.get("b")) != tid:
@@ -744,13 +761,18 @@ def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
     kinds = {k["kind"]: k for k in schema["kinds"]}
     at = _post_at(cur, post)
     own = own_address(cur, post, answer.get("things") or [], kinds)
+    root = roots(cur, tid)
+    seen: Dict[str, List[Tuple[str, str, Set[str], Dict[str, Set[str]]]]] = {}
+    touched: List[str] = []
     n_added = 0
     for n, th in enumerate(answer.get("things") or []):
         kind = kinds.get(th.get("kind"))
         if kind is None or not th.get("fields"):
             continue
         mine_own = own if kind["kind"] != PRACTICE_KIND else None
-        thing = _match(cur, tid, kind, th["fields"], post, own=mine_own)
+        if kind["kind"] not in seen:
+            seen[kind["kind"]] = _candidates(cur, tid, kind, post)
+        thing = _match(kind, th["fields"], seen[kind["kind"]], root, own=mine_own)
         if thing is None:
             key = sorted(sigs(kind, th["fields"], mine_own))
             first = kind["fields"][0]["name"]
@@ -759,24 +781,30 @@ def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
                         (tid, kind["kind"], key[0] if key else f"{first}={key_text(th['fields'][first]['value'])}",
                          version, at, at))
             thing = cur.fetchone()[0]
+            root[thing] = thing
         cur.execute("""INSERT INTO mx_track_thing_reports (call_id, n, thing_id, post_id, task_id, schema_version, win,
                                                            field_values)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb) ON CONFLICT DO NOTHING""",
                     (call_id, n, thing, post, task["id"], version, win, json.dumps(th["fields"], ensure_ascii=False)))
         n_added += cur.rowcount
-        remerge(cur, tid, thing)
+        seen[kind["kind"]].append(_candidate(kind, thing, th["fields"], mine_own))
+        touched.append(thing)
+    for thing in dict.fromkeys(root.get(t, t) for t in touched):
+        remerge(cur, tid, thing, root=root)
     if n_added and task.get("guide") == THINGS_GUIDE:
-        fold_catalog(cur, tid, post, call_id, kinds)
+        fold_catalog(cur, tid, post, call_id, kinds, root=root)
     return n_added
 
 
-def fold_catalog(cur: Any, track_id: str, post: str, call_id: Any, kinds: Dict[str, Dict[str, Any]]) -> int:
+def fold_catalog(cur: Any, track_id: str, post: str, call_id: Any, kinds: Dict[str, Dict[str, Any]], *,
+                 root: Optional[Dict[str, str]] = None) -> int:
     """A post asked again under track-things-v3 (`repair`) gave one row of a kind: the rows of that kind only this
     post's earlier answers gave join it (merged_by haiku). How many joins."""
     cur.execute("""SELECT t.kind, array_agg(DISTINCT r.thing_id::text) FROM mx_track_thing_reports r
                      JOIN mx_track_things t ON t.id = r.thing_id
                     WHERE r.call_id = %s AND t.track_id = %s GROUP BY 1""", (call_id, track_id))
-    got, root = cur.fetchall(), roots(cur, track_id)
+    got = cur.fetchall()
+    root = roots(cur, track_id) if root is None else root
     joined = 0
     for kind, things in got:
         heads = {root.get(t, t) for t in things}
@@ -790,7 +818,7 @@ def fold_catalog(cur: Any, track_id: str, post: str, call_id: Any, kinds: Dict[s
                                            WHERE r.thing_id = t.id AND (r.post_id <> %s OR k.guide = %s))""",
                     (track_id, kind, head, post, THINGS_GUIDE))
         for (gone,) in cur.fetchall():
-            joined += merge(cur, track_id, head, gone, "haiku")
+            joined += merge(cur, track_id, head, gone, "haiku", root=root)
     return joined
 
 
@@ -831,12 +859,42 @@ def rare_words(names: Iterable[str]) -> Set[str]:
     return {w for w, c in df.items() if c <= cap}
 
 
-def same_identity(a_name: str, a_links: Set[str], b_name: str, b_links: Set[str], rare: Set[str]) -> bool:
+def other_keys(kind: Dict[str, Any], values: Dict[str, Any]) -> Dict[str, Set[str]]:
+    """A report's (or a row's) key text fields besides its name, as words ({field: name_words}); a field not given is
+    left out. v10.44: a kind keyed on several fields (a model *and* the machine it ran on) is one thing only where
+    they all agree."""
+    out = {}
+    for f in kind["fields"][1:]:
+        if not f.get("key") or f.get("type") not in (None, "text"):
+            continue
+        v = values.get(f["name"])
+        v = v.get("value") if isinstance(v, dict) and "value" in v else v
+        if isinstance(v, str) and (w := name_words(key_text(v))):
+            out[f["name"]] = w
+    return out
+
+
+def keys_agree(a: Optional[Dict[str, Set[str]]], b: Optional[Dict[str, Set[str]]]) -> bool:
+    """Whether two reports' other key fields (`other_keys`) agree: each field both give names the same (one's words
+    within the other's, or AGREE of their words shared: "5090 GPU" and "RTX 5090" agree, "RTX 3060 12GB" and "Machine
+    with 23GB RAM" do not). A field one leaves out never disagrees."""
+    for name in set(a or {}) & set(b or {}):
+        x, y = a[name], b[name]
+        if not (x <= y or y <= x or 2 * len(x & y) >= AGREE * (len(x) + len(y))):
+            return False
+    return True
+
+
+def same_identity(a_name: str, a_links: Set[str], b_name: str, b_links: Set[str], rare: Set[str],
+                  a_keys: Optional[Dict[str, Set[str]]] = None, b_keys: Optional[Dict[str, Set[str]]] = None) -> bool:
     """Two reports are one thing only on a strong identity: the same name, or a shared link and names that agree (a
     rare word in both and AGREE of their words shared: "Tiel-Coder" and "Tiel-Coder 35B-A3B" agree, "Test PC" and
     "Palit RTX 5060 Ti test stand" do not); a link to the other's own page needs the rare word only. A shared link
-    alone, or any other key (the hardware), is not the thing's identity."""
+    alone, or any other key (the hardware), is not the thing's identity, and a disagreeing other key (`keys_agree`:
+    one model on two machines) is two things whatever the name."""
     if not a_name or not b_name:
+        return False
+    if not keys_agree(a_keys, b_keys):
         return False
     if a_name == b_name:
         return True
@@ -851,49 +909,59 @@ def same_identity(a_name: str, a_links: Set[str], b_name: str, b_links: Set[str]
     return page or 2 * len(shared) >= AGREE * (len(a) + len(b))
 
 
-def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any], post: str,
-           own: Optional[str] = None) -> Optional[str]:
-    """The current thing a report joins (its root): same kind and a strong identity with one of that thing's own
-    reports (`same_identity`, so no chain through weak keys); a practice only among its own post's things."""
-    mine = name_of(kind, values)
-    if not mine:
-        return None
+def _candidate(kind: Dict[str, Any], thing: str, values: Dict[str, Any], own: Optional[str] = None
+               ) -> Tuple[str, str, Set[str], Dict[str, Set[str]]]:
+    """A report as `_match` compares it: (its thing, name, links, other keys)."""
+    return thing, name_of(kind, values), links_of(kind, values, own), other_keys(kind, values)
+
+
+def _candidates(cur: Any, track_id: str, kind: Dict[str, Any], post: str
+                ) -> List[Tuple[str, str, Set[str], Dict[str, Set[str]]]]:
+    """The reports a report of `post` may join (`_candidate` each): of a practice, its own post's of the kind; else
+    every report of the kind in the track, with its post's own address when that post gave this one thing only (of
+    the track's kinds). One read."""
     if kind["kind"] == PRACTICE_KIND:
-        cur.execute("""SELECT DISTINCT r.thing_id::text, r.field_values FROM mx_track_thing_reports r
+        cur.execute("""SELECT DISTINCT r.thing_id::text, r.field_values, NULL FROM mx_track_thing_reports r
                          JOIN mx_track_things t ON t.id = r.thing_id
                         WHERE t.track_id = %s AND t.kind = %s AND r.post_id = %s""", (track_id, kind["kind"], post))
-        rows = cur.fetchall()
-    else:   # each report with its post's own address when that post gave this one thing only (of the track's kinds)
-        cur.execute("""SELECT r.thing_id::text, r.field_values,
-                              CASE WHEN (SELECT count(DISTINCT r2.thing_id) FROM mx_track_thing_reports r2
-                                           JOIN mx_track_things t2 ON t2.id = r2.thing_id
-                                          WHERE r2.post_id = r.post_id AND t2.track_id = t.track_id
-                                            AND t2.kind <> %s) = 1 THEN p.url END
-                         FROM mx_track_thing_reports r JOIN mx_track_things t ON t.id = r.thing_id
-                         JOIN posts p ON p.id = r.post_id
-                        WHERE t.track_id = %s AND t.kind = %s""", (PRACTICE_KIND, track_id, kind["kind"]))
-        rows = cur.fetchall()
-    if not rows:
+    else:
+        cur.execute(f"""WITH {_one_thing_posts()}
+                        SELECT r.thing_id::text, r.field_values, CASE WHEN one.post_id IS NOT NULL THEN p.url END
+                          FROM mx_track_thing_reports r JOIN mx_track_things t ON t.id = r.thing_id
+                          JOIN posts p ON p.id = r.post_id LEFT JOIN one ON one.post_id = r.post_id
+                         WHERE t.track_id = %s AND t.kind = %s""", (track_id, PRACTICE_KIND, track_id, kind["kind"]))
+    return [_candidate(kind, thing, vals, url) for thing, vals, url in cur.fetchall()]
+
+
+def _match(kind: Dict[str, Any], values: Dict[str, Any],
+           cands: Sequence[Tuple[str, str, Set[str], Dict[str, Set[str]]]], root: Dict[str, str],
+           own: Optional[str] = None) -> Optional[str]:
+    """The current thing a report joins (its root): same kind and a strong identity with one of that thing's own
+    reports (`same_identity`, so no chain through weak keys); a practice only among its own post's things (the same
+    name). `cands`: `_candidates`; `root`: the track's `roots`."""
+    mine = name_of(kind, values)
+    if not mine or not cands:
         return None
-    root = roots(cur, track_id)
     if kind["kind"] == PRACTICE_KIND:
-        for row in rows:
-            if name_of(kind, row[1]) == mine:
-                return root.get(row[0], row[0])
+        for thing, name, _l, _k in cands:
+            if name == mine:
+                return root.get(thing, thing)
         return None
-    named = [(row[0], name_of(kind, row[1]), links_of(kind, row[1], row[2] if len(row) > 2 else None)) for row in rows]
-    rare = rare_words([n for _t, n, _l in named] + [mine])
-    links = links_of(kind, values, own)
-    for thing, name, theirs in named:
-        if same_identity(mine, links, name, theirs, rare):
+    rare = rare_words([n for _t, n, _l, _k in cands] + [mine])
+    links, keys = links_of(kind, values, own), other_keys(kind, values)
+    for thing, name, theirs, their_keys in cands:
+        if same_identity(mine, links, name, theirs, rare, keys, their_keys):
             return root.get(thing, thing)
     return None
 
 
-def reports(cur: Any, track_id: str, thing_ids: Optional[Sequence[str]] = None) -> Dict[str, List[Dict[str, Any]]]:
+def reports(cur: Any, track_id: str, thing_ids: Optional[Sequence[str]] = None, *,
+            root: Optional[Dict[str, str]] = None) -> Dict[str, List[Dict[str, Any]]]:
     """{root thing: its reports and its merged things' [{post, at, call, values, version, found_at}]}, oldest post
-    first; `thing_ids`: only these roots'."""
-    root = roots(cur, track_id)
+    first; `thing_ids`: only these roots'; `root`: the track's `roots`, when the caller read them. A post hidden
+    (posts.filtered_by: its source's item filter or a repair hid it) reports nothing: v10.44, it leaves every view
+    of the track's things and every row's fields."""
+    root = roots(cur, track_id) if root is None else root
     wanted = None if thing_ids is None else set(thing_ids)
     members = [t for t, r in root.items() if wanted is None or r in wanted]
     if not members:
@@ -901,13 +969,18 @@ def reports(cur: Any, track_id: str, thing_ids: Optional[Sequence[str]] = None) 
     cur.execute(f"""SELECT r.thing_id::text, r.post_id::text, {post_date()}, r.call_id::text, r.field_values,
                            r.schema_version, r.created_at
                       FROM mx_track_thing_reports r JOIN posts p ON p.id = r.post_id
-                     WHERE r.thing_id = ANY(%s::uuid[])
+                     WHERE r.thing_id = ANY(%s::uuid[]) AND p.filtered_by IS NULL
                      ORDER BY 3 NULLS FIRST, r.created_at, r.call_id, r.n""", (members,))
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for thing, post, at, call, vals, version, found in cur.fetchall():
         out[root[thing]].append({"post": post, "at": at, "call": call, "values": vals, "version": version,
                                  "found_at": found})
     return out
+
+
+def reported(things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """The things some shown post reports (`reports` reads no hidden post): the rows a view of the track shows."""
+    return [t for t in things if rs.get(t["id"])]
 
 
 def value_key(v: Any) -> str:
@@ -945,9 +1018,10 @@ def merged_fields(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     return fields
 
 
-def remerge(cur: Any, track_id: str, thing: str) -> None:
-    """A thing's fields again from its reports (`merged_fields`), its first and last post dates (publication)."""
-    rs = reports(cur, track_id, [thing]).get(thing, [])
+def remerge(cur: Any, track_id: str, thing: str, *, root: Optional[Dict[str, str]] = None) -> None:
+    """A thing's fields again from its reports (`merged_fields`), its first and last post dates (publication).
+    `root`: the track's `roots`, when the caller read them."""
+    rs = reports(cur, track_id, [thing], root=root).get(thing, [])
     if not rs:
         return
     fields = merged_fields(rs)
@@ -957,10 +1031,10 @@ def remerge(cur: Any, track_id: str, thing: str) -> None:
                 (json.dumps(fields, ensure_ascii=False), min(ats) if ats else None, max(ats) if ats else None, thing))
 
 
-def merge(cur: Any, track_id: str, keep: str, gone: str, by: str) -> bool:
+def merge(cur: Any, track_id: str, keep: str, gone: str, by: str, *, root: Optional[Dict[str, str]] = None) -> bool:
     """`gone` joined into `keep` (both current roots of the track, two of one kind): a status, its reports read as
-    `keep`'s from then on."""
-    root = roots(cur, track_id)
+    `keep`'s from then on. `root`: the track's `roots` read once by the caller, kept up to date here."""
+    root = roots(cur, track_id) if root is None else root
     keep, gone = root.get(keep, keep), root.get(gone, gone)
     if keep == gone:
         return False
@@ -970,7 +1044,8 @@ def merge(cur: Any, track_id: str, keep: str, gone: str, by: str) -> bool:
                       AND g.status = 'current' AND k.status = 'current'""", (keep, by, gone, keep, track_id))
     if not cur.rowcount:
         return False
-    remerge(cur, track_id, keep)
+    _joined(root, keep, gone)
+    remerge(cur, track_id, keep, root=root)
     return True
 
 
@@ -1030,24 +1105,27 @@ def _kinds(cur: Any, track_id: str) -> Dict[str, Dict[str, Any]]:
 
 
 def entity_join(cur: Any, track: Dict[str, Any]) -> int:
-    """Two current things of one kind (not practices) naming the same entity: the newer joined into the older. How
-    many joins."""
+    """Two current things of one kind (not practices) naming the same entity, their other keys agreeing
+    (`keys_agree`: one model on two machines stays two rows): the newer joined into the older. How many joins."""
     tid = track["folder_id"]
     kinds = _kinds(cur, tid)
     things = [t for t in current(cur, tid) if t["kind"] != PRACTICE_KIND and t["kind"] in kinds]
     if len(things) < 2:
         return 0
-    rs = reports(cur, tid, [t["id"] for t in things])
+    root = roots(cur, tid)
+    rs = reports(cur, tid, [t["id"] for t in things], root=root)
     ments = _mentions(cur, sorted({r["post"] for v in rs.values() for r in v}))
-    first: Dict[Tuple[str, str], str] = {}
+    keys = {t["id"]: other_keys(kinds[t["kind"]], t["fields"] or {}) for t in things}
+    first: Dict[Tuple[str, str], List[str]] = defaultdict(list)
     joined = 0
     for t in sorted(things, key=lambda t: (t["found_at"], t["id"])):
-        for e in sorted(named_entities(kinds[t["kind"]], rs.get(t["id"], []), ments)):
-            k = (t["kind"], e)
-            if k in first and first[k] != t["id"]:
-                joined += merge(cur, tid, first[k], t["id"], "entity")
-                break
-            first.setdefault(k, t["id"])
+        ents = sorted(named_entities(kinds[t["kind"]], rs.get(t["id"], []), ments))
+        into = next((o for e in ents for o in first[(t["kind"], e)] if keys_agree(keys[o], keys[t["id"]])), None)
+        if into is not None:
+            joined += merge(cur, tid, into, t["id"], "entity", root=root)
+            continue
+        for e in ents:
+            first[(t["kind"], e)].append(t["id"])
     return joined
 
 
@@ -1188,20 +1266,20 @@ def apply_same(cur: Any, task: Dict[str, Any], answer: Dict[str, Any]) -> bool:
 CATALOG_ROWS = 5   # rows of one kind that one post alone gave: the post is a catalog read one row an item
 
 
-def _member_reports(cur: Any, track_id: str, things: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+def _member_reports(cur: Any, track_id: str, things: Sequence[str], *, root: Optional[Dict[str, str]] = None
+                    ) -> Dict[str, List[Dict[str, Any]]]:
     """{root: its reports and its members' [{call, n, thing (its own), post, at, values, url (the post's own address
-    when that post gave one thing of the track's kinds)}]}, oldest post first."""
-    root = roots(cur, track_id)
+    when that post gave one thing of the track's kinds)}]}, oldest post first. `root`: the track's `roots`."""
+    root = roots(cur, track_id) if root is None else root
     wanted = set(things)
     members = [t for t, r in root.items() if r in wanted]
     if not members:
         return {}
-    cur.execute(f"""SELECT r.call_id::text, r.n, r.thing_id::text, r.post_id::text, {post_date()}, r.field_values,
-                           CASE WHEN (SELECT count(DISTINCT r2.thing_id) FROM mx_track_thing_reports r2
-                                        JOIN mx_track_things t2 ON t2.id = r2.thing_id
-                                       WHERE r2.post_id = r.post_id AND t2.track_id = %s AND t2.kind <> %s) = 1
-                                THEN p.url END
+    cur.execute(f"""WITH {_one_thing_posts()}
+                    SELECT r.call_id::text, r.n, r.thing_id::text, r.post_id::text, {post_date()}, r.field_values,
+                           CASE WHEN one.post_id IS NOT NULL THEN p.url END
                       FROM mx_track_thing_reports r JOIN posts p ON p.id = r.post_id
+                      LEFT JOIN one ON one.post_id = r.post_id
                      WHERE r.thing_id = ANY(%s::uuid[])
                      ORDER BY 5 NULLS FIRST, r.created_at, r.call_id, r.n""", (track_id, PRACTICE_KIND, members))
     out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -1214,16 +1292,16 @@ def _member_reports(cur: Any, track_id: str, things: Sequence[str]) -> Dict[str,
 def regroup(kind: Dict[str, Any], rs: Sequence[Dict[str, Any]], rare: Set[str]) -> List[List[Dict[str, Any]]]:
     """A row's reports in the groups a strong identity makes (`same_identity` with a report already in the group;
     oldest first): one group is one thing."""
-    groups: List[List[Tuple[str, Set[str], Dict[str, Any]]]] = []
+    groups: List[List[Tuple[str, Set[str], Dict[str, Set[str]], Dict[str, Any]]]] = []
     for r in rs:
-        name, links = name_of(kind, r["values"] or {}), links_of(kind, r["values"] or {}, r.get("url"))
+        _t, name, links, keys = _candidate(kind, "", r["values"] or {}, r.get("url"))
         for g in groups:
-            if any(same_identity(name, links, n, ls, rare) for n, ls, _r in g):
-                g.append((name, links, r))
+            if any(same_identity(name, links, n, ls, rare, keys, ks) for n, ls, ks, _r in g):
+                g.append((name, links, keys, r))
                 break
         else:
-            groups.append([(name, links, r)])
-    return [[r for _n, _l, r in g] for g in groups]
+            groups.append([(name, links, keys, r)])
+    return [[r for _n, _l, _k, r in g] for g in groups]
 
 
 def repair_plan(cur: Any, track_id: str) -> Dict[str, Any]:
@@ -1236,9 +1314,10 @@ def repair_plan(cur: Any, track_id: str) -> Dict[str, Any]:
         if t["kind"] in kinds and t["kind"] != PRACTICE_KIND:
             by_kind[t["kind"]].append(t)
     splits = []
+    root = roots(cur, track_id) if by_kind else {}
     for kname, rows in sorted(by_kind.items()):
         kind = kinds[kname]
-        rs = _member_reports(cur, track_id, [t["id"] for t in rows])
+        rs = _member_reports(cur, track_id, [t["id"] for t in rows], root=root)
         rare = rare_words(name_of(kind, r["values"] or {}) for v in rs.values() for r in v)
         for t in rows:
             mine = rs.get(t["id"], [])
@@ -1300,28 +1379,45 @@ def repair(cur: Any, track_id: str, *, dry_run: bool = True, ask: bool = True) -
                 cur.execute("""UPDATE mx_track_thing_reports SET thing_id = %s, moved_from = COALESCE(moved_from, %s)
                                 WHERE call_id = %s AND n = %s""", (head, thing, call, n))
             heads.append(head)
-        remerge(cur, track_id, sp["thing"])
-    for h in heads:
-        remerge(cur, track_id, h)
+    root = roots(cur, track_id)   # v10.44: read once after the splits, kept up to date by every merge below
+    for t in dict.fromkeys([sp["thing"] for sp in plan["splits"]] + heads):
+        remerge(cur, track_id, t, root=root)
     rejoined = 0
     epoch_max = datetime.max.replace(tzinfo=timezone.utc)
+    of_kind: Dict[str, Any] = {}   # kind: its rows' reports as identities, read once (v10.44: not once a head)
     for h in heads:   # a split-off thing of an older current thing's identity joins it
         cur.execute("SELECT kind, status FROM mx_track_things WHERE id = %s", (h,))
         kname, status = cur.fetchone()
-        if status != "current":
+        if status != "current" or root.get(h, h) != h:
             continue
         kind = kinds[kname]
-        rs = _member_reports(cur, track_id, [t["id"] for t in current(cur, track_id, kname)])
-        rare = rare_words(name_of(kind, r["values"] or {}) for v in rs.values() for r in v)
-        mine = [(name_of(kind, r["values"] or {}), links_of(kind, r["values"] or {}, r["url"])) for r in rs.get(h, [])]
-        first = min((r["at"] for r in rs.get(h, []) if r["at"]), default=epoch_max)
-        older = sorted(((min((r["at"] for r in v if r["at"]), default=epoch_max), o) for o, v in rs.items() if o != h))
-        for at, other in older:
+        if kname not in of_kind:
+            rs = _member_reports(cur, track_id, [t["id"] for t in current(cur, track_id, kname)], root=root)
+            rare = rare_words(name_of(kind, r["values"] or {}) for v in rs.values() for r in v)
+            idents = {o: [_candidate(kind, o, r["values"] or {}, r["url"])[1:] for r in v] for o, v in rs.items()}
+            firsts = {o: min((r["at"] for r in v if r["at"]), default=epoch_max) for o, v in rs.items()}
+            index: Dict[str, Set[str]] = defaultdict(set)   # a name or a link: the rows one of whose reports has it
+            for o, ids in idents.items():
+                for name, links, _k in ids:
+                    for x in [f"name:{name}"] + sorted(links):
+                        index[x].add(o)
+            of_kind[kname] = (rare, idents, firsts, index)
+        rare, idents, firsts, index = of_kind[kname]
+        mine = idents.get(h, [])
+        first = firsts.get(h, epoch_max)
+        near = {root.get(o, o) for name, links, _k in mine for x in [f"name:{name}"] + sorted(links)
+                for o in index.get(x, ())} - {h}   # a strong identity needs the same name or a shared link
+        for at, other in sorted((firsts[o], o) for o in near if o in idents):
             if at > first:
                 break
-            if any(same_identity(n, ls, name_of(kind, r["values"] or {}), links_of(kind, r["values"] or {}, r["url"]),
-                                 rare) for n, ls in mine for r in rs[other]):
-                rejoined += merge(cur, track_id, other, h, "key")
+            if any(same_identity(n, ls, n2, ls2, rare, ks, ks2) for n, ls, ks in mine for n2, ls2, ks2 in idents[other]):
+                if merge(cur, track_id, other, h, "key", root=root):
+                    rejoined += 1
+                    idents[other] = idents[other] + idents.pop(h, [])
+                    firsts[other] = min(firsts[other], firsts.pop(h, epoch_max))
+                    for name, links, _k in mine:
+                        for x in [f"name:{name}"] + sorted(links):
+                            index[x].add(other)
                 break
     asked = 0
     if ask and plan["catalogs"]:

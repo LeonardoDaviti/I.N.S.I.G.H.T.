@@ -915,13 +915,14 @@ def discover_order(cal: Dict[str, Any]):
 
 
 def _items(cur: Cursor, folder_id: Any, *, shown: bool = True) -> List[Dict[str, Any]]:
-    """The track's judged posts: each post's newest verdict (any version). `shown` False reads only what a place needs
-    (post, verdict, confidence, source, date), for the sidebar's counts."""
+    """The track's judged posts: each post's newest verdict (any version); a hidden post (posts.filtered_by: its source's
+    item filter or a repair hid it) is none (v10.44: it leaves every placement, section, Discover, count and kept page).
+    `shown` False reads only what a place needs (post, verdict, confidence, source, date), for the sidebar's counts."""
     if not shown:
         cur.execute(f"""SELECT DISTINCT ON (i.post_id) i.post_id::text, i.verdict, i.confidence, p.source_id::text,
                                {_date()}, i.check_in, i.check_confidence
                           FROM mx_track_items i JOIN posts p ON p.id = i.post_id
-                         WHERE i.track_id = %s AND i.verdict IS NOT NULL
+                         WHERE i.track_id = %s AND i.verdict IS NOT NULL AND p.filtered_by IS NULL
                          ORDER BY i.post_id, i.version DESC""", (str(folder_id),))
         return [dict(zip(("post_id", "verdict", "confidence", "source_id", "at", "check_in", "check_confidence"), r))
                 for r in cur.fetchall()]
@@ -930,7 +931,7 @@ def _items(cur: Cursor, folder_id: Any, *, shown: bool = True) -> List[Dict[str,
                            COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
                                     s.handle_or_url), i.check_in, i.check_confidence
                       FROM mx_track_items i JOIN posts p ON p.id = i.post_id JOIN sources s ON s.id = p.source_id
-                     WHERE i.track_id = %s AND i.verdict IS NOT NULL
+                     WHERE i.track_id = %s AND i.verdict IS NOT NULL AND p.filtered_by IS NULL
                      ORDER BY i.post_id, i.version DESC""", (str(folder_id),))
     cols = ("post_id", "verdict", "confidence", "subtopic", "why", "origin", "cos", "answered_at", "version", "found_by",
             "title", "url", "at", "source_id", "source", "check_in", "check_confidence")

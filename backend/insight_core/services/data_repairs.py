@@ -109,8 +109,9 @@ REPAIRS: Sequence[Repair] = (
     Repair("hide_listing_pages", "v10.35", "Hide stored listing pages",
            "Tag, category and author listing pages stored as posts are hidden through their source's item filter.",
            _hide_listing_pages),
-    Repair("repair_track_rows", "v10.41", "One row a thing in topic tracks",
-           "Track rows that absorbed reports of different things are split; catalog posts are asked again.",
+    Repair("repair_track_rows", "v10.44", "One row a thing in topic tracks",
+           "Track rows that absorbed reports of different things (v10.44: also one name with a disagreeing key, a model "
+           "on two machines) are split; catalog posts are asked again.",
            _repair_track_rows),
     Repair("repair_saved_titles", "v10.44", "Title saved pages again",
            "Unreadable saved pages titled by a link's words (“here”) get a real title and their address's date.",
