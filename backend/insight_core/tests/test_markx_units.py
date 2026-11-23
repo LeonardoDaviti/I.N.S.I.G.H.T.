@@ -274,6 +274,19 @@ class Stored(_Db):
         got = units.also_in(self.cur, [a])
         self.assertEqual([(r["post"], r["n"], r["source"]) for r in got], [(rd, 1, "Example Digest")])
 
+    def test_a_tag_that_moves_queues_the_post_for_the_story_job(self):
+        """v10.39: Mark IX's stories read the tag (a round-up joins no story by its links): a post tagged, or no longer
+        tagged, is regrouped as a saved post is."""
+        rd = self.post(self.digest, T0, html=self.digest_html([f"https://example.com/news/s{k}" for k in range(5)]))
+        self.cur.execute("DELETE FROM story_queue WHERE key = %s", ("post:" + rd,))
+        self.read(rd)
+        self.cur.execute("SELECT count(*) FROM story_queue WHERE key = %s", ("post:" + rd,))
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        self.cur.execute("DELETE FROM story_queue WHERE key = %s", ("post:" + rd,))
+        units.note(self.cur, [rd])                                         # the same inputs: no tag moved
+        self.cur.execute("SELECT count(*) FROM story_queue WHERE key = %s", ("post:" + rd,))
+        self.assertEqual(self.cur.fetchone()[0], 0)
+
     def test_never_a_round_up_nor_the_round_up_itself(self):
         prev = self.post(self.digest, T0 - D, url="https://test.invalid/units/prev",
                          html=self.digest_html([f"https://example.com/news/p{k}" for k in range(5)]))

@@ -8,6 +8,7 @@ included, and nothing of it is kept). Assertions are scoped to the test's own ro
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import signal
 import sys
@@ -183,6 +184,24 @@ class JoiningRulesTests(unittest.TestCase):
         self.assertEqual(ids(stories), [["a", "r"], ["b", "c"]])
         self.assertEqual(stories[1].mentions, {"r"}, "the roundup counts for story 2 but is not in it")
         self.assertEqual(stories[0].mentions, set())
+
+    def test_a_told_roundup_joins_no_story_by_its_links(self):
+        """v10.39: a post Mark X tags a round-up (3+ anchors: a newsletter issue) joins no story by citation or link,
+        its first anchor too; it mentions every story it lists. The same post untold joins its first (0050), and a
+        tag on a post of fewer anchors changes nothing: a single-topic post citing one article joins."""
+        one, two, three = (f"https://news.example/2026/10/story-{n}" for n in (1, 2, 3))
+        cited = post("a", "s1", hours=1, url="https://s1.test/2026/10/the-first-story-told", links=[(one, None)])
+        posts = [post("r", "weekly", hours=2, roundup=True,
+                      links=[(cited.url, "a"), (two, None), (three, None)]),
+                 cited, post("b", "s2", hours=1, links=[(one, None)]),
+                 post("c", "s3", hours=2, links=[(two, None)]), post("d", "s4", hours=2, links=[(two, None)])]
+        stories = group(posts)
+        self.assertEqual(ids(stories), [["a", "b"], ["c", "d"]])
+        self.assertEqual([s.mentions for s in stories], [{"r"}, {"r"}], "it mentions both, its first one too")
+        untold = group([dataclasses.replace(p, roundup=False) for p in posts])
+        self.assertEqual(ids(untold), [["a", "b", "r"], ["c", "d"]], "untold, its first anchor joins it (0050)")
+        self.assertEqual(ids(group([post("t", "weekly", hours=2, roundup=True, links=[(cited.url, "a")]), cited])),
+                         [["a", "t"]], "a tag alone, with one link, is no roundup")
 
     def test_a_story_needs_two_sources(self):
         self.assertEqual(group([post("a", "s1", title="One two three four five"),

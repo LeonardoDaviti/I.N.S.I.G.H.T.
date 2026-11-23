@@ -24,6 +24,7 @@ from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE,
                                             Edge, Story, source_site, text_chars_sql)
 from insight_core.markx.pairing import ix_date   # Mark IX's time (0190)
+from insight_core.markx.units import roundup_sql   # the round-up tag (GLOSSARY "Round-up": units owns it; v10.39)
 from insight_core.utils import voice as voice_keys
 from insight_core.utils.tree_rules import _PAGE
 from insight_core.utils.url_normalization import normalize_url
@@ -447,7 +448,7 @@ class StoriesRepository:
         in order, and the stored post each link is, if any. Its parts (issue 0076, post_parts: a post not
         parsed yet is parsed first): the title every page shows, the account a reply answers, the tweet it
         quotes, the words of the pages it quotes, Reddit's poster and its words; those of its HTML only
-        on the platforms (`html_sources`)."""
+        on the platforms (`html_sources`). Whether Mark X tags it a round-up (`roundup`, units.roundup_sql: v10.39)."""
         PostPartsRepository.write_missing(cur, ids)
         cur.execute(
             f"""
@@ -456,7 +457,7 @@ class StoriesRepository:
                    COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at,
                    pp.title, pp.reply_to, pp.quoted, pp.quoted_words, pp.author, pp.words, pp.opening,
                    CASE WHEN p.published_at IS NULL THEN 'none' ELSE p.published_precision END,
-                   p.metadata ->> %(moved)s
+                   p.metadata ->> %(moved)s, {roundup_sql("p.id")}
             FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE {ix_date("p")} IS NOT NULL
               AND (%(ids)s::uuid[] IS NULL OR p.id = ANY(%(ids)s::uuid[]))
@@ -469,7 +470,7 @@ class StoriesRepository:
              "reposted_by": r[10] or [], "stored_at": r[11], "links": [], "link_texts": {},
              "shown_title": r[12], "reply_to": r[13], "quoted": r[14], "quoted_words": (r[15] or {}) if r[7] else {},
              "poster": r[16] if r[7] else None, "words": (r[17] or 0) if r[7] else 0, "opening": r[18],
-             "precision": r[19], "moved_to": r[20]}
+             "precision": r[19], "moved_to": r[20], "roundup": r[21]}
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}

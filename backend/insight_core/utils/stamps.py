@@ -174,7 +174,7 @@ def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Option
           html: Optional[str] = None, text: Optional[str] = None, content_hash: Optional[str] = None, chars: int = 0,
           author: Optional[str] = None,
           reposted_by: Sequence[str] = (), updated: bool = False, stored: Optional[datetime] = None,
-          moved_to: Optional[str] = None) -> Dict[str, Any]:
+          moved_to: Optional[str] = None, roundup: bool = False) -> Dict[str, Any]:
     """A post as load_posts returns it, stored an hour after it was posted unless `stored` says when, with
     its parts as the parser reads them (issue 0076; `html` only on the platforms, as load_posts reads them)."""
     from insight_core.utils.post_parser import parse   # the parser's stamp reads this module
@@ -185,7 +185,7 @@ def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Option
             "stored_at": stored or at + timedelta(hours=1),
             "shown_title": parts.title, "reply_to": parts.reply_to, "quoted": parts.quoted,
             "quoted_words": parts.quoted_words, "poster": parts.author, "words": parts.words, "opening": parts.opening,
-            "moved_to": moved_to}
+            "moved_to": moved_to, "roundup": roundup}
 
 
 def _stored(url: str) -> str:
@@ -223,6 +223,9 @@ def posts() -> List[Dict[str, Any]]:
           author="writer_x", html="<p>Lab Model Seven is fast</p>"),
         p("o1", "s-beta", _at(8), "This week in models", "https://beta.example/this-week-in-models",
           links=[(L1, None), (L2, None), (L4, None)]),
+        # A post Mark X tags a round-up (v10.39) joins no story by its links, its first one too: it mentions them all.
+        p("o2", "s-gamma", _at(9), "The morning brief", "https://gamma.example/research/the-morning-brief",
+          links=[(L1, None), (L2, None), (L4, None)], roundup=True),
         # Link words a slug confirms
         p("b1", "s-gamma", _at(24), "Sparse routing at scale", "https://gamma.example/research/sparse-routing-notes",
           links=[(L2, None)], texts={L2: "sparse routing at scale"}),

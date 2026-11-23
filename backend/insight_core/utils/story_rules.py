@@ -15,7 +15,8 @@ the reference the real code reproduces. The thresholds are here, in one place.
 - Posts join when they share a text (the same content_hash, 120+ characters, within 30 days),
   a title (5+ words, within 7 days), an outside page linked by 2+ voices within 72 hours, or one
   cites a stored post of another voice within 72 hours. A post with 3+ anchors is a roundup: it
-  joins only the story of its first and mentions the others. Home and profile pages join nothing.
+  joins only the story of its first and mentions the others. A post told a round-up (`StoryPost.roundup`,
+  Mark X's tag, v10.39) joins no story by its links: it mentions all of them. Home and profile pages join nothing.
 - Two posts at one address (0049 keeps them apart when their titles differ) join (`address`).
 - A story is a group of posts from 2+ sources, keyed by its first post.
 - **On X (issue 0066)** the platform says how tweets connect, and that is as certain as an address:
@@ -103,6 +104,9 @@ class StoryPost:
     date_alone: Optional[bool] = None      # its time is a date alone; None: told by the time (`date_only`)
     undated: bool = False                  # the source gave no date: its time is when it was fetched (0076)
     moved_to: Optional[str] = None         # where its page moved (issue 0108: a redirect stub's target), normalized
+    # A round-up as Mark X tells it (markx/units.py owns the tag: its reading says so, or a digest source's digest
+    # shape; v10.39): about many stories, it joins none by its links (each a mention), whatever their count.
+    roundup: bool = False
     # Its owner's voice when that is another (issue 0111: a person's blog and video channel are one owner,
     # SourceFacts.owners), and the same for each of `other_sources`: News counts voices by owner.
     owner: Optional[str] = None
@@ -387,7 +391,7 @@ class Grouping:
     stories: List[Story]
     edges: List[Edge]
     root: Dict[str, str]             # node (a post id, or _PAGE + an address) -> its group's root
-    listed: Dict[str, List[str]]     # a roundup -> the nodes it lists after its first
+    listed: Dict[str, List[str]]     # a roundup -> the nodes it lists after its first (a told round-up: all)
 
 
 def group(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = None) -> List[Story]:
@@ -475,10 +479,13 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
         quote = quote_of(p)
         points = [anchor for anchor in every[p.id] if anchor != quote]
         if len(points) >= ROUNDUP_ANCHORS:
-            for anchor in points[1:]:
+            # v10.39: a told round-up (a newsletter issue, a daily brief) is about none of its links; its first
+            # one joined it to that story by citation or link (The Download, AI #N, a daily AI brief on the server).
+            lead = 0 if p.roundup else 1
+            for anchor in points[lead:]:
                 mentioned[anchor].add(p.id)
-            listed[p.id] = points[1:]
-            points = points[:1]
+            listed[p.id] = points[lead:]
+            points = points[:lead]
         focused[p.id] = points + ([quote] if quote else [])
         for anchor in focused[p.id]:
             linkers[anchor].append(p)
@@ -552,7 +559,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
                 pages[root] |= {("post", p.id), *every[p.id]}
     origins: Dict[str, Optional[str]] = {}
     for pid, mentions in listed.items():
-        if by_id[pid].kind not in PLATFORM_KINDS or uf.find(pid) in pages:
+        if by_id[pid].kind not in PLATFORM_KINDS or by_id[pid].roundup or uf.find(pid) in pages:
             continue
         roots = {story_of.get(target if what == "post" else _PAGE + target) for what, target in mentions} - {None}
         if len(roots) != 1:

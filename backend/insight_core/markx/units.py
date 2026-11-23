@@ -659,20 +659,19 @@ def _inputs(cur: Any, ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
 def note(cur: Any, ids: Iterable[str]) -> Dict[str, int]:
     """Split these posts now: a post whose inputs (code, reading, text) moved is split again; its items are stored
     (appended) when it is said or shaped a round-up; then its source's tags (`tag`) and the attach of the posts
-    tagged. {split, roundups, units}."""
+    tagged. A post whose tag moved is queued for the story job (v10.39: a round-up joins no Mark IX story by its links).
+    {split, roundups, units}."""
     ids = sorted({str(i) for i in ids})
     if not ids:
         return {"split": 0, "roundups": 0, "units": 0}
     inputs = _inputs(cur, ids)
     cur.execute("SELECT post_id::text, basis FROM mx_roundups WHERE post_id = ANY(%s::uuid[])", (ids,))
     have = dict(cur.fetchall())
-    now: List[str] = []
-    sources: Set[str] = set()
-    for pid, x in inputs.items():
-        if have.get(pid) == x["basis"]:
-            continue
-        now.append(pid)
-        sources.add(x["source"])
+    now = [pid for pid, x in inputs.items() if have.get(pid) != x["basis"]]
+    sources: Set[str] = {inputs[pid]["source"] for pid in now}
+    was = _tagged_in(cur, sources)
+    for pid in now:
+        x = inputs[pid]
         s = split(x["html"], x["text"], x["url"], x["reading"], x["skip"])
         cur.execute("""INSERT INTO mx_roundups (post_id, source_id, version, basis, roundup, said, structured, read_whole,
                                                 why, adapter, units, words)
@@ -690,6 +689,10 @@ def note(cur: Any, ids: Iterable[str]) -> Dict[str, int]:
                         (pid, x["basis"], it.n, s.adapter, it.start if it.start >= 0 else None,
                          it.stop if it.stop >= 0 else None, list(it.links), it.text, it.headline))
     tagged = tag(cur, sources)
+    moved = was ^ _tagged_in(cur, sources)
+    if moved:   # v10.39: Mark IX's story job reads the tag (a round-up joins no story by its links): it regroups them
+        from insight_core.db.repo_stories import StoriesRepository
+        StoriesRepository.queue_regroup(cur, sorted(moved))
     cur.execute("SELECT post_id::text FROM mx_roundups WHERE post_id = ANY(%s::uuid[]) AND roundup", (now,))
     fresh = {r[0] for r in cur.fetchall()} | tagged
     if fresh:
@@ -698,6 +701,15 @@ def note(cur: Any, ids: Iterable[str]) -> Dict[str, int]:
                     WHERE post_id = ANY(%s::uuid[]) AND roundup""", (ids,))
     n, u = cur.fetchone()
     return {"split": len(now), "roundups": n, "units": int(u)}
+
+
+def _tagged_in(cur: Any, source_ids: Iterable[str]) -> Set[str]:
+    """The posts of these sources tagged round-ups now."""
+    sources = sorted({str(s) for s in source_ids if s})
+    if not sources:
+        return set()
+    cur.execute("SELECT post_id::text FROM mx_roundups WHERE source_id = ANY(%s::uuid[]) AND roundup", (sources,))
+    return {r[0] for r in cur.fetchall()}
 
 
 def roundup_sql(post: str) -> str:
