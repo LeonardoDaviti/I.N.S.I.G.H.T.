@@ -17,15 +17,20 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tup
 
 from insight_core.db import database as db
 from insight_core.db.repo_linked import page_source
+from insight_core.db.repo_post_parts import shown_title
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.ingestion.feed_finder import FeedFinding, find_feeds
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing, saved
 from insight_core.ingestion.kinds.page_watch import LISTING_MAX_BYTES, article_post, page_date, page_title
 from insight_core.services.reader_service import ReaderService
-from insight_core.utils.originals_rules import address_hint, strip_access_tokens
-from insight_core.utils.post_fields import COLLECTED_KEY, SAVED_KEY, STORY_ONLY_KEY
-from insight_core.utils.url_normalization import normalize_url
+from insight_core.db.repo_stories import SourceFacts
+from insight_core.services import page_titles
+from insight_core.utils.originals_rules import address_day, address_hint, strip_access_tokens
+from insight_core.utils.post_fields import CITES_KEY, COLLECTED_KEY, SAVED_KEY, STORY_ONLY_KEY
+from insight_core.utils.post_links import titled_link_text
+from insight_core.utils.tree_rules import slug_title
+from insight_core.utils.url_normalization import extract_url_host, normalize_url
 
 logger = logging.getLogger("insight.saved")
 
@@ -69,6 +74,23 @@ def _web_page(address: str) -> bool:
     return parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname)
 
 
+def unread_title(given: str, url: str) -> str:
+    """The title of a page nothing titles (v10.42): the words the save was given when they read as a title
+    (post_links.titled_link_text: a bookmarklet's page title; a link's words "writes", "here" or "пишет" are no
+    title), else the address's slug made readable (tree_rules.slug_title), else the given words of two or more,
+    else the address."""
+    given = " ".join((given or "").split())
+    if titled_link_text(given):
+        return given
+    return slug_title(url) or (given if len(given.split()) >= 2 else url)
+
+
+def address_day_before(url: str, saved_at: datetime) -> Optional[datetime]:
+    """The day an address names (originals_rules.address_day), when before the save; None otherwise."""
+    day = address_day(url)
+    return day if day is not None and day < saved_at else None
+
+
 def dated_by_page(post: Dict[str, Any], saved_at: datetime) -> Tuple[Dict[str, Any], Optional[datetime]]:
     """(post, sorts_at): no date, or one after the save, becomes the save time (sorts_at None); an earlier
     date is kept and the post sorts at the save time."""
@@ -103,15 +125,16 @@ class SavedService:
             job_id = await self._fetch_first(owner["id"], saved_at, fetch)
             if job_id:
                 return {"success": True, "status": "fetching", "job_id": job_id, "source": owner,
-                        "title": (title or "").strip() or address}
+                        "title": unread_title(title or "", address)}
         (post, reason), finding = await asyncio.gather(
-            self.read(http, address, (title or "").strip()), find_feeds(http, self.kinds, address))
+            self.read(http, address, (title or "").strip(), self.known_title), find_feeds(http, self.kinds, address))
         stored = post["url"] != address and await asyncio.to_thread(self.stored_post, [post["url"]])
         if stored:
             return await self._already(stored, saved_at)
-        if post.get("date") is None:   # no later than the first post linking it, so its story's window is its
-            # links', never the save's (0113); none: the save time (dated_by_page)
-            post = {**post, "date": await asyncio.to_thread(self.first_linked, [address, post["url"]], saved_at)}
+        if post.get("date") is None:   # no date of its own: the day its address names, else no later than the first
+            # post linking it (its story's window is its links', never the save's: 0113); none: the save time
+            post = {**post, "date": address_day_before(post["url"], saved_at) or address_day_before(address, saved_at)
+                    or await asyncio.to_thread(self.first_linked, [address, post["url"]], saved_at)}
         if owner:
             source_id = owner["id"]
             post = {**post, "metadata": {**post.get("metadata", {}), SAVED_KEY: saved_at.isoformat()}}
@@ -229,9 +252,12 @@ class SavedService:
         await asyncio.to_thread(self.reader.set_later, [stored["post_id"]], True, saved_at)
         return {"success": True, "status": "already", **stored}
 
-    async def read(self, http: KindHttp, address: str, title: str) -> Tuple[Dict[str, Any], Optional[str]]:
+    async def read(self, http: KindHttp, address: str, title: str,
+                   known: Optional[Callable[[List[str]], Optional[str]]] = None) -> Tuple[Dict[str, Any], Optional[str]]:
         """(the post the page is, None) or, when it cannot be read as an article, (a post of its
-        title and address, why)."""
+        title and address, why). That post's title (v10.42): the page's own, if any of it was read; else the
+        stored data's (`known`: the save's known_title); else unread_title (the words given, when they read
+        as a title; else the address's slug; else the address)."""
         page, landed, reason = "", address, None
         try:
             body, landed = await http.get_start(address, LISTING_MAX_BYTES)
@@ -246,6 +272,9 @@ class SavedService:
             # identity is the whole address: two sites' "/" are two posts
             return {**post, "external_id": url, "date": stated}, None
         named = page_title(page, url) if page else url
+        if named == url:
+            named = await asyncio.to_thread(known, sorted({address, url})) if known else None
+            named = named or unread_title(title, url)
         image = parsing.normalize_media_url(parsing.meta_content(page, "og:image")) if page else None
         return {
             "platform": saved.PLATFORM,
@@ -253,7 +282,7 @@ class SavedService:
             "url": url,
             "external_id": url,
             "guid": url,
-            "title": named if named != url else (title or url),
+            "title": named,
             "content": "",
             "content_html": None,
             "date": None,
@@ -317,6 +346,25 @@ class SavedService:
                         "AND started_at > %s ORDER BY started_at DESC LIMIT 1", (FETCH_JOB, source_id, now - RUNNING_WITHIN))
             row = cur.fetchone()
         return str(row[0]) if row else None
+
+    def known_title(self, urls: List[str]) -> Optional[str]:
+        """The title the stored data gives a page that could not be read (v10.42), else None: a followed source's
+        post citing it (issue 0167: a link blog's item for it, its title), else page_titles.evidence (one title for
+        a page you don't follow: the words its linking posts quote, link words that read as a title, a link post's
+        title; never a bare "writes" or "here", tree_rules.origin_title)."""
+        normalized = sorted({n for n in map(normalize_url, urls) if n})
+        if not normalized:
+            return None
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT {shown_title()} FROM posts p WHERE p.url_host = ANY(%s) AND p.metadata ? %s"
+                        " AND p.metadata -> %s ->> 'normalized_url' = ANY(%s) AND btrim(COALESCE(p.title, '')) <> ''"
+                        " ORDER BY p.fetched_at, p.id LIMIT 1",
+                        ([extract_url_host(u) for u in normalized], CITES_KEY, CITES_KEY, normalized))
+            row = cur.fetchone()
+            if row and row[0]:
+                return row[0]
+            titles = page_titles.evidence(cur, SourceFacts(cur), normalized)
+        return next((titles[u] for u in normalized if titles.get(u)), None)
 
     def first_linked(self, urls: List[str], saved_at: datetime) -> Optional[datetime]:
         """When the first dated post linking one of these addresses showed the link (LINKED_SINCE), never later
