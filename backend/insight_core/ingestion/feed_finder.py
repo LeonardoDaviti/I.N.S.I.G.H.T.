@@ -5,60 +5,19 @@
     finding.feeds    # (Feed(url="https://borretti.me/feed.xml", title="Fernando Borretti"),)
 
 One search, cheapest first, stopping at the first stage that finds something:
-  0. No request. A kind or site adapter reads the address directly ("direct"), or a platform
-     rule names its feed (Medium, GitHub releases and a GitHub account's activity, an arXiv
-     category, a PyPI project's releases, the publication of an open.substack.com/pub/<name> link).
-     A Substack profile (substack.com/@<handle>, v10.13.10) asks Substack's public profile once and is
-     offered the person's publications' feeds, the primary first; never Substack's own (the platform's
-     /feed is a 404): a profile with none, or unreadable, is "none" saying so.
-  1. The address itself: a feed ("feed"); else its page's <link rel="alternate"> feeds, then
-     its <a> links that look like feeds.
-  2. The section page (/blog/) and the home page, fetched in parallel, the same way.
-  3. The page's links to its own blog or newsroom (named so, or a blog./news. subdomain of the
-     same site), at most two, the same way: www.cloudflare.com leads to blog.cloudflare.com.
-     A page that cannot be read (a feed gone) takes its home page's links instead. The ones
-     that answer on the same site are reported as the finding's pages: with no feed, the
-     pages to follow instead of a home page (issue 0041). With none named, the page's own menu
-     links (header and navigation, then footer) are reported instead, unread: the preview
-     chooses among them by their articles (issue 0047).
-  4. Common feed paths, under those blogs first, then at the site's root: the first that is a feed.
-The home page's menu link named Blog (or Writing, Posts, Essays) to another domain is a
-candidate after the site's own feeds (issue 0108: a person's site whose blog is elsewhere): its
-feeds follow the site's, or are the finding when the site has none. A platform's takes its rule.
-A feed found whose entries carry no body may be a blog that moved (issue 0108): its first entry's
-page is read, and when it redirects (by HTTP, a meta refresh or a canonical link) to another site,
-the finder runs on that page too. Its feeds come first; the old feed follows, saying where its
-posts now live (Feed.moved_to).
-A page under an account or section of a site (its first path segment: github.com/<name>,
-huggingface.co/<org>/<model>) is not offered what the site keeps for everyone else (v10.13.5): a feed
-found away from the page (its section, home, blog pages, common paths) that lives on the same site
-under another section (/blog/feed.xml) and holds no item under the page's section is another
-section's feed, left out; and the home page's menu blog on another domain (github.blog) is taken for
-the home page only. A feed at the site's root, on its blog subdomain's root, or on another site
-linked as a feed (an essayist's feed hosted elsewhere) is still the page's.
-A candidate is proved by reading only its first FEED_BYTES into a pull parser: the root must
-be rss, feed or RDF, and it is accepted at its first item or entry. At most FAN_OUT requests
-run at once, each within REQUEST_TIMEOUT_S, the whole search within BUDGET_S: a slow or
-blocked site gives "none", never a hang. Once one candidate is proved, the others of its stage
-get PROOF_GRACE_S more, so a hanging one never holds back a feed already found.
-JSON Feed is not looked for: INSIGHT reads RSS and Atom.
-
-Issue 0137 (new spheres, round 2):
-- A t.me channel or an x.com account pasted takes the configured bridge (TELEGRAM_RSS_HOSTS, NITTER_HOSTS);
-  a bridge's address is probed before "direct": one answering 4xx/5xx is never direct.
-- A page that refuses us (401/403/429) has, after the common paths, the feeds its site's robots.txt and
-  sitemap name, and the shapes of the feeds your other sources at that publisher use, with this page's
-  own path words (`known`), tried; no publisher's path is named here.
-- A link saying RSS or feeds that is no feed is a feed directory: one is followed, and the feeds on it
-  are known by their content, not their extension.
-- An Apple Podcasts page asks the public lookup for the show's feed.
-- A saved search is never the only offer while the search can go on; else the finding says so (`note`).
-- Every feed offered is read whole with the fetcher's own parser (parse_feed_posts, a bare & repaired):
-  one it cannot read is refused with the parser's message.
-- A feed sharing no item with the page's 3+ articles, or whose newest item is 30+ days older than the
-  page's newest article, is flagged (`Feed.flag`): the site's feed, not this page's.
-- "none" says why (`reason`): blocked, rate-limited, needs login, gone, server error, empty feed, no
-  bridge (none configured), bridge did not answer (configured, asked twice: issue 0185), none found.
+  0. No request: a kind reads the address directly ("direct"), a bridge serves a t.me / x.com address, or a
+     platform rule names its feed (Medium, GitHub, arXiv, PyPI, Substack publications and profiles).
+  1. The address itself, else its page's alternate feed links, then its feed-like <a> links.
+  2. The section page and the home page, in parallel, the same way.
+  3. The page's links to its own blog or newsroom (at most two); with none, its menu links are reported unread.
+  4. Common feed paths, under those blogs first, then at the site's root. A blocked page also tries its site's
+     robots.txt and sitemap feeds and the shapes of your other feeds at that publisher (`known`).
+A menu blog on another domain is a candidate after the site's own feeds; a bodiless feed whose first entry moved
+to another site is searched there too (Feed.moved_to). A page under an account or section is never offered
+another section's feed. A candidate is proved by its first FEED_BYTES in a pull parser; at most FAN_OUT requests
+at once, within REQUEST_TIMEOUT_S each and BUDGET_S overall, so a slow site gives "none", never a hang. Offered
+feeds are read whole with the fetcher's parser (unreadable ones refused) and flagged when they are the site's
+feed rather than the page's; "none" says why (`reason`).
 """
 from __future__ import annotations
 
@@ -94,7 +53,7 @@ from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.ingestion.feed_finder")
 
-PAGE_BYTES = 3_000_000          # the most of a page read for its links (cloudflare.com: 1.3 MB, the blog link in its footer)
+PAGE_BYTES = 3_000_000          # the most of a page read for its links (a blog link may sit in a late footer)
 FEED_BYTES = 64 * 1024          # the most of a candidate read to prove it a feed
 PARSE_CHUNK = 16 * 1024         # fed to the pull parser at a time, so a page stops early
 REQUEST_TIMEOUT_S = 5.0
@@ -102,30 +61,25 @@ BUDGET_S = 10.0
 PROOF_GRACE_S = 1.0
 FAN_OUT = 4
 MAX_CANDIDATES = 6              # per stage, from the pages' links
-# A page with no feed may link its own blog or newsroom, often on a subdomain
-# (www.cloudflare.com -> blog.cloudflare.com): links so named, on the same site, at most two.
+# A page with no feed may link its own blog or newsroom, often on a subdomain: links so named, same site.
 BLOG_LINK_TEXTS = frozenset({"blog", "the blog", "our blog", "news", "newsroom", "press", "engineering blog"})
 MAX_BLOG_LINKS = 2
-# A home page that names no blog may still have one under another word ("Now", "Latest"): its
-# own menu links, header and navigation before the footer, the shallowest first, at most twelve
-# (a menu may lead with ten sign-up, demo and product pages before its blog).
+# A home page that names no blog may have one under another word: its menu links, header and nav first.
 MENU_TAGS = ("header", "nav", "footer")
-# A home page's menu link so named, on another domain, is its blog elsewhere (issue 0108): at most two.
+# A home page's menu link so named, on another domain, is its blog elsewhere.
 ELSEWHERE_BLOG_TEXTS = frozenset({"blog", "writing", "posts", "essays"})
 MAX_MENU_LINKS = 12
 COMMON_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/index.xml", "/feed.atom", "/feed.rss",
                 "/?feed=rss2", "/feeds/posts/default")
 
-# A page that refuses us (issue 0135: a journal's bot protection) while its feed addresses answer:
-# these paths are tried under the page itself, then at the site's root, before anything else.
+# A page that refuses us may still serve its feeds: these paths under the page, then at the root, first.
 BLOCKED_STATUSES = (401, 403, 429)
 BLOCKED_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml")
 REFUSED = "this feed has items INSIGHT can't read"
-# A feed that reads as a saved search (issue 0135): its title's words, its address's query or path.
+# A feed that reads as a saved search: its title's words, its address's query or path.
 SEARCH_WORDS = frozenset({"search", "query"})
 SEARCH_PARAMS = frozenset({"q", "query", "term", "terms", "search", "s", "keyword", "keywords"})
 
-# Issue 0137.
 PARSED_FEEDS = 3                 # the feeds offered that are read whole with the fetcher's parser
 PARSE_TIMEOUT_S = 8.0
 SEARCH_ONLY = "only a saved search was found"
@@ -147,21 +101,20 @@ GENERIC_SEGMENTS = frozenset({"journal", "journals", "home", "toc", "current", "
                               "page", "pages", "topics", "topic", "section", "sections", "category", "tag"})
 FEED_WORDS = frozenset({"rss", "atom", "feed", "feeds", "xml", "rdf", "rss2", "etoc"})
 DIRECTORY_WORDS = frozenset({"rss", "feeds", "atom"})
-# A pasted address on a platform INSIGHT reads through a bridge (issue 0137 A3).
+# A pasted address on a platform INSIGHT reads through a bridge.
 TELEGRAM_HOSTS = frozenset({"t.me", "telegram.me"})
 X_HOSTS = frozenset({"x.com", "twitter.com", "mobile.twitter.com", "mobile.x.com"})
 X_RESERVED = frozenset({"home", "search", "explore", "i", "intent", "share", "hashtag", "settings", "messages",
                         "notifications", "login", "signup", "tos", "privacy"})
 TELEGRAM_RESERVED = frozenset({"c", "joinchat", "addstickers", "addemoji", "share", "proxy", "socks", "login"})
 BRIDGE_KINDS = frozenset({"nitter_rss", "telegram_rss"})
-# Platform rules (stage 0, v10.13.5): a GitHub account name; arXiv's hosts.
+# Platform rules (stage 0).
 GITHUB_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 ARXIV_HOSTS = frozenset({"arxiv.org", "export.arxiv.org"})
 APPLE_PODCAST_HOSTS = frozenset({"podcasts.apple.com", "itunes.apple.com"})
 APPLE_ID_RE = re.compile(r"(?:^|/)id(\d{4,})(?:$|[/?])")
 APPLE_LOOKUP = "https://itunes.apple.com/lookup?id={}&entity=podcast"
-# A Substack profile (substack.com/@<handle>, v10.13.10) is no publication: its public profile names the
-# person's publications, offered by their own feeds (the primary first, then those they write for).
+# A Substack profile (substack.com/@<handle>) is no publication: its public profile names the publications.
 SUBSTACK_PROFILE_HOSTS = frozenset({"substack.com", "www.substack.com"})
 SUBSTACK_HANDLE_RE = re.compile(r"^@([A-Za-z0-9_.-]{1,80})$")
 SUBSTACK_SUBDOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62})$")
@@ -170,11 +123,10 @@ SUBSTACK_WRITER_ROLES = frozenset({"admin", "author"})
 NO_PUBLICATION = "a Substack profile with no publication"
 PROFILE_UNREADABLE = "the Substack profile could not be read"
 NO_PROFILE = "no such Substack profile"
-# "none" says why (issue 0137 B5), from the address's own answer.
+# "none" says why, from the address's own answer.
 REASON_BY_STATUS = {401: "needs login", 407: "needs login", 403: "blocked", 429: "rate-limited", 404: "gone", 410: "gone"}
 NONE_FOUND, EMPTY_FEED, NO_BRIDGE, SERVER_ERROR = "none found", "empty feed", "no bridge", "server error"
-# A bridge IS configured but its feed gave nothing readable, asked BRIDGE_TRIES times (timeout, empty or no
-# feed; issue 0185). NO_BRIDGE says only that none is configured.
+# A configured bridge gave nothing readable, asked BRIDGE_TRIES times; NO_BRIDGE: none is configured.
 BRIDGE_SILENT = "bridge did not answer"
 BRIDGE_TRIES = 2
 
@@ -182,7 +134,6 @@ FEED_ROOTS = {"rss", "feed", "rdf"}
 FEED_SEGMENTS = {"rss", "atom", "feed"}
 FEED_ENDINGS = (".rss", ".atom", "feed.xml", "rss.xml", "atom.xml", "index.xml")
 FEED_LINK_TEXTS = {"rss", "atom", "feed", "rss feed", "atom feed"}
-# An item's body: RSS's description and content:encoded, Atom's summary and content (issue 0108).
 BODY_ELEMENTS = frozenset({"description", "encoded", "summary", "content"})
 
 Status = Literal["feed", "found", "direct", "none"]
@@ -192,24 +143,22 @@ Status = Literal["feed", "found", "direct", "none"]
 class Feed:
     url: str
     title: str                  # the feed's own <title>; "" when it has none
-    # The item addresses in the part of the feed read to prove it (issue 0060: what it holds).
+    # the item addresses in the part of the feed read to prove it
     items: Tuple[str, ...] = field(default=(), compare=False)
-    # Their titles, in feed order (issue 0072: the source doctor's evidence and preview).
+    # their titles, in feed order
     titles: Tuple[str, ...] = field(default=(), compare=False)
-    # Every entry read carries no body (issue 0108: its posts may have moved).
+    # every entry read carries no body (its posts may have moved)
     bodiless: bool = field(default=False, compare=False)
-    # The site its posts now live at ("blog.example"), when its first entry's page moved there (0108).
+    # the site its posts now live at, when its first entry's page moved there
     moved_to: str = field(default="", compare=False)
-    # Its items are where INSIGHT's parser reads them (issue 0135, parsing.ITEM_PATHS); an unreadable
-    # feed is never offered: the finding says it was refused.
+    # its items are where parsing.ITEM_PATHS reads them; an unreadable feed is never offered
     readable: bool = field(default=True, compare=False)
-    # It reads as a saved search ("Keyword search for query", ?q=): ranked below the site's own feeds.
+    # it reads as a saved search: ranked below the site's own feeds
     search: bool = field(default=False, compare=False)
-    # Its newest item's date, as far as it was read (issue 0137 B2).
     newest: Optional[datetime] = field(default=None, compare=False)
-    # The site's feed, not this page's (issue 0137 B2): OTHER_SCOPE (none of the page's articles) or STALE.
+    # the site's feed, not this page's: OTHER_SCOPE or STALE
     flag: str = field(default="", compare=False)
-    # The whole document, when the read that proved it held all of it (issue 0137 B4: parsed without asking again).
+    # the whole document, when the read that proved it held all of it
     whole: bytes = field(default=b"", compare=False, repr=False)
 
 
@@ -220,29 +169,24 @@ class FeedFinding:
     pages: Tuple[str, ...] = ()  # none: the site's own blog or news pages the search read (stage 3)
     menu: Tuple[str, ...] = ()   # none, when no page is named so: the page's own menu links, unread
     landed: str = field(default="", compare=False)   # where the address itself landed, when it was read
-    # A section address read, with its home page read beside it (stage 2): the home page's own
-    # blog or news links, else its menu links, unread. Follow from a section (issue 0060) offers
-    # them when the section gives nothing, without looking at the home page again.
+    # for a section address (stage 2): the home page's blog or news links, else its menu links, unread
     home_pages: Tuple[str, ...] = field(default=(), compare=False)
     home_menu: Tuple[str, ...] = field(default=(), compare=False)
-    # A feed was found whose items INSIGHT cannot read (issue 0135): REFUSED, else "". A feed the
-    # fetcher's parser refuses says the parser's message (issue 0137 B4).
+    # a feed was found whose items INSIGHT cannot read: REFUSED or the parser's message, else ""
     refused: str = field(default="", compare=False)
-    # Why none (issue 0137 B5): REASON_BY_STATUS's, EMPTY_FEED, NO_BRIDGE, SERVER_ERROR or NONE_FOUND; "" else.
+    # why none: REASON_BY_STATUS's, EMPTY_FEED, NO_BRIDGE, SERVER_ERROR or NONE_FOUND; "" else
     reason: str = field(default="", compare=False)
-    # SEARCH_ONLY when the only feed found is a saved search (issue 0137 A5).
+    # SEARCH_ONLY when the only feed found is a saved search
     note: str = field(default="", compare=False)
 
 
-# The test read of a source being added (issue 0254), whatever its kind's read costs (yt-dlp's listing: its own 45s).
+# The test read of a source being added, whatever its kind's read costs (yt-dlp's listing takes 45s).
 TEST_READ_BUDGET_S = 60
 
 
 async def test_read(registry: KindRegistry, source: Dict[str, object]) -> Optional[ReadCheck]:
-    """Why the source being added can't be read (issue 0254, the source-adding rule: no address added that no kind
-    can read): its kind's own test read (BaseKind.test_read: a YouTube channel, an X account through the bridge),
-    None when it read it, or its kind has none (a feed or a page: find_feeds and the page-watch preview read those
-    before the Add). Never raises."""
+    """Why the source being added can't be read, by its kind's own test read (BaseKind.test_read); None when it
+    read, or its kind has none. No address is added that no kind can read. Never raises."""
     try:
         kind = registry.resolve(source)
     except LookupError:
@@ -258,9 +202,8 @@ async def test_read(registry: KindRegistry, source: Dict[str, object]) -> Option
 
 
 async def find_feeds(http: KindHttp, registry: KindRegistry, url: str, known: Sequence[str] = ()) -> FeedFinding:
-    """The feeds for the page at url (a scheme is added when missing). Never raises for a
-    site's failure or slowness; ValueError for an empty address. `known`: the feed addresses your
-    sources use (issue 0137 A2: a blocked page tries their shapes at its own publisher)."""
+    """The feeds for the page at url (a scheme is added when missing). Never raises for a site's failure or
+    slowness; ValueError for an empty address. `known`: your sources' feed addresses (shapes a blocked page tries)."""
     address = _normalise(url)
     search = _Search(http, known)
     started = time.monotonic()
@@ -292,9 +235,8 @@ async def find_feeds(http: KindHttp, registry: KindRegistry, url: str, known: Se
 
 
 def bridge_feed(url: str) -> Optional[Tuple[str, Optional[str]]]:
-    """(the platform, the bridge's feed address) for a pasted t.me channel or x.com account (issue 0137
-    A3): the configured Telegram bridge's /rss/<channel>, your Nitter's /<user>/rss; the address None when
-    no bridge is set. None for any other address."""
+    """(the platform, the bridge's feed address) for a pasted t.me channel or x.com account; the address None
+    when no bridge is set. None for any other address."""
     host = publication_of(host_of(url))
     segments = path_segments(url)
     if host in TELEGRAM_HOSTS and segments:
@@ -313,10 +255,8 @@ def bridge_feed(url: str) -> Optional[Tuple[str, Optional[str]]]:
 
 
 async def page_feeds(http: KindHttp, url: str) -> Tuple[Feed, ...]:
-    """The feeds the page at url names itself (stage 1 only): the page when it is one, else its
-    feed links that are feeds. Never raises for a site's failure or slowness. Follow from a
-    section (issue 0060) reads the home page's feeds beside the section's: a newspaper's tech
-    feed may hold fewer of the linked articles than its feed of everything."""
+    """The feeds the page at url names itself (stage 1 only): the page when it is one, else its feed links that
+    are feeds. Never raises for a site's failure or slowness."""
     search = _Search(http)
     try:
         async with asyncio.timeout(BUDGET_S):
@@ -341,13 +281,13 @@ def _normalise(url: str) -> str:
 class _Search:
     def __init__(self, http: KindHttp, known: Sequence[str] = ()) -> None:
         self.http = http
-        self.known = tuple(known)               # your sources' feed addresses (issue 0137 A2)
-        self.statuses: Dict[str, int] = {}      # url -> the HTTP error it answered (issue 0137 B5)
-        self.empty_feed = False                 # the address is a feed with no item (B5)
-        self.searches: Tuple[Feed, ...] = ()    # saved searches kept aside while the search goes on (A5)
-        self.directories: List[str] = []        # links saying RSS or feeds that are pages (B3)
+        self.known = tuple(known)               # your sources' feed addresses
+        self.statuses: Dict[str, int] = {}      # url -> the HTTP error it answered
+        self.empty_feed = False                 # the address is a feed with no item
+        self.searches: Tuple[Feed, ...] = ()    # saved searches kept aside while the search goes on
+        self.directories: List[str] = []        # links saying RSS or feeds that are pages
         self.followed_directory = False
-        self.articles: Tuple[str, ...] = ()     # the page's own article links (B2)
+        self.articles: Tuple[str, ...] = ()     # the page's own article links
         self.page_newest: Optional[datetime] = None
         self.fan_out = asyncio.Semaphore(FAN_OUT)
         self.tried: set[str] = set()
@@ -357,22 +297,22 @@ class _Search:
         self.landed = ""
         self.home_pages: Tuple[str, ...] = ()
         self.home_menu: Tuple[str, ...] = ()
-        self.elsewhere: Tuple[str, ...] = ()   # the home page's menu blog links on another domain (0108)
-        self.refused = False                   # a feed was found that INSIGHT cannot read (0135)
-        self.blocked: set[str] = set()         # the addresses that refused us (BLOCKED_STATUSES, 0135)
+        self.elsewhere: Tuple[str, ...] = ()   # the home page's menu blog links on another domain
+        self.refused = False                   # a feed was found that INSIGHT cannot read
+        self.blocked: set[str] = set()         # the addresses that refused us (BLOCKED_STATUSES)
 
     async def run(self, url: str) -> FeedFinding:
         finding = await self._run(url)
         if self.elsewhere and finding.status in ("found", "none"):
             finding = await self._with_elsewhere(finding)
         if finding.status == "none" and self.searches:
-            # Only a saved search was found (issue 0137 A5): offered, and said so.
+            # only a saved search was found: offered, and said so
             return FeedFinding("found", self.searches, note=SEARCH_ONLY)
         return await self._past_moved(finding)
 
     async def through_bridge(self, address: str, kind: str, bridged: Optional[Tuple[str, Optional[str]]]) -> FeedFinding:
-        """A pasted t.me or x.com address (bridged) through the configured bridge, or an address a kind
-        reads: a bridge's is probed first, and one answering an HTTP error is never "direct" (issue 0137 A3)."""
+        """A pasted t.me or x.com address through the configured bridge, or an address a kind reads; a bridge's
+        address is probed first, and one answering an HTTP error is never "direct"."""
         if bridged is not None:
             platform, feed_url = bridged
             if feed_url is None:
@@ -383,7 +323,7 @@ class _Search:
                     return FeedFinding("found", (replace(got[1], url=feed_url),))
                 if 400 <= self.statuses.get(feed_url, 0) < 500:
                     break                       # the bridge answered: gone, blocked, rate-limited
-            # A configured bridge that gave nothing readable (issue 0185): its answer's reason, else its own.
+            # a configured bridge that gave nothing readable: its answer's reason, else its own
             return FeedFinding("none", reason=self.reason(feed_url) if feed_url in self.statuses else BRIDGE_SILENT)
         if kind in BRIDGE_KINDS:
             await self._get(address, FEED_BYTES)
@@ -392,9 +332,8 @@ class _Search:
         return FeedFinding("direct")
 
     async def substack_profile(self, handle: str) -> FeedFinding:
-        """A Substack profile's publications (v10.13.10), from its public profile: one request, the feeds
-        offered unread (each a publication's /feed). Never Substack's own feed: a profile that can't be read,
-        or names no publication, is "none" saying so."""
+        """A Substack profile's publications' feeds, unread, from one public-profile request. Never Substack's own
+        feed: an unreadable profile, or one naming no publication, is "none" saying so."""
         url = SUBSTACK_PROFILE_API.format(urllib.parse.quote(handle, safe=""))
         self.requests += 1
         try:
@@ -409,7 +348,7 @@ class _Search:
         return FeedFinding("found", feeds) if feeds else FeedFinding("none", reason=NO_PUBLICATION)
 
     def reason(self, address: str) -> str:
-        """Why the search found nothing (issue 0137 B5), from the address's own answer."""
+        """Why the search found nothing, from the address's own answer."""
         if self.empty_feed:
             return EMPTY_FEED
         status = self.statuses.get(address) or self.statuses.get(self.landed) or 0
@@ -418,9 +357,9 @@ class _Search:
         return SERVER_ERROR if status >= 500 else NONE_FOUND
 
     async def parsed(self, finding: FeedFinding) -> FeedFinding:
-        """The finding with its first PARSED_FEEDS feeds read whole with the fetcher's own parser (issue
-        0137 B4): one it refuses is never offered (the parser's message says why); and flagged when it is
-        the site's feed, not this page's (B2). A feed that cannot be fetched again now is kept as proved."""
+        """The finding with its first PARSED_FEEDS feeds read whole with the fetcher's parser: one it refuses is
+        never offered, and each is flagged when it is the site's feed, not this page's. A feed that cannot be
+        fetched again now is kept as proved."""
         checked = await asyncio.gather(*(self._parse(feed) for feed in finding.feeds[:PARSED_FEEDS]))
         feeds = [feed for feed, _ in checked if feed is not None] + list(finding.feeds[PARSED_FEEDS:])
         if not feeds:
@@ -449,8 +388,8 @@ class _Search:
         return self._flagged(replace(feed, items=items or feed.items, newest=max(dates) if dates else feed.newest)), ""
 
     def _flagged(self, feed: Feed) -> Feed:
-        """The feed flagged OTHER_SCOPE when it holds none of the page's 3+ articles, else STALE when its
-        newest item is STALE_AFTER older than the page's newest article (issue 0137 B2)."""
+        """The feed flagged OTHER_SCOPE when it holds none of the page's 3+ articles, else STALE when its newest
+        item is STALE_AFTER older than the page's newest article."""
         if len(self.articles) >= SCOPE_MIN_ARTICLES and feed.items:
             if not {_article_key(url) for url in feed.items} & {_article_key(url) for url in self.articles}:
                 return replace(feed, flag=OTHER_SCOPE)
@@ -459,15 +398,15 @@ class _Search:
         return feed
 
     def _offer(self, feeds: Tuple[Feed, ...]) -> Tuple[Feed, ...]:
-        """The feeds when one is the site's own; saved searches alone are kept aside (issue 0137 A5)."""
+        """The feeds when one is the site's own; saved searches alone are kept aside."""
         if feeds and all(feed.search for feed in feeds):
             self.searches += tuple(feed for feed in feeds if feed not in self.searches)
             return ()
         return feeds
 
     async def _with_elsewhere(self, finding: FeedFinding) -> FeedFinding:
-        """The finding with the feeds of the home page's blog on another domain after its own (issue
-        0108): a platform's by its rule, else the feeds its page names, or the page when it is one."""
+        """The finding with the feeds of the home page's blog on another domain after its own: a platform's by its
+        rule, else the feeds its page names, or the page when it is one."""
         rules = [rule for link in self.elsewhere if (rule := _platform_feed(link))]
         pages = [link for link in self.elsewhere if not _platform_feed(link)]
         candidates = list(rules)
@@ -479,9 +418,8 @@ class _Search:
         return replace(finding, status="found", feeds=finding.feeds + more, pages=(), menu=()) if more else finding
 
     async def _past_moved(self, finding: FeedFinding) -> FeedFinding:
-        """The finding, and when the first of its feeds whose entries carry no body has posts on
-        another site now (issue 0108), the feeds found from that post's page first, the old feed
-        then saying where its posts live. Its status is "found" then: a choice."""
+        """The finding; when its first bodiless feed's posts now live on another site, the feeds found from that
+        post's page first, the old feed then saying where (status "found": a choice)."""
         old = next((feed for feed in finding.feeds if feed.bodiless and feed.items), None)
         if old is None:
             return finding
@@ -498,7 +436,7 @@ class _Search:
         self.requests += there.requests
         if not moved.feeds:
             return finding
-        # Found already (the home page's blog elsewhere, 0108's other way), it moves to the front.
+        # found already (the home page's blog elsewhere): it moves to the front
         first = {feed.url for feed in moved.feeds}
         host = publication_of(host_of(target))
         feeds = tuple(moved.feeds) + tuple(replace(feed, moved_to=host) if feed is old else feed
@@ -507,8 +445,7 @@ class _Search:
         return replace(finding, status="found", feeds=feeds)
 
     def _in_scope(self, feeds: Tuple[Feed, ...], start: str) -> Tuple[Feed, ...]:
-        """The feeds found away from the page at start that can be its own (v10.13.5): another
-        section's feed on its site is left out (see _other_section)."""
+        """The feeds found away from the page at start that can be its own: another section's is left out."""
         kept = tuple(feed for feed in feeds if not _other_section(feed, start))
         for feed in feeds:
             if feed not in kept:
@@ -534,12 +471,12 @@ class _Search:
             if title is not None:
                 feed = _feed(here, title, _repaired(body), here, whole=body if len(body) < PAGE_BYTES else None)
                 if not feed.readable:
-                    # A feed whose items the parser would not read stores nothing (issue 0135).
+                    # a feed whose items the parser would not read stores nothing
                     self.refused = True
                     return FeedFinding("none")
                 return FeedFinding("feed", (feed,))
             if _is_feed_root(_repaired(body)):
-                self.empty_feed = True          # a feed with no item yet (issue 0137 B5)
+                self.empty_feed = True          # a feed with no item yet
                 return FeedFinding("none")
             links = _links(body)
             if path_segments(here):
@@ -550,15 +487,13 @@ class _Search:
             if feeds := self._offer(await self._prove(_feed_links(body, here)) or await self._directory()):
                 return FeedFinding("found", feeds)
         elif url in self.blocked:
-            # The page refuses us; its feed addresses may not (issue 0135): the known feed paths
-            # under the page, then at the site's root, before the pages around it (refused too).
+            # the page refuses us; its feed addresses may not: BLOCKED_PATHS before the pages around it
             page_base = url.split("?", 1)[0].rstrip("/")
             bases = dict.fromkeys([page_base, origin_from_source(url, "")])
             if feeds := self._offer(await self._prove([base + path for base in bases for path in BLOCKED_PATHS],
                                                       limit=None, first=True)):
                 return FeedFinding("found", feeds[:1])
-            # Then the feeds its robots.txt and sitemap name, and the shapes of your other feeds at this
-            # publisher with this page's own words (issue 0137 A2).
+            # then the feeds its robots.txt and sitemap name, and your other feeds' shapes at this publisher
             if feeds := self._offer(await self._prove(await self._site_listed(url), limit=None)
                                     or await self._prove(learned_feeds(url, self.known), limit=None, first=True)):
                 return FeedFinding("found", feeds)
@@ -569,8 +504,7 @@ class _Search:
                                 or await self._directory()):
             return FeedFinding("found", feeds)
 
-        # An address that cannot be read (a feed gone) takes its home page's links instead. The
-        # home page's menu blog elsewhere is the home page's: never an account's (github.blog).
+        # an unreadable address takes its home page's links; the menu blog elsewhere is the home page's only
         origin = origin_from_source(here, "")
         home = dict(zip(around, pages)).get(f"{origin}/")
         if home and not self.elsewhere and not section_of(here):
@@ -600,8 +534,7 @@ class _Search:
         return FeedFinding("none", pages=self.pages, menu=self.menu)
 
     async def _apple_podcast(self, url: str) -> Optional[FeedFinding]:
-        """An Apple Podcasts show page: the public lookup's feedUrl for its id, proved (issue 0137 B3);
-        None for any other address, or when the lookup gives no feed that is one."""
+        """An Apple Podcasts show page: the public lookup's feedUrl for its id, proved; None otherwise."""
         found = APPLE_ID_RE.search(urllib.parse.urlparse(url).path)
         if host_of(url) not in APPLE_PODCAST_HOSTS or not found:
             return None
@@ -615,8 +548,8 @@ class _Search:
         return FeedFinding("found", proved) if proved else None
 
     async def _directory(self) -> Tuple[Feed, ...]:
-        """The feeds on the first feed directory met (a link saying RSS or feeds that is a page, issue 0137
-        B3), known by their content: its feed links first, then its other links on the site. One is followed."""
+        """The feeds on the first feed directory met (a page linked as RSS or feeds), known by their content: its
+        feed links first, then its other links on the site. One directory is followed."""
         if self.followed_directory or not self.directories:
             return ()
         self.followed_directory = True
@@ -632,9 +565,8 @@ class _Search:
         return (await self._prove([*_feed_links(body, here), *others], limit=MAX_DIRECTORY_FEEDS * 2))[:MAX_DIRECTORY_FEEDS]
 
     async def _site_listed(self, url: str) -> List[str]:
-        """The feed addresses a site's robots.txt and sitemaps name (issue 0137 A2): robots' own feed-like
-        addresses, then the feed-like <loc>s of its sitemaps (robots' Sitemap lines, else /sitemap.xml), a
-        sitemap index's children that say feed or rss first, at most MAX_SITEMAPS read."""
+        """The feed-like addresses a site's robots.txt and sitemaps name (an index's feed / rss children first),
+        at most MAX_SITEMAPS read."""
         origin = origin_from_source(url, "")
         robots = await self._get(f"{origin}/robots.txt", FEED_BYTES)
         text = robots[0].decode("utf-8", errors="replace") if robots else ""
@@ -671,8 +603,8 @@ class _Search:
                 return None
 
     async def _sniff(self, url: str) -> Optional[Tuple[str, Feed]]:
-        """(the final URL, the feed) when url is a feed, else None. A page met on a link saying RSS or
-        feeds is kept as a feed directory (issue 0137 B3)."""
+        """(the final URL, the feed) when url is a feed, else None. A page met on a link saying RSS or feeds is
+        kept as a feed directory."""
         got = await self._get(url, FEED_BYTES)
         if got is None:
             return None
@@ -715,7 +647,7 @@ class _Search:
             if task.done() and not task.cancelled() and task.result():
                 final, feed = task.result()
                 feeds.setdefault(final, feed)
-        # A saved search after the site's own feeds (issue 0135); the order otherwise kept.
+        # a saved search after the site's own feeds; the order otherwise kept
         return tuple(sorted(feeds.values(), key=lambda feed: feed.search))
 
 
@@ -730,10 +662,8 @@ def _first_known(tasks: Sequence["asyncio.Task[Optional[Tuple[str, Feed]]]"]) ->
 
 
 def _platform_feed(url: str) -> Optional[str]:
-    """The feed a platform keeps at a known address for this page, else None: a Medium writer or
-    publication; a GitHub repository's releases, a GitHub user's or organization's public activity
-    (github.com/<name>.atom; an organization's may hold no entry: then it is no feed); an arXiv
-    category's listing (/list/<cat>/..., /archive/<cat>) its category feed; a PyPI project its releases."""
+    """The feed a platform keeps at a known address for this page, else None: Medium, a GitHub repository's
+    releases or an account's activity (an empty one is no feed), an arXiv category, a PyPI project's releases."""
     host = publication_of(host_of(url))
     segments = path_segments(url)
     feed = None
@@ -782,8 +712,8 @@ def _substack_publication(publication: object) -> Optional[Tuple[str, str]]:
 
 
 def substack_profile_feeds(data: object) -> Tuple[Feed, ...]:
-    """The feeds of a Substack profile's publications (v10.13.10): its primaryPublication first, then the
-    publications its publicationUsers say the person runs or writes for (role admin or author), once each."""
+    """The feeds of a Substack profile's publications: its primaryPublication first, then those the person runs
+    or writes for (SUBSTACK_WRITER_ROLES), once each."""
     if not isinstance(data, dict):
         return ()
     publications = [data.get("primaryPublication")]
@@ -799,8 +729,8 @@ def substack_profile_feeds(data: object) -> Tuple[Feed, ...]:
 
 
 def section_of(url: str) -> str:
-    """The account or section a page is under (v10.13.5): its first path segment, lowercased; "" for a
-    home page, or when that segment names a feed (/rss, /feed.xml: a gone feed stands for its site)."""
+    """The account or section a page is under: its first path segment, lowercased; "" for a home page, or when
+    that segment names a feed (a gone feed stands for its site)."""
     segments = path_segments(url)
     if not segments:
         return ""
@@ -809,10 +739,9 @@ def section_of(url: str) -> str:
 
 
 def _other_section(feed: Feed, start: str) -> bool:
-    """Whether a feed found away from the page at start is another section's on its site (v10.13.5):
-    start is under a section; the feed lives on the same site under another first segment (not a feed
-    word: /blog/feed.xml, not /feed or /rss/x); its address does not carry start's section; and none of
-    its items read lives under that section. huggingface.co/<org> and its /blog/feed.xml."""
+    """Whether a feed found away from start is another section's on its site: start is under a section, the feed
+    lives on the same site under another first segment (not a feed word), its address does not carry start's
+    section, and none of its items read lives under it."""
     section = section_of(start)
     if not section or not same_site(host_of(feed.url), host_of(start)):
         return False
@@ -832,8 +761,7 @@ def _around(here: str, url: str) -> List[str]:
 
 
 def feed_title(start: bytes) -> Optional[str]:
-    """The feed's title when start (up to FEED_BYTES) begins a feed with an item, else None:
-    the finder's own proof, for the source doctor's re-check of an old address."""
+    """The feed's title when start (up to FEED_BYTES) begins a feed with an item, else None (the finder's proof)."""
     return _feed_title(start)
 
 
@@ -860,17 +788,16 @@ def _feed_title(start: bytes) -> Optional[str]:
 
 
 def _feed(url: str, title: str, start: bytes, final: str, whole: Optional[bytes] = None) -> Feed:
-    """The feed at url (read from start, landed at final), with what it holds, whether INSIGHT
-    reads its items and whether it is a saved search (issue 0135), and its newest item's date (0137);
-    whole: the answer as it came, when it is all of the document."""
+    """The feed at url (read from start, landed at final), with its items, readability, search flag and newest
+    date; whole: the answer as it came, when it is all of the document."""
     items, titles, bodiless = _feed_entries(start, final)
     return Feed(url, title, items, titles, bodiless, readable=_readable(start),
                 search=is_search_feed(title, final), newest=_newest_item(start), whole=whole or b"")
 
 
 def _repaired(start: bytes) -> bytes:
-    """The start of an answer with a feed's recoverable errors repaired (parsing.repaired_xml, issue 0137
-    B4: a bare &, a stray control character), as the fetcher reads it; a page is left as it is."""
+    """The start of an answer with a feed's recoverable errors repaired (parsing.repaired_xml), as the fetcher
+    reads it; a page is left as it is."""
     head = start[:512].lstrip().lower()
     if not head.startswith(b"<?xml") and not head.startswith((b"<rss", b"<feed", b"<rdf")):
         return start
@@ -908,8 +835,7 @@ def _newest_item(start: bytes) -> Optional[datetime]:
 
 
 def _page_newest(body: bytes) -> Optional[datetime]:
-    """The newest date a page shows for its articles (issue 0137 B2): its <time datetime> and JSON-LD
-    datePublished values."""
+    """The newest date a page shows for its articles: its <time datetime> and JSON-LD datePublished values."""
     text = body.decode("utf-8", errors="replace")
     dates = [when for value in PAGE_TIME_RE.findall(text) + PAGE_PUBLISHED_RE.findall(text)
              if (when := parsing.parse_datetime_value(value))]
@@ -917,8 +843,8 @@ def _page_newest(body: bytes) -> Optional[datetime]:
 
 
 def _article_links(links: "_FeedLinks", page_url: str) -> List[str]:
-    """The page's own article links (issue 0137 B2): on its site, outside its menus, two or more path
-    segments deep, the last a slug of three words or more ("/blog/why-rates-rose"), once each."""
+    """The page's own article links: on its site, outside its menus, two or more path segments deep, the last a
+    slug of three words or more ("/blog/why-rates-rose"), once each."""
     site = blog_site(host_of(page_url))
     found = []
     for href in links.content:
@@ -940,7 +866,7 @@ def _article_key(url: str) -> str:
 
 
 def _says_feed(href: str, text: str) -> bool:
-    """A link whose address or words say RSS or feeds (issue 0137 B3: a feed, or a page listing feeds)."""
+    """A link whose address or words say RSS or feeds (a feed, or a page listing feeds)."""
     words = set("".join(ch if ch.isalnum() else " " for ch in text.lower()).split())
     try:
         parsed = urllib.parse.urlparse(href.lower())
@@ -951,11 +877,9 @@ def _says_feed(href: str, text: str) -> bool:
 
 
 def learned_feeds(page_url: str, known: Sequence[str]) -> List[str]:
-    """Feed addresses in the shape of your other feeds at this page's publisher (issue 0137 A2), with
-    this page's own path words in place of each of theirs that is no feed word: a stored
-    /<code>/current.rss beside a page /<other-code>/home gives /<other-code>/current.rss; a stored
-    ?jc=<code> gives ?jc=<other-code>. Learned from what you follow; no publisher is named. At most
-    MAX_LEARNED, the stored addresses themselves left out."""
+    """Feed addresses in the shape of your other feeds at this page's publisher, with this page's path words in
+    place of their non-feed words (/<code>/current.rss beside /<other-code>/home gives /<other-code>/current.rss).
+    No publisher is named; at most MAX_LEARNED, the stored addresses left out."""
     site = publication_of(host_of(page_url))
     words = [segment for segment in path_segments(page_url)
              if segment.lower() not in GENERIC_SEGMENTS and segment.lower() not in FEED_WORDS and "." not in segment]
@@ -981,8 +905,7 @@ def learned_feeds(page_url: str, known: Sequence[str]) -> List[str]:
 
 
 def _readable(start: bytes) -> bool:
-    """Whether start holds an item where parse_feed_posts reads one (parsing.ITEM_PATHS), as far as
-    it reads: a feed with items elsewhere (an RSS item outside its channel) would store nothing."""
+    """Whether start holds an item where parse_feed_posts reads one (parsing.ITEM_PATHS), as far as it reads."""
     parser = ET.XMLPullParser(events=("start", "end"))
     path: List[str] = []
     seen_item = False
@@ -1005,8 +928,7 @@ def _readable(start: bytes) -> bool:
 
 
 def is_search_feed(title: str, url: str) -> bool:
-    """A feed that reads as a saved search (issue 0135): its title says search or query ("Keyword
-    search for query"), or its address searches (?q=, ?term=, /search/)."""
+    """A feed that reads as a saved search: its title says search or query, or its address searches."""
     words = set("".join(ch if ch.isalnum() else " " for ch in (title or "").lower()).split())
     try:
         parsed = urllib.parse.urlparse(url)
@@ -1022,10 +944,8 @@ def _feed_items(start: bytes, feed_url: str) -> Tuple[str, ...]:
 
 
 def _feed_entries(start: bytes, feed_url: str) -> Tuple[Tuple[str, ...], Tuple[str, ...], bool]:
-    """(the item addresses, the item titles, whether no item read carries a body) in start, as far
-    as it reads, in feed order. An address is absolute, once each: an RSS item's <link> (else a
-    permalink <guid>), an Atom entry's alternate <link href>. A title is the item's <title> text, its
-    spaces single. A body is a description, summary or content with any text (issue 0108)."""
+    """(the item addresses, the item titles, whether no item read carries a body) in start, in feed order. An
+    address is absolute, once each: an RSS <link> (else a permalink <guid>) or an Atom alternate <link href>."""
     parser = ET.XMLPullParser(events=("start", "end"))
     found: List[str] = []
     titles: List[str] = []
@@ -1086,8 +1006,8 @@ def _links(body: bytes) -> "_FeedLinks":
 
 
 def _on_blog_site(links: Iterable[str], page_url: str) -> List[str]:
-    """The links, absolute, on the page's blog site (addresses.blog_site: a blog./news. subdomain
-    included), less the page itself, once each, the shallowest first: /blog before /blog/tag/research."""
+    """The links, absolute, on the page's blog site (addresses.blog_site), less the page itself, once each, the
+    shallowest first."""
     site = blog_site(host_of(page_url))
     absolute = (_absolute(page_url, href) for href in links)
     same = (url for url in absolute if url and url.rstrip("/") != page_url.rstrip("/") and blog_site(host_of(url)) == site)
@@ -1100,8 +1020,8 @@ def _blog_links(links: "_FeedLinks", page_url: str) -> List[str]:
 
 
 def _menu_links(links: "_FeedLinks", page_url: str) -> List[str]:
-    """The page's own menu links (MENU_TAGS), header and navigation before the footer, the
-    shallowest first, at most MAX_MENU_LINKS: the pages that may be its blog under another word."""
+    """The page's own menu links (MENU_TAGS), header and navigation before the footer, the shallowest first, at
+    most MAX_MENU_LINKS."""
     menu = [href for _, href in sorted(links.menu, key=lambda link: link[0])]
     # A link with a query is the page in another state (a sign-up form), not a page of its own.
     return [url for url in _on_blog_site(menu, page_url)
@@ -1109,8 +1029,8 @@ def _menu_links(links: "_FeedLinks", page_url: str) -> List[str]:
 
 
 def _elsewhere_blogs(links: "_FeedLinks", page_url: str) -> List[str]:
-    """The page's menu links named a blog (ELSEWHERE_BLOG_TEXTS) on another site, absolute, once
-    each, at most MAX_BLOG_LINKS (issue 0108)."""
+    """The page's menu links named a blog (ELSEWHERE_BLOG_TEXTS) on another site, once each, at most
+    MAX_BLOG_LINKS."""
     site = blog_site(host_of(page_url))
     absolute = (_absolute(page_url, href) for href in links.named)
     other = (url for url in absolute if url and not same_site(host_of(url), host_of(page_url))
@@ -1119,8 +1039,7 @@ def _elsewhere_blogs(links: "_FeedLinks", page_url: str) -> List[str]:
 
 
 def _absolute(base: str, href: str) -> Optional[str]:
-    """href as an absolute http(s) URL without its fragment; None for anything else (a
-    malformed one, "http://[x/", too)."""
+    """href as an absolute http(s) URL without its fragment; None for anything else."""
     try:
         url = urllib.parse.urldefrag(urllib.parse.urljoin(base, href.strip()))[0]
         return url if urllib.parse.urlparse(url).scheme in ("http", "https") else None
@@ -1153,8 +1072,8 @@ class _FeedLinks(HTMLParser):
         self.anchors: List[str] = []
         self.blogs: List[str] = []                   # links to the site's own blog or newsroom
         self.menu: List[Tuple[int, str]] = []        # (0 header or navigation, 1 footer), href
-        self.named: List[str] = []                   # menu links named a blog elsewhere (issue 0108)
-        self.content: List[str] = []                 # links outside the menus (issue 0137: articles, directories)
+        self.named: List[str] = []                   # menu links named a blog elsewhere
+        self.content: List[str] = []                 # links outside the menus (articles, directories)
         self._regions: List[str] = []                # the open MENU_TAGS
         # [href, text so far, its first piece of text]: a menu item's label comes before its
         # description ("Blog", then "Product updates, insights…").

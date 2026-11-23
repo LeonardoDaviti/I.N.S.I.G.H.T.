@@ -1,14 +1,7 @@
-"""A page that says it is for paying readers (issue 0167, part 3): read from the page's own standard markers.
+"""A page that says it is for paying readers, read from its own standard markers (never a site's name).
 
-A page read that finds a paywall says so (metadata.paywalled, "for paid subscribers"), instead of "its page held
-nothing longer". Only what a page states about itself counts, never a site's name:
-  - **schema.org's `isAccessibleForFree`** false: the structured data publishers give search engines for paywalled
-    content, as JSON-LD (`"isAccessibleForFree": false`, or "False"/"false" as a string, also inside `hasPart`) or as
-    microdata (`itemprop="isAccessibleForFree" content="False"`);
-  - **Open Graph's `article:content_tier`** "locked" (a metered page is readable: not a paywall);
-  - **Substack's own answer for the post**: the page's `_preloads` names the post's `audience` "only_paid" or
-    "founding" (paid) or "only_subscribers" (subscribers only). Read from the post's own object, never from another
-    post the page lists (a paid recommendation on a free post's page is no paywall).
+schema.org's `isAccessibleForFree` false (JSON-LD or microdata), Open Graph's `article:content_tier` "locked" (metered
+is no paywall), or Substack's `_preloads` audience for the post itself (never another post the page lists).
 """
 from __future__ import annotations
 
