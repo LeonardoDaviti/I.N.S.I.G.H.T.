@@ -4,7 +4,8 @@ One decision, owned here: which tools and products a topic track's posts are abo
 (practitioners) that discuss them and how recently. Two readers: the track page's "Tools in use" panel (`panel`) and
 the track's `tool` finder (finders.py: a passive post naming one of these tools is put up for judging, `finder_ids`).
 
-**What counts** (`rows`): the entities of the track's judged-in posts (Haiku's in, or the owner's ✓; never a post the
+**What counts** (`rows`): the entities of the track's posts placed in it (the owner's ✓, an active source's in, a
+join; v10.41: never a Discover suggestion; never a post the
 owner marked ✗ nor a switched-off source's) whose kind is a tool: the current identity facts' kind (0184,
 entity_facts.read, when on) else the entity's type, one of TOOL_KINDS; never a generic word (facts `generic`) nor a
 name the book marked not an entity. Each tool: its posts, its voices (Mark X's voice rule: a post counts as its
@@ -41,9 +42,10 @@ POSTS_READ = 40         # the newest posts of a tool read for its voices
 
 
 def judged_in(items: Sequence[Dict[str, Any]]) -> List[str]:
-    """The track's posts a tool can come from: placed in the track, joined or in Discover (Haiku's in, or the owner's
-    ✓); not out, not off."""
-    return [it["post_id"] for it in items if it.get("place") in ("track", "joined", "discover")]
+    """The track's posts a tool can come from: placed in the track or joined (the owner's ✓, an active source's in, a
+    join); not out, not off. v10.41: never Discover's, a suggestion not decided yet (production, 2026-11-23: Security's
+    panel showed Railway, pnpm and RubyGems from Discover posts, 0 of them in the track)."""
+    return [it["post_id"] for it in items if it.get("place") in ("track", "joined")]
 
 
 def rows(cur: Cursor, posts: Sequence[str], in_track: Sequence[str] = (), *, now: Optional[datetime] = None,

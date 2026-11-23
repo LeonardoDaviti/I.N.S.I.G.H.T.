@@ -39,7 +39,10 @@ def item(k=0, *, chars=600, dated=True, lang="en", transcript=None, at=None):
 
 
 def verdict(inside=True, conf=0.9):
-    return {"id": "x", "in": inside, "confidence": conf, "subtopic": "parts" if inside else None, "why": "A printable part: Acme's Widget."}
+    # v10.41 (track-v3): the fit stated before `in`, quoting the tracks' `Belongs:` ("... parts ...")
+    return {"id": "x", "subject": "a printable part", "fits": inside, "matches": "parts" if inside else None,
+            "excluded": None, "in": inside, "confidence": conf, "subtopic": "parts" if inside else None,
+            "why": "A printable part: Acme's Widget."}
 
 
 class StubReader:
