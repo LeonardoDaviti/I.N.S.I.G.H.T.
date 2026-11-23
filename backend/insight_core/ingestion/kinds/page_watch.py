@@ -211,14 +211,18 @@ def listing_address(url: str, prefix: str = "") -> bool:
 SITE_PAGE_ADAPTERS = frozenset({"page_watch", "generic_rss"})
 
 
+def read_from_address(external_id: Optional[str], adapter: Optional[str]) -> bool:
+    """Whether a stored post is a site page read as an article from its address (an archive's sitemap, listing or
+    Web Archive page, a page watch's page), from its row alone: SITE_PAGE_ADAPTERS and an external id that is the
+    page's path (article_post's; a page that moved keeps the one it was first read at), never a feed item's guid."""
+    return adapter in SITE_PAGE_ADAPTERS and bool(external_id) and str(external_id).startswith("/")
+
+
 def stored_listing(url: Optional[str], external_id: Optional[str], adapter: Optional[str], prefix: str = "") -> bool:
     """Whether a stored post is a listing of other posts, from its row alone: a site page read as an article
-    (SITE_PAGE_ADAPTERS, external_id a path) at a listing address; never a feed item, saved page or release.
+    (read_from_address) at a listing address; never a feed item, saved page or release.
     Asked by utils/item_filter's `listing` rule."""
-    if not url or adapter not in SITE_PAGE_ADAPTERS or not external_id:
-        return False
-    # its external id a path (article_post's; a page that moved keeps the one it was first read at), never a guid
-    return external_id.startswith("/") and listing_address(url, prefix)
+    return bool(url) and read_from_address(external_id, adapter) and listing_address(str(url), prefix)
 
 
 def listing_markup(page: str, url: str) -> bool:
@@ -1037,4 +1041,4 @@ class PageWatchKind(BaseSourceAdapter):
 __all__ = ["Discovery", "PageWatchKind", "action_page", "listing_address", "listing_markup", "not_post", "stored_listing", "article_post", "article_shaped", "discover", "discover_changed",
            "form_page", "name_titles", "pagination_page", "site_suffixes", "stable_prefix",
            "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_dating", "page_title", "preview",
-           "read_page_post", "section_prefix", "sitemap_entries", "list_pages", "list_offers", "dated_list"]
+           "read_page_post", "read_from_address", "section_prefix", "sitemap_entries", "list_pages", "list_offers", "dated_list"]
