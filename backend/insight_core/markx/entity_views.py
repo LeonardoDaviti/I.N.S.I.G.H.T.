@@ -828,11 +828,12 @@ def story_entries(cur: Any, members: Dict[str, List[str]], voices: Dict[str, int
     from insight_core.markx import news as NW
     sids = sorted(s for s, ps in members.items() if ps)
     out, seen = [], set()
-    for g in graph.release_groups(cur, sids):
-        g = [s for s in g if s in voices]
-        if len(g) < 2:
-            continue
-        order = NW.launch_order(NW._story_facts(cur, g), {s: voices[s] for s in g})
+    groups = [g for g in ([s for s in g if s in voices] for g in graph.release_groups(cur, sids)) if len(g) >= 2]
+    # v10.40: every group's stories built in one call, as News builds its rows' (a call a group read the book's makers
+    # and the members' texts again each time: Anthropic's page on the server copy, 29 groups, 10.2 s of its 16 s)
+    facts = NW._story_facts(cur, {s for g in groups for s in g}) if groups else {}
+    for g in groups:
+        order = NW.launch_order({s: facts[s] for s in g if s in facts}, {s: voices[s] for s in g})
         rest = sorted((s for s in g if s not in order), key=lambda s: (-voices[s], s))
         out.append(list(dict.fromkeys(order + rest)))
         seen |= set(g)

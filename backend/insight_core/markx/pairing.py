@@ -387,8 +387,12 @@ def specific(pol: Policy, type_: Optional[str], *, level: Optional[str] = None, 
 
 
 def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
-                     only: Optional[Iterable[str]] = None, model: str = MODEL) -> Dict[Tuple[str, str], float]:
-    """{(x, y): cosine} of the groups' mean vectors (x < y), at `lo` or more; with `only`, pairs touching one of them."""
+                     only: Optional[Iterable[str]] = None, model: str = MODEL,
+                     near: Optional[Tuple[Mapping[str, Any], timedelta]] = None) -> Dict[Tuple[str, str], float]:
+    """{(x, y): cosine} of the groups' mean vectors (x < y), at `lo` or more; with `only`, pairs touching one of them.
+    v10.40: with `near` ({group: its time}, window), only the pairs whose times are at most the window apart have
+    their cosine computed (the caller keeps its own rule; this only spares the work): the stories' pairs were every
+    pair of the window's stories (~3.3k stories: 5.5M cosines, ~4.5 s a call) for the ~10k within 14 days."""
     keys, ids = [], []
     for k, ps in groups.items():
         for p in ps:
@@ -396,14 +400,43 @@ def centroid_cosines(cur: Any, groups: Dict[str, Sequence[str]], lo: float,
             ids.append(p)
     if not keys:
         return {}
+    times = window = None
+    if near is not None and all(isinstance(t, datetime) for t in near[0].values()) and set(groups) <= set(near[0]):
+        times, window = near[0], near[1].total_seconds() + 1.0   # a second of slack: the caller's rule is exact
+    # the groups' mean vectors are hashed twice (4 KB each): a work_mem that cannot hold them spills every probe to
+    # disk (3.3k groups at 4 MB: 125 s, at 16 MB: 1.1 s); raised for this statement only, never lowered
+    cur.execute("SELECT current_setting('work_mem'), pg_size_bytes(current_setting('work_mem')) / 1024")
+    was, have_kb = cur.fetchone()
+    need_kb = min(CENTROID_WORK_MEM_CAP_KB, 4096 + 12 * len(groups))
+    if need_kb > have_kb:
+        cur.execute("SELECT set_config('work_mem', %s, true)", (f"{need_kb}kB",))
+    try:
+        rows = _centroid_rows(cur, keys, ids, lo, only, model, times, window)
+    finally:
+        if need_kb > have_kb:
+            cur.execute("SELECT set_config('work_mem', %s, true)", (was,))
+    return {(x, y): float(c) for x, y, c in rows}
+
+
+CENTROID_WORK_MEM_CAP_KB = 256 * 1024   # centroid_cosines' work_mem at most (~20k groups)
+
+
+def _centroid_rows(cur: Any, keys: List[str], ids: List[str], lo: float, only: Optional[Iterable[str]], model: str,
+                   times: Optional[Mapping[str, datetime]], window: Optional[float]) -> List[Tuple[str, str, float]]:
     cur.execute("""WITH g AS (SELECT * FROM unnest(%(k)s::text[], %(p)s::uuid[]) AS g(k, post_id)),
-                        c AS (SELECT g.k, avg(e.v::vector) AS v FROM g
-                                JOIN mx_embeddings e ON e.post_id = g.post_id AND e.model = %(m)s GROUP BY g.k)
-                   SELECT x.k, y.k, 1 - (x.v <=> y.v) FROM c x JOIN c y ON x.k < y.k
-                    WHERE (%(only)s::text[] IS NULL OR x.k = ANY(%(only)s) OR y.k = ANY(%(only)s))
-                      AND 1 - (x.v <=> y.v) >= %(lo)s""",
-                {"k": keys, "p": ids, "m": model, "lo": lo, "only": None if only is None else list(only)})
-    return {(x, y): float(c) for x, y, c in cur.fetchall()}
+                        t AS (SELECT * FROM unnest(%(tk)s::text[], %(tt)s::float8[]) AS t(k, at)),
+                        c AS MATERIALIZED (SELECT g.k, avg(e.v::vector) AS v FROM g
+                                JOIN mx_embeddings e ON e.post_id = g.post_id AND e.model = %(m)s GROUP BY g.k),
+                        kt AS MATERIALIZED (SELECT c.k, t.at FROM c LEFT JOIN t ON t.k = c.k),
+                        xy AS (SELECT x.k AS xk, y.k AS yk FROM kt x JOIN kt y ON x.k < y.k
+                                WHERE (%(w)s::float8 IS NULL OR abs(x.at - y.at) <= %(w)s)
+                                  AND (%(only)s::text[] IS NULL OR x.k = ANY(%(only)s) OR y.k = ANY(%(only)s))
+                               OFFSET 0)   -- the pairs first (keys and times only), then their vectors
+                   SELECT xy.xk, xy.yk, 1 - (cx.v <=> cy.v) FROM xy JOIN c cx ON cx.k = xy.xk JOIN c cy ON cy.k = xy.yk
+                    WHERE 1 - (cx.v <=> cy.v) >= %(lo)s""",
+                {"k": keys, "p": ids, "m": model, "lo": lo, "only": None if only is None else list(only),
+                 "tk": list(times or ()), "tt": [t.timestamp() for t in (times or {}).values()], "w": window})
+    return cur.fetchall()
 
 
 def post_cosines(cur: Any, pairs: Iterable[Tuple[str, str]], model: str = MODEL) -> Dict[Tuple[str, str], float]:
@@ -427,7 +460,8 @@ def story_pairs(cur: Any, pol: Policy, groups: Dict[str, Sequence[str]], posts: 
               if ps and voice.count((voice.Said(posts[p].source, posts[p].kind) for p in ps if p in posts),
                                     voice.Policy.MARKX) >= pol.min_voices}
     first = {k: posts[ps[0]].at for k, ps in groups.items()}
-    return {(x, y): c for (x, y), c in centroid_cosines(cur, groups, pol.story_cosine).items()
+    near = (first, pol.story_window) if pol.story_window is not None else None
+    return {(x, y): c for (x, y), c in centroid_cosines(cur, groups, pol.story_cosine, near=near).items()
             if pol.story_within(first[x], first[y])}
 
 
