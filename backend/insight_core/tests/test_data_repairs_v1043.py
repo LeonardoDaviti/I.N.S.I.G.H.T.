@@ -134,7 +134,7 @@ class RealRepairs(unittest.TestCase):
         names = [r.name for r in D.REPAIRS]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(set(names), {"hide_listing_pages", "repair_track_rows", "repair_saved_titles",
-                                      "repair_foreign_pages"})
+                                      "repair_foreign_pages", "reopen_failed_track_v3"})
         self.assertTrue(all(r.version and r.title for r in D.REPAIRS))
 
 

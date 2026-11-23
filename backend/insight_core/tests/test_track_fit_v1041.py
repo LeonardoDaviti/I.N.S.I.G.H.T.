@@ -52,8 +52,8 @@ class Fit(unittest.TestCase):
                        "why": "A Django linter for slow queries, a printer tool."})
         self.assertIsNone(self.check(ok))
         self.assertIn("copy the words", self.check(dict(ok, matches=None)))
-        self.assertIn("its own words", self.check(dict(ok, matches="clever software tools")),
-                      "a quote must be the description's words, not the post's")
+        self.assertIn("its own words", self.check(dict(ok, matches="Django query linter tools")),
+                      "a quote must be the description's words, not the post's (v10.44: most of them)")
         self.assertIn("its own words", self.check(dict(ok, matches="kitchen timer")),
                       "an example's words are not the description's")
         self.assertIn("null when fits is false", self.check(answer(matches="functional prints")))
