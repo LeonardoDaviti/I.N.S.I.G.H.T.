@@ -260,7 +260,10 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
     for key, ms in members.items():
         if nv[key] < 2:
             continue
-        origin = ms[0].post
+        # v10.39: the story's origin is Mark IX's tree root (the member with no parent reason), not its earliest post:
+        # a post the tree hangs from the root by `none`/`time` (no edge) may be dated first (Nvidia's "A Message to Our
+        # Company", 11-08, first of the Google TPU story through one TechCrunch aside) and was never checked
+        origin = next((m.post for m in ms if m.why is None), ms[0].post)
         for m in ms:
             p = posts[m.post]
             roundup = kinds.get(m.post) == "roundup"
