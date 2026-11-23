@@ -1,35 +1,11 @@
-"""Save any page (issue 0031): one web page, kept as an unread post of the built-in Saved source.
+"""Save any page: one web page kept as an unread post of the built-in Saved source (`save`), plus the
+collected originals of News stories (`collect`, `collect_for_source`, `collect_quote`).
 
-    result = await services().saved.save(http, "https://example.com/an/article", title="An article")
-    result["status"]   # "saved" | "already"
-
-A page already stored (its URL, or the one it redirects to, normalised) is not stored again:
-"already", with that post.
-
-Every save puts the post in Later at the save time (issue 0022, owner's decision), through
-ReaderService.set_later. A new saved post is dated by the page (issue 0063): its published_at is
-the date the page states (page_watch.page_date: meta tags, JSON-LD, <time>), else the save time.
-It still sorts by when it was saved, so it tops the feed: an older page date puts the save time
-in surfaced_at, the feed's sort key (0039). When it was saved stays fetched_at. A page already
-stored keeps its date. Otherwise the page is read as page watch reads an article
-(page_watch.article_post: the full-text reader, title, date, images). A page that cannot be
-read as an article (built with JavaScript, blocked, an error) is still saved, with its title
-(the page's, else the one the bookmarklet sent) and its address, and the answer says why
-(readable false, reason). The Saved source is created by the first save, and sources.json
-(the sources' export) is rewritten.
-
-Meanwhile the feed finder looks at the page: a feed that is not a source yet comes back as
-feed {url, title}, so the save page can offer to follow it.
-
-A page of a source you follow (issue 0122; whose page it is: repo_linked.page_source, 0084 B's rule)
-is looked for under that source first. With a `fetch` (the API's: one live fetch of that source, as
-Fetch now runs it) the save starts that fetch and answers "fetching" {job_id, source}; a fetch of the
-source already running is that job, and a source tried in the last 15 minutes (0114's floor) or in
-backoff is not fetched. The caller waits for the job and saves again with after_fetch: the page is
-"already" (the source's post) when the fetch brought it; else it is saved as the source's post
-(source_id the source, metadata.saved_by_owner the save time), dated by the page, else by the first
-stored post linking it (0113: a page dated at its save time pulls its story apart), never later than
-the save. Only a click fetches: nothing here runs by itself.
+A page already stored (its URL or its redirect, normalised) is "already" and goes to Later. A new save goes to
+Later, is dated by the page (else by the first stored post linking it, else the save time) and sorts at the save
+time (surfaced_at). An unreadable page is still saved with its title and address, and the answer says why. A page
+of a followed source is stored under that source; with `fetch`, the save first starts that source's fetch
+("fetching") and the caller saves again with after_fetch. Only a click fetches: nothing here runs by itself.
 """
 from __future__ import annotations
 
@@ -54,18 +30,15 @@ from insight_core.utils.url_normalization import normalize_url
 logger = logging.getLogger("insight.saved")
 
 ADAPTER = "saved"
-# A source tried this recently is not fetched again for a save (0114's floor, issue 0122).
+# A source tried this recently is not fetched again for a save (0114).
 REFETCH_WITHIN = timedelta(minutes=15)
 # A fetch job still "running" after this long is no fetch to wait for (a process that died).
 RUNNING_WITHIN = timedelta(hours=1)
 FETCH_JOB = "ingestion_run"
 _NAME = "COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url)"
-# Since when a linking post p shows its links (first_linked): its date, or the later change its page says it had
-# (metadata.modified, an ISO time: parsing.page_modified). Migration 0156 repairs with the same expression.
-# 0248: a change within a day of its publication is the same piece corrected (a news report updated that afternoon, a
-# page tidied minutes after it went up), its links there from the start; only a later one (an essay edited months on)
-# shows a link from the change. Measured on the server's copy: of the 47 collected pages 0156 B redated, 24 moved by
-# such a same-day edit (a filing cited by a report at 11:40, its page edited at 15:42, dated 14:01 by another report).
+# Since when a linking post p shows its links (first_linked): its date, or its page's later change
+# (metadata.modified) when that is more than a day after publication (a same-day edit is the same piece; 0248).
+# Migration 0156 repairs with the same expression.
 LINKED_SINCE = ("(CASE WHEN p.metadata->>'modified' ~ '^\\d{4}-\\d\\d-\\d\\dT'"
                 " AND (p.published_at IS NULL OR (p.metadata->>'modified')::timestamptz > p.published_at + interval '1 day')"
                 " THEN (p.metadata->>'modified')::timestamptz ELSE p.published_at END)")
@@ -97,9 +70,8 @@ def _web_page(address: str) -> bool:
 
 
 def dated_by_page(post: Dict[str, Any], saved_at: datetime) -> Tuple[Dict[str, Any], Optional[datetime]]:
-    """(the post dated by the date its page states, when it sorts in the feed): post["date"] is
-    that date or None. No date, or one after the save (a clock off), is the save time and sorts
-    as itself (None); an earlier one sorts at the save time."""
+    """(post, sorts_at): no date, or one after the save, becomes the save time (sorts_at None); an earlier
+    date is kept and the post sorts at the save time."""
     stated = post.get("date")
     if not isinstance(stated, datetime) or stated >= saved_at:
         return {**post, "date": saved_at}, None
@@ -137,9 +109,8 @@ class SavedService:
         stored = post["url"] != address and await asyncio.to_thread(self.stored_post, [post["url"]])
         if stored:
             return await self._already(stored, saved_at)
-        if post.get("date") is None:   # no date of its own: no later than the first post linking it (0122;
-            # 0113: every page, a source's or Saved's, so its story's 72 hours are its links', never the save's);
-            # none: the save time (dated_by_page), your own save. v10.13.9: the month hint is the backlog's only
+        if post.get("date") is None:   # no later than the first post linking it, so its story's window is its
+            # links', never the save's (0113); none: the save time (dated_by_page)
             post = {**post, "date": await asyncio.to_thread(self.first_linked, [address, post["url"]], saved_at)}
         if owner:
             source_id = owner["id"]
@@ -154,23 +125,21 @@ class SavedService:
             "post_id": post_id,
             "title": post["title"],
             "source_id": source_id,
-            # The source it is a post of (issue 0122): a followed source's {id, name}, else null (Saved).
+            # a followed source's {id, name}, else null (Saved)
             "source": owner,
             "readable": reason is None,
             "reason": reason,
             "feed": await asyncio.to_thread(self.unfollowed_feed, finding),
         }
 
-    # ------------------------------------------------------------------ collected originals (issue 0123)
+    # ------------------------------------------------------------------ collected originals
 
     async def collect(self, http: KindHttp, url: str, title: Optional[str] = None, *,
                       collected_as: Optional[str] = None) -> Dict[str, Any]:
-        """A News story's original no followed source owns, read once and stored as a Saved post by itself:
-        never in Later (no tap of yours), sorted by its own date, `metadata.collected_original` the time, and
-        `story_only` (issue 0126): shown inside its story and on its post page, no row of a feed, no unread count.
-        Its address keeps no access or gift token. A page that can't be read as an article is not stored
-        ("unreadable"). Stored or owned already: "already" or "followed", nothing read. One request. `collected_as`
-        (issue 0138 E): "classic" or "work", kept in its metadata (`collected_as`) for the post page's line."""
+        """A News story's original no followed source owns, read once (one request) and stored as a story_only
+        Saved post (shown only in its story and post page), never in Later, without access tokens in its address.
+        Returns "collected", "unreadable" (not stored), "already" or "followed". `collected_as`: "classic" or
+        "work", kept in metadata."""
         address = strip_access_tokens(parsing.web_address(url, "An address is needed"))
         if not _web_page(address):
             raise ValueError("Only an http or https page can be collected")
@@ -196,9 +165,8 @@ class SavedService:
         return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 1}
 
     async def collect_for_source(self, http: KindHttp, url: str, source_id: str) -> Dict[str, Any]:
-        """Issue 0138 F2: a followed source's page its feed never carried, read once and stored as that source's post
-        (0122's rule: one post under the source), not in Later (no tap of yours), `metadata.missed_by_feed` the
-        time; dated by the page, else by the first post linking it. Stored already: "already". One request."""
+        """A followed source's page its feed never carried, read once and stored as that source's post (not in
+        Later, `metadata.missed_by_feed` the time), dated as `_older_date`. Stored already: "already"."""
         address = strip_access_tokens(parsing.web_address(url, "An address is needed"))
         if not _web_page(address):
             raise ValueError("Only an http or https page can be collected")
@@ -220,8 +188,7 @@ class SavedService:
         return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 1}
 
     def collect_quote(self, url: str, words: str, *, title: Optional[str], at: datetime) -> Dict[str, Any]:
-        """A tweet a member quotes, stored from the quote (its words as Nitter shows them, its time by its
-        id): no request. As `collect` stores a page."""
+        """A tweet a member quotes, stored from the quote's words and time, as `collect` stores a page; no request."""
         address = normalize_url(url) or url
         stored = self.stored_post([address])
         if stored:
@@ -236,9 +203,8 @@ class SavedService:
         return {"status": "collected", "post_id": post_id, "title": post["title"], "requests": 0}
 
     async def _older_date(self, post: Dict[str, Any], address: str, landed: str, now: datetime) -> Optional[datetime]:
-        """v10.13.9: a collected page's date (an older page, never "now"): the date it states, else its address's day
-        or month (/2003/07/: the 1st), else when the first stored post linking it was published, else None (undated:
-        _insert sorts it before its source's oldest post)."""
+        """A collected page's date, never "now": the date it states, else its address's day or month, else the
+        first stored post linking it, else None (undated: sorted before its source's oldest post)."""
         stated = post.get("date")
         if isinstance(stated, datetime) and stated < now:
             return stated
@@ -258,8 +224,7 @@ class SavedService:
             return None
 
     async def _already(self, stored: Dict[str, Any], saved_at: datetime) -> Dict[str, Any]:
-        """A page already in INSIGHT: that post goes to Later (a post already there keeps its
-        time), its date untouched. A page shown only inside its story (issue 0126) is one you saved now."""
+        """A page already stored: to Later (keeping an earlier Later time), date untouched, no longer story_only."""
         await asyncio.to_thread(self.posts.drop_story_only, stored["post_id"])
         await asyncio.to_thread(self.reader.set_later, [stored["post_id"]], True, saved_at)
         return {"success": True, "status": "already", **stored}
@@ -278,8 +243,7 @@ class SavedService:
         stated = page_date(page, url) if page else None
         post = article_post(page, saved.HANDLE, url, stated, adapter=ADAPTER, platform=saved.PLATFORM) if page else None
         if post is not None:
-            # A saved page's identity is its whole address: two sites' "/" are two posts. Its
-            # date is the one the page states, or None (dated_by_page).
+            # identity is the whole address: two sites' "/" are two posts
             return {**post, "external_id": url, "date": stated}, None
         named = page_title(page, url) if page else url
         image = parsing.normalize_media_url(parsing.meta_content(page, "og:image")) if page else None
@@ -302,12 +266,11 @@ class SavedService:
 
     def stored_post(self, urls: Iterable[str]) -> Optional[Dict[str, Any]]:
         """{post_id, title, source_id, source} of a post stored under one of these addresses, else None.
-        source: {id, name} of a followed source's post (issue 0122), null for the Saved source's."""
+        source: {id, name} of a followed source's post, null for the Saved source's."""
         urls = list(urls)
         normalized = [n for n in map(normalize_url, urls) if n]
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            # normalized_url is not unique (issue 0049: one address can hold posts with other
-            # titles): an exact url first, else the first seen.
+            # normalized_url is not unique (0049): an exact url first, else the first seen
             cur.execute(f"SELECT p.id, p.title, s.id, s.platform, {_NAME} FROM posts p JOIN sources s ON s.id = p.source_id "
                         "WHERE p.url = ANY(%s) OR p.normalized_url = ANY(%s) "
                         "ORDER BY p.url = ANY(%s) DESC, p.fetched_at, p.created_at, p.id LIMIT 1",
@@ -319,7 +282,7 @@ class SavedService:
         return {"post_id": str(row[0]), "title": row[1] or "", "source_id": str(row[2]), "source": source}
 
     def page_source(self, address: str) -> Optional[Dict[str, str]]:
-        """{id, name} of the followed source whose post page this address is (issue 0122), else None."""
+        """{id, name} of the followed source whose post page this address is, else None."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             source_id = page_source(cur, address)
             if not source_id:
@@ -329,9 +292,8 @@ class SavedService:
         return {"id": source_id, "name": row[0]} if row else None
 
     def fetch_plan(self, source_id: str, now: datetime) -> Tuple[Optional[str], bool]:
-        """(the running fetch job of this source, or None; whether a new fetch may start): none when it
-        was tried in the last REFETCH_WITHIN or waits out its backoff (consecutive failures, before
-        next_retry_at), as the schedule would."""
+        """(this source's running fetch job or None, whether a new fetch may start): not within REFETCH_WITHIN
+        of its last attempt nor during its backoff, as the schedule would."""
         running = self.running_fetch(source_id, now)
         if running:
             return running, False
@@ -357,12 +319,8 @@ class SavedService:
         return str(row[0]) if row else None
 
     def first_linked(self, urls: List[str], saved_at: datetime) -> Optional[datetime]:
-        """When the first stored post linking one of these addresses was published (its published date: v10.13.9,
-        never an undated post's fetch time), never later than the save; None when no dated post links it. A linking
-        page that says it changed after it was published (metadata.modified, a page read again: issue 0039) shows
-        the link only from that change on (v10.25, issue 0228: a 2023 essay edited in 2026 to link a 2026 page
-        dated that page 2023); a change within a day of its publication does not count (0248: the same piece corrected,
-        its links there from the start)."""
+        """When the first dated post linking one of these addresses showed the link (LINKED_SINCE), never later
+        than the save; None when no dated post links it."""
         normalized = sorted({n for n in map(normalize_url, urls) if n})
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute(f"SELECT min({LINKED_SINCE}) FROM post_links pl JOIN posts p ON p.id = pl.post_id "
@@ -396,14 +354,13 @@ class SavedService:
         return str(row[0]) if row else None
 
     def _insert(self, source_id: str, post: Dict[str, Any], sorts_at: Optional[datetime] = None) -> str:
-        """The new post, saved; sorts_at (the save time, for a page dated earlier) is where the
-        feed sorts it (surfaced_at)."""
+        """The new post's id; sorts_at, when given, is its surfaced_at."""
         with db.transaction(self.db_url) as cur:
             post_id, inserted = self.posts.upsert_post(cur, post, source_id)
             if sorts_at is not None:
                 cur.execute("UPDATE posts SET surfaced_at = %s WHERE id = %s::uuid", (sorts_at, post_id))
             elif inserted and not isinstance(post.get("date"), datetime):
-                # v10.13.9: an undated older page sorts before its source's oldest post, as an archive's does
+                # an undated older page sorts before its source's oldest post, as an archive's does
                 PostsRepository.place_undated_backlog(cur, [str(post_id)])
         return str(post_id)
 

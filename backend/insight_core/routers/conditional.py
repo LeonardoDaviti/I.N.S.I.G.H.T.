@@ -1,10 +1,5 @@
-"""Conditional GETs for the answers every page polls (issue 0195).
-
-The top bar's running jobs, the unread counts, the Ingestion overview and source health are asked again every few
-seconds and mostly answer what they answered last time. Each such answer carries a weak ETag (a hash of its body) and
-`Cache-Control: no-cache`, so the browser keeps it and asks again with If-None-Match; an unchanged answer is then a
-304 with no body (the browser hands the kept body to the page as a 200). Only the listed paths, and only a 200: the
-answer is held once, as the response already holds it, never kept between requests.
+"""Conditional GETs for the answers pages poll: a weak ETag (a hash of the body) and `Cache-Control: no-cache` on
+the 200 answers of POLLED, and a 304 with no body when If-None-Match names it. Nothing is kept between requests.
 """
 from __future__ import annotations
 
@@ -15,8 +10,8 @@ Scope = Dict[str, Any]
 Message = Dict[str, Any]
 
 POLLED = ("/api/feed/unread-counts", "/api/operations/running", "/api/operations/overview", "/api/sources/health",
-          "/api/markx/news",   # 0198: a kept page (1.7 MB): an unchanged one is a 304
-          "/api/news", "/api/sources")   # 0215: the next large answers (86 KB each gzipped on the server), opened often
+          "/api/markx/news",   # a large kept page
+          "/api/news", "/api/sources")   # large answers opened often
 
 
 def etag_of(body: bytes) -> str:

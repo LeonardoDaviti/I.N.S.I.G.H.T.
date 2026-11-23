@@ -1,10 +1,7 @@
 """Gwern site adapter: his writing from the sitemap, the daily list from his two index pages.
 
-An explicit exception for a site with its own index pages (issue 0043). Every Gwern rule is
-here, none in the shared reader: the archive is the sitemap without /doc/ (topic directories,
-their introductions, copies of other people's texts) and the /newsletter/ issues (those are the Substack feed); the daily list is
-/blog/index (dated by each link's id) and Gwern's own pages on /doc/newest/index; each page
-is one request, read by the shared reader from its HTML.
+Every Gwern rule is here, none in the shared reader. Archive: the sitemap without BANNED_PREFIXES. Daily list:
+/blog/index (dated by each link's id) and his own pages on /doc/newest/index. One request per page.
 """
 
 from __future__ import annotations
@@ -24,7 +21,7 @@ class GwernAdapter(BaseSourceAdapter):
 
     adapter_type = "gwern_site"
     available_basis = "estimate"   # sitemap candidates; a few may hold no article
-    watches = True                 # his pages are re-read for edits when the owner asks (issue 0039)
+    watches = True                 # his pages are re-read for edits when the owner asks
     HOSTS = {"gwern.net", "www.gwern.net"}
     PAGE_SIZE = 20
     PAGE_DELAY_SECONDS = 1
@@ -39,9 +36,7 @@ class GwernAdapter(BaseSourceAdapter):
         "/changelog",
         "/blog/index",
     }
-    # /doc/ is not Gwern's writing: topic directories (/index), their introductions (/abstract)
-    # and copies of other people's texts and papers. /newsletter/
-    # issues are the same as gwern.substack.com/feed, which the feed finder offers.
+    # /doc/ is not his writing (topic directories, copies of others' papers); /newsletter/ is the Substack feed
     BANNED_PREFIXES = ("/static/", "/metadata/", "/doc/", "/newsletter/")
     BANNED_EXTENSIONS = {
         ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
@@ -55,8 +50,7 @@ class GwernAdapter(BaseSourceAdapter):
     LINK_TAG_RE = re.compile(r"(?is)<link\b(?P<attrs>[^>]+)>")
     ANCHOR_TAG_RE = re.compile(r"(?is)<a\b(?P<attrs>[^>]+)>")
     DATE_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-    # A date-range span renders "2010<sub>16ya</sub>" and "1929<sup>–</sup><sub>60</sub>1989":
-    # keep the dates and the dash, drop the "years ago" and "lasted" subscripts.
+    # "2010<sub>16ya</sub>", "1929<sup>–</sup><sub>60</sub>1989": keep the dates and dash, drop the subscripts
     DATE_RANGE_RE = re.compile(
         r'(?is)(<span class="date-range\b[^"]*"[^>]*>[^<]*)'
         r'(?:<span class="subsup"><sup>([^<]*)</sup><sub>[^<]*</sub></span>([^<]*))?'
@@ -104,9 +98,8 @@ class GwernAdapter(BaseSourceAdapter):
         return sorted(dict.fromkeys(urls))
 
     async def _discover_recent_entries(self, source: Dict[str, Any]) -> Dict[str, Optional[str]]:
-        """{url: the date its index link gives, or None}, in reading order, each page once:
-        Gwern's own pages on /doc/newest/index (most of it is other people's papers), then
-        /blog/index newest first, each short post dated by its link's id."""
+        """{url: its index link's date, or None}, in reading order, each page once: his own pages on
+        /doc/newest/index, then /blog/index newest first."""
         base = self._base(source)
         entries: Dict[str, Optional[str]] = {}
         for path in (self.NEWEST_PATH, self.BLOG_PATH):

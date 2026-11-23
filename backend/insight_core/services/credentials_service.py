@@ -1,22 +1,11 @@
-"""Connections: the secrets the owner adds in Sources → Connections (Mark IX §10.1).
+"""Connections: the secrets the owner adds in Sources → Connections, write-only.
 
-Write-only. The API shows, per field, whether a value is set (stored here: source "db",
-else "none"), its last 4 characters and when it was saved. No secret is read from the
-environment. It never returns a stored value, a ciphertext or a Telegram session, and
-nothing here logs one.
-
-Providers:
-- substack {sid}: the substack.sid cookie of the owner's logged-in browser.
-- telegram {api_id, api_hash, session}: the session is the Telethon StringSession saved by
-  the browser sign-in (login_start -> login_code -> login_password), the only session.
-- reddit {client_id, client_secret, username} (issue 0242): the owner's registered Reddit app ("script"
-  type); Reddit ended its feeds, so subreddits are read through its OAuth API with it.
-- YouTube reads public feeds: nothing to add, so it has no row.
-A row stored for a provider not listed here (an old gemini key) is kept but never shown.
-
-Test: substack reads the newest paid post of a configured Substack source (or asks
-substack.com whether the cookie is signed in); telegram connects and calls get_me; reddit asks
-for an application-only token.
+The API shows per field only whether a value is set, its last 4 characters and when it was saved; it never returns
+a stored value, a ciphertext or a Telegram session, nothing here logs one, and no secret is read from the
+environment. Providers: substack {sid}, telegram {api_id, api_hash, session} (the session from the browser sign-in:
+login_start -> login_code -> login_password), reddit {client_id, client_secret, username} (its OAuth API). A row of
+an unlisted provider is kept but never shown. Each provider has a test (a paid post or sign-in check, get_me, an
+application-only token).
 """
 from __future__ import annotations
 
@@ -349,7 +338,7 @@ class CredentialsService:
         return await SubstackKind(KindHttp(), credentials=self.credentials).check_session(source)
 
     async def _test_reddit(self) -> Tuple[bool, str]:
-        """Reddit gives the app a token (issue 0242): its credentials work."""
+        """Reddit gives the app a token: its credentials work."""
         from insight_core.ingestion.http import HttpError, KindHttp
         from insight_core.ingestion.kinds.base import KindUnavailable
         from insight_core.ingestion.kinds.reddit import RedditKind
@@ -392,8 +381,8 @@ class CredentialsService:
 
     # ------------------------------------------------------------------ Telegram sign-in
 
-    # The sign-in waiting for its code or password lives in the database, encrypted like every Connection
-    # (issue 0112 Decided 11): with two API processes the code can reach the one that never sent it.
+    # The pending sign-in lives in the database, encrypted: with two API processes the code can reach the one that
+    # never sent it.
     PENDING_PROVIDER, PENDING_KEY = "telegram_sign_in", "pending"
 
     @property

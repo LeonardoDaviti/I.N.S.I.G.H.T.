@@ -56,9 +56,8 @@ logger = logging.getLogger(__name__)
 
 
 def register_stack_dump() -> Optional[Any]:
-    """SIGUSR1 writes every thread's stack to <logs>/api-stacks.log (issue 0117): the watchdog's door sends it before
-    a restart, so the next hang names its function. faulthandler writes from its C handler, so it works while Python
-    is stuck. The open file is returned (it must stay open)."""
+    """SIGUSR1 writes every thread's stack to <logs>/api-stacks.log (the watchdog sends it before a restart);
+    faulthandler writes from C, so it works while Python is stuck. Returns the open file (it must stay open)."""
     import faulthandler
     import signal as signals
     try:
@@ -79,8 +78,7 @@ _STACKS_FILE = register_stack_dump()
 
 
 def fill_search_vectors() -> None:
-    """The posts stored before search (issue 0040), or indexed by an older rule (issue 0056's
-    version names, migration 0042), become searchable as search reads them now, in the background."""
+    """Index the posts not yet indexed (or indexed by an older rule), in the background."""
     try:
         filled = services().reader.fill_search_vectors()
         if filled:
@@ -90,7 +88,7 @@ def fill_search_vectors() -> None:
     from insight_core.markx import search as mx_search
     if not mx_search.enabled():
         return
-    try:   # issue 0139: Mark X's English layer, for the posts it answered (only read while Mark X is on)
+    try:   # Mark X's English layer, for the posts it answered
         filled = services().reader.fill_markx_search()
         if filled:
             logger.info("Search: Mark X's English layer written for %s posts", filled)
@@ -99,9 +97,8 @@ def fill_search_vectors() -> None:
 
 
 def recompute_stories() -> None:
-    """The start's story job, wanted (0216: insight-ingestion's jobs runner runs it, markx/jobs.py; before, it ran here,
-    in a process of its own), after the stored bodies catch up with the reader's rules (issue 0068), so the job reads
-    their links. In a process of its own (issue 0072: the API keeps none of what the catch-up read)."""
+    """Bring stored bodies up to the reader's rules, then ask for the story job (insight-ingestion runs it,
+    markx/jobs.py). Run in its own process so the API keeps none of what the catch-up read."""
     try:
         changed = services().posts.catch_up_stored_bodies()
         if changed:
@@ -113,19 +110,17 @@ def recompute_stories() -> None:
 
 
 def start_stories() -> None:
-    """The start's story job wanted (`recompute_stories`), then Mark X's first decisions are asked for (issue 0112 A;
-    insight-ingestion runs both, 0112 Decided 10; a decision run reads the stories as stored); the second is nothing
-    when INSIGHT_MARKX is off."""
+    """Ask for the story job (`recompute_stories`), then Mark X's first decisions (nothing when INSIGHT_MARKX is
+    off); insight-ingestion runs both."""
     in_own_process(recompute_stories)
     markx_router_module.after_start_stories()
 
 
 def start_once() -> None:
-    """The start's work when this process is the API's only one (`uvicorn main:app` by hand): the API's jobs a
-    restart ended are closed (issue 0070), then the search refill and the story job run in the background. In the
-    container the API runs as several processes, and the supervisor does this once (scripts/api_supervisor.py,
-    0112 Decided 11): each process doing it would close the other's running jobs and run the story job twice."""
-    try:   # the API's jobs a restart ended (issue 0070): no request has started one yet
+    """Start-up work when this process is the API's only one (`uvicorn main:app` by hand): close the jobs a restart
+    ended, then the search refill and the story job in the background. In the container the supervisor does this
+    once (scripts/api_supervisor.py): each of several processes doing it would close the others' running jobs."""
+    try:   # no request has started a job yet
         closed = services().operations.close_interrupted_jobs("manual")
         if closed:
             logger.info("Jobs: %s left running by a restart marked interrupted", closed)
@@ -138,10 +133,10 @@ def start_once() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     services()  # build the services at boot, so a bad configuration fails here
-    freeze_start()  # issue 0202: the start's objects out of the GC's reach, so the idle collection is cheap
+    freeze_start()  # the start's objects out of the GC's reach, so the idle collection is cheap
     if os.getenv("INSIGHT_API_SUPERVISED") != "1":
         start_once()
-    # Mark X's jobs never run here (0112 Decided 10): insight-ingestion runs them (markx/jobs.py).
+    # Mark X's jobs never run here: insight-ingestion runs them (markx/jobs.py).
     yield
     database.close_all()
 
@@ -167,7 +162,7 @@ def _cors_origins() -> list[str]:
             origins.append(origin)
     return origins
 
-# Issue 0188: a request's statements end after 30 s (database.RequestTimeouts); added first, so it is innermost.
+# A request's statements end after 30 s (database.RequestTimeouts); added first, so it is innermost.
 app.add_middleware(database.RequestTimeouts)
 app.add_middleware(
     CORSMiddleware,
@@ -176,10 +171,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Issue 0195: the polled answers (running jobs, unread counts, the overview, source health) as conditional GETs.
+# The polled answers (running jobs, unread counts, the overview, source health) as conditional GETs.
 from insight_core.routers.conditional import ConditionalGet  # noqa: E402
 app.add_middleware(ConditionalGet)
-# Issue 0202: the outermost; when the process is idle, the memory its requests freed goes back to the OS.
+# The outermost; when the process is idle, the memory its requests freed goes back to the OS.
 from insight_core.utils.idle_trim import IdleTrim, freeze_start  # noqa: E402
 app.add_middleware(IdleTrim)
 
@@ -313,7 +308,7 @@ class SystemStatus(BaseModel):
     folders: List[FolderStatus] = []
     recent_jobs: List[JobStatus] = []
     source_health_summary: Dict[str, int] = {}
-    # Issue 0188: what `healthy` is computed from (reasons, warnings, checks), and the biggest tables' sizes
+    # what `healthy` is computed from (reasons, warnings, checks), and the biggest tables' sizes
     health: Dict[str, Any] = {}
     table_sizes: List[Dict[str, Any]] = []
 
@@ -326,7 +321,7 @@ class ArchiveRequest(BaseModel):
     # True: start an archive_source job and answer 202 at once (the source sheet polls
     # the job). False runs the archive inside the request and answers its result.
     background: bool = False
-    # Issue 0130 C: back to this date ("2025-11-01"): a Telegram, X or Substack archive stops once its pages pass it.
+    # back to this date ("2025-11-01"): a Telegram, X or Substack archive stops once its pages pass it
     until: str | None = None
 
 
@@ -355,9 +350,9 @@ class IngestionRunRequest(BaseModel):
 class SchedulerConfigRequest(BaseModel):
     intervalHours: float | None = None
     ingestTickMinutes: float | None = None
-    collectOriginals: bool | None = None   # issue 0123: Collect originals (0126: on by default)
-    lookupOriginals: bool | None = None    # issue 0138 C: Look up unlinked originals, default off
-    storeClassics: bool | None = None      # issue 0138 E1: Store Classics, default on
+    collectOriginals: bool | None = None   # Collect originals, default on
+    lookupOriginals: bool | None = None    # Look up unlinked originals, default off
+    storeClassics: bool | None = None      # Store Classics, default on
 
 
 class PostReaderSessionRequest(BaseModel):
@@ -384,13 +379,13 @@ class ReadStateRequest(BaseModel):
     scope: str = "all"
     through_cursor: str | None = None
     newest_cursor: str | None = None
-    all_sources: bool = False   # a topic track's mark-through over every post of its sources (v10.12.1)
-    news: bool = False   # 0238: mark read every post of every News row of `scope` (its `mark`'s rows)
+    all_sources: bool = False   # a topic track's mark-through over every post of its sources
+    news: bool = False   # mark read every post of every News row of `scope` (its `mark`'s rows)
     mark: str = "main"
 
 
 class LaterRequest(BaseModel):
-    """PUT /api/feed/later: put posts in Later or take them out (issue 0022)."""
+    """PUT /api/feed/later: put posts in Later or take them out."""
     ids: List[str] = []
     later: bool = True
 
@@ -402,7 +397,7 @@ class NewSourceRequest(BaseModel):
     fetch_delay_seconds: int | None = None
     priority: int | None = None
     state: str | None = "enabled"
-    page_watch: Dict[str, Any] | None = None     # settings.page_watch: follow a page (issue 0028)
+    page_watch: Dict[str, Any] | None = None     # settings.page_watch: follow a page
 
 
 class FindFeedRequest(BaseModel):
@@ -417,12 +412,12 @@ class PageWatchPreviewRequest(BaseModel):
 class SavePageRequest(BaseModel):
     url: str = ""
     title: str | None = None     # the page's title as the bookmarklet read it
-    after_fetch: bool = False    # issue 0122: the fetch it waited for is done; save now, fetch nothing
+    after_fetch: bool = False    # the fetch it waited for is done; save now, fetch nothing
 
 
 class SwitchSourceRequest(BaseModel):
     url: str = ""
-    page_watch: Dict[str, Any] | None = None     # follow the page at url (issue 0028) instead of a feed
+    page_watch: Dict[str, Any] | None = None     # follow the page at url instead of a feed
 
 
 class SourceEnabledRequest(BaseModel):
@@ -451,7 +446,7 @@ class ClassicHideRequest(BaseModel):
 
 
 # ============= JOBS =============
-# A route that starts runs (a fetch, an archive) takes run_rate first (issue 0187): at most RUN_STARTS_PER_MINUTE
+# A route that starts runs (a fetch, an archive) takes run_rate first: at most RUN_STARTS_PER_MINUTE
 # starts a minute in this process, then 429 with Retry-After. A click a second is far under it; a loop is not.
 
 RUN_STARTS_PER_MINUTE = 30
@@ -548,7 +543,7 @@ def _accept_ingestion_run(
 
 
 def _archive_jobs() -> ArchiveJobs:
-    """The API's archive jobs (trigger "manual"); the scheduler continues the waiting ones (0107)."""
+    """The API's archive jobs (trigger "manual"); the scheduler continues the waiting ones."""
     return ArchiveJobs(services().operations, services().source_fetch, trigger="manual")
 
 
@@ -572,9 +567,8 @@ async def _run_archive(
                                      job_id=job_id, linked=linked, until=until)
 
 
-# Sources with an archive running in this process (a restart empties it, as it ends the runs it tracked). With two
-# API processes (0112 Decided 11) it is only this one's: the database's running job is the truth, and a new
-# archive starts only through operations.start_job_unless_running, which checks and inserts under one lock.
+# Sources with an archive running in this process. With two API processes it is only this one's: the database's
+# running job is the truth, and a new archive starts only through operations.start_job_unless_running (one lock).
 _archiving_sources: set[str] = set()
 
 
@@ -586,7 +580,7 @@ async def _run_archive_once(source_id: str, *args, **kwargs):
 
 
 async def _continue_archive_once(source_id: str, job_id: str):
-    """Continue a waiting archive now (a Resume by hand while it waits out a host's limit, 0107)."""
+    """Continue a waiting archive now (a Resume by hand while it waits out a host's limit)."""
     try:
         await _run_async_job_background("archive_source", _archive_jobs().continue_job, job_id)
     finally:
@@ -614,7 +608,7 @@ async def _accept_archive_run(
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason,
                                                       "unavailable": bool(support.get("unavailable"))})
     latest = services().operations.latest_job_for_source("archive_source", source_id)
-    # The scheduler may be the one running it (it continues waiting archives, issue 0107).
+    # The scheduler may be the one running it (it continues waiting archives).
     if source_id in _archiving_sources or (latest or {}).get("status") in ("running", "queued"):
         reason = ("This source's archive is queued; it starts when its turn comes" if (latest or {}).get("status") == "queued"
                   else "An archive of this source is already running")
@@ -639,7 +633,7 @@ async def _accept_archive_run(
     payload = {**jobs.request_payload(resume=resume, rate_limit=rate_limit_overrides, until=until), "lane": lane}
     try:
         if exclusive_lane(lane):
-            # Its lane's turn (issue 0130): a Telegram or Nitter archive while another runs is queued, not started.
+            # Its lane's turn: a Telegram or Nitter archive while another runs is queued, not started.
             job_id, status = await asyncio.to_thread(jobs.queue.add, source_id, lane=lane, trigger="manual",
                                                      queue=False, payload=payload)
         else:
@@ -673,7 +667,7 @@ def _archive_until(request: "ArchiveRequest", support: Dict[str, Any]) -> tuple:
     if horizon is None:
         reason = f"Not a date: {request.until}"
         return None, JSONResponse(status_code=400, content={"success": False, "detail": reason, "error": reason})
-    # A kind whose pages are not newest first can't stop at a date: it runs to the source's end, as before.
+    # A kind whose pages are not newest first can't stop at a date: it runs to the source's end.
     return (horizon.date().isoformat() if support.get("until") else None), None
 
 
@@ -683,8 +677,8 @@ def _unavailable(reason: str) -> JSONResponse:
 
 
 def _export_sources_json() -> None:
-    """Write the sources' export, sources.json (issue 0071). A source change still succeeds when
-    this fails: the database is the truth."""
+    """Write the sources' export, sources.json. A source change still succeeds when this fails: the database is
+    the truth."""
     try:
         services().source_config_sync.sync_db_to_json()
     except Exception:
@@ -781,7 +775,7 @@ def get_feed(scope: str = "all", filter: str = "all", view: str = "stream",
     (starred is Keep; later is oldest saved first);
     days: the last N days, or date: one day (YYYY-MM-DD, UTC).
     A track that is a topic (0145, Mark X on) lists only the posts in the track; all_sources=1 lists every post of
-    its sources, as a plain folder does (v10.12.1)."""
+    its sources, as a plain folder does."""
     query = FeedQuery.parse(scope=scope, filter=filter, view=view, cursor=cursor, limit=limit,
                             days=days, date=date)
     if all_sources:
@@ -813,8 +807,8 @@ def search_posts(q: str, scope: str | None = None, filter: str = "all", days: in
 @app.get("/api/feed/unread-counts")
 @error_detail("load unread counts")
 def get_feed_unread_counts():
-    """{total, by_source, newest_unread, by_folder, later} (ReaderRepository.unread_counts), kept while nothing it
-    reads was written (issue 0206)."""
+    """{total, by_source, newest_unread, by_folder, later} (ReaderRepository.unread_counts), cached while nothing it
+    reads was written."""
     return Response(services().reader.unread_counts(), media_type="application/json")
 
 
@@ -863,7 +857,7 @@ def set_read_state(request: ReadStateRequest):
 @app.put("/api/feed/later")
 @error_detail("update Later")
 def set_later_state(request: LaterRequest):
-    """Read later (issue 0022): {ids, later}, at most 500 ids; one answer {success, updated, ids}.
+    """Read later: {ids, later}, at most 500 ids; one answer {success, updated, ids}.
     Nothing clears Later on a clock; an explicit mark read (PUT /api/feed/read) does."""
     return services().reader.set_later(_require_post_ids(request.ids), bool(request.later))
 
@@ -917,7 +911,7 @@ ET.register_namespace("insight", OPML_NS)
 
 def sources_opml(sources: List[Dict[str, Any]], folders: List[Dict[str, Any]],
                  memberships: Dict[str, List[str]]) -> bytes:
-    """Every source as an OPML outline (issue 0035): one outline per track, in track order,
+    """Every source as an OPML outline: one outline per track, in track order,
     each source under its first track (category names all of them), then the sources in none.
     insight:displayName, insight:pageWatchPrefix ("" when the path is inferred) and
     insight:platform (when not rss) carry what INSIGHT needs to add it back. The built-in
@@ -960,7 +954,7 @@ def sources_opml(sources: List[Dict[str, Any]], folders: List[Dict[str, Any]],
 @app.get("/api/sources/export.opml")
 @error_detail("export the sources")
 def export_sources_opml():
-    """Every source as OPML 2.0, grouped by track, for another reader or an off-site copy (issue 0035)."""
+    """Every source as OPML 2.0, grouped by track, for another reader or an off-site copy."""
     folders_service = services().folders
     sources = services().sources.get_all_sources_with_settings()
     memberships = {s["id"]: folders_service.list_folders_for_source(s["id"]) for s in sources}
@@ -991,7 +985,7 @@ async def add_source(request: NewSourceRequest):
     named = None if str(settings.get("display_name") or "").strip() else await _name_new_source(
         created["source_id"], platform, created["handle"], settings)
     await asyncio.to_thread(_export_sources_json)
-    # Issue 0167: following a feed fetches its archive (back to follow_archive's horizon), queued in its turn.
+    # Following a feed fetches its archive (back to follow_archive's horizon), queued in its turn.
     archive = await asyncio.to_thread(follow_archive.queue_on_follow, services(), _archive_jobs, created["source_id"])
     return {"success": True, "source_id": created["source_id"], "platform": platform,
             "handle_or_url": created["handle"], **({"recognised": recognised} if recognised else {}),
@@ -1066,7 +1060,7 @@ async def find_feed(request: FindFeedRequest):
 
 
 def _known_feeds(address: str) -> List[str]:
-    """Your sources' addresses at the address's publisher (issue 0137 A2: a blocked page tries their shapes)."""
+    """Your sources' addresses at the address's publisher (a blocked page tries their shapes)."""
     from insight_core.utils.addresses import host_of, publication_of
 
     publication = publication_of(host_of(address))
@@ -1139,7 +1133,7 @@ async def save_page(request: SavePageRequest, background_tasks: BackgroundTasks)
                                        after_fetch=request.after_fetch)
 
 
-NEWS_PAGE, CLASSICS_PAGE = 50, 100   # issue 0195: the first page is the top rows the whole list began with
+NEWS_PAGE, CLASSICS_PAGE = 50, 100   # the first page is the top rows the whole list began with
 
 
 @app.get("/api/news")
@@ -1161,7 +1155,7 @@ async def get_news(scope: str = "all", limit: int = Query(NEWS_PAGE, ge=1, le=10
     (`news.notable`), as the switch says (`order` in the answer); `order=coverage` asks for the old order by score.
     Issue 0238: each row's `news.unread` (its posts unread), `rows` and `unread_rows` over the scope; `unread=true`
     lists only the rows with an unread post (News's Unread view)."""
-    from insight_core.services.news_service import reader_view   # 0215: the fields the page reads
+    from insight_core.services.news_service import reader_view   # the fields the page reads
     return reader_view(await asyncio.to_thread(services().news.news, scope, limit=limit, cursor=cursor, mark=mark,
                                                order=order, unread=unread))
 
@@ -1191,7 +1185,7 @@ async def get_news_since(at: str | None = None):
 @app.post("/api/news/since/look")
 @error_detail("record the look")
 def post_news_since_look():
-    """Issue 0271: the reader opened "Since you looked": {before, now}."""
+    """The reader opened "Since you looked": {before, now}."""
     return services().news.look()
 
 
@@ -1235,9 +1229,8 @@ async def get_suggested_sources(offset: int = Query(0, ge=0, le=MAX_SEARCH_OFFSE
     untitled articles' titles in the jobs process (issue 0206), at most once in 30 days (services/discover_reads.py).
     built_at: when the answer served was built (issue 0172: built in the background, never on the request but the
     first); refreshing: a newer one is being built."""
-    # Issue 0172 c1: the last answer built, never made on the request (an open that made it took 255-300 s on the
-    # server). Issue 0206: one due again, and the first page's web reads, are the jobs process's (the job "discover",
-    # wanted here); `refreshing` says it is at work.
+    # The last answer built, never made on the request (too slow); the jobs process rebuilds one due again (the job
+    # "discover", wanted here); `refreshing` says it is at work.
     return await asyncio.to_thread(services().stories.discover_served, offset=offset, limit=limit, q=q)
 
 
@@ -1493,7 +1486,7 @@ async def fetch_linked_pages(source_id: str, background_tasks: BackgroundTasks):
     if (latest or {}).get("status") == "waiting":
         reason = "This source's archive is waiting for its host; it continues by itself"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
-    try:   # under the start lock, as an archive (0112 Decided 11: two API processes)
+    try:   # under the start lock, as an archive (two API processes)
         job_id = await asyncio.to_thread(services().operations.start_job_unless_running, "archive_source",
                                          trigger="manual", source_id=source_id, message="Fetch linked pages",
                                          payload={"linked": True})
@@ -1550,7 +1543,7 @@ async def queue_archive(source_id: str, request: ArchiveRequest):
     until, bad = _archive_until(request, support)
     if bad is not None:
         return bad
-    await asyncio.to_thread(services().source_fetch.clear_stop, source_id)   # v10.13.9: a new archive starts afresh
+    await asyncio.to_thread(services().source_fetch.clear_stop, source_id)   # a new archive starts afresh
     rate = {"page_delay_seconds": request.pageDelaySeconds, "batch_size": request.batchSize,
             "batch_cooldown_seconds": request.batchCooldownSeconds}
     job_id, status = await asyncio.to_thread(_archive_jobs().enqueue, source_id, resume=bool(request.resume),
@@ -1565,7 +1558,7 @@ async def queue_archive(source_id: str, request: ArchiveRequest):
 @app.post("/api/archive/{source_id}/stop")
 @error_detail("stop the archive")
 async def stop_archive(source_id: str):
-    """Stop the source's running archive after its current page (v10.13.9), whichever process runs it: what it
+    """Stop the source's running archive after its current page, whichever process runs it: what it
     stored is kept, and its checkpoint says "stopped_by_owner" (never resumed by itself; queue it again to restart).
     202 {stopping: true}."""
     await asyncio.to_thread(services().source_fetch.request_stop, source_id)
@@ -1834,7 +1827,7 @@ def get_status():
     svc = services()
     ops = svc.operations
     health_summary = ops.get_source_health()["summary"]
-    health = ops.system_health(failing_sources=sources_failing(health_summary))   # issue 0188: no literal True
+    health = ops.system_health(failing_sources=sources_failing(health_summary))
     return {
         "success": True,
         "healthy": health["healthy"],
@@ -1997,15 +1990,15 @@ def save_youtube_watch_progress(video_id: str, request: YouTubeProgressRequest):
     return {"success": True, "progress": progress}
 
 
-# ============= MARK X SHADOW (issue 0086 C: the worker API; INSIGHT_MARKX off answers 404) =============
+# ============= MARK X (the worker API; INSIGHT_MARKX off answers 404) ==============
 from insight_core.markx import api as markx_router_module  # noqa: E402
 from insight_core.markx.api import router as markx_router  # noqa: E402
 app.include_router(markx_router)
-from insight_core.routers.voices import router as voices_router  # noqa: E402  (issue 0132 A)
+from insight_core.routers.voices import router as voices_router  # noqa: E402
 app.include_router(voices_router)
-from insight_core.routers.source_discoveries import router as source_discoveries_router  # noqa: E402  (issue 0143)
+from insight_core.routers.source_discoveries import router as source_discoveries_router  # noqa: E402
 app.include_router(source_discoveries_router)
-from insight_core.routers.discover_main_source import router as discover_main_source_router  # noqa: E402  (issue 0170)
+from insight_core.routers.discover_main_source import router as discover_main_source_router  # noqa: E402
 app.include_router(discover_main_source_router)
-from insight_core.routers.official import router as official_router  # noqa: E402  (issue 0196)
+from insight_core.routers.official import router as official_router  # noqa: E402
 app.include_router(official_router)

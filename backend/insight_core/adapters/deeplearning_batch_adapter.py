@@ -1,12 +1,8 @@
 """DeepLearning.AI The Batch newsletter adapter.
 
-Issue 0130 B2: the archive read 38 pages and found 0 posts (2026-11-07); the newest stored issue is of July 2026,
-so the issue pages stopped carrying the Next.js post payload this reader parsed. No page of the new layout is stored
-anywhere, so the reader does not guess it: an issue page without the payload is read as any article page (page
-watch's reader: its body, title and the date the page states); the issue list falls back to the site's own sitemap
-when the CMS sitemap can't be read or lists no issue. Issue pages that still read as no post are counted (the
-checkpoint's "skipped"); every listed entry is an issue (LISTS_ONLY_POSTS), so the archive reports "the layout
-changed" instead of a silent 0, and a live fetch that reads no post from several issue pages fails, saying so.
+Issues come from the CMS sitemap, else the site's own. An issue page without the Next.js post payload is read as
+any article page (page watch's reader) rather than guessing a new layout. Every listed entry is an issue
+(LISTS_ONLY_POSTS), so pages read as no post report "the layout changed" instead of a silent 0 (0130).
 """
 
 from __future__ import annotations

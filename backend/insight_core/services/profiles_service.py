@@ -1,21 +1,9 @@
-"""Channel profiles (issue 0132 C2): each source's profile or about page fetched once a month, every answer kept.
+"""Channel profiles: each source's profile or about page fetched about once a month, every answer kept.
 
-    summary = await ProfilesService(db_url, http=KindHttp(), gates=FetchGates.shared(), registry=registry).run()
-
-Run by the ingestion scheduler after its tick (scripts/run_scheduler.py), never by the API, while the switch is on
-(system_settings `channel_profiles` {on}; **on by default**, the owner's ask of 2026-11-08):
-- **Which:** the enabled sources with a profile (ingestion/profiles.ask_for: Nitter, YouTube, the Telegram bridge or
-  MTProto, a site's home page; never Reddit, Hacker News or Saved) never read, read over PROFILE_EVERY ago, or failed
-  over FAILED_RETRY ago; never read first, then the oldest. At most PER_RUN a run, so the profiles never crowd the
-  hourly fetches (an hourly tick reads 6: a server of 250 sources is read in two days, then a month later).
-- **How:** the normal fetch path: KindHttp, the source's host gate (its floor: Nitter 10 s, the bridge 5 s), a
-  limiting host (429, a timeout) waited out by the host limiter and left for the run; MTProto on its own session
-  (a session another run holds: the channels wait for the next run).
-- **Kept:** source_profiles (migration 0086): a new answer closes the source's last (valid_to) and adds a row; a
-  failure is a row closed at once. Nothing is deleted.
-
-What reads them: the voices' suggestions (utils/voice_rules.profile_verdicts, not_followed) and the Audience card
-(markx/source_stats.py).
+`ProfilesService.run` is called by the ingestion scheduler after its tick (never the API) while system_settings
+`channel_profiles` is on (the default): at most PER_RUN due sources a run (`due`), through the normal fetch path and
+host gates, so profiles never crowd the fetches. Each answer closes the source's last row (valid_to) and adds one;
+nothing is deleted. Read by the voices' suggestions and the Audience card.
 """
 from __future__ import annotations
 
@@ -57,7 +45,7 @@ def table_exists(cur: Any) -> bool:
 
 def current(cur: Any, source_ids: Optional[Sequence[str]] = None) -> Dict[str, Dict[str, Any]]:
     """source id -> its current profile {kind, url, name, bio, website, links, followers, followers_label,
-    fetched_at}; {} when migration 0086 is not there."""
+    fetched_at}; {} when the table is not there."""
     if not table_exists(cur):
         return {}
     cur.execute("""SELECT source_id::text, kind, url, name, bio, website, links, followers, followers_label, fetched_at

@@ -1,6 +1,4 @@
-"""
-Operational controls for scheduler config, job history, alerts, and source health.
-"""
+"""Operational controls: scheduler config, job history, alerts, system health and source health."""
 from __future__ import annotations
 
 import json
@@ -34,18 +32,16 @@ from insight_core.utils.json_safe import iso, json_safe
 from insight_core.utils.originals_rules import COLLECT_CHOSEN, classics_setting, collect_setting, lookup_setting
 
 
-# Human labels per job type. Any other type (old rows, reddit_comments_fetch) reads as its
-# own name: "safe_ingest" -> "Safe ingest".
+# Human labels per job type; any other type reads as its own name ("safe_ingest" -> "Safe ingest").
 JOB_LABELS: Dict[str, str] = {
     "ingestion_run": "Ingestion run",
     "scheduler_cycle": "Daily work",
     "archive_source": "Archive",
-    "api_restart": "API restart",   # issue 0117: the watchdog in insight-ingestion
+    "api_restart": "API restart",
 }
 
 
-# The job types INSIGHT still runs. Rows of any other type (retired analysis jobs, kept by
-# 0027_drop_analysis.sql; old safe_ingest rows) stay in job_runs but leave the job list.
+# The job types INSIGHT still runs; rows of other (retired) types stay in job_runs but leave the job list.
 LIVE_JOB_TYPES = ("ingestion_run", "scheduler_cycle", "archive_source", "api_restart")
 
 
@@ -57,8 +53,7 @@ def job_label(job_type: Optional[str]) -> str:
 INGEST_TICK_MINUTES_MIN = 15
 INGEST_TICK_MINUTES_MAX = 24 * 60
 
-# Source health (spec §F.4). Every source lands in exactly one status; the summary counts
-# the enabled ones, so its buckets add up to the number of enabled sources.
+# Source health: every source lands in exactly one status; the summary's buckets add up to the enabled sources.
 class HealthStatus(str, Enum):
     """The one place the status set lives; declaration order is the sort order (worst first)."""
 
@@ -71,7 +66,7 @@ class HealthStatus(str, Enum):
 
 
 HEALTH_STATUS_ORDER = tuple(status.value for status in HealthStatus)
-# Summary wire keys (API contract, spec §F.4): a disabled source is not counted.
+# Summary wire keys (API contract): a disabled source is not counted.
 HEALTH_SUMMARY_KEYS: Dict[HealthStatus, str] = {
     HealthStatus.DUE: "due_now",
     HealthStatus.DEFERRED: "deferred",
@@ -79,23 +74,17 @@ HEALTH_SUMMARY_KEYS: Dict[HealthStatus, str] = {
     HealthStatus.UNAVAILABLE: "unavailable",
     HealthStatus.ERROR: "errors",
 }
-# "Failing" in the spec glossary: retrying now (error) or waiting to retry (backoff).
 OVERVIEW_HEALTH_ROWS = 8
-# The recent jobs the overview and the top bar's running sign list (the scheduler writes ~4-6 rows per cycle).
 OVERVIEW_JOBS = 50
 
 
 def empty_health_summary() -> Dict[str, int]:
-    """Each status's count, `silent` (issue 0178): sources silent far beyond their rhythm, and `stalled` (issue
-    0242): sources that stopped without anyone seeing; neither is a status."""
+    """Each status's count, plus `silent` (0178) and `stalled` (0242), which are not statuses."""
     return {**{key: 0 for key in HEALTH_SUMMARY_KEYS.values()}, "silent": 0, "stalled": 0}
 
 
-# Issue 0242: a source on that has stopped, in front of the owner (the Sources page and the reader's nav). Its last
-# success (else the day it was added) is older than max(STALLED_FLOOR, STALLED_INTERVALS x its interval), or it
-# failed STALLED_FAILURES times in a row. Not measured: 5 intervals is a run of missed fetches no working source
-# has (the alert that fired every run was one failure each), and the 3-day floor keeps a source fetched every few
-# hours from flagging after one bad night. Deterministic, from the health row's own data.
+# Stalled: last success (else added) older than max(STALLED_FLOOR, STALLED_INTERVALS x interval), or STALLED_FAILURES
+# failures in a row (not measured; the floor spares a frequent source one bad night).
 STALLED_FLOOR = timedelta(days=3)
 STALLED_INTERVALS = 5
 STALLED_FAILURES = 5
@@ -103,11 +92,7 @@ STALLED_FAILURES = 5
 
 def stalled_fields(source: Dict[str, Any], state: Optional[FetchStateRow], interval: timedelta, failures: int,
                    enabled: bool, now: datetime, stored: int = 0) -> Optional[Dict[str, Any]]:
-    """{since, days, failures, posts, reason} for a source that stopped (issue 0242, the rule above): since its last
-    success (None: its live fetch never worked; days then count from when it was added), the posts it holds (an
-    archive may have brought them while the live fetch failed: "its live feed fails", not "never fetched", issue
-    0254), and its last attempt's error when that attempt failed. None when it is off, the owner's saved pages, or
-    working."""
+    """{since, days, failures, posts, reason} for a stalled source; None when off, the saved pages, or working."""
     if not enabled or source.get("platform") == SAVED_PLATFORM:
         return None
     last = state.last_success_at if state else None
@@ -125,14 +110,12 @@ CADENCE_OVERRIDE_MAX_HOURS = 2160.0   # 90 days
 
 
 def backlog_posts(available_posts: Any, stored_posts: Any) -> Optional[int]:
-    """E1: max(available - stored, 0) when the available count is a known int, else None."""
     if isinstance(available_posts, bool) or not isinstance(available_posts, int):
         return None
     return max(available_posts - int(stored_posts or 0), 0)
 
 
 def last_attempt_failed(state: Optional[FetchStateRow]) -> bool:
-    """The newest attempt failed: last_outcome is 'error' and no success came after it."""
     if state is None or state.last_outcome != "error":
         return False
     if state.last_success_at is None or state.last_error_at is None:
@@ -147,9 +130,8 @@ def health_status(enabled: bool, decision: FetchDecision, consecutive_failures: 
     if decision.kind == DecisionKind.SKIP_UNAVAILABLE:
         return HealthStatus.UNAVAILABLE.value
     if decision.kind == DecisionKind.SKIP_BACKOFF:
-        return HealthStatus.BACKOFF.value      # failing, its retry is scheduled
-    # Failing and its retry is due now. A failed last attempt counts even with no failure
-    # count: Mark VIII rows backfilled by 0019 can be last_outcome='error' with 0 failures.
+        return HealthStatus.BACKOFF.value
+    # Failing and due now; a failed last attempt counts even with 0 failures (backfilled rows).
     if consecutive_failures > 0 or last_attempt_failed(state):
         return HealthStatus.ERROR.value
     return HealthStatus.DUE.value if decision.fetch else HealthStatus.DEFERRED.value
@@ -176,19 +158,13 @@ def _kind_reading_notice(kind: Any, source: Dict[str, Any]) -> Optional[str]:
         return None
 
 
-# A source's page reads (repo_fetch_state.PAGE_READS_IN_HEALTH newest) that lost most of their
-# images, or opened with a very short block, before its row says so: conservative, so one
-# odd page never warns, and a source whose dropped images were related cards (NVIDIA) never
-# counts them (parsing.read_fidelity estimates from the article block only).
+# How many newest page reads must lose images / open short before the row says so (one odd page never warns).
 READING_NOTICE_MIN = 3
 SHORT_OPENINGS_MIN = 4
 
 
 def reading_notice(page_reads: Any) -> Optional[str]:
-    """What source health says about how a source's pages are read (issue 0032), or None:
-    "Pages from this source lose most of their images (5 of the last 8)" when at least
-    READING_NOTICE_MIN of its newest page reads and at least half of them did, and the like
-    for openings under SHORT_OPENING_CHARS (three quarters of them)."""
+    """A note when most of a source's newest page reads lost their images or opened very short, else None."""
     reads = [read for read in (page_reads or []) if isinstance(read, dict)]
     lost = sum(1 for read in reads if lost_most_images(read))
     short = sum(1 for read in reads if read.get("short_opening"))
@@ -201,26 +177,18 @@ def reading_notice(page_reads: Any) -> Optional[str]:
     return ". ".join(notes) or None
 
 
-# Source hygiene (issue 0046): two marks from data INSIGHT already has, never acted on alone.
-QUIET_AFTER = timedelta(days=30)        # nothing new for at least this long...
-QUIET_GAPS = 3                          # ...and for more than 3x the source's own mean gap
-NEVER_OPENED_MIN_POSTS = 20             # at least this many posts...
-NEVER_OPENED_MIN_AGE = timedelta(days=30)  # ...and added at least this long ago
+# Source hygiene (0046): two marks, never acted on alone.
+QUIET_AFTER = timedelta(days=30)
+QUIET_GAPS = 3
+NEVER_OPENED_MIN_POSTS = 20
+NEVER_OPENED_MIN_AGE = timedelta(days=30)
 TIDY_KEEP_DAYS = 90                     # Keep hides the marks this long; then they may return
 NO_TIDY_MARKS = {"quiet": False, "never_opened": False}
 
 
 def tidy_marks(source: Dict[str, Any], status: str, now: datetime) -> Dict[str, bool]:
-    """Whether a source went quiet or was never opened (issue 0046).
-
-    Quiet: its fetches work (it is on, available and not failing, and has fetched once), yet
-    its newest post (or, with none, the day it was added) is older than QUIET_AFTER and than
-    QUIET_GAPS times its mean gap between posts (unknown gap: QUIET_AFTER alone).
-    Never opened: NEVER_OPENED_MIN_POSTS posts or more, added NEVER_OPENED_MIN_AGE ago or
-    more, and none opened (opened_posts, repo_fetch_state.OPENED_POST_SQL: opened, read for
-    a while, in Later, kept or part-read). Neither for a broken (failing) or disabled source,
-    for saved pages, or within TIDY_KEEP_DAYS of the owner's Keep.
-    """
+    """Whether a working source went quiet (vs QUIET_AFTER and QUIET_GAPS x its mean gap) or was never opened;
+    neither for a failing or disabled source, saved pages, or within TIDY_KEEP_DAYS of the owner's Keep."""
     state: Optional[FetchStateRow] = source.get("state")
     if (status in (HealthStatus.ERROR.value, HealthStatus.BACKOFF.value, HealthStatus.DISABLED.value)
             or source.get("platform") == SAVED_PLATFORM):
@@ -250,12 +218,10 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
     stats = cadence_stats(source, state)
     decision = decide_fetch(stats, kind.profile, now, force=False, availability=availability)
     enabled = bool(source.get("enabled"))
-    # B8: why this kind cannot be fetched at all (yt-dlp off, no Telegram session, ...),
-    # kept even for a disabled source so the table says why enabling it would not help.
+    # Why this kind cannot be fetched at all; kept for a disabled source too, so enabling it is no mystery.
     unavailable = unavailable_reason(kind.profile, availability)
     if not enabled:
-        # As the runner's defensive path: a disabled source is never picked by a cycle
-        # (fetch-now still works on it).
+        # As the runner: a disabled source is never picked by a cycle (fetch-now still works).
         detail = "Source is disabled" + (f"; unavailable: {unavailable}" if unavailable else "")
         decision = replace(decision, kind=DecisionKind.SKIP_DISABLED, fetch=False,
                            next_due_at=None, detail=detail)
@@ -273,7 +239,6 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "in_main_digest": bool(source.get("in_main_digest", True)),
         "folders": list(source.get("folders") or []),
         "stored_posts": stored,
-        # When its newest post was published (fetched, if undated): the list's "last new post".
         "last_post_at": iso(source.get("last_post_at")),
         "created_at": iso(source.get("created_at")),
         "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
@@ -287,17 +252,12 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "decision": decision.kind.value,
         "decision_detail": decision.detail,
         "unavailable_reason": unavailable,
-        # A kind that still fetches but would fetch more with a credential (Substack
-        # without a session: teasers only) says so here; None otherwise.
         "credential_notice": _credential_notice(kind),
-        # How its newest page-read posts were read (page watch, full text): None, or a note.
         "reading_notice": ". ".join(filter(None, [reading_notice(source.get("page_reads")),
                                                   _kind_reading_notice(kind, source)])) or None,
-        # Watch for changes (issue 0039): whether its kind can re-read its pages, and whether it does.
         "watchable": bool(getattr(kind, "watches", False)),
         "watch_changes": bool(getattr(kind, "watches", False) and settings.get("watch_changes")),
         "status": status,
-        # Source hygiene (issue 0046): quiet / never opened, and the owner's last Keep.
         **tidy_marks(source, status, now),
         "opened_posts": int(source.get("opened_posts") or 0),
         "tidy_kept_at": iso(source.get("tidy_kept_at")),
@@ -310,23 +270,17 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "consecutive_failures": failures,
         "next_retry_at": iso(stats.next_retry_at),
         "dormant": _dormant(failures, state),
-        # Where its posts now live (issue 0108): {host, followed}; the owner chooses, nothing is switched off.
         "moved_to": source.get("moved_to"),
         **_doctor_fields(state, source.get("handle_or_url")),
-        # Silent far beyond its own rhythm (issue 0178), and where the doctor found it went; None otherwise.
         "silent": silent_fields(source, state, status, now),
-        # Stopped without anyone seeing (issue 0242): the flag on the Sources page and in the reader's nav.
         "stalled": stalled_fields(source, state, decision.interval, failures, enabled, now, stored),
     }
 
 
 def silent_fields(source: Dict[str, Any], state: Optional[FetchStateRow], status: str,
                   now: datetime) -> Optional[Dict[str, Any]]:
-    """A source silent far beyond its own rhythm (issue 0178, source_doctor.silent_beyond_rhythm): {days,
-    usual_gap_hours, last_post_at, looked_at, moved, replacement}, the doctor's look (looked_at None: not yet, or
-    its kind has no address to move) when it was made since the source's newest post. None when it is not
-    silent, is off, failing (the failure doctor speaks then) or the owner's saved pages, or the owner said it
-    stopped and nothing came since."""
+    """A source silent far beyond its rhythm, with the doctor's look if made since its newest post; None when not
+    silent, off, failing, the saved pages, or the owner said it stopped and nothing came since."""
     from insight_core.ingestion.source_doctor import silent_beyond_rhythm
 
     if (status in (HealthStatus.ERROR.value, HealthStatus.BACKOFF.value, HealthStatus.DISABLED.value)
@@ -361,8 +315,7 @@ def _same_instant(stored: Any, value: Optional[datetime]) -> bool:
 
 
 def _dormant(failures: int, state: Optional[FetchStateRow]) -> bool:
-    """Dormant is what it waits (issue 0088): 10 failures in a row and a wait past the 24h cap. A 5xx
-    or a timeout waits at most 12h however many failures, so it is never dormant."""
+    """Dormant (0088): 10 failures in a row and a wait past the 24h cap; a 5xx or timeout is never dormant."""
     if failures < BACKOFF_DORMANT_AFTER:
         return False
     if state is None or state.next_retry_at is None or state.last_error_at is None:
@@ -371,27 +324,23 @@ def _dormant(failures: int, state: Optional[FetchStateRow]) -> bool:
 
 
 def _doctor_fields(state: Optional[FetchStateRow], address: Optional[str] = None) -> Dict[str, Any]:
-    """The source doctor's finding (issue 0036): when it looked (None: it has not, in this
-    failure streak, or the owner dismissed it, or the old address read again: a temporary
-    error, nothing to replace, or the site answered a server error: no move, issue 0072) and the
-    replacement it found ({kind: feed|page_watch, url, title, found, prefix, shared, latest};
-    None: nothing found), and `server_error` {status, site} when it read a server error (issue 0072 D3;
-    `site`, issue 0088: whose server, "example.org", "" when the address has no host)."""
+    """The source doctor's finding: when it looked, the replacement it found (None: nothing), and `server_error`
+    {status, site} when the site answered a server error (no move)."""
     finding = (state.doctor_finding if state else None) or {}
-    # A server error is no move (issue 0072 D3): the sheet says the server is failing, {status} (None: timed out).
+    # A server error is no move: the sheet says the server is failing ({status} None: timed out).
     failing = {"status": finding.get("status"), "site": publication_of(host_of(address))} if state and state.doctor_checked_at and finding.get("server_error") else None
     if (state is None or state.doctor_checked_at is None or finding.get("dismissed")
             or finding.get("working_again") or finding.get("server_error")
-            # A fetch that stored nothing (issue 0135): nothing was looked for; last_error says why.
+            # A fetch that stored nothing: nothing was looked for; last_error says why.
             or finding.get("empty_fetch")):
         return {"doctor_looked_at": None, "replacement": None, "server_error": failing, "dead": None}
     if finding.get("dead"):
-        # A dead host (issue 0242): switch it off or replace it; nothing was looked for.
+        # A dead host: switch it off or replace it; nothing was looked for.
         return {"doctor_looked_at": None, "replacement": None, "server_error": None,
                 "dead": {"host": finding.get("host"), "since": finding.get("since"), "reason": finding.get("reason"),
                          "checked_at": iso(state.doctor_checked_at)}}
     replacement = finding.get("replacement")
-    # An offer stored before 0072 was never checked against the source's items: not offered.
+    # An old offer never checked against the source's items is not offered.
     if isinstance(replacement, dict) and "shared" not in replacement:
         replacement = None
     return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": replacement, "server_error": None,
@@ -406,9 +355,7 @@ def _health_sort_key(row: Dict[str, Any]) -> tuple:
 
 
 def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Each enabled source in its status's bucket. `errors` counts every failing source (issue 0137 A1):
-    retrying now, and waiting to retry after failures (also counted in `backoff`), so "errors": 0 means
-    no source is failing."""
+    """Each enabled source in its status's bucket; `errors` counts every failing source, backoff ones too."""
     summary = empty_health_summary()
     for row in rows:
         try:
@@ -420,14 +367,13 @@ def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
         if status == HealthStatus.BACKOFF:
             summary[HEALTH_SUMMARY_KEYS[HealthStatus.ERROR]] += 1
         if row.get("silent"):
-            summary["silent"] += 1   # silent far beyond its rhythm (issue 0178), whatever its status
+            summary["silent"] += 1
         if row.get("stalled"):
-            summary["stalled"] += 1  # stopped without anyone seeing (issue 0242), whatever its status
+            summary["stalled"] += 1
     return summary
 
 
 def _ago(span: timedelta) -> str:
-    """A span for a health reason: minutes under 2 hours, else hours."""
     seconds = span.total_seconds()
     return f"{seconds / 60:.0f} minutes" if seconds < 7200 else f"{seconds / 3600:.1f} hours"
 
@@ -438,7 +384,6 @@ def sources_failing(summary: Dict[str, int]) -> int:
 
 
 class OperationsService:
-    """Manage operational configuration and runtime telemetry."""
 
     SETTINGS_KEY_SCHEDULER = "scheduler_config"
     SETTINGS_KEY_SCHEDULER_STATE = "scheduler_state"
@@ -453,8 +398,7 @@ class OperationsService:
     ):
         self.db_url = db_url
         self.logger = get_component_logger("operations_service")
-        # Health seams: the kind registry (built lazily: the default one constructs
-        # YouTubeService), the availability probe and the clock.
+        # Health seams; the kind registry is built lazily (the default one constructs YouTubeService).
         self._kinds = kinds
         self.availability = availability or availability_from_env
         self.clock = clock or (lambda: datetime.now(timezone.utc))
@@ -479,7 +423,7 @@ class OperationsService:
         existing = self.get_scheduler_config()
         config = config or {}
         merged = self._normalize_scheduler_config({**existing, **config})
-        # The switch as you set it now, else as it was; marked as this default's, so a false is your choice (0126).
+        # Marked as this default's, so a stored false is the owner's choice (0126).
         merged["collect_originals"] = (bool(config["collect_originals"]) if config.get("collect_originals") is not None
                                        else existing["collect_originals"])
 
@@ -488,8 +432,8 @@ class OperationsService:
             "ingest_tick_minutes": merged["ingest_tick_minutes"],
             "collect_originals": merged["collect_originals"],
             COLLECT_CHOSEN[0]: COLLECT_CHOSEN[1],
-            "lookup_originals": merged["lookup_originals"],   # issue 0138 C: off unless you switch it on
-            "store_classics": merged["store_classics"],       # issue 0138 E1: on unless you switch it off
+            "lookup_originals": merged["lookup_originals"],
+            "store_classics": merged["store_classics"],
         }
 
         with db.connection(self.db_url) as conn:
@@ -557,13 +501,8 @@ class OperationsService:
         payload: Optional[Dict[str, Any]] = None,
         compact: bool = False,
     ) -> None:
-        """Close out a job run.
-
-        Pass compact=True when the payload is a full result graph, so long lists and
-        long strings are cut before they land in job_runs. Callers
-        that poll the job for its result - see pollOperationJob in the frontend -
-        must keep compact=False.
-        """
+        """Close out a job run. compact=True cuts long lists/strings of a full result graph; callers that poll
+        the job for its result (the frontend's pollOperationJob) must keep compact=False."""
         now_iso = datetime.now(timezone.utc).isoformat()
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -606,9 +545,7 @@ class OperationsService:
             conn.commit()
 
     def close_interrupted_jobs(self, trigger: str) -> int:
-        """At a process's start (issue 0070): the jobs it runs (`trigger`: "manual" the API's,
-        "scheduler" the scheduler's) still `running` were ended by its restart, so they become
-        `interrupted`, with an event saying so, and the top bar stops saying "fetching". Returns how many."""
+        """At a process's start: its `trigger`'s jobs still `running` become `interrupted`. Returns how many."""
         event = {"level": "error", "message": "Interrupted by a restart", "status": "interrupted"}
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -626,9 +563,7 @@ class OperationsService:
             conn.commit()
         return closed
 
-    # A job that waits (issue 0107: an archive waiting out a host's limit) is not finished: its
-    # status is `waiting`, `waiting_until` in its payload says when it continues, and the process
-    # that continues it claims it first.
+    # A waiting job is not finished: `waiting_until` says when it continues; the continuing process claims it first.
 
     def wait_job(self, job_id: str, *, message: str, payload: Dict[str, Any]) -> None:
         """Mark a running job waiting, its payload merged with the leg's result (finished_at stays empty)."""
@@ -661,8 +596,7 @@ class OperationsService:
             return [{"id": row[0], "source_id": row[1]} for row in cur.fetchall()]
 
     def claim_waiting_job(self, job_id: str, *, trigger: str) -> Optional[Dict[str, Any]]:
-        """waiting -> running, as this process's job (`trigger`); {id, source_id, payload}, or None
-        when the job is not waiting (another process claimed it first)."""
+        """waiting -> running, as this process's job; None when another process claimed it first."""
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -675,8 +609,7 @@ class OperationsService:
         return {"id": row[0], "source_id": row[1], "payload": row[2] or {}} if row else None
 
     def requeue_interrupted_archives(self, trigger: str, now: datetime) -> int:
-        """At the scheduler's start: the archives it was continuing when it stopped wait again, due
-        now, so they carry on by themselves (a deploy must not need a Resume). Returns how many."""
+        """At the scheduler's start: archives it was continuing are due again, so a deploy needs no Resume."""
         event = {"level": "warning", "message": "Interrupted by a restart; continues shortly", "status": "waiting"}
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -746,14 +679,12 @@ class OperationsService:
                 )
             conn.commit()
 
-    # Tracked work (an archive, a fetch, a comment fetch) goes on when its job_runs row
-    # cannot be written: these log the failure and return, instead of raising.
+    # Tracked work goes on when its job_runs row cannot be written: these log and return instead of raising.
 
     def start_job_unless_running(self, job_type: str, *, source_id: str, trigger: str = "manual",
                                  message: Optional[str] = None, payload: Optional[Dict[str, Any]] = None) -> Optional[str]:
-        """start_job, unless a job of this type for this source is running: None then. The check and the insert run
-        under one lock on (type, source), so two API processes (0112 Decided 11) can't both start one. A failure to
-        write the row is logged and raised."""
+        """start_job, unless a job of this type for this source is running (None then). Check and insert run under
+        one lock on (type, source), so two API processes can't both start one. A write failure is logged and raised."""
         key = f"job_runs:{job_type}:{source_id}"
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (key,))
@@ -772,8 +703,7 @@ class OperationsService:
                 cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
 
     def recent_job_times(self, job_type: str, seconds: float, *, kind: Optional[str] = None) -> List[float]:
-        """The start times (epoch seconds) of this type's jobs in the last `seconds`, with payload.kind = `kind` when
-        given (the API watchdog's restarts of the last hour, issue 0117)."""
+        """Start times (epoch seconds) of this type's jobs in the last `seconds`, optionally of payload.kind `kind`."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute("""SELECT extract(epoch FROM started_at) FROM job_runs
                             WHERE job_type = %s AND started_at > now() - make_interval(secs => %s)
@@ -806,11 +736,7 @@ class OperationsService:
             self.logger.exception("Could not finish job %s", job_id)
 
     def prune_job_runs(self, retain_days: int = 30) -> int:
-        """Delete job history older than retain_days. Returns rows removed.
-
-        Without this, job_runs grows forever and every list query gets slower and
-        more memory-hungry. Called once per scheduler cycle.
-        """
+        """Delete job history older than retain_days (operational log). Returns rows removed."""
         retain_days = max(1, int(retain_days))
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -938,8 +864,7 @@ class OperationsService:
         }
 
     def background_work(self) -> Dict[str, Any]:
-        """Sources -> Ingestion -> overview's Background work (issue 0062): the story job's last run
-        and whether it runs now, and how far search indexing and link reading are. Read only."""
+        """The overview's Background work: the story job, search indexing and link reading. Read only."""
         from insight_core.db.repo_background import background_work
         from insight_core.services.stories_service import LOCK_KEY, SETTINGS_KEY
 
@@ -947,14 +872,11 @@ class OperationsService:
             return {"success": True, **background_work(cur, stories_key=SETTINGS_KEY, stories_lock=LOCK_KEY)}
 
     def running(self) -> Dict[str, Any]:
-        """What runs now, for the top bar's sign on every page (issue 0195): the recent jobs only, the same list the
-        overview carries (the running fetch and an hour's failed one are read from it), without source health."""
+        """What runs now, for the top bar's sign: the overview's recent jobs, without source health."""
         return {"success": True, "jobs": self.list_recent_jobs(OVERVIEW_JOBS)}
 
     def get_operations_overview(self) -> Dict[str, Any]:
-        # The SQL projection above is what fixed the memory, not this limit, so keep
-        # enough history for the alerts panel to still catch a stale failure.
-        # The scheduler writes ~4-6 rows per cycle, so 50 covers ~8-10 cycles.
+        # enough history (~8-10 scheduler cycles) for the alerts panel to catch a stale failure
         jobs = self.list_recent_jobs(OVERVIEW_JOBS)
         health = self.get_source_health()
         summary = health["summary"]
@@ -989,8 +911,7 @@ class OperationsService:
         }
 
     def get_database_counts(self) -> Dict[str, int]:
-        """{total_posts, enabled_sources}: the posts summed over each source's kept statistics (issue 0195), not a
-        count of every post."""
+        """{total_posts, enabled_sources}: posts summed over each source's kept statistics, not a count of posts."""
         from insight_core.db import repo_post_stats
 
         with db.connection(self.db_url) as conn:
@@ -1004,20 +925,12 @@ class OperationsService:
             "enabled_sources": int(enabled or 0),
         }
 
-    # ------------------------------------------------------------------ the system's health (issue 0188)
+    # ------------------------------------------------------------------ the system's health
 
     def system_health(self, now: Optional[datetime] = None, *, failing_sources: Optional[int] = None) -> Dict[str, Any]:
-        """/api/status's `healthy`, from real checks (was a literal True). {healthy, reasons (what makes it
-        unhealthy), warnings (shown, never unhealthy alone), checks (the numbers read)}:
-          - ingestion: the newest successful ingestion run is older than the fetch interval plus two ticks (every
-            source is due within the interval, so a run must have happened), or the scheduler's next tick is two
-            ticks overdue (its loop stopped);
-          - the scheduler's and Mark X's loops (utils/heartbeat.py, the logs volume): a heartbeat past its limit;
-          - Mark X (when on): a job failing (markx/jobs.py: FAILING_AFTER failed runs in a row), or the newest
-            finished decision run older than 2 x jobs.EVERY;
-          - warnings: failing sources (a source failing is the site's trouble, not the system's), workers silent
-            for more than WORKER_STALE_DAYS (markx/news.py).
-        Each check that cannot be read is a reason of its own."""
+        """/api/status's `healthy`: {healthy, reasons, warnings (never unhealthy alone), checks}. Reasons: ingestion
+        or the scheduler tick overdue, a heartbeat past its limit, a failing Mark X job or stale decision run, and any
+        check that cannot be read; warnings: failing sources, silent workers."""
         from insight_core.utils import heartbeat
         now = now or datetime.now(timezone.utc)
         reasons: List[str] = []
@@ -1043,7 +956,6 @@ class OperationsService:
             reasons.append(f"could not read the ingestion state ({type(exc).__name__})")
         ages = heartbeat.ages(now.timestamp())
         checks["heartbeats"] = {k: None if v is None else round(v) for k, v in ages.items()}
-        # 0216: each process's own memory and CPU, as its beat carries them (the scheduler's parent; each API process)
         checks["processes"] = {name: {k: (round(v) if k == "age" else v) for k, v in p.items()}
                                for name, p in heartbeat.processes(now.timestamp()).items() if len(p) > 1}
         reasons.extend(heartbeat.stale(now.timestamp(), required=()))
@@ -1065,7 +977,7 @@ class OperationsService:
             cur.execute("SELECT max(finished_at) FROM mx_runs")
             last_run = cur.fetchone()[0]
             stale_workers = [w["worker"] for w in markx_news.workers_view(markx_api.contacts(cur), now) if w["stale"]]
-            ix = jobs.mark_ix(cur)                                              # 0209
+            ix = jobs.mark_ix(cur)
             held = jobs.decision_hold(ix)[0]
         checks["markx"] = {"jobs": {job: {k: v.get(k) for k in ("failures", "failing", "retry_at", "finished_at")}
                                     | {"ok": (v.get("last") or {}).get("ok")} for job, v in view.items()},
@@ -1077,7 +989,7 @@ class OperationsService:
                 error = (v.get("last") or {}).get("error") or "no error recorded"
                 reasons.append(f"Mark X's {job} job failed {v['failures']} times in a row ({str(error)[:120]})")
         if last_run is None or (now - last_run).total_seconds() > 2 * jobs.EVERY:
-            # 0209: and why a decision run doesn't start, when Mark IX holds it
+            # why a decision run doesn't start, when Mark IX holds it
             reasons.append(("no Mark X decision run has finished" if last_run is None
                             else f"the last Mark X decision run finished {_ago(now - last_run)} ago")
                            + (f"; held: {held}" if held else ""))
@@ -1095,8 +1007,7 @@ class OperationsService:
                             + ", ".join(stale_workers))
 
     def table_sizes(self, limit: int = 15) -> List[Dict[str, Any]]:
-        """Issue 0188: the biggest tables with their indexes and TOAST (pg_total_relation_size), largest first;
-        reported only: nothing is pruned (the owner keeps everything)."""
+        """The biggest tables with their indexes and TOAST, largest first. Read only: nothing is pruned."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute("""SELECT c.relname, pg_total_relation_size(c.oid), c.reltuples::bigint
                              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -1109,9 +1020,7 @@ class OperationsService:
     STATEMENT_CHARS = 2000
 
     def top_statements(self, limit: int = STATEMENTS_SHOWN) -> Dict[str, Any]:
-        """Issue 0215: what insight-db spends its time on (`top_statements` below). Read only.
-        v10.22 (0216): with `indexes` (every index of INDEX_MB_SHOWN MB or more, with its scans since the statistics'
-        reset) and `memory` (shared_buffers, effective_cache_size, work_mem and the hit ratio), read by a GET."""
+        """What insight-db spends its time on (`top_statements`), plus `indexes` and `memory`. Read only."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             seen = self._indexes_and_memory(cur)
             return {**top_statements(cur, limit, chars=self.STATEMENT_CHARS), **seen}
@@ -1119,8 +1028,7 @@ class OperationsService:
     INDEX_MB_SHOWN = 1
 
     def _indexes_and_memory(self, cur: Any) -> Dict[str, Any]:
-        """top_statements' `indexes` and `memory` (v10.22: read by a GET, so whether an index earns its keep and the
-        server's buffer settings are checked without the owner's psql)."""
+        """`indexes` of INDEX_MB_SHOWN MB or more with their scans, and `memory` (buffer settings, hit ratio)."""
         cur.execute("""SELECT i.relname, i.indexrelname, i.idx_scan, pg_relation_size(i.indexrelid)
                          FROM pg_stat_user_indexes i
                         WHERE pg_relation_size(i.indexrelid) >= %s
@@ -1138,8 +1046,7 @@ class OperationsService:
                            "blocks_hit": hit, "blocks_read": read, "since": iso(reset)}}
 
     def get_corpus_freshness(self) -> Dict[str, Any]:
-        """Corpus-wide freshness: newest/oldest post, latest fetch (from each source's kept statistics, issue 0195),
-        last-24h volume (by the fetched_at index)."""
+        """Corpus-wide freshness: newest/oldest post, latest fetch (from kept statistics), last-24h volume."""
         from insight_core.db import repo_post_stats
 
         with db.connection(self.db_url) as conn:
@@ -1158,12 +1065,8 @@ class OperationsService:
     # ------------------------------------------------------------------ source health
 
     def get_source_health(self) -> Dict[str, Any]:
-        """SourcesHealthResponse (spec §F.4): one schedule-aware row per source plus a summary.
-
-        Every row is cadence_stats(source, state) -> decide_fetch(..., force=False) with the
-        source's resolved kind and the process availability, exactly as the runner decides,
-        so the table and the next run cannot disagree. Rows are sorted worst first.
-        """
+        """SourcesHealthResponse: one row per source (worst first) plus a summary. Each row decides exactly as the
+        runner does (decide_fetch, force=False), so the table and the next run cannot disagree."""
         now = self.clock()
         rows = self._health_rows(self._load_schedule_view(), now)
         return {
@@ -1175,9 +1078,7 @@ class OperationsService:
         }
 
     def host_limits(self) -> List[Dict[str, Any]]:
-        """Each host's budget as learned from the limits archives met (issue 0107), by host:
-        [{host, requests, window_s, limits, archive_gap_s, line}]. An archive paces to it once
-        learned from LEARN_AFTER limits. Never raises: health does not fail for it."""
+        """Each host's learned budget: [{host, requests, window_s, limits, archive_gap_s, line}]. Never raises."""
         from insight_core.ingestion.host_budgets import HostBudgets
         from insight_core.ingestion.ports import DbHostBudgetStore
 
@@ -1192,10 +1093,7 @@ class OperationsService:
         return rows[0] if rows else None
 
     def set_cadence_override(self, source_id: str, hours: Optional[float]) -> Dict[str, Any]:
-        """Write sources.fetch_interval_hours_override and return the source's fresh row.
-
-        The range (None or [1, 2160]) is validated by the route. LookupError if no source.
-        """
+        """Write sources.fetch_interval_hours_override; the fresh row. LookupError if no source."""
         if not self._write_cadence_override(source_id, hours):
             raise LookupError(f"Source {source_id} not found")
         row = self.get_source_health_row(source_id)
@@ -1204,8 +1102,7 @@ class OperationsService:
         return row
 
     def dismiss_replacement(self, source_id: str) -> Dict[str, Any]:
-        """Hide the source doctor's finding until the next failure streak; the fresh row.
-        LookupError when the source has no finding."""
+        """Hide the source doctor's finding until the next failure streak; the fresh row (LookupError: none)."""
         dismissed = False
         if self._valid_id(source_id):
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
@@ -1217,8 +1114,8 @@ class OperationsService:
         return row
 
     def source_stopped(self, source_id: str) -> Dict[str, Any]:
-        """The owner says a silent source stopped (issue 0178): its silence is not shown again until it posts.
-        Nothing is switched off or deleted. The fresh row; LookupError for no such source."""
+        """The owner says a silent source stopped: its silence is hidden until it posts; nothing is switched off.
+        The fresh row; LookupError if no source."""
         marked = False
         if self._valid_id(source_id):
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
@@ -1232,9 +1129,8 @@ class OperationsService:
         return row
 
     def keep_source(self, source_id: str) -> Dict[str, Any]:
-        """Keep a source marked quiet or never opened (issue 0046): its marks hide for
-        TIDY_KEEP_DAYS and come back only if still true then. The fresh row; LookupError
-        for no such source."""
+        """Keep a source marked quiet or never opened: its marks hide for TIDY_KEEP_DAYS; the fresh row.
+        LookupError if no source."""
         kept = False
         if self._valid_id(source_id):
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
@@ -1302,11 +1198,8 @@ class OperationsService:
         return {
             "interval_hours": interval_hours,
             "ingest_tick_minutes": int(tick) if float(tick).is_integer() else tick,
-            # Issue 0123: a News story's original collected when INSIGHT lacks it. On unless you switched it off (0126).
             "collect_originals": collect_setting(config),
-            # Issue 0138 C: a title lookup for a document entity no post links. Off unless you switch it on.
             "lookup_originals": lookup_setting(config),
-            # Issue 0138 E1: every Classic not stored collected once, under its own allowance. On unless switched off.
             "store_classics": classics_setting(config),
             "updated_at": config.get("updated_at"),
         }
@@ -1355,12 +1248,8 @@ class OperationsService:
 
 
 def top_statements(cur: Any, limit: int, *, chars: int = OperationsService.STATEMENT_CHARS) -> Dict[str, Any]:
-    """Issue 0215: what insight-db spends its time on: pg_stat_statements' statements of this database by total
-    execution time, since its counts were last reset (a server restart keeps them; `since`). Each statement as
-    Postgres normalized it (every constant a $n: no value of a post, a source or a label is shown), cut at `chars`
-    (0216, GET /metrics: 0, none), with its calls, total and mean milliseconds, rows, and blocks hit and read; `share`:
-    of the database's whole statement time. Read only. {"enabled": False, "reason"} while the library isn't loaded
-    (docker-compose.yml's `command`; DEPLOYMENT.md) or its view not created (migration 0146)."""
+    """pg_stat_statements' statements of this database by total time since `since`, normalized ($n: no values shown),
+    cut at `chars`, with `share` of all time. Read only; {"enabled": False, "reason"} without the extension."""
     cur.execute("""SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'),
                           'pg_stat_statements' = ANY(string_to_array(
                               replace(current_setting('shared_preload_libraries'), ' ', ''), ','))""")

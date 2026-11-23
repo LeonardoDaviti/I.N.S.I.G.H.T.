@@ -1,27 +1,6 @@
-"""What Discover reads of the web, for its first page only (issue 0080: Discover tested nothing, and
-75% of its lines had no title but one made from the address).
-
-For each suggestion on the first page (StoriesService.discover, FIRST_PAGE), at most once in CHECK_DAYS:
-- **the follow test**: the path every source add takes (where_linked.follow: the feed finder, then page
-  watching), labelled "feed" (Feed found), "page" (Page watching: a page whose articles it reads),
-  "blocked" (Blocks readers: every request it made was refused with 401 or 403) or "headlines"
-  (Headlines only: anything else, a paywall or no feed and a page it can't read). A platform account
-  INSIGHT follows by a source kind (an X account through the Nitter bridge, a Telegram channel, a
-  subreddit, a YouTube channel: `kind_source`, issue 0109) is tested through that kind instead: one
-  read of the address the kind reads, "feed" when it answers with posts. A test made by older rules
-  (FOLLOW_TEST) is made again wherever its suggestion is listed;
-- **the channels of linked videos** (0239, 0237 #5: 12 of 12 channels the reader wanted were never suggested, their
-  videos an "unnamed" place): YouTube's oEmbed answer for a video address names its channel (author_url), VIDEOS_PER_PASS
-  a pass, the videos most sources link first; a channel found is never asked again, a failure after CHECK_DAYS. Each
-  video is then its channel's address (StoriesService.map_videos), so a channel 3+ voices link is a suggestion;
-- **the titles** of the pages it lists that have none (no stored post, no evidence: services/page_titles.py),
-  its articles' and the stories they started, and the archive rows' lines (issue 0106); and Classics'
-  untitled pages: the page's own title, as page watching reads one (page_watch.page_title), from the
-  start of the page. Tweets are never read: their line names the account.
-Each answer is stored with its date (system_settings `discover_reads`, DiscoverRepository.reads), a failure
-too, so nothing is asked again within CHECK_DAYS. Requests go one at a time per host, spaced by the
-ingestion's per-host limiter (gates.HostLimiter), FAN_OUT hosts at once, with the Add source dialog's client.
-Off with INSIGHT_DISCOVER_READS=0 (a machine that must not fetch).
+"""What Discover reads of the web for its first page, at most once in CHECK_DAYS each (stored in `discover_reads`):
+follow tests (`follow_read`), linked videos' channels (`read_video`) and untitled pages' titles (`page_title`).
+One request at a time per host, FAN_OUT hosts at once. Entry: `keep` (jobs process); off with INSIGHT_DISCOVER_READS=0.
 """
 from __future__ import annotations
 
@@ -46,24 +25,18 @@ from insight_core.utils.discover_rules import CHECK_DAYS, FIRST_PAGE, FOLLOWABLE
 logger = logging.getLogger(__name__)
 
 PAGE_BYTES = 512 * 1024      # the start of a page read for its title (its <head>)
-FAN_OUT = 4                  # hosts read at once
+FAN_OUT = 4
 TITLE_CHARS = 300
 BLOCKED = (401, 403)
 LABELS = ("feed", "page", "headlines", "blocked", "other_feed")
-# The rules a follow test is made by (issue 0109: platform accounts through their kind): a stored test
-# by other rules is due again.
-FOLLOW_TEST = 5   # 2: platform accounts through their kind; 3: "feed" only for a feed of the linked pages;
-#                   4 (issue 0172): where it landed (moved_to), its own pages' sections, its declared account, transient
-#                   5 (issue 0240): no feed and no page: the site's list pages (where_linked.follow, step 5)
-# Rules whose followable tests still stand under FOLLOW_TEST (0240 only adds ways in for the unfollowable): only the
-# unfollowable ones they made are due again, not every suggestion ever tested.
+# the follow test's rules version: a stored test made by other rules is due again
+FOLLOW_TEST = 5
+# older rules whose followable tests still stand: only their unfollowable ones are due again
 FOLLOWABLE_STANDS = frozenset({4})
-KIND_POSTS = 3           # the posts a platform account's kind is asked for
-# Issue 0172 b6: a test that failed for a passing reason (a bridge's error, a timeout, a 5xx, a 429) is asked again
-# after this, not after CHECK_DAYS (a bridge's hiccup had labelled an X account "headlines" for 30 days).
-TRANSIENT_HOURS = 6
-SECTIONS_TRIED = 2       # b7: the sections of a site's own linked pages its test tries when its home page gives none
-VIDEOS_PER_PASS = 25     # 0239: the videos whose channel a pass reads (one oEmbed request each); not measured
+KIND_POSTS = 3
+TRANSIENT_HOURS = 6      # a test failed for a passing reason (5xx, timeout, 429) is asked again after this (0172)
+SECTIONS_TRIED = 2
+VIDEOS_PER_PASS = 25     # not measured
 OEMBED = "https://www.youtube.com/oembed?format=json&url={}"
 _ACCOUNT = re.compile(r"^[\w.@-]+$")
 _ADDRESS = re.compile(r"^\s*(?:https?://\S+|[\w-]+(?:\.[\w-]+)+/\S*)\s*$")
@@ -74,16 +47,14 @@ def enabled() -> bool:
 
 
 class Polite:
-    """An http client whose requests' refusals are recorded; with a limiter, one at a time per host
-    (HostLimiter). A follow test holds its host's slot for the whole test instead: the finder's own
-    requests run FAN_OUT at once, each within its timeout, as when a source is added."""
+    """An http client that records refusals; with a limiter, one request at a time per host."""
 
     def __init__(self, http: Any, limiter: Optional[HostLimiter] = None) -> None:
         self.http = http
         self.limiter = limiter
         self.answered = 0
         self.refused: List[Optional[int]] = []
-        self.troubled = 0   # refusals for a passing reason: a 5xx, a timeout, a 429 (issue 0172 b6)
+        self.troubled = 0
 
     async def _call(self, name: str, url: str, *args: Any, **kwargs: Any) -> Any:
         if self.limiter is None:
@@ -116,9 +87,7 @@ class Polite:
 
 
 def label(found: Dict[str, Any], polite: Polite) -> str:
-    """The follow test's label of where_linked.follow's answer and the requests it made. A feed is "feed" only
-    when it holds one of the linked pages, or when none were linked (issue 0109 W9: a hub's owners were
-    "Feed found" by the hub's own blog feed); else "other_feed": a feed, but not of these pages."""
+    """The follow test's label; a feed is "feed" only if it holds a linked page (or none linked), else other_feed."""
     if found.get("status") == "direct":
         return "feed"
     feeds = found.get("feeds") or []
@@ -140,8 +109,7 @@ def slot(url: str) -> str:
 
 
 def own_pages(key: str, linked: Sequence[str]) -> List[str]:
-    """The linked pages that are a suggestion's own (issue 0109): on a platform's owner (hub.example/owner),
-    those under its path; on a site, all its host's (www. aside, case aside in the path)."""
+    """The linked pages that are a suggestion's own: under its path (a platform owner), else all its host's."""
     host, _, path = key.lower().partition("/")
     out = []
     for url in linked:
@@ -155,12 +123,9 @@ def own_pages(key: str, linked: Sequence[str]) -> List[str]:
 
 
 def kind_source(key: str, registry: Any) -> Optional[Dict[str, str]]:
-    """The source a platform account is followed as (issue 0109 W1): the address its source kind reads, as
-    the Add source templates write it (x.com/<user> -> the Nitter bridge's /<user>/rss; t.me/<channel> ->
-    the Telegram bridge's /rss/<channel>; reddit.com/r/<sub> -> r/<sub>; youtube.com/@<channel> -> the
-    channel), when a kind of `registry` reads it (KindRegistry.resolve: not the generic feed reader nor
-    page watching). None for a site, an owner on a platform no kind reads (a code or model hub's) or a
-    kind of page."""
+    """The source a platform account is followed as (X and Telegram through their bridges, a subreddit, a YouTube
+    channel), as Add source writes it, when a specific kind of `registry` reads it (not generic_rss nor page_watch);
+    else None."""
     host, _, rest = key.partition("/")
     segments = [s for s in rest.split("/") if s]
     site = site_of(host)
@@ -169,9 +134,7 @@ def kind_source(key: str, registry: Any) -> Optional[Dict[str, str]]:
     source: Optional[Dict[str, str]] = None
     if (site in PLATFORM_SITES["x"] or (site in PLATFORM_SITES["telegram"] and site != "telegram.org")) \
             and len(segments) == 1:
-        # 0241: through the bridge the add path follows it through (feed_finder.bridge_feed: NITTER_HOSTS' first, the
-        # Telegram bridge's origin), never a fixed nitter.local / telegram.local: a test read through another host
-        # than the add's reads another bridge (or none). No bridge set: no kind reads it.
+        # the same bridge the add path follows it through (0241); no bridge set: no kind reads it
         from insight_core.ingestion.feed_finder import bridge_feed
         got = bridge_feed(f"https://{host}/{segments[0]}")
         if got is None or not got[1]:
@@ -192,9 +155,7 @@ def kind_source(key: str, registry: Any) -> Optional[Dict[str, str]]:
 
 
 async def kind_read(registry: Any, source: Dict[str, str]) -> Dict[str, Any]:
-    """A platform account's follow test (issue 0109): its kind's latest posts, as a fetch run reads them.
-    {label: "feed" when there are some, "blocked" when the read was refused with 401 or 403, else "headlines";
-    transient: true when it failed for a passing reason (issue 0172 b6: the bridge's error, a timeout, a 5xx)}."""
+    """A platform account's follow test by its kind's latest posts: {label: feed | blocked | headlines, transient?}."""
     try:
         posts = await registry.resolve(source).fetch_latest(source, KIND_POSTS)
     except HttpError as exc:
@@ -215,9 +176,7 @@ _HREF = re.compile(r"""href\s*=\s*["']([^"'#\s]+)["']""", re.I)
 
 
 def declared_accounts(page: str, base: str, registry: Any) -> List[str]:
-    """The platform accounts a site's page links to (its "follow us" links, issue 0172 b5), that a source kind
-    reads (kind_source), the most linked first: x.com/<name>, t.me/<name>, youtube.com/@<name>, reddit.com/r/<name>.
-    A post (a tweet's status), a share or intent page names no account."""
+    """The platform accounts a site's page links to ("follow us") that a source kind reads, the most linked first."""
     from collections import Counter
     from urllib.parse import urljoin
 
@@ -237,8 +196,7 @@ def declared_accounts(page: str, base: str, registry: Any) -> List[str]:
 
 
 def _sections(key: str, linked: Sequence[str]) -> List[str]:
-    """The sections a site's own linked pages sit in (their first path segment, not a date or a number), the most
-    pages first, at most SECTIONS_TRIED, as addresses (issue 0172 b7)."""
+    """The sections a site's own linked pages sit in, as addresses, the most pages first, at most SECTIONS_TRIED."""
     from collections import Counter
 
     from insight_core.utils.post_links import NUMBERISH
@@ -255,10 +213,9 @@ def _sections(key: str, linked: Sequence[str]) -> List[str]:
 
 async def follow_read(http: Any, registry: Any, url: str, linked: List[str],
                       limiter: Optional[HostLimiter] = None) -> Dict[str, Any]:
-    """The follow test (module doc), as stored: {label, moved_to? (the site it landed on, when another: issue 0172
-    b1), url? (the section of its own pages that can be followed when its home page gives nothing: b7), account?
-    ({url, label}: the account it declares, a kind reads and that answers, when it can't be followed itself: b5),
-    transient? (failed for a passing reason: asked again within TRANSIENT_HOURS, b6)}."""
+    """The follow test, as stored: {label, moved_to? (landed on another site), url? (a followable section of its own
+    pages when the home page gives nothing), account? ({url, label}: a declared account that answers, when the site
+    can't be followed), transient? (asked again after TRANSIENT_HOURS)}."""
     polite = Polite(http)
     key = url.split("://", 1)[-1]
     source = kind_source(key, registry)
@@ -293,7 +250,7 @@ async def follow_read(http: Any, registry: Any, url: str, linked: List[str],
 
 
 async def _declared(http: Any, registry: Any, url: str) -> Optional[Dict[str, str]]:
-    """The first account a site's home page declares that its kind can read now (issue 0172 b5), as {url, label}."""
+    """The first account a site's home page declares that its kind can read now, as {url, label}."""
     try:
         body, here = await http.get_start(url, PAGE_BYTES)
     except Exception:  # noqa: BLE001 - an unread page declares nothing
@@ -312,8 +269,7 @@ async def follow_test(http: Any, registry: Any, url: str, linked: List[str],
 
 
 def page_title(page: str, url: str) -> Optional[str]:
-    """A page's own title (page_watch.page_title), None when it has none, only its address, or only its site's
-    name (issue 0109 W7: a wall or a script page answers with its site's <title>, its og:site_name)."""
+    """A page's own title, None when it has none or only its address or its site's name (a wall or script page)."""
     title = " ".join(html.unescape(page_watch.page_title(page, url) or "").split())
     site = " ".join(html.unescape(parsing.meta_content(page, "og:site_name") or "").split())
     if not title or title == url or _ADDRESS.match(title) or len(title) > TITLE_CHARS:
@@ -332,8 +288,7 @@ async def read_title(polite: Polite, url: str) -> Optional[str]:
 
 
 def channel_key(author_url: str) -> Optional[str]:
-    """0239: the Discover key of the channel an oEmbed answer names (youtube.com/@<handle>, discover_address's account
-    of the normalised address), None when it names no YouTube account."""
+    """The Discover key of the YouTube channel an oEmbed answer names, else None."""
     from insight_core.utils.discover_rules import discover_address
     from insight_core.utils.url_normalization import normalize_url
     url = normalize_url(author_url or "") or ""
@@ -342,7 +297,7 @@ def channel_key(author_url: str) -> Optional[str]:
 
 
 async def read_video(polite: "Polite", url: str) -> Dict[str, Any]:
-    """0239: a video's channel as YouTube's oEmbed names it: {channel: key or None, transient?}."""
+    """A video's channel as YouTube's oEmbed names it: {channel: key or None, transient?}."""
     from urllib.parse import quote
     try:
         body, _ = await polite.get_text(OEMBED.format(quote(url, safe="")))
@@ -356,8 +311,7 @@ async def read_video(polite: "Polite", url: str) -> Dict[str, Any]:
 
 def videos_due(linked: Sequence[Any], reads: Dict[str, Any], now: datetime, *,
                limit: int = VIDEOS_PER_PASS) -> List[str]:
-    """0239: the linked videos (`linked`: (address, sources linking it), the most first) whose channel is read this pass:
-    never read, or read without a channel and `due`; at most `limit`."""
+    """The linked videos whose channel is read this pass: never read, or no channel and `due`; at most `limit`."""
     videos = reads.get("videos", {})
     out = []
     for url, _ in linked:
@@ -370,8 +324,7 @@ def videos_due(linked: Sequence[Any], reads: Dict[str, Any], now: datetime, *,
 
 
 def due(read: Optional[Dict[str, Any]], now: datetime, *, test: bool = False) -> bool:
-    """Never read, or read CHECK_DAYS ago or more (TRANSIENT_HOURS for one that failed for a passing reason, issue
-    0172 b6); a follow test (`test`), also one by older rules (FOLLOW_TEST)."""
+    """Never read, read CHECK_DAYS ago (TRANSIENT_HOURS if transient), or (`test`) made by older FOLLOW_TEST rules."""
     try:
         again = timedelta(hours=TRANSIENT_HOURS) if read and read.get("transient") else timedelta(days=CHECK_DAYS)
         older = test and read is not None and read.get("test") != FOLLOW_TEST and not (
@@ -382,9 +335,7 @@ def due(read: Optional[Dict[str, Any]], now: datetime, *, test: bool = False) ->
 
 
 def to_read(answer: Dict[str, Any], *, first_page: int = FIRST_PAGE) -> List[Dict[str, Any]]:
-    """The suggestions whose lines and tests are read (issue 0109): the first page, and the first page's count
-    by score alone wherever they are listed (the tested come first, so an untested one with more stories
-    would otherwise wait behind them, never tested)."""
+    """The first page plus the top FIRST_PAGE by score (tested ones sort first; else an untested one never is)."""
     listed = answer["suggestions"]
     by_score = sorted(listed, key=lambda s: (-s.get("score", 0), s["key"]))[:first_page]
     page = listed[:first_page]
@@ -395,11 +346,9 @@ def to_read(answer: Dict[str, Any], *, first_page: int = FIRST_PAGE) -> List[Dic
 def work(page: List[Dict[str, Any]], reads: Dict[str, Any], now: datetime, *,
          archives: Sequence[Dict[str, Any]] = (), classics: Sequence[str] = (),
          listed: Sequence[Dict[str, Any]] = ()) -> Dict[str, List[str]]:
-    """What the first page asks to read: the suggestions whose follow test is due, and every `listed` one
-    whose stored test was made by older rules (issue 0109: the X accounts the finder called headlines had
-    sunk out of the first page); the pages whose title is due and that have none (not tweets): its
-    suggestions' articles and the stories they started, the archive rows' lines (issue 0106: one title per
-    page, whichever line shows it) and the untitled `classics`."""
+    """What the first page asks to read: {follow: the suggestions whose test is due, and every `listed` one with a
+    stored test by older rules; titles: the untitled pages whose title is due (not tweets): articles, the stories they
+    started, archive rows' lines and `classics`}."""
     follow, titles = reads.get("follow", {}), reads.get("titles", {})
     lines = [line for s in page for line in (*s.get("articles", ()), *s.get("origin_stories", ()))]
     lines += [line for a in archives for line in a.get("origin_stories", ())]
@@ -412,16 +361,14 @@ def work(page: List[Dict[str, Any]], reads: Dict[str, Any], now: datetime, *,
 
 async def read_first_page(stories: Any, http: Any, registry: Any, *,
                           clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> Dict[str, int]:
-    """Read what the first page lacks (`work`), and Classics' untitled pages (issue 0106), and store each
-    answer with its date; then make and keep Discover's list once (issue 0080 cold open: the answers change
-    its inputs, so the next open, in any process, reads it instead of making it). Returns how many."""
-    answer = await asyncio.to_thread(stories.discover_kept)   # v10.22.2: the answer served, not built again
+    """Read what the first page lacks (`work`) and the videos due, store each dated answer, then rebuild the list."""
+    answer = await asyncio.to_thread(stories.discover_kept)
     classics = await asyncio.to_thread(stories.untitled_classics)
     with db.connection(stories.db_url) as conn, conn.cursor() as cur:
         reads = DiscoverRepository.reads(cur)
         todo = work(to_read(answer), reads, clock(),
                     archives=answer.get("archives", ()), classics=classics, listed=answer["suggestions"][FIRST_PAGE:])
-        todo["videos"] = videos_due(DiscoverRepository.linked_videos(cur), reads, clock())   # 0239
+        todo["videos"] = videos_due(DiscoverRepository.linked_videos(cur), reads, clock())
     if not todo["follow"] and not todo["titles"] and not todo["videos"]:
         return {"follow": 0, "titles": 0}
     gate = asyncio.Semaphore(FAN_OUT)
@@ -453,27 +400,23 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
         reads["videos"] = {**reads.get("videos", {}), **channeled}
         DiscoverRepository.keep_reads(cur, reads)
     found = {url: r["channel"] for url, r in channeled.items() if r.get("channel")}
-    moved = await asyncio.to_thread(stories.map_videos, found) if found else 0   # 0239: videos to their channels
+    moved = await asyncio.to_thread(stories.map_videos, found) if found else 0
     logger.info("Discover: %d follow tests, %d page titles, %d videos read (%d to a channel, %d addresses moved)",
                 len(tested), len(titled), len(channeled), len(found), moved)
-    await asyncio.to_thread(stories.refresh)   # the answer served, made with the answers (issue 0172 c1)
+    await asyncio.to_thread(stories.refresh)   # the served answer, made with the new reads
     return {"follow": len(tested), "titles": len(titled), **({"videos": len(channeled)} if channeled else {})}
 
 
 def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = None,
          people: Optional[Callable[[str], Dict[str, Any]]] = None) -> Dict[str, Any]:
-    """Issue 0206, the jobs process (markx/jobs.py, the view "discover", wanted by an open: services/stories_service.
-    discover_served): Discover's answer made again when it is due (StoriesService.refresh), then what its first page
-    lacks read over the web (`read_first_page`, which makes it again when it read anything; off with
-    INSIGHT_DISCOVER_READS=0). Was: in the API process, in the background of an open (255-300 s on the server, with
-    the API's memory)."""
+    """The jobs process's build (0206): Discover's answer rebuilt when due, its people kept, then `read_first_page`."""
     from insight_core.services.stories_service import StoriesService
     stories = stories or StoriesService(db_url)
     out: Dict[str, Any] = {"built": [], "follow": 0, "titles": 0}
     if stories.served_due():
         stories.refresh()
         out["built"].append("answer")
-    out["people"] = (people or keep_people)(db_url)   # 0276: Discover's people and makers, built here (~1 s on the server copy)
+    out["people"] = (people or keep_people)(db_url)
     if enabled():
         if http is None:
             from concurrent.futures import ThreadPoolExecutor
@@ -487,8 +430,7 @@ def keep(db_url: str, *, stories: Any = None, http: Any = None, registry: Any = 
 
 
 def keep_people(db_url: str) -> Dict[str, Any]:
-    """Issue 0276: Discover's people and makers (markx/discover_people.keep) built again when KEEP_FOR old; a failure is
-    logged and returned, never failing Discover's own answer."""
+    """Discover's people and makers rebuilt when due; a failure is logged and returned, never raised."""
     from insight_core.db import database
     from insight_core.markx import discover_people
     try:

@@ -23,7 +23,7 @@ from insight_core.ingestion.kinds.base import checked_fetch
 
 from insight_core.logs.core.logger_config import get_component_logger
 
-# Why a video was skipped (issue 0135): the first of these found in yt-dlp's error, else "yt-dlp failed".
+# Why a video was skipped: the first of these found in yt-dlp's error, else "yt-dlp failed".
 SKIP_REASONS = (
     ("confirm you", "the bot check"),         # "Sign in to confirm you're not a bot"
     ("timed out", "timed out"),
@@ -51,9 +51,8 @@ def base_language(code: Optional[str]) -> str:
 
 
 def original_language(details: Dict[str, Any]) -> str:
-    """The video's own language (issue 0135): its `language`, else its default audio track's
-    (kept by _get_video_details before the formats go), else the automatic captions' untranslated
-    track ("ru-orig"); "" when none says."""
+    """The video's own language: its `language`, else its default audio track's, else the untranslated
+    automatic captions' ("ru-orig"); "" when none says."""
     for value in (details.get("language"), details.get("_audio_language")):
         if base_language(value):
             return base_language(value)
@@ -74,13 +73,9 @@ def audio_language(formats: Sequence[Dict[str, Any]]) -> str:
 
 
 def transcript_tracks(details: Dict[str, Any], preferred: Sequence[str]) -> List[Tuple[str, str]]:
-    """The caption tracks to try, in order, as (bucket, language key) (issue 0135):
-      1. the video's own language: its subtitles, its untranslated automatic captions ("ru-orig"), then
-         its automatic captions in that language;
-      2. the owner's preferred languages: subtitles, and automatic captions only in the video's own
-         language or when it is unknown (any other automatic track is YouTube's machine translation);
-      3. any other subtitles; any other automatic track only when the video's language is unknown.
-    A translated automatic track is never tried while the video has its own language."""
+    """The caption tracks to try, in order, as (bucket, language key): the video's own language (subtitles, then
+    automatic, untranslated first), the preferred languages, then any other subtitles. Any other automatic track is
+    YouTube's machine translation: tried only when the video's language is unknown."""
     subtitles = details.get("subtitles") or {}
     automatic = details.get("automatic_captions") or {}
     original = original_language(details)
@@ -112,9 +107,7 @@ def transcript_tracks(details: Dict[str, Any], preferred: Sequence[str]) -> List
 
 
 def plain_transcript(text: Optional[str]) -> str:
-    """Any caption payload as plain text (issue 0135): a caption XML document (srv1-3, ttml) by its
-    text elements, json3 by its segments, WebVTT by its cue lines, their inline tags gone; plain text
-    as it is. Never markup: a transcript stored as "<?xml…><transcript>" is read back to its words."""
+    """Any caption payload (XML srv1-3/ttml, json3, WebVTT, plain) as plain text, never markup."""
     payload = (text or "").strip()
     if not payload:
         return ""
@@ -173,25 +166,17 @@ class YouTubeService:
     DEFAULT_PAGE_SIZE = 15
     DEFAULT_LANGUAGES = ("en", "en-US", "en-GB", "ru", "ka")
 
-    # yt-dlp defaults to --retries 10 / --fragment-retries 10 / --extractor-retries 3 with
-    # exponential sleeps between them. Against "Sign in to confirm you're not a bot" that
-    # is how one video cost 7.5 minutes on 2026-07-23, with nothing bounding the call.
-    # Cut the retries and put a hard wall on every invocation.
+    # yt-dlp's default retries with exponential sleeps can spend minutes on one bot-checked video:
+    # fewer retries, and a hard timeout on every call.
     YTDLP_HARDENING_ARGS = ("--retries", "2", "--extractor-retries", "1", "--socket-timeout", "15")
     DEFAULT_YTDLP_TIMEOUT_SECONDS = 90
-    # The test read before a channel is added (issue 0254): one listing of its newest video, while the owner waits.
+    # the test read before a channel is added (one listing of its newest video), while the reader waits
     TEST_READ_TIMEOUT_SECONDS = 45
-    # A whole-channel listing legitimately takes longer than a single video.
     DEFAULT_YTDLP_PLAYLIST_TIMEOUT_SECONDS = 180
-    # inspect_channel enumerates EVERY video on the channel (that count is the archive's
-    # available_posts, and the last entry is its first_post_date), so it is not a 180s job on
-    # a channel with thousands of videos - it was unbounded before the timeouts landed. Given
-    # its own, much larger budget rather than a --playlist-end limit, because a limit would
-    # silently redefine available_posts as "min(total, limit)" and first_post_date as "oldest
-    # of the last N", which is exactly the metadata this call exists to produce.
+    # a full channel scan lists every video (available_posts, first_post_date), so it gets a larger budget
+    # rather than a --playlist-end limit, which would silently change both numbers
     DEFAULT_YTDLP_CHANNEL_SCAN_TIMEOUT_SECONDS = 900
-    # Total wall-clock allowed for pulling subtitles for one video: the format loop used to
-    # be unbounded at 60s per HTTP attempt across every format of every language.
+    # total time for one video's subtitles, across every format of every language
     DEFAULT_TRANSCRIPT_BUDGET_SECONDS = 90
 
     def __init__(self, db_url: str):
@@ -229,8 +214,7 @@ class YouTubeService:
                 channel_ref["channel_url"], timeout=self.ytdlp_channel_scan_timeout_seconds
             )
         except Exception as exc:
-            # Planning an archive is the only caller; the plan fails with this error. Name the
-            # consequence here, at the only place that knows what was lost.
+            # the archive plan (the only caller) fails with this error; the log names what was lost
             self.logger.error(
                 "Channel scan failed for %s - archive metadata (available_posts, "
                 "first_post_date) will stay stale: %s",
@@ -253,8 +237,7 @@ class YouTubeService:
         }
 
     def fetch_live_posts(self, source_handle: str, limit: int) -> List[Dict[str, Any]]:
-        """The channel's latest videos. Every one skipped (the bot check) is an EmptyFetch with the
-        reasons counted, over half skipped a warning (issue 0135, kinds.base.checked_fetch)."""
+        """The channel's latest videos; skips are counted by reason (kinds.base.checked_fetch)."""
         channel_ref = self._normalize_channel_ref(source_handle)
         entries = self._list_channel_entries(channel_ref["channel_url"], limit=limit)
         skipped: Counter = Counter()
@@ -262,8 +245,7 @@ class YouTubeService:
         return checked_fetch(posts, len(entries), skipped, noun="videos")
 
     def test_read_channel(self, source_handle: str) -> None:
-        """The channel's newest video listed, nothing hydrated (the test read before adding, issue 0254). Raises
-        yt-dlp's error (a wrong handle: "HTTP Error 404"), within TEST_READ_TIMEOUT_SECONDS."""
+        """List the channel's newest video, nothing hydrated (the test read before adding); raises yt-dlp's error."""
         channel_ref = self._normalize_channel_ref(source_handle)
         self._list_channel_entries(channel_ref["channel_url"], limit=1, timeout=self.TEST_READ_TIMEOUT_SECONDS)
 
@@ -440,10 +422,7 @@ class YouTubeService:
             args.extend(["--playlist-end", str(start + limit - 1)])
 
         if timeout is None:
-            # No --playlist-end means a full channel scan, not a page fetch (the archive dumps
-            # every video from `start`, as inspect_channel does). Charging that the 180s page
-            # budget breaks precisely the largest channels, which is the regression the
-            # channel-scan budget was introduced to prevent.
+            # no limit is a full channel scan: the page budget would break the largest channels
             timeout = (
                 self.ytdlp_playlist_timeout_seconds
                 if limit
@@ -472,7 +451,7 @@ class YouTubeService:
             return None
 
         transcript, transcript_source = self._extract_transcript(details)
-        # The stored text's language (issue 0135): the caption track's, else none said (detected).
+        # the stored text's language: the caption track's, else unset (detected later)
         transcript_language = base_language(transcript_source.split(":", 1)[1]) if transcript_source else ""
         description = details.get("description") or ""
         published_at = self._parse_upload_date(details.get("upload_date")) or datetime.now(timezone.utc)
@@ -538,10 +517,8 @@ class YouTubeService:
         posts.sort(key=lambda item: item.get("date") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         return posts
 
-    # Bulk keys in yt-dlp's per-video JSON that nothing downstream reads. `formats`
-    # is usually the majority of a 2-8MB dump. Deliberately NOT discarded:
-    # `subtitles` and `automatic_captions` feed _extract_transcript (see :502), and
-    # `thumbnails` feeds media_urls (see :391) - dropping those breaks ingestion.
+    # bulk keys of yt-dlp's per-video JSON nothing reads (`formats` is most of a 2-8MB dump); subtitles,
+    # automatic_captions and thumbnails are read and must stay
     _YTDLP_DISCARD_KEYS = (
         "formats",
         "requested_formats",
@@ -557,7 +534,7 @@ class YouTubeService:
                 f"https://www.youtube.com/watch?v={video_id}",
             ]
         )
-        # The default audio track's language, read before its formats go (issue 0135).
+        # read before the formats are dropped
         details["_audio_language"] = audio_language(details.get("formats") or [])
         for key in self._YTDLP_DISCARD_KEYS:
             details.pop(key, None)
@@ -568,8 +545,7 @@ class YouTubeService:
         timeout = timeout or self.ytdlp_timeout_seconds
         started = time.monotonic()
 
-        # start_new_session so the timeout can kill the whole process group: subprocess
-        # timeouts only kill the direct child, and yt-dlp leaves grandchildren behind.
+        # a new session so the timeout kills the whole group: yt-dlp leaves grandchildren behind
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -582,8 +558,7 @@ class YouTubeService:
         except subprocess.TimeoutExpired:
             self._kill_process_group(process)
             process.communicate()
-            # Same exception shape as the failure branch below, so callers such as
-            # _hydrate_entries_to_posts skip the video instead of losing the channel.
+            # a ValueError like a failure, so callers skip the video instead of losing the channel
             raise ValueError(f"yt-dlp timed out after {timeout}s: {command[-1]}")
 
         if process.returncode != 0:
@@ -631,12 +606,8 @@ class YouTubeService:
             return None
 
     def _extract_transcript(self, details: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
-        # One deadline for the whole video. Without it a video with many caption languages
-        # can spend 60s per HTTP attempt across every format of every language, which is a
-        # second unbounded path next to yt-dlp itself.
-        deadline = time.monotonic() + self.transcript_budget_seconds
+        deadline = time.monotonic() + self.transcript_budget_seconds   # one deadline for the whole video
 
-        # The video's own language first, never YouTube's machine translation of it (issue 0135).
         for bucket_name, language in transcript_tracks(details, self.preferred_languages):
             formats = (details.get(bucket_name) or {}).get(language) or []
             transcript = self._fetch_transcript_from_formats(formats, deadline)
@@ -677,8 +648,7 @@ class YouTubeService:
             return response.read().decode("utf-8", errors="replace")
 
     def _parse_subtitle_payload(self, payload: str, ext: Optional[str]) -> str:
-        """Plain text from any caption format, told by its content, not its declared ext: an srv1
-        track is XML whatever it is called (issue 0135: one was stored as raw XML)."""
+        """Plain text from any caption format, told by its content, not its declared ext."""
         return plain_transcript(payload)
 
     def _escape_html(self, value: str) -> str:

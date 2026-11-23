@@ -1,16 +1,9 @@
-"""Media proxy: a post's images, fetched when the reader shows them (issue 0006).
+"""Media proxy: GET /api/media streams one image of one post, fetched when the reader shows it; nothing stored
+(nginx and the browser cache it for 24 hours).
 
-Nothing is stored here. GET /api/media streams one image of one post; the frontend nginx
-caches the answer for 24 hours (proxy_cache, inactive=24h) and the browser keeps it as
-long, so an image is fetched once a day at most and is gone a day after it was last seen.
-
-Only an image the post itself carries can be fetched: one of its media_urls, its feed
-thumbnail (a YouTube frame) or an <img> of its body. That and the address check keep this
-from being an open proxy. The check is KindHttp's own (ingestion/http.py AddressGuard, issue
-0187): a host that resolves to a private, loopback or link-local address is refused unless it
-is one of the LAN bridges the feeds come from (telegram.local, nitter.local, NITTER_HOSTS,
-TELEGRAM_RSS_HOSTS, INSIGHT_MEDIA_PRIVATE_HOSTS, RSS_SKIP_TLS_VERIFY_HOSTS); every redirect hop
-is checked the same way, and the connection goes to the address that was checked.
+Not an open proxy: only an image the post itself carries (media_urls, its thumbnail, an <img> of its body), and
+only through KindHttp's AddressGuard (private, loopback and link-local addresses refused except the configured LAN
+bridges; every redirect hop checked; the connection goes to the checked address).
 """
 from __future__ import annotations
 
@@ -101,7 +94,7 @@ class MediaProxyService:
     def _allowed(self, post_id: str) -> Set[str]:
         try:
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
-                # A Telegram album's pictures are its post's (issue 0069).
+                # a Telegram album's pictures are its post's
                 cur.execute("SELECT url, media_urls, content_html, content FROM posts"
                             " WHERE id = %s::uuid OR album_of = %s::uuid", (post_id, post_id))
                 rows = cur.fetchall()

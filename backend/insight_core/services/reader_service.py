@@ -1,8 +1,6 @@
-"""Reader: the post listing, search (issue 0040), read state, Later (issue 0022) and unread
-counts (Mark IX, B7).
+"""Reader: the post listing, search, read state, Later and unread counts.
 
-Owns the connection and transaction lifecycle around ReaderRepository and turns its
-results into the API shapes (FeedPage, FeedGroupsPage, ReadStateResult, UnreadCounts).
+Owns the connections and transactions around ReaderRepository and shapes its results for the API.
 """
 from __future__ import annotations
 
@@ -20,9 +18,7 @@ def _read_state_result(ids: List[str]) -> Dict[str, Any]:
     return {"success": True, "updated": len(ids), "ids": ids}
 
 
-# 0206: what the unread counts read, as kept inputs (markx/kept_pages.changes): the posts, the read state (read, Later,
-# starred), the stories' members, the folded parts, the folders and a source added, removed or put in or out of the
-# main digest
+# what the unread counts read, as kept inputs (markx/kept_pages.changes)
 UNREAD_INPUTS = ("posts", "reads", "stories", "parts", "folders")
 
 
@@ -32,7 +28,7 @@ def unread_inputs(cur: Any) -> List[Any]:
 
 
 def unread_missing(cur: Any, repo: ReaderRepository | None = None) -> bool:
-    """0206, the jobs process's look (the view "unread"): whether the counts are not kept for their inputs now."""
+    """Whether the unread counts are not kept for their current inputs (the jobs process's check)."""
     from insight_core.markx import kept_pages
     repo = repo or ReaderRepository()
     st = kept_pages.stamp("unread", "counts", unread_inputs(cur))
@@ -40,8 +36,8 @@ def unread_missing(cur: Any, repo: ReaderRepository | None = None) -> bool:
 
 
 def keep_unread_counts(cur: Any, repo: ReaderRepository | None = None) -> Dict[str, Any]:
-    """0206, the jobs process: the unread counts counted (ReaderRepository.unread_counts, the one path) and kept for
-    their inputs, unless they are; in the caller's snapshot (the stamp and the counts read one)."""
+    """Count the unread counts (ReaderRepository.unread_counts, the one path) and keep them for their inputs, unless
+    kept already; in the caller's snapshot, so the stamp and the counts agree."""
     from insight_core.markx import kept_pages
     repo = repo or ReaderRepository()
     st = kept_pages.stamp("unread", "counts", unread_inputs(cur))
@@ -62,8 +58,8 @@ class ReaderService:
 
     @staticmethod
     def _track_scope(cur: Any, scope: FeedScope, all_sources: bool) -> FeedScope:
-        """A topic track's folder scope restricted to its items while Mark X is on (v10.12.1, markx/track_feed), unless
-        `all_sources`; every other scope as it came (Mark X is not imported for them)."""
+        """A topic track's folder scope restricted to its items (markx/track_feed), unless `all_sources`; any other
+        scope as it came."""
         if all_sources or scope.kind != "folder":
             return scope
         from insight_core.markx import track_feed
@@ -71,13 +67,13 @@ class ReaderService:
 
     def list_posts(self, query: FeedQuery, *, all_sources: bool = False) -> Dict[str, Any]:
         """FeedPage {items, next_cursor}, or FeedGroupsPage {groups, next_cursor} for view=by_source.
-        A topic track (Mark X on) lists only its items unless `all_sources` (v10.12.1)."""
+        A topic track lists only its items unless `all_sources`."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             scope = self._track_scope(cur, query.scope, all_sources)
             if scope is not query.scope:
                 query = dataclasses.replace(query, scope=scope)
             rows, next_cursor = self.repo.list_posts(cur, query, now=self.clock())
-            if query.view != "by_source":   # one post on two channels of a voice shows once (issue 0132 A)
+            if query.view != "by_source":   # one post on two channels of a voice shows once
                 from insight_core.db.repo_voices import VoicesRepository
                 rows = VoicesRepository.also_on(cur, rows, scope_kind=query.scope.kind, scope_id=query.scope.id,
                                                 filter=query.filter)
@@ -86,10 +82,8 @@ class ReaderService:
 
     def search(self, query: SearchQuery) -> Dict[str, Any]:
         """SearchPage {items (each with its snippet; a story's with its `story`), next_cursor, entities};
-        under Classics {classics, next_cursor, entities}, as GET /api/classics shapes them.
-
-        While Mark X is on (issue 0139) a post also matches by its English layer (mx_post_search), and
-        `entities` holds up to 3 entity cards the words name, on a first page not of one source; else []."""
+        under Classics {classics, next_cursor, entities}. While Mark X is on, a post also matches by its English
+        layer and `entities` holds up to 3 entity cards on a first page not of one source; else []."""
         from insight_core.markx import search as mx_search
         markx = mx_search.enabled()
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
@@ -101,22 +95,18 @@ class ReaderService:
         return {"success": True, key: items, "next_cursor": next_cursor, "entities": entities}
 
     def fill_search_vectors(self) -> int:
-        """Give every post whose search vector is missing (stored before 0033) or made by an
-        older rule (0042's search_version) its vector, FILL_BATCH posts a transaction, so no
-        write waits on a long one, until none is left (issue 0069). Returns how many were filled."""
+        """Fill every missing or outdated search vector, FILL_BATCH posts a transaction so no write waits on a long
+        one, until none is left. Returns how many were filled."""
         return db.fill_until_done(self.db_url, self.search_repo.fill_missing_vectors, self.search_repo.missing_vectors)
 
     def fill_markx_search(self) -> int:
-        """Mark X's English layer (issue 0139): every post with a read or entities answer and no row, a row of an
-        older rule or older than its answers gets it, FILL_BATCH posts a transaction, until none is left."""
+        """Fill Mark X's English search layer for every post missing or outdated, FILL_BATCH posts a transaction."""
         from insight_core.markx import search as mx_search
         return db.fill_until_done(self.db_url, mx_search.fill_batch, mx_search.pending)
 
     def unread_counts(self) -> bytes:
-        """GET /api/feed/unread-counts' bytes (issue 0206): kept while nothing it reads was written since (the kept
-        inputs' counts and the window), else counted as before (ReaderRepository.unread_counts, the one path) and
-        kept. Polled every 60 s by every open tab: unchanged, one indexed read and one row (0.4-1.4 s on the server
-        before); after a read or a fetch, counted once, by whichever request comes first."""
+        """GET /api/feed/unread-counts' bytes: kept while none of their inputs changed, else counted once and kept
+        (every open tab polls this)."""
         from insight_core.markx import kept_pages
         with db.transaction(self.db_url) as cur:
             if self.repo.unread_window_days is not None:   # a window reads the clock: counted on every request
@@ -127,9 +117,8 @@ class ReaderService:
     def set_read(self, post_ids: Sequence[str], read: bool, keep_later: bool = False) -> Dict[str, Any]:
         """Mark these posts read or unread. `ids` are the ones that changed.
 
-        An explicit mark read finishes a post, so it also leaves Later (issue 0022) and where it
-        was left is cleared (issue 0030); `keep_later` is a read that is only an open (the feed
-        marking what it opens), which finishes nothing.
+        An explicit mark read finishes a post: it leaves Later and its reading position is cleared. `keep_later`
+        is a read that is only an open, which finishes nothing.
         """
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -151,7 +140,7 @@ class ReaderService:
     def mark_read_through(self, scope: FeedScope, through: FeedCursor, newest: FeedCursor, *,
                           all_sources: bool = False) -> Dict[str, Any]:
         """Mark read every unread post in `scope` from `newest` down to `through`. `ids` undo it. A topic track's
-        are the posts its list shows (v10.12.1): only its items unless `all_sources`."""
+        are only its items unless `all_sources`."""
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 scope = self._track_scope(cur, scope, all_sources)

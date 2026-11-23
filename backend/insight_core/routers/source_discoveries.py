@@ -1,4 +1,4 @@
-"""The smart archiver's routes (issue 0143): an APIRouter, included by main.py in one line. The app's own.
+"""The smart archiver's routes: an APIRouter included by main.py. The app's own.
 
 GET  /api/sources/{source_id}/discoveries   what the source discovered (db/repo_source_discoveries): {sites [{key,
                                             site, platform, state open|followed|hidden, voices, articles, addresses,
