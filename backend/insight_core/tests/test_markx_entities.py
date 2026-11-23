@@ -221,6 +221,38 @@ class Rules(unittest.TestCase):
         d = self.ent("d", "Mimo-2.6", maker="Other", fields=dict(a.haiku))
         self.assertIsNone(I.fields_rule(self.ent("a", "Mimo-2.6", maker="Acme", fields=dict(a.haiku)), d))
 
+    def test_one_name_in_another_word_order(self):
+        """v10.38: "Zentra Opus 4.5" and "Zentra 4.5 Opus" (the parser: family "zentra opus" / variant "opus") are one
+        name when Haiku's fields are one; never two different words, versions or sizes, nor without Haiku's fields."""
+        f = {"family": "Zentra", "version": "4.5", "variant": "Opus", "size": None, "build": None}
+        a, b = self.ent("a", "Zentra Opus 4.5", fields=dict(f)), self.ent("b", "Zentra 4.5 Opus", fields=dict(f))
+        self.assertTrue(N.reordered(a.pk, b.pk))
+        self.assertEqual(I.fields_rule(a, b), "auto")
+        d = self.decide(a, b, auto={"fields"})
+        self.assertEqual((d.tier, d.reason), ("auto", "rule:fields"))
+        # the maker in front: stripped before a word ("Vexa Flash V4.1"), kept before a version ("Vexa V4.1 Flash")
+        g = {"family": "Vexa", "version": "V4.1", "variant": "Flash", "size": None, "build": None}
+        c = self.ent("c", "Vexa Flash V4.1", maker="Vexa", fields=dict(g))
+        e = self.ent("e", "Vexa V4.1 Flash", maker="Vexa", fields=dict(g))
+        self.assertEqual(I.fields_rule(c, e), "auto")
+        self.assertIsNone(I.vconflict(c, e))
+        # two makers' words are never left out ("Vexa V5 Pro" / "Orbit Pi 5 Pro")
+        self.assertFalse(N.reordered(N.fields_key(N.parse("Vexa V5 Pro", "model", "Vexa"), "Vexa"),
+                                     N.fields_key(N.parse("Orbit Pi 5 Pro", "product", "Orbit Pi"), "Orbit Pi"),
+                                     ("Vexa", "Orbit Pi")))
+        for x, y in (("Zentra Flash 4.5", "Zentra 4.5 Pro"), ("Zentra Mini 4.5", "Zentra 4.5 Small"),
+                     ("Zentra Opus 4.5", "Zentra 4.6 Opus"), ("Zentra Opus 4.5 8B", "Zentra 4.5 Opus 70B")):
+            self.assertFalse(N.reordered(N.fields_key(N.parse(x, "model")), N.fields_key(N.parse(y, "model"))), (x, y))
+        # the parser's words alone are not enough: Haiku's fields differ ("Bolt Pro M3" / "Bolt M3 Pro", another chip)
+        h = self.ent("h", "Bolt Pro M3", fields={"family": "Bolt Pro", "version": "M3", "variant": None, "size": None,
+                                                 "build": None})
+        k = self.ent("k", "Bolt M3 Pro", fields={"family": "Bolt", "version": "M3", "variant": "Pro", "size": None,
+                                                 "build": None})
+        self.assertTrue(N.reordered(h.pk, k.pk))
+        self.assertFalse(I.reordered(h, k))
+        self.assertIsNone(I.fields_rule(h, k))
+        self.assertEqual(I.vconflict(h, k), "soft")
+
     def test_the_chain_guard(self):
         ents = [self.ent(x, f"Name {x}", "software") for x in "abcd"]
         book = self.book(*ents)

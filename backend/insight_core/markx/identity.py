@@ -2580,14 +2580,16 @@ def relink(cur: Any, book: Book, ms: Sequence[Mention]) -> Dict[str, int]:
 def vconflict(a: Ent, b: Ent, literal: bool = False) -> Optional[str]:
     """'strong': both name a version, variant, size or build and they differ; 'soft': one names one the other lacks
     (or an edition year on one side only); None. `literal`: the two names are one string once the maker and the
-    separators go, so only the parser's split counts (the lab's vconflict)."""
+    separators go, so only the parser's split counts (the lab's vconflict). v10.38: the parser's two readings of one
+    name in another word order, Haiku's fields one (reordered), are no conflict."""
     worst = None
     ya, yb = N.years(a.key), N.years(b.key)
     if ya != yb and not literal:
         if ya and yb:
             return "strong"
         worst = "soft"
-    for ka, kb in (((a.pk, b.pk),) if literal else ((a.hk, b.hk), (a.pk, b.pk))):
+    parsed = () if reordered(a, b) else ((a.pk, b.pk),)
+    for ka, kb in (parsed if literal else ((a.hk, b.hk),) + parsed):
         for i, (x, y) in enumerate(zip(N.version_part(ka), N.version_part(kb))):
             if (N.ver_eq(x, y) if i == 0 else x == y):
                 continue
@@ -2720,12 +2722,21 @@ def generic_bares(book: Book, members: Iterable[str]) -> Dict[str, Set[str]]:
 def fields_rule(a: Ent, b: Ent) -> Optional[str]:
     """'auto': the same family, version tuple, variant, size and build in Haiku's fields, the parser's version,
     variant, size and build agreeing, and the same maker or one side none (22/22 unseen); 'queue': only Haiku's
-    fields agree (34/39); None. Family + version + variant alone is never a merge (3/59)."""
+    fields agree (34/39); None. Family + version + variant alone is never a merge (3/59). v10.38: the parser's
+    readings agreeing in another word order ("Claude Opus 4.5" / "Claude 4.5 Opus": reordered) agree (53/53 on the
+    server copy, v10.38)."""
     if not (N.has_version(a.hk) and a.hk == b.hk and a.hk[0]):
         return None
     if a.maker and b.maker and N.key(a.maker) != N.key(b.maker):
         return None
-    return "auto" if N.version_part(a.pk) == N.version_part(b.pk) else "queue"
+    return "auto" if N.version_part(a.pk) == N.version_part(b.pk) or reordered(a, b) else "queue"
+
+
+def reordered(a: Ent, b: Ent) -> bool:
+    """v10.38: one name in another word order: Haiku's fields one (a version stated), and the parser's two readings
+    the same words in another order (names.reordered). Haiku's fields are the guard: the parser's words alone join
+    "MacBook Pro M3" and "MacBook M3 Pro" (another chip), whose fields differ."""
+    return a.hk == b.hk and N.has_version(a.hk) and N.reordered(a.pk, b.pk, (a.maker, b.maker))
 
 
 @dataclass(slots=True)   # 0183: no per-pair __dict__ (a full pass pools hundreds of thousands of pairs)
@@ -3108,7 +3119,8 @@ def family_version(book: Book, a: Ent, b: Ent) -> bool:
     if a.maker and b.maker and not same_maker(book, a.maker, b.maker):
         return False
     va, vb = _vsig(a), _vsig(b)
-    return any(x is not None for x in va) and va == vb and N.version_part(a.pk) == N.version_part(b.pk)
+    return any(x is not None for x in va) and va == vb and \
+        (N.version_part(a.pk) == N.version_part(b.pk) or reordered(a, b))
 
 
 def decide_pair(book: Book, p: Pooled, auto: Set[str], queue: Set[str], judge: Optional[Dict[str, Any]],

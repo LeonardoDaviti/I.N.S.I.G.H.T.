@@ -13,6 +13,8 @@ parses as family Acme, version V4, variant Pro; the lab's parser stripped "Acme"
   parse(name, type, maker) family, version, variant, size, build
   vt(version)             a version as a tuple ("4.10" != "4.1"; "V4" = (4,); "K3.1" = ('k', 3, 1))
   fields_key(fields, maker) (family key, version tuple, variant key, size key, build key)
+  reordered(a, b, makers) v10.38: two fields keys the parser read of one name in another word order ("Claude Opus 4.5"
+                          / "Claude 4.5 Opus": the same version, size, build and family + variant words, any order)
   clean(fields, name, versions) v10.30: a ratio is no version ("5:1"); a model id's last two numbers one version
                           ("x-5-1": 5.1) when its family states it
   setting(variant, name)  v10.30: a variant that is a setting of its version ("low", "xhigh", "(max)"), not a release
@@ -25,7 +27,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
 DASHES = dict.fromkeys(map(ord, "‐‑‒–—―−⁃﹘﹣－"), "-")
 SIZE = re.compile(r"^((0|[1-9]\d*)(\.\d+)?[kmbt]|\d+x\d+(\.\d+)?[bt]|a\d+(\.\d+)?b|e\d+b)$")
@@ -261,6 +263,24 @@ def fields_key(f: Optional[Dict[str, Any]], maker: Optional[str] = None) -> Tupl
 def version_part(fk: Optional[Tuple]) -> Tuple:
     """What decides 'another version': version tuple, variant, size, build (the family left out)."""
     return tuple(fk[1:]) if fk else (None, None, None, None)
+
+
+def reordered(a: Optional[Tuple], b: Optional[Tuple], makers: Iterable[Optional[str]] = ()) -> bool:
+    """v10.38: two parses of one name written in another word order ("Claude Opus 4.5" / "Claude 4.5 Opus", "DeepSeek
+    Flash V4.1" / "DeepSeek V4.1 Flash"): the parser puts a word before the version in the family and after it in the
+    variant, so the two split differently. The same version (stated), size and build, and the same words in family
+    and variant together, in any order; the maker's words left out when both state one maker (a maker in front is
+    stripped only when no version follows it), never another's ("DeepSeek V5 Pro" / "Orange Pi 5 Pro"). Never two
+    different words: "Flash" / "Pro", "Mini" / "Small", a version or a size apart."""
+    if not a or not b or a == b or a[1] is None or a[1] != b[1] or a[3:] != b[3:]:
+        return False
+    ms = [key(m) for m in makers]
+    mw = set(ms[0].split()) if len(ms) == 2 and ms[0] and ms[0] == ms[1] else set()
+
+    def words(fk: Tuple) -> list:
+        return sorted(w for w in f"{fk[0] or ''} {fk[2] or ''}".split() if w not in mw)
+    wa = words(a)
+    return bool(wa) and wa == words(b)
 
 
 def has_version(fk: Optional[Tuple]) -> bool:
