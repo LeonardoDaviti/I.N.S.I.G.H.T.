@@ -189,12 +189,12 @@ app.add_middleware(
 # Issue 0195: the polled answers (running jobs, unread counts, the overview, source health) as conditional GETs.
 from insight_core.routers.conditional import ConditionalGet  # noqa: E402
 app.add_middleware(ConditionalGet)
-# Issue 0202: the outermost; when the process is idle, the memory its requests freed goes back to the OS.
-from insight_core.utils.idle_trim import IdleTrim, freeze_start  # noqa: E402
-app.add_middleware(IdleTrim)
 # v10.42: each route's count and time in this process (db-statements' api_routes); outside the routing
 from insight_core.utils.route_timings import RouteTimings  # noqa: E402
 app.add_middleware(RouteTimings)
+# Issue 0202: the outermost; when the process is idle, the memory its requests freed goes back to the OS.
+from insight_core.utils.idle_trim import IdleTrim, freeze_start  # noqa: E402
+app.add_middleware(IdleTrim)
 
 
 # ============= ERRORS =============
