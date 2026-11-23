@@ -124,7 +124,7 @@ def plan_probes(cur: Cursor, **_kw: Any) -> int:
     schemas.ensure_guides(cur)
     added = 0
     for t in tracks.described(cur):
-        if probe_rows(cur, t["folder_id"], t["version"]):
+        if t.get("parent_id") or probe_rows(cur, t["folder_id"], t["version"]):   # v10.42: a sub-track scans no source
             continue
         task_id, new = repo.add_task(cur, kind=KIND, guide=schemas.KINDS[KIND].guide, subject_kind="track",
                                      input=probes_input(cur, t), a=t["folder_id"], priority=-1)
