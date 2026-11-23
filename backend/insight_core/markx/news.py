@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from insight_core.markx import pairing
@@ -68,7 +69,23 @@ def _story_posts(cur: Any, ids: Iterable[str], sources: Any = None) -> Dict[str,
     if not parsed:
         return {}
     sources = SourceFacts(cur) if sources is None else sources
-    return {row["id"]: StoriesService._story_post(row, sources) for row in StoriesRepository.load_posts(cur, sources, parsed)}
+    said = reports(cur, parsed)
+    return {row["id"]: replace(StoriesService._story_post(row, sources), report=said.get(row["id"]))
+            for row in StoriesRepository.load_posts(cur, sources, parsed)}
+
+
+def reports(cur: Any, ids: Iterable[str]) -> Dict[str, bool]:
+    """v10.39: {post: whether its preferred reading (reading5.rank_sql, as the post panel picks it) says it reports an
+    event: kind report, of no leak or rumour type} of the posts read (StoryPost.report: what leads a row)."""
+    from insight_core.markx import event_types, reading5
+    ids = sorted({str(p) for p in ids if p})
+    if not ids:
+        return {}
+    rank = reading5.rank_sql("guide")
+    cur.execute(f"""SELECT DISTINCT ON (post_id) post_id::text, kind,
+                           COALESCE(reading->>'event_type', reading->'reading'->>'event_type') FROM mx_readings
+                     WHERE post_id = ANY(%s::uuid[]) AND {rank} IS NOT NULL ORDER BY post_id, {rank}""", (ids,))
+    return {pid: kind == "report" and kind_type != event_types.LEAK for pid, kind, kind_type in cur.fetchall()}
 
 
 # ---- 0177: what each post's StoryPost is made of, kept by the run's state ------------------------------------------
@@ -100,7 +117,9 @@ def post_digests(cur: Any, memo: Any, ids: Iterable[str]) -> Dict[str, str]:
                                                            ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
                     WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[]) GROUP BY pl.post_id""", (ids,))
     links = dict(cur.fetchall())
-    return {i: hashlib.sha1(f"{stamps[i]}\x1f{links.get(i, '')}".encode()).hexdigest()[:16] for i in ids if i in stamps}
+    said = reports(cur, ids)   # v10.39: a reading that comes or changes may change a row's lead
+    return {i: hashlib.sha1(f"{stamps[i]}\x1f{links.get(i, '')}\x1f{said.get(i)}".encode()).hexdigest()[:16]
+            for i in ids if i in stamps}
 
 
 def surge_keys(found: Iterable[Any]) -> List[List[Any]]:
@@ -141,6 +160,31 @@ def release_keys(joins: Iterable[Sequence[str]], stories: Iterable[str]) -> Dict
     return out
 
 
+def _window_stories(stories: Dict[str, Tuple[List[str], Set[str]]], sp: Dict[str, Any],
+                    joins: Iterable[Sequence[str]], since: datetime) -> Set[str]:
+    """v10.39: the stories a one-release group joins in the window starting at `since`: each by its own start (a row
+    is in the window by its first post, 0111, and so is each stage of a release). A group's story begun before
+    `since` is left out of the group, its own row of an earlier window: the group's row, begun by it, was no row of
+    this window, and its launch went with it (Gemini 4 Carbon: an arena leak 31 days old took the launch 25 days old
+    and its 17 posts out of News; Mistral Large 4's open-weight release of 10-29 went with its 10-06 launch)."""
+    grouped = {str(s) for g in joins for s in g} & set(stories)
+    out = set(stories) - grouped
+    for sid in grouped:
+        own = _own_start(stories[sid][0], sp)
+        if own is None or own >= since:
+            out.add(sid)
+    return out
+
+
+def _own_start(members: Iterable[str], sp: Dict[str, Any]) -> Optional[datetime]:
+    """A story's own start (story_rules.story_start over its own posts' times), whatever group it is in: the date the
+    window reads it by (`_window_stories`) and the run keeps as its `first` (0116: a story whose start crossed the
+    window's start is made again, its group with it)."""
+    from insight_core.utils.story_rules import story_start, story_times
+    ps = [sp[p] for p in members if p in sp]
+    return story_start(ps, story_times(ps)) if ps else None
+
+
 def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: datetime,
             only: Optional[Set[str]] = None, window: Optional[Set[str]] = None,
             first: Optional[Dict[str, Any]] = None, memo: Any = None, sources: Any = None,
@@ -150,9 +194,10 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     rows and the Mark X story of each. With `only` (0116), the rows of those posts only: the caller passes every
     story touching them, and a set closed under rows, stories, mentions and surges. `first` gets each story's
     first_at. `joins` (0236, the one-release row: graph.release_groups, read here when None): each group's stories
-    are one story to News's code (its posts in date order, the lowest id its key), each post still naming its own."""
+    are one story to News's code (its posts in date order, the lowest id its key), each post still naming its own; a
+    group's story begun before `since` is no story of the group (`_window_stories`, v10.39)."""
     from insight_core.services.news_service import NewsService
-    from insight_core.utils.story_rules import Story, background, story_start, story_times
+    from insight_core.utils.story_rules import Story, lead_order, story_start, story_times
     in_story = {p for ms, _ in stories.values() for p in ms}
     every = (window_posts(cur, since) if window is None else set(window)) | in_story
     if only is not None:
@@ -162,7 +207,7 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     if joins is None:
         from insight_core.markx import graph
         joins = graph.release_groups(cur, stored)
-    key_of = release_keys(joins, stories)
+    key_of = release_keys(joins, _window_stories(stories, sp, joins, since))
     parts: Dict[str, List[str]] = defaultdict(list)
     for sid in sorted(stories):
         parts[key_of.get(sid, sid)].append(sid)
@@ -180,14 +225,14 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
         if not ps or (len(ps) < 2 and not key.startswith("one:")):
             continue
         times = story_times(ps)
-        bg = background(ps, times)    # 0263: a background page is never the row's first post nor its start
-        ps.sort(key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.t, p.id))
-        built.append(Story(id=key, first_at=times[ps[0].id], posts=ps, voices=0, roles={}, reasons={},
+        ps = lead_order(ps, times)    # 0263, v10.39: never led by a background page nor a non-report; its start the earliest
+        start = story_start(ps, times)
+        built.append(Story(id=key, first_at=start, posts=ps, voices=0, roles={}, reasons={},
                            mentions=mentions - seen))
         made_of |= set(sids)
         if first is not None:
             for sid in sids:
-                own = story_start([sp[p] for p in stories[sid][0] if p in times], times)
+                own = _own_start(stories[sid][0], sp)
                 if own is not None:
                     first[sid] = own
     story_of: Dict[str, str] = {}
