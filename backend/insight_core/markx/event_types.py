@@ -11,6 +11,8 @@ The interface (what a caller must know):
       - `group` and `stage`: the happening group of the reading's main action (release, deal, funding, legal, people,
         pricing, research, announcement; None for reported / other / no main) and its stage (rumored, announced,
         released, closed). A happening's parties may refine the group (happening.key): the seam gives the action's.
+      - `subtype` (v10.42, ent-v6): the type's finer kind (schemas.SUBTYPES: new_model, build, method, benchmark, ...),
+        from the same reading as `type`; None when that reading gave none (every reading before ent-v6).
   - `of_stories(cur, {story: [post ids]}) -> {story: type or None}`: the story's kind of happening (folds.story_type
     over its posts' types, in their own-date order: the most common news type, a tie to the first).
   - `types_of(cur, post_ids) -> {post: (type, origin)}`: every post asked, (None, None) when none read.
@@ -126,6 +128,7 @@ class EventType:
     origin: Optional[str] = None   # maker / relay / other, with the type
     group: Optional[str] = None    # the happening group of the main action, None: names none
     stage: Optional[str] = None
+    subtype: Optional[str] = None  # v10.42: the type's finer kind (schemas.SUBTYPES), with the type; None: none given
 
 
 NONE = EventType()
@@ -144,10 +147,11 @@ def from_reading(reading: Optional[Mapping[str, Any]], guide: str) -> EventType:
     typ = origin = None
     if guide in TYPE_GUIDES or guide == V5:
         typ, origin = reading.get("event_type"), reading.get("origin")
+    subtype = reading.get("subtype") if guide == V5 else None
     group, stage = TYPE_GROUPS.get(typ or "", (None, None))
     if group is None and guide in (GROUP_GUIDE, V5):
         group, stage = action_group((reading.get("main") or {}).get("action"))
-    return EventType(typ, origin, group, stage)
+    return EventType(typ, origin, group, stage, subtype)
 
 
 def of_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, EventType]:
@@ -157,24 +161,24 @@ def of_posts(cur: Any, post_ids: Iterable[str]) -> Dict[str, EventType]:
         return {}
     types, groups = type_guides(cur), group_guides(cur)
     guides = sorted(set(types) | set(groups))
-    cur.execute("""SELECT post_id::text, guide, reading->>'event_type', reading->>'origin', reading->'main'->>'action'
-                     FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND guide = ANY(%s)""", (ids, guides))
+    cur.execute("""SELECT post_id::text, guide, reading->>'event_type', reading->>'origin', reading->'main'->>'action',
+                          reading->>'subtype' FROM mx_readings WHERE post_id = ANY(%s::uuid[]) AND guide = ANY(%s)""", (ids, guides))
     got: Dict[str, Dict[str, Tuple]] = {}
-    for pid, guide, typ, origin, action in cur.fetchall():
-        got.setdefault(pid, {})[guide] = (typ, origin, action)
+    for pid, guide, typ, origin, action, subtype in cur.fetchall():
+        got.setdefault(pid, {})[guide] = (typ, origin, action, subtype)
     out = {}
     for pid, by in got.items():
-        typ = origin = None
+        typ = origin = subtype = None
         for g in types:
             if g in by:
-                typ, origin = by[g][0], by[g][1]
+                typ, origin, subtype = by[g][0], by[g][1], by[g][3]
                 break
         group, stage = TYPE_GROUPS.get(typ or "", (None, None))
         for g in groups:
             if group is None and g in by:
                 group, stage = action_group(by[g][2])
                 break
-        out[pid] = EventType(typ, origin, group, stage)
+        out[pid] = EventType(typ, origin, group, stage, subtype)
     return out
 
 

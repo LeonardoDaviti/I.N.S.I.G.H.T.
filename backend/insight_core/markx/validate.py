@@ -1069,6 +1069,27 @@ def _reading5(a: Dict[str, Any], input: str) -> Optional[str]:
     return _read({"events": r.get("events"), "main": a.get("event")}, input)
 
 
+def subtype_error(event_type: Optional[str], subtype: Optional[str]) -> Optional[str]:
+    """v10.42: why a reading's subtype disagrees with its event type (schemas.SUBTYPE_TYPES), None when it agrees: a
+    subtype only under its event types, and every type that has subtypes names one."""
+    if subtype is None:
+        if any(event_type in types for types in schemas.SUBTYPE_TYPES.values()):
+            return f"subtype is null for a {event_type}"
+        return None
+    if event_type not in schemas.SUBTYPE_TYPES.get(subtype, ()):
+        return f"subtype {subtype} is not one of a {event_type}'s"
+    return None
+
+
+def _reading6(a: Dict[str, Any], input: str) -> Optional[str]:
+    """ent-v6: ent-v5's checks, then the subtype agrees with the event type."""
+    err = _reading5(a, input)
+    if err or later_window(input):
+        return err
+    r = a["reading"]
+    return subtype_error(r.get("event_type"), r.get("subtype"))
+
+
 CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _headline, "briefing": _briefing,
           "translate": _translate, "collide": _collide, "read3": _read, "stance": _stance,
           "relate": _relate,   # 0131
@@ -1093,6 +1114,7 @@ CHECKS = {"read": _read, "entities": _entities, "card": _card, "headline": _head
 
 # 0196: a guide variant's own checks (schemas.GUIDE_VARIANTS), in place of its kind's.
 GUIDE_CHECKS = {"websearch-official-v1": _websearch_official,
+                "ent-v6": _reading6,                    # v10.42: ent-v5's checks and the subtype's
                 "digest-v2": _digest_rows,   # 0245: a track brief's points cite its rows
                 "digest-v3": _digest_rows,   # v10.29: digest-v2's points, stating facts
                 "collide-makers-v1": _collide_makers,   # 0250: two maker groups of one bare name

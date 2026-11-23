@@ -166,6 +166,31 @@ READING_V5_SCHEMA = {
     },
 }
 
+# v10.42 (ent-v6): the reading's `subtype`, the finer kind of a release, a technical post or an incident (a new model
+# vs a quant or adapter of an existing one, a method vs a benchmark, ...), each allowed only under its event types; null
+# for every other type. validate._reading5 refuses a subtype its event type does not allow.
+SUBTYPE_TYPES: Dict[str, Tuple[str, ...]] = {
+    "new_model": ("model_release",),
+    "build": ("model_release", "product_release"),
+    "dataset": ("model_release", "research_result"),
+    "product": ("product_release",),
+    "software": ("product_release",),
+    "method": ("research_result", "tutorial_explainer", "product_release", "model_release"),
+    "benchmark": ("research_result",),
+    "finding": ("research_result",),
+    "guide": ("tutorial_explainer",),
+    "security": ("incident",),
+    "failure": ("incident",),
+}
+SUBTYPES = list(SUBTYPE_TYPES)
+_V5_READING = READING_V5_SCHEMA["properties"]["reading"]["anyOf"][1]
+READING_V6_SCHEMA = {
+    **READING_V5_SCHEMA,
+    "properties": {**READING_V5_SCHEMA["properties"], "reading": {"anyOf": [{"type": "null"}, {
+        "type": "object", "required": _V5_READING["required"] + ["subtype"],
+        "properties": {**_V5_READING["properties"], "subtype": {"enum": SUBTYPES + [None]}}}]}},
+}
+
 JUDGE_SCHEMA = {
     "type": "object",
     "required": ["relation", "confidence"],
@@ -787,7 +812,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("unit_types", "unit-types-v1", "post", UNIT_TYPES_SCHEMA),   # 0181: a round-up's items: type, headline
     Kind("significance", "significance-v2", "story", SIGNIFICANCE_V2_SCHEMA),   # 0208: a News row's significance,
                                                                                 # its breakdowns (v2; v1 rows kept)
-    Kind("reading", "ent-v5", "post", READING_V5_SCHEMA),           # 0212: read, read3 and entities in one reading
+    Kind("reading", "ent-v6", "post", READING_V6_SCHEMA),           # 0212: read, read3 and entities in one reading
+                                                                     # (v10.42: v6, + the reading's subtype)
     Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),   # 0245: a track's kinds and fields
     Kind("track_things", "track-things-v3", "post_track", TRACK_THINGS_SCHEMA),   # 0245; 0261: v2; v10.41: v3 (a catalog one row)
     Kind("track_same", "track-same-v2", "thing_thing", TRACK_SAME_SCHEMA),   # 0245: two rows, one thing? (v10.41: every kind)
@@ -905,6 +931,7 @@ EARLIER_GUIDES: Dict[str, Tuple[Tuple[str, ...], Dict[str, Any]]] = {
                                               # that linked nothing are asked again (graph.chain_asked)
     "chain-v3": (("chain",), CHAIN_SCHEMA),   # v10.40: before v4's project made with the thing (builds_on); its
                                               # same_release and unknown pairs are asked again (graph.chain_asked)
+    "ent-v5": (("reading",), READING_V5_SCHEMA),   # v10.42: before v6's subtype; its readings are not asked again
 }
 
 

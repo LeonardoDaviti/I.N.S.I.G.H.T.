@@ -27,6 +27,7 @@ from insight_core.markx import pairing, plan_marks, repo, schemas, tasks
 GUIDE = "ent-v4.2"
 CITE_KIND, CITE_GUIDE = "cite", "cite-v1"
 V5_GUIDE = "ent-v5"                         # 0212: ent-v5 keeps cite as its own question; its answer merges into both sets
+V5_ASKED = schemas.answer_guides("reading")   # v10.42: the reading's task guides (ent-v6, ent-v5); rows stay ent-v5's
 CITE_CHARS, CITE_LINKS = 6000, 12
 CITE_MAX = 30
 Q2 = "q2"                                  # mx_mentions.rule of an entity the second question added
@@ -298,17 +299,17 @@ def plan(cur: Any, *, days: Any = tasks.SETTING, limit: int = tasks.PLAN_LIMIT, 
                 WHERE (%(days)s::int IS NULL OR {pairing.ordinary_date('p')}
                                                  >= COALESCE(%(now)s, now()) - make_interval(days => %(days)s))
                   AND EXISTS (SELECT 1 FROM mx_tasks t WHERE t.a = p.id AND ((t.kind = 'entities' AND t.guide = %(main)s)
-                                                               OR (t.kind = 'reading' AND t.guide = %(v5)s)))   -- 0212
+                                                               OR (t.kind = 'reading' AND t.guide = ANY(%(v5)s))))   -- 0212
                   AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
                   AND {plan_marks.unmarked()}
                   AND {plan_marks.left("SELECT t.a FROM mx_tasks t WHERE t.kind = 'entities' AND t.guide = %(main)s"
-                                       " UNION ALL SELECT t.a FROM mx_tasks t WHERE t.kind = 'reading' AND t.guide = %(v5)s"
+                                       " UNION ALL SELECT t.a FROM mx_tasks t WHERE t.kind = 'reading' AND t.guide = ANY(%(v5)s)"
                                        " EXCEPT SELECT t.a FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s")}
                   AND (%(at)s::timestamptz IS NULL
                        OR ({pairing.ordinary_date('p')}, p.id) < (%(at)s::timestamptz, %(id)s::uuid))
                 ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
                 LIMIT %(limit)s""",
-            {"now": now, "days": days, "main": GUIDE, "v5": V5_GUIDE, "kind": CITE_KIND, "guide": CITE_GUIDE, "limit": limit,
+            {"now": now, "days": days, "main": GUIDE, "v5": list(V5_ASKED), "kind": CITE_KIND, "guide": CITE_GUIDE, "limit": limit,
              "at": after[0] if after else None, "id": after[1] if after else None})
         todo = [r for r in rows if str(r[0]) not in _not_cue]
         posts = tasks.load_posts(cur, [r[0] for r in todo])
@@ -381,10 +382,10 @@ def after_cite(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, A
     added = 0
     # 0212: the cite answer is merged into each set whose first window is answered: ent-v4.2's (kind entities) and
     # ent-v5's (kind reading, which keeps `cite` as its own question)
-    for kind, guide in (("entities", GUIDE), ("reading", V5_GUIDE)):
+    for kind, guide, asked in (("entities", GUIDE, [GUIDE]), ("reading", V5_GUIDE, list(V5_ASKED))):
         # 0176: window 1 (0233: a spent input is a first window's: tasks.spend keeps the later windows')
-        cur.execute("""SELECT 1 FROM mx_tasks WHERE kind = %s AND guide = %s AND a = %s AND status = 'answered'
-                          AND (input IS NULL OR input !~ %s) LIMIT 1""", (kind, guide, pid, tasks.WINDOW_RE))
+        cur.execute("""SELECT 1 FROM mx_tasks WHERE kind = %s AND guide = ANY(%s) AND a = %s AND status = 'answered'
+                          AND (input IS NULL OR input !~ %s) LIMIT 1""", (kind, asked, pid, tasks.WINDOW_RE))
         if cur.fetchone() is None:
             continue
         have = repo.mentions(cur, pid, guide)

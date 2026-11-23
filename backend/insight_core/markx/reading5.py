@@ -22,9 +22,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from psycopg import Cursor
 
-from insight_core.markx import pairing, plan_marks, repo, tasks
+from insight_core.markx import pairing, plan_marks, repo, schemas, tasks
 
 GUIDE, KIND = "ent-v5", "reading"
+# v10.42: the guides whose tasks ask the reading, current first (ent-v6: + the subtype). Its rows stay under GUIDE
+# whichever asked (the call names its task), so every reader of ent-v5's rows reads ent-v6's.
+ASKED = schemas.answer_guides(KIND)
 SETTING = "reading_guide"
 MODES = ("off", "shadow", "on")
 DEFAULT = "off"
@@ -109,7 +112,8 @@ def old_kinds_sql(cur: Cursor, post: str = "p.id") -> str:
     ent-v5 reads it."""
     if not is_on(cur):
         return "TRUE"
-    return f"NOT EXISTS (SELECT 1 FROM mx_tasks v5 WHERE v5.kind = '{KIND}' AND v5.guide = '{GUIDE}' AND v5.a = {post})"
+    asked = ", ".join(f"'{g}'" for g in ASKED)
+    return f"NOT EXISTS (SELECT 1 FROM mx_tasks v5 WHERE v5.kind = '{KIND}' AND v5.guide IN ({asked}) AND v5.a = {post})"
 
 
 # ---- the input and the planner -------------------------------------------------------------------------------------
@@ -139,12 +143,12 @@ def plan(cur: Cursor, *, limit: int = tasks.PLAN_LIMIT, now: Optional[datetime] 
                                  - {pairing.ordinary_date('p')})) / 86400))::int, {plan_marks.STAMP}
               FROM posts p
              WHERE {tasks.fresh_sql()}
-               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = p.id)
+               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = ANY(%(asked)s) AND t.a = p.id)
                AND {plan_marks.unmarked()}
                AND p.filtered_by IS NULL
              ORDER BY {pairing.ordinary_date('p')} DESC, p.id DESC
              LIMIT %(limit)s""",
-        {"now": now, "fresh": since, "kind": KIND, "guide": GUIDE, "limit": limit, "days": tasks.FRESH_DATED_DAYS})
+        {"now": now, "fresh": since, "kind": KIND, "guide": GUIDE, "asked": list(ASKED), "limit": limit, "days": tasks.FRESH_DATED_DAYS})
     if not rows:
         return 0
     added, passed = add_posts(cur, rows)
@@ -187,7 +191,7 @@ def as_read3(answer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     return {"kind": r.get("kind"), "events": r.get("events"), "main": answer.get("event"), "items": r.get("items") or [],
             "mentions": r.get("mentions") or [], "lang": r.get("lang"), "type_why": r.get("type_why"),
-            "event_type": r.get("event_type"), "origin": r.get("origin")}
+            "event_type": r.get("event_type"), "subtype": r.get("subtype"), "origin": r.get("origin")}
 
 
 def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> None:
@@ -209,6 +213,7 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: Dict[str, An
     mentions = ent42.main_mentions(cur, pid, entities) if win == 0 else ent42.window_mentions(cur, pid, entities)
     repo.add_mentions(cur, post_id=pid, guide=GUIDE, call_id=call_id, mentions=mentions, win=win, current=on)
     if on:
+        task = {**task, "guide": GUIDE}   # v10.42: the readers name the rows' guide, whichever version asked
         tasks._note_happening(cur, task)
         tasks._note_units(cur, task)
 

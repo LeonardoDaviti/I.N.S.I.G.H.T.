@@ -1225,11 +1225,12 @@ def plan_last_posts(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Opt
             SELECT l.id, GREATEST(0, floor(extract(epoch FROM (COALESCE(%(now)s, now()) - l.at)) / 86400))::int
               FROM last l
              WHERE l.k <= %(last)s
-               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = %(guide)s AND t.a = l.id)
+               AND NOT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.kind = %(kind)s AND t.guide = ANY(%(asked)s) AND t.a = l.id)
                AND NOT EXISTS ({read.format(post="l.id")})
              ORDER BY 2, l.id
              LIMIT %(limit)s""",
         {"guide": guide, "kind": kind, "below": LAST_POSTS_BELOW, "last": LAST_POSTS, "now": now, "limit": limit,
+         "asked": list(reading5.ASKED) if kind == reading5.KIND else [guide],   # v10.42: ent-v6's and ent-v5's tasks
          "read": reading5.guides(cur, "read-v3", "read-v2")})
     rows = cur.fetchall()
     if kind == reading5.KIND:
