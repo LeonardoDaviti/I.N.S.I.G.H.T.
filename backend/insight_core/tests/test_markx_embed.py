@@ -254,6 +254,29 @@ class SaidNothing(_Embed):
                          [(a, b, "embedding", 0.8), (c, d, "entity", None), (c, a, "embedding", 0.0),
                           (copy1, copy2, "embedding", 1.0)])
 
+    def test_centroid_cosines_near_computes_only_the_pairs_in_the_window_and_restores_work_mem(self):
+        from insight_core.markx import pairing
+        ps = [self.post(title=f"Post {n}", text=f"Words of post {n} about one thing.") for n in "abcd"]
+        with self.conn.transaction():
+            for pid, v in zip(ps, (unit((0, 1.0)), unit((0, 0.9), (1, 0.1)), unit((0, 0.95), (2, 0.05)),
+                                   unit((0, 1.0), (3, 0.01)))):
+                repo.put_embedding(self.cur, post_id=pid, model="bge-m3", text_hash="h-" + pid, vector=v,
+                                   model_sha256=BUILD)
+        groups = {"g1": [ps[0]], "g2": [ps[1]], "g3": [ps[2]], "g4": [ps[3]]}
+        at = {"g1": T0, "g2": T0 + timedelta(days=3), "g3": T0 + timedelta(days=20), "g4": T0 + timedelta(days=21)}
+        window = timedelta(days=14)
+        self.cur.execute("SHOW work_mem")
+        was = self.cur.fetchone()[0]
+        every = pairing.centroid_cosines(self.cur, groups, 0.5)
+        near = pairing.centroid_cosines(self.cur, groups, 0.5, near=(at, window))
+        self.assertEqual(len(every), 6)                                     # every pair, as before
+        self.assertEqual(sorted(near), [("g1", "g2"), ("g3", "g4")])   # only those 14 days apart at most
+        self.assertEqual({k: round(v, 6) for k, v in near.items()}, {k: round(every[k], 6) for k in near})
+        only = pairing.centroid_cosines(self.cur, groups, 0.5, only=["g4"], near=(at, window))
+        self.assertEqual(sorted(only), [("g3", "g4")])
+        self.cur.execute("SHOW work_mem")
+        self.assertEqual(self.cur.fetchone()[0], was)                       # raised for the statement only
+
     def test_a_name_of_no_letter_is_not_embedded(self):
         with self.conn.transaction():
             self.cur.execute("INSERT INTO mx_entities (name, key, type) VALUES ('—', 'x-dash', 'product'), "
