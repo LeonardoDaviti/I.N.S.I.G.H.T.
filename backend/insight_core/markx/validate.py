@@ -531,7 +531,8 @@ where which while whom whose will with within without would your yours yourself 
 
 
 def _stem(w: str) -> str:
-    return w[:5]
+    """A word's first 5 letters, a plural's -s off first ("tool" and "tools" one stem; "access" stays "acces")."""
+    return (w[:-1] if len(w) > 4 and w.endswith("s") and not w.endswith("ss") else w)[:5]
 
 
 def _cite_words(text: str) -> set:
@@ -557,11 +558,30 @@ def _post_words(input: str) -> Tuple[set, set]:
     return _cite_words(own), _cite_words(head)
 
 
+# The judge answers in English: a post written mostly in another script (Cyrillic, CJK, ...) shares no word with an
+# answer that names it right, so its why is not checked (v10.44: 591 track-v3 tasks of Russian posts failed so). Its
+# share of Latin words is counted on its title and text only, never its links (URLs are Latin in any language).
+LATIN_SHARE_MIN = 0.5
+
+
+_POST_LABEL = re.compile(r"^(?:Title|Text|Quotes the tweet): ", re.M)
+
+
+def _latin_share(input: str) -> float:
+    post = input.partition(POST_MARK)[2].split("\nLinks, in order:")[0]
+    body = _POST_LABEL.sub("", "\n".join(line for line in post.splitlines()
+                                         if not line.startswith(("Platform:", "Author:"))))
+    words = [w for w in _CITE_WORD.findall(fold(body)) if len(w) >= 4 and not w.isdigit()]
+    return sum(1 for w in words if _LATIN.search(w)) / len(words) if words else 1.0
+
+
 def track_verdict_error(a: Dict[str, Any], input: Optional[str]) -> Optional[str]:
     """Why a `track` answer is no verdict of its post (None: it is one). See POST_MARK's note."""
     if float(a.get("confidence") or 0) <= 0:
         return "confidence: 0 judges nothing; say how sure you are of `in` (above 0)"
     if not input or POST_MARK not in input:
+        return None
+    if _latin_share(input) < LATIN_SHARE_MIN:
         return None
     own, asked = _post_words(input)
     own -= asked | _guide_words("track")
@@ -592,12 +612,21 @@ def header_part(input: Optional[str], name: str) -> Optional[str]:
     return body[:min(ends)] if ends else body
 
 
+# A quote of the header needs most of its words from the named part (QUOTE_SHARE_MIN of its words of 4+ letters,
+# function words aside, by stem): the judge copies the reader's words but joins or rewords a few of them ("inference
+# engines and tools for running local models" of "inference engines (llama.cpp, ...)"); an answer that names other
+# things than the header's stays refused.
+QUOTE_SHARE_MIN = 0.5
+
+
 def _quotes(quote: Optional[str], part: Optional[str], field: str) -> Optional[str]:
-    words = _cite_words(quote or "")
+    words = _cite_words(quote or "") - {_stem(w) for w in _FUNCTION_WORDS}
     if not words:
         return f"{field}: copy the words of the track's header it names (at least one word of 4+ letters)"
-    if part is not None and not words <= _cite_words(part):
-        return f"{field}: copy it from the track's header, its own words (not {sorted(words - _cite_words(part))[:3]})"
+    if part is not None:
+        missing = words - _cite_words(part)
+        if len(missing) > len(words) * (1 - QUOTE_SHARE_MIN):
+            return f"{field}: copy it from the track's header, its own words (not {sorted(missing)[:3]})"
     return None
 
 

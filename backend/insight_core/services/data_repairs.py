@@ -96,6 +96,15 @@ def _repair_foreign_pages(db_url: str, dry_run: bool) -> Dict[str, Any]:
                        "sources skipped (feed unreadable)": len(out["skipped"])}, "sample": sample}
 
 
+def _reopen_failed_tracks(db_url: str, dry_run: bool) -> Dict[str, Any]:
+    from insight_core.scripts import reopen_failed_tracks
+    with _connect(db_url) as conn:
+        out = reopen_failed_tracks.run(conn, dry_run=dry_run)
+    sample = [{"label": (s["error"] or "")[:120], "post_id": s["post_id"], "track_id": s["track_id"]}
+              for s in out["sample"]]
+    return {"counts": {"track questions asked again": out["reopened"]}, "sample": sample}
+
+
 REPAIRS: Sequence[Repair] = (
     Repair("hide_listing_pages", "v10.35", "Hide stored listing pages",
            "Tag, category and author listing pages stored as posts are hidden through their source's item filter.",
@@ -109,6 +118,10 @@ REPAIRS: Sequence[Repair] = (
     Repair("repair_foreign_pages", "v10.42", "Move another site's pages out of a source",
            "Pages of another site stored as a source's posts move to Saved (one feed read a source affected).",
            _repair_foreign_pages),
+    Repair("reopen_failed_track_v3", "v10.44", "Ask the failed track questions again",
+           "Track questions the track-v3 checks refused twice (a post in another script, a reworded quote of the "
+           "track) are asked once more under the v10.44 checks.",
+           _reopen_failed_tracks),
 )
 
 
