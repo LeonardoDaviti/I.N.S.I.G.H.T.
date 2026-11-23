@@ -1,38 +1,22 @@
-"""The corpus of real article pages (issue 0032): what the shared reader must make of each.
+"""The corpus of real article pages (0032): what the shared reader must make of each.
 
-fixtures/pages/<name>.html is a real page, fetched once and trimmed of <script>, <style>,
-<noscript>, <svg> and inline base64 blobs (the reader drops those itself); the rest is
-verbatim (gwern_spaced_repetition is also cut to some of its sections and its first ten
-footnotes, 107 KB of 370; of the pages added by issue 0053, whole repeated elements were cut:
-lesswrong to the post's first 16 paragraphs and 2 lists, 20 comments with no replies and 6 rows
-of the comments' contents, 138 KB of 1.9 MB, its post still under half of the page's text;
-sivers to 30 of its 568 comments; tomsguide to 4 of its menu's items and 1 of its 3 "river"
-asides; vuzix to 5 of its 238 country choices; uploadvr without its mobile copy of the related
-grid; each reads the same cut as whole). Two were never fetched for the corpus (issue 0063):
-openai_model_spec and technologyreview are the bodies the lab's posts stored when the reader
-read those pages, class names and all, kept for their links' hidden labels ("(opens in a new
-window)") and technologyreview's hidden figures ("66 %"); "fetched" is when the post was.
-fixtures/pages/expectations.json says, per page:
+fixtures/pages/<name>.html is a real page, fetched once and trimmed of <script>, <style>, <noscript>, <svg> and inline
+base64 blobs (the reader drops those itself); the rest is verbatim, though some long pages were cut of repeated
+elements (each reads the same cut as whole). fixtures/pages/expectations.json says, per page:
 
   url, fetched     where and when it was fetched
   title            page_watch's page_title for the page
   first, last      text found in the first / last EDGE_CHARS characters of the kept text
-                   (a title, byline or date may come before the first sentence; chrome may not)
-  images           the article's own images, counted by hand on the page: its figures and
-                   inline images, its cover when the cover sits inside the article element;
-                   never related cards, sidebars, avatars, logos or icons
+  images           the article's own images, counted by hand (never related cards, sidebars, avatars, logos, icons)
   must_not         words of the page's chrome (menus, share bars, "Related", newsletter boxes)
   contains         optional: text that must be kept (a code block)
-  tables           the article's data tables, each as its number of cells (th and td); none
-                   when absent (issue 0042: a table is kept as a table, not loose paragraphs)
+  tables           the article's data tables, each as its number of cells (th and td); none when absent
   figures          [figures kept, of them with a caption]; [0, 0] when absent
-Every page is also checked never to end on a heading (heading_last): a section title whose
-content a script fills in is no part of the article.
-  known_gaps       optional: {expectation: why the reader misses it}. A known gap must still
-                   fail: when the reader starts meeting it, the corpus test says so, and the
-                   gap is removed rather than left to hide a regression.
+  known_gaps       optional: {expectation: why the reader misses it}; a known gap must still fail, so a fixed gap
+                   is removed rather than left to hide a regression
+Every page is also checked never to end on a heading (heading_last).
 
-Used by test_page_corpus and the owner-run scripts/refresh_page_corpus.
+Used by test_page_corpus and scripts/refresh_page_corpus.
 """
 from __future__ import annotations
 
@@ -54,8 +38,7 @@ BASE64_RE = re.compile(r"data:[a-z0-9.+/-]+;base64,[A-Za-z0-9+/=]+", re.IGNORECA
 
 
 def trim(page: str) -> str:
-    """A fetched page as the corpus keeps it: no scripts, styles, noscript, svg or inline
-    base64 blobs (the reader drops them all); the rest verbatim."""
+    """A fetched page as the corpus keeps it: no scripts, styles, noscript, svg or inline base64 blobs."""
     return BASE64_RE.sub("data:,", TRIMMED_RE.sub("", page))
 
 

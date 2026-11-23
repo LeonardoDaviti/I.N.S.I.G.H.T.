@@ -1,7 +1,6 @@
-"""The real-data checks (issue 0075): the case runner's paths, tests and verdicts, the invariants' own
-patterns, the diff's kinds of change, the scratch-only and read-only guards, and refs and story
-assertions on the database (one transaction, rolled back). Neutral names only: the real cases, their
-posts and the reports stay in plan/research/ (private)."""
+"""The real-data checks (0075): the case runner, the invariants' own patterns, the diff's kinds of change, the
+scratch-only and read-only guards, refs and story assertions on the database (rolled back). Neutral names only: the
+real cases stay in plan/research/ (private)."""
 from __future__ import annotations
 
 import os
@@ -52,7 +51,7 @@ class PathsTests(unittest.TestCase):
         self.assertTrue(paths.test(["x y", "x", "x y z"], "count", {"of": "x y", "equals": 2})[0])
 
     def test_the_ops_discovers_cases_need(self):
-        """Issue 0109: not_contains on every line, at_most on a count, rank_at_most on a suggestion's place."""
+        """not_contains on every line, at_most on a count, rank_at_most on a suggestion's place (0109)."""
         urls = ["https://a.test/1?_hsenc=x", "https://a.test/2"]
         self.assertFalse(paths.test(urls, "not_contains", "_hsenc=")[0])
         self.assertTrue(paths.test(urls[1:], "not_contains", "_hsenc=")[0])
@@ -166,7 +165,7 @@ class InvariantPatternTests(unittest.TestCase):
         self.assertEqual(invariants._title_ends_on_lead(run)[0], [], "no address after it")
 
     def test_discovers_lines_and_first_page(self):
-        """Issue 0080: no title or name is an address, no title is the slug, 30 at most, each tested."""
+        """No title or name is an address, no title is the slug, 30 at most, each tested (0080)."""
         run = invariants.Run("postgresql://unused/none", None, NOW)
         tested = {"label": "feed", "at": (NOW - timedelta(days=2)).isoformat()}
         old = {"label": "feed", "at": (NOW - timedelta(days=40)).isoformat()}
@@ -315,7 +314,7 @@ class DiffTests(unittest.TestCase):
             self.assertIn("**Needs reading: 0** News lead changes.", text)
 
     def test_a_deploy_start_that_raises_fails_the_check_even_when_main_raises_too(self):
-        """Issue 0110: the server's v9.17 rebuild raised on main's code; the check never ran that path."""
+        """The check runs the deploy start's path itself (0110)."""
         import json
         import tempfile
         from insight_core.checks import report
@@ -333,7 +332,7 @@ class DiffTests(unittest.TestCase):
                 self.assertEqual(any("story.deploy_start" in p for p in problems), failed, (base, head))
 
     def test_mark_x_changing_mark_ix_fails_the_check_even_where_main_cant_measure_it(self):
-        """0086 Safety 1: a version before the decision job says "not measured"; the head's count must be 0."""
+        """A version before the decision job says "not measured"; the head's count must be 0."""
         import json
         import tempfile
         from insight_core.checks import report
@@ -351,7 +350,7 @@ class DiffTests(unittest.TestCase):
                 self.assertEqual(any("markx.ix_unchanged" in p for p in problems), failed, (base, head))
 
     def test_a_job_over_its_budget_or_a_fifth_worse_than_main_fails_the_check(self):
-        """0218: each job's own peak MB and seconds, against its budget and the base's (checks/resources.py)."""
+        """Each job's own peak MB and seconds, against its budget and the base's (checks/resources.py, 0218)."""
         import json
         import tempfile
         from unittest import mock
@@ -447,7 +446,7 @@ class ReadOnlyTests(unittest.TestCase):
 
 @requires_test_db
 class ResourcesTests(unittest.TestCase):
-    """0218: a job measured as the jobs process runs it, in a spawned process of its own (commits its run's rows)."""
+    """A job measured as the jobs process runs it, in a spawned process of its own (commits its run's rows)."""
 
     def test_a_job_in_its_own_process_records_its_own_peak_and_seconds(self):
         from insight_core.checks import resources
@@ -506,8 +505,7 @@ class RefsAndStoriesTests(unittest.TestCase):
         self.assertEqual(row, {"names": ["model 2"], "origins": [self.a, self.c], "row_first": self.b})
 
     def test_the_identity_compare_in_sql_is_the_python_compare(self):
-        """0253: story_identity keeps both states in the copy and compares them in SQL; what it reports (rows,
-        differing, the examples each side shows) is what holding both as JSON text in Python reported."""
+        """story_identity compares both states in SQL and reports what comparing them as JSON in Python would (0253)."""
         from insight_core.scripts import story_identity as si
         first = si.snapshot(self.cur)
         si.keep(self.cur, "first")
@@ -524,8 +522,7 @@ class RefsAndStoriesTests(unittest.TestCase):
         si.drop_kept(self.cur)
 
     def test_the_checksums_at_once_are_the_checksums_one_by_one(self):
-        """0253: the tables hashed on connections of their own sum the same as one by one (committed rows: the
-        test's uncommitted ones are its connection's alone)."""
+        """The tables hashed on connections of their own sum the same as one by one (committed rows only) (0253)."""
         from insight_core.checks import job_checks
         with psycopg.connect(db_url(), autocommit=True) as conn, conn.cursor() as cur:
             self.assertEqual(job_checks.table_checksums(cur, db_url(), workers=4), job_checks.table_checksums(cur))

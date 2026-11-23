@@ -1,4 +1,4 @@
-"""Media proxy (issue 0006): only a post's own images, only from public hosts or the LAN bridges."""
+"""Media proxy (0006): only a post's own images, only from public hosts or the LAN bridges."""
 from __future__ import annotations
 
 import asyncio
@@ -38,8 +38,8 @@ class FakeResponse(io.BytesIO):
 
 
 class FakeOrigin:
-    """url -> FakeResponse | status; records the urls asked (the guard's opener is replaced: the address
-    rules have their own tests below, through the real opener, and in test_address_guard)."""
+    """url -> FakeResponse | status; records the urls asked (the guard's opener is replaced: the address rules are
+    tested below and in test_address_guard)."""
 
     def __init__(self, answers: dict):
         self.answers = answers

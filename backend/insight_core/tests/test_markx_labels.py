@@ -1,6 +1,5 @@
-"""Mark X's labels (issue 0086 F): the one tap on Mark X News members and its route, the Wilson interval, and (v10.22,
-0216 D) the Labels queue gone: its routes answer 404 and its tables are dropped. Synthetic data only; the DB tests run
-on a database whose name ends in _test."""
+"""Mark X's labels (0086 F): the one tap on Mark X News members and its route, the Wilson interval, and the Labels
+queue gone (its routes answer 404, its tables dropped). Synthetic data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import json
@@ -45,7 +44,7 @@ class Labels(unittest.TestCase):
     def post(self, hours, title):
         source = insert_scratch_source(self.cur, platform="telegram", settings_json=json.dumps({"display_name": "Example"}))
         url = f"https://test.invalid/mark-x/{uuid.uuid4().hex}"
-        # each post a text of its own: posts of one text are near-copies, never checked (0112 bug 3)
+        # each post a text of its own: posts of one text are near-copies, never checked
         body = title + ". " + " ".join(f"word{k}{url[-6:]}" for k in range(LONG))
         self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, published_at) "
                          "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", (source, url, url, title, body, T + hours * H))
@@ -84,7 +83,7 @@ class Labels(unittest.TestCase):
                                         "confidence": 90 if p == b else 75, "reason": "why " + p[:4]})
         self.answer("pair", lambda p: {"relation": "same_event", "confidence": 65, "reason": "same launch"})
         D.run(self.cur, now=self.now)
-        # a story-changing answer counts once asked again (0112 Decided 8): the run reopened the pair
+        # a story-changing answer counts once asked again: the run reopened the pair
         self.answer("pair", lambda p: {"relation": "same_event", "confidence": 65, "reason": "same launch"})
         D.run(self.cur, now=self.now)
         return a, b, c, d, e
@@ -109,8 +108,8 @@ class Labels(unittest.TestCase):
         self.assertTrue(lines and lines[0]["story"] == story and lines[0]["flag"] is None, json.dumps(page, default=str)[:3000])
 
     def test_the_queue_s_tables_are_gone_and_the_owner_s_labels_stay(self):
-        """0150: mx_label_queues and mx_label_queue_items dropped, the jobs' "labels" row and check entry gone;
-        mx_labels kept."""
+        """mx_label_queues and mx_label_queue_items dropped, the jobs' "labels" row and check entry gone; mx_labels
+        kept (0150)."""
         self.cur.execute("SELECT array_agg(relname ORDER BY relname) FROM pg_class WHERE relkind = 'r' "
                          "AND relname IN ('mx_label_queues', 'mx_label_queue_items', 'mx_labels')")
         self.assertEqual(self.cur.fetchone()[0], ["mx_labels"])

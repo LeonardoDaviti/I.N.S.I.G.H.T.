@@ -1,7 +1,6 @@
-"""Issue 0261 (Stealth v10.31): an entity's brief, the general briefer applied to an entity (markx/entity_brief.py).
-
-Invented names only. The entity is briefed as a track whose subject is the entity: the same things questions, checks,
-reports, joins and digest as a track's; its schema is the general one, written by code.
+"""An entity's brief (0261, markx/entity_brief.py): the general briefer applied to an entity, briefed as a track whose
+subject is the entity (the same questions, checks, reports, joins and digest; its schema the general one, written by
+code). Invented names only.
 """
 from __future__ import annotations
 
@@ -128,10 +127,9 @@ class EntityBrief(_Briefer):
         self.assertEqual([ln["text"] for ln in page["brief"]["how"]], ["turned on with a flag in settings"])
 
     def test_a_brief_needs_five_posts_read_and_a_definition_of_the_entity_itself(self):
-        """0269 (production: a phone OS's brief, from one post about its camera app, said it 'is a camera app'): a
-        brief is shown only when SHOW_POSTS posts were read and a what_it_is line's subject is the entity itself; a
-        line about '<entity> Camera' is that product's. Lines of the same figures and key words are one; a result
-        whose 'what' is the entity's own name shows its result alone."""
+        """A brief is shown only when SHOW_POSTS posts were read and a what_it_is line's subject is the entity itself
+        (a line about '<entity> Camera' is that product's); lines of the same figures and key words are one; a result
+        whose 'what' is the entity's own name shows its result alone (0269)."""
         p1, ent = self.about(None, "Zqedit Mode Camera", "Zqedit Mode Camera is a camera app, version 94.")
         rest = [self.about(ent, f"Post {k}", f"Zqedit Mode post {k}: it cut steps from 12 to 3.")[0] for k in range(4)]
         with self.conn.transaction():
@@ -179,7 +177,7 @@ class Checks(unittest.TestCase):
 
     def test_guide_v2_asks_new_posts_only(self):
         from insight_core.markx import schemas
-        # v10.41: v3 (a catalog one row) after v2; v3 keeps v2's rules
+        # v3 (a catalog one row) after v2; v3 keeps v2's rules
         self.assertEqual((schemas.KINDS["track_things"].guide, TT.THINGS_GUIDE), ("track-things-v3", "track-things-v3"))
         self.assertEqual(schemas.answer_guides("track_things"), ("track-things-v3", "track-things-v1",
                                                                  "track-things-v2"))

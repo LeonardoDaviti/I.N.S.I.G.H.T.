@@ -1,6 +1,6 @@
-"""Issue 0222: an entity pair's opinion holds only for what its question showed (mx_opinion_inputs, identity's
-void_opinions); the owner's queue shows only the items Claude's review flagged; the entity page's posts carry the
-sentences around their mention. Synthetic posts with invented names, in one transaction rolled back after each test."""
+"""An entity pair's opinion holds only for what its question showed (0222: mx_opinion_inputs, identity's
+void_opinions); the owner's queue shows only flagged items; the entity page's posts carry the sentences around their
+mention. Synthetic posts, rolled back after each test."""
 from __future__ import annotations
 
 import unittest
@@ -64,9 +64,8 @@ class AnOpinionHoldsForWhatItWasAskedOn(_Pairs):
         self.assertEqual((item["void"], item["opinion"]["confidence"], item["band"]), (None, 0.86, "0.85-0.90"))
 
     def test_a_side_that_lost_a_post_it_was_asked_on_voids_the_answer(self):
-        """The server's "Qwen 14B" = "Qwen3.8FN" (0.97, "the same two posts appear on each side"): a post the question
-        showed is now another entity's; the answer is never shown, banded or applied; the item is closed and the pair
-        asked again with what it is now."""
+        """A post the question showed is now another entity's: the answer is never shown, banded or applied; the item
+        is closed and the pair asked again with what it is now."""
         a, b = self.kestrel()
         self.reread(b[1], ("Borealis Shell", "software", "subject"))   # read again: it names another tool now
         item, = entity_views.queue(self.cur)["open"]
@@ -122,7 +121,7 @@ class TheReport(_Pairs):
         self.assertEqual(self.stage(since=self.since)["merged"], 1)
         got = I.opinion_report(self.cur)
         self.assertEqual((got["merges"]["checked"], got["merges"]["void"], got["queue"]["checked"]), (1, 0, 0))
-        self.cur.execute("DELETE FROM mx_opinion_inputs")   # as on the server: asked before 0222
+        self.cur.execute("DELETE FROM mx_opinion_inputs")   # asked before inputs were recorded
         self.reread(b[0], ("Borealis Shell", "software", "subject"))
         got = I.opinion_report(self.cur)
         self.assertEqual((got["merges"]["void"], got["merges"]["by_why"], got["merges"]["by"]), (1, {"unmatched": 1}, {"haiku": 1}))
@@ -132,7 +131,7 @@ class TheReport(_Pairs):
 class AQuestionAskedBeforeIsReadBack(_Pairs):
     def test_its_input_says_what_it_showed(self):
         a, b = self.kestrel()
-        self.cur.execute("DELETE FROM mx_opinion_inputs")   # asked before 0222: nothing recorded
+        self.cur.execute("DELETE FROM mx_opinion_inputs")   # asked before inputs were recorded
         item, = entity_views.queue(self.cur)["open"]
         self.assertIsNone(item["void"])                     # read back from its input: it holds
         self.assertEqual(self.inputs(), [])                 # a page writes nothing

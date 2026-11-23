@@ -1,7 +1,5 @@
-"""A feed source's archive reads the site's sitemap of posts (issue 0108, decision 5): a blog whose
-feed holds its latest posts and whose sitemap lists them all. Fixtures are written from a Ghost blog's
-measured shapes (robots.txt naming a sitemap index; the index's pages, posts, authors and tags files;
-the posts file listing every post); every name here is neutral. No network: FakeHttp.
+"""A feed source's archive reads the site's sitemap of posts (0108): a blog whose feed holds its latest posts and whose
+sitemap lists them all (robots.txt naming a sitemap index, its posts file listing every post). No network: FakeHttp.
 """
 from __future__ import annotations
 
@@ -133,8 +131,7 @@ class SitemapArchiveTests(unittest.TestCase):
         self.assertEqual([post["url"] for page in pages for post in page.posts][-1:], [post_url("oldest-post")])
 
     def test_an_older_page_without_a_date_in_its_markup_takes_its_addresss_day(self):
-        """v10.13.5: a blog whose pages state no date in their markup (a link blog's 2008 entries) were stored
-        undated and showed as today's; the address names the day (/2008/Jul/7/), before the sitemap's lastmod."""
+        """A page with no date in its markup is dated by its address (/2008/Jul/7/), before the sitemap's lastmod."""
         dated = f"{BLOG}/2008/Jul/7/a-link/"
         undated_page = ('<html><head><title>a-link</title><meta property="og:type" content="article"></head><body>'
                         f"<article><p>{'An old link entry. ' * 40}</p></article></body></html>")
@@ -149,8 +146,8 @@ class SitemapArchiveTests(unittest.TestCase):
         self.assertTrue(old[0][BACKLOG_KEY])
 
     def test_an_older_page_with_no_date_anywhere_stays_undated(self):
-        """v10.13.6: no date in its markup, its address or the sitemap: undated (the saver sorts it before the
-        source's oldest), never dated "now" as a page watch's new page is."""
+        """No date in its markup, its address or the sitemap: undated (the saver sorts it before the source's oldest),
+        never dated "now"."""
         plain = f"{BLOG}/an-old-note/"
         page = ('<html><head><title>an-old-note</title><meta property="og:type" content="article"></head><body>'
                 f"<article><p>{'An old note. ' * 40}</p></article></body></html>")

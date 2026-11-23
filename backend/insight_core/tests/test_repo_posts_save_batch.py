@@ -1,8 +1,5 @@
-"""PostsRepository.save_batch: one save path that owns its transaction (spec §B.1, §5.3).
-
-Scratch-source pattern: save_batch commits, so every class here is @requires_test_db and
-only runs against a database whose name ends in `_test`. setUp clears leftovers, tearDown
-deletes the scratch sources (posts cascade).
+"""PostsRepository.save_batch: one save path that owns its transaction. save_batch commits, so every class here is
+@requires_test_db; setUp clears leftovers, tearDown deletes the scratch sources (posts cascade).
 """
 from __future__ import annotations
 
@@ -102,8 +99,8 @@ class SaveBatchTests(unittest.TestCase):
         self.assertEqual(again.updated, 45)
 
     def test_a_refetched_post_as_stored_is_not_written_again(self):
-        """0215: a feed's items come again at every fetch; one that would not change is left as it is (no row
-        version, no trigger, no links or refs read again); one whose text changed is written as before."""
+        """A feed item that would not change is left as it is (no row version, no trigger, no links or refs read
+        again); one whose text changed is written (0215)."""
         page = "https://elsewhere.invalid/2026/11/a-page"
         drafts = [PostDraft(self.source_a, {"url": f"https://test.invalid/refetch/{self.tag}/{n}", "title": f"Post {n}",
                                             "content": f"Body {n}", "content_html": f'<a href="{page}">a page</a>',
@@ -187,7 +184,7 @@ class SaveBatchTests(unittest.TestCase):
             return [(url.rsplit("/", 1)[1], at.isoformat()) for url, at in cur.fetchall()]
 
     def test_a_first_fetchs_undated_posts_sort_below_its_dated_ones_in_its_order(self):
-        # Issue 0070: a new source's undated backlog doesn't take the top of the feed.
+        # a new source's undated backlog doesn't take the top of the feed (0070)
         from datetime import datetime, timezone
         dated = datetime(2026, 10, 5, 14, 0, tzinfo=timezone.utc)
         url = f"https://test.invalid/mark-ix-post/{self.tag}/"
@@ -207,8 +204,8 @@ class SaveBatchTests(unittest.TestCase):
         self.assertGreater(self._feed_order(self.source_a)[0][1], "2026-10-06")
 
     def test_a_later_fetchs_undated_older_post_sorts_below_too(self):
-        """v10.13.5: an archive's undated older page (backlog) of a source fetched before sorted at its fetch: a
-        blog's 2008 entries showed under Today. It sorts before the source's oldest post, as a first fetch's does."""
+        """An archive's undated older page of a source fetched before sorts before the source's oldest post, as a
+        first fetch's does, not at its fetch."""
         from datetime import datetime, timezone
         from insight_core.db.repo_posts import BACKLOG_KEY
         url = f"https://test.invalid/mark-ix-post/{self.tag}/"

@@ -1,11 +1,7 @@
-"""GET /api/search (issues 0040, 0056): real services on the scratch database, over ASGI.
-
-Word forms in English and Russian, phrases, -word, the source's name, each narrowing (scope,
-Later, Kept, days), both orders, the snippet and paging. Issue 0056: version names on the index
-and the query sides (and the refill of older vectors), stories folded at their best-matching
-post, the News and Classics scopes, and their paging. Rows are committed, so the class
-only runs against a `_test` database. Every post's title ends in the test's own marker word
-and every query names it, so no other row can match.
+"""GET /api/search (0040, 0056) over ASGI: word forms in English and Russian, phrases, -word, the source's name, each
+narrowing, both orders, the snippet and paging, version names, stories folded at their best-matching post, the News
+and Classics scopes. Rows are committed, so it only runs against a `_test` database; every post's title ends in the
+test's own marker word and every query names it, so no other row can match.
 """
 import json
 import random
@@ -92,8 +88,8 @@ class SearchRouteTests(unittest.TestCase):
             delete_scratch_sources(cur)
 
     def _source(self, *, name: str = "Scratch Source", in_main_digest: bool = False) -> str:
-        # A name of its own, never its random scratch address: the name is in each post's vector, and
-        # an address's hex can read as more words than another's, so ties would break by it (0129).
+        # a name of its own, never its random scratch address: an address's hex can read as more words than
+        # another's, so ties would break by it (0129)
         settings = '{"display_name": "%s"}' % name
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             return insert_scratch_source(cur, settings_json=settings, in_main_digest=in_main_digest)
@@ -108,7 +104,7 @@ class SearchRouteTests(unittest.TestCase):
             return str(cur.fetchone()[0])
 
     def search(self, q: str, **query):
-        # The marker makes every query 2+ words, which orders by best match unless asked (issue 0139): newest here.
+        # the marker makes every query 2+ words, which orders by best match unless asked: newest here
         status, _, body = call(main.app, "GET", "/api/search", query={"q": f"{self.marker} {q}", "order": "newest", **query})
         self.assertEqual(status, 200, body)
         return body
@@ -116,7 +112,7 @@ class SearchRouteTests(unittest.TestCase):
     def ids(self, q: str, **query) -> list[str]:
         return [item["id"] for item in self.search(q, **query)["items"]]
 
-    # ---- v10.13.6: a pasted address, a slug, a title phrase first ----------------------------------------
+    # ---- a pasted address, a slug, a title phrase first ---------------------------------------------------
 
     def _addressed(self, source_id: str, url: str, title: str) -> str:
         from insight_core.utils.url_normalization import normalize_url
@@ -328,7 +324,7 @@ class SearchRouteTests(unittest.TestCase):
                 if order == "newest":
                     self.assertEqual(seen, posts)
 
-    # ---- version names (issue 0056) -----------------------------------------------------
+    # ---- version names --------------------------------------------------------------------
 
     def test_a_version_name_is_found_by_its_parts(self):
         source = self._source()
@@ -381,7 +377,7 @@ class SearchRouteTests(unittest.TestCase):
                                  "claude3": ["claud", "3"], "a100": None, "26b5c67b": None, "kimi": None, "3.1": None,
                                  "x.com/a1": None})
         self.assertEqual(queries, [
-            "'kimi' <-> '3.1' | 'kimi' <2> '3.1'",   # a name and its version stand together (v10.13.1, 0095)
+            "'kimi' <-> '3.1' | 'kimi' <2> '3.1'",   # a name and its version stand together
             "'k3.1' | 'k' <-> '3.1'",
             "'kimi' <-> 'k3.1' <-> 'pro'",   # a phrase keeps its word: an OR there takes its longest width
             "'gpt' <-> ( '-6.1' | '6.1' ) & !( 'qwen3.8' | 'qwen' <-> '3.8' )",
@@ -393,7 +389,7 @@ class SearchRouteTests(unittest.TestCase):
         source = self._source()
         posts = [self._post(source, "Kimi K3.1 Pro") for _ in range(3)]
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
-            # As 0033 made them: the words alone, no version, no parts.
+            # the words alone, no version, no parts
             cur.execute("UPDATE posts SET search_vector = to_tsvector('russian', title), search_version = NULL"
                         " WHERE id = ANY(%s::uuid[])", (posts,))
         self.assertEqual(self.ids("kimi 3.1"), [])
@@ -411,10 +407,10 @@ class SearchRouteTests(unittest.TestCase):
                         (posts,))
             self.assertEqual(cur.fetchall(), [(True,)])
 
-    # ---- stories (issue 0056) -----------------------------------------------------------
+    # ---- stories --------------------------------------------------------------------------
 
     def _story(self, *posts: tuple[str, str]) -> str:
-        """A story of (post id, role), keyed by its first post (as 0050 keys it)."""
+        """A story of (post id, role), keyed by its first post."""
         story = posts[0][0]
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, now(), %s)", (story, len(posts)))
@@ -470,9 +466,7 @@ class SearchRouteTests(unittest.TestCase):
         self.assertEqual(self.ids("robots", scope="all", days=7), [inside_post])
 
     def test_dates_compete_whatever_the_scratch_addresses(self):
-        """Issue 0129: the test above failed about 1 run in 15. A scratch address's random hex read
-        like `3e4f…` is two lexemes (a number in scientific notation and a word), so that source's
-        posts were one lexeme longer and ranked lower: the tie broke by the address, not the date."""
+        """A scratch address's random hex (`3e4f…`) is two lexemes, so ties must not break by the address (0129)."""
         addresses = iter([f"{SCRATCH_PREFIX}3e4f{uuid.uuid4().hex}", f"{SCRATCH_PREFIX}{uuid.uuid4().hex}"])
         with mock.patch("insight_core.tests._db.scratch_handle", lambda: next(addresses)):
             self.test_only_matching_posts_in_the_scope_and_dates_compete()
@@ -510,7 +504,7 @@ class SearchRouteTests(unittest.TestCase):
                 self.assertEqual(sorted(seen), sorted([posts[0], posts[2], posts[3], posts[6], posts[7]]),
                                  "8 posts, two stories of 2 and 3, each at its best match (a title hit)")
 
-    # ---- News and Classics (issue 0056) -------------------------------------------------
+    # ---- News and Classics ----------------------------------------------------------------
 
     def _news(self, *posts: tuple[str, str], first_at: datetime) -> str:
         news = posts[0][0]

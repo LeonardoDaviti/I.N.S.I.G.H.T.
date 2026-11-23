@@ -1,9 +1,7 @@
-"""0131 (Stealth v10.6): Stalker's first edges. Authors' links as edges (another source's p 1.0, the same source's
-p 0.9; none under 30 days, none for boilerplate; a target stored later becomes an edge with no re-read; a link that
-stops resolving closes its edge), the `relate` kind (planned and capped, three runs and their majority, "unknown" on
-a split; the judge refines an author-link edge and never removes it), next_version from entity identity, the post
-panel's Before list with its marks and labels, and the invariant. Synthetic data only; the DB tests run on a database
-whose name ends in _test."""
+"""Stalker's first edges (0131): authors' links as edges (no boilerplate, none under 30 days, a later-stored target
+becomes an edge with no re-read, a link that stops resolving closes its edge), the `relate` kind (planned, capped,
+majority of runs; the judge refines an author-link edge, never removes it), next_version from entity identity, the
+post panel's Before list, and the invariant. Synthetic data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import hashlib
@@ -19,7 +17,7 @@ from insight_core.tests.test_markx_api import _Api, call
 
 NOW = datetime.now(timezone.utc)
 DAY = timedelta(days=1)
-FROZEN_JUDGE_MD5 = "5a534f99860e519210c988137298f426"   # G2's g2_judge_v3.md, ported unchanged
+FROZEN_JUDGE_MD5 = "5a534f99860e519210c988137298f426"   # ported unchanged
 
 
 def answer(relation, reason="The newer post builds on the older one."):
@@ -53,7 +51,7 @@ class TheKind(unittest.TestCase):
         self.assertEqual((v["relation"], v["p"]), ("unknown", None))
 
     def test_a_first_unrelated_settles_the_pair_alone(self):
-        # 0191: ask once; a second and third time only when the first is not "unrelated"
+        # ask once; a second and third time only when the first is not "unrelated"
         v = graph.verdict([("c1", answer("unrelated", "Different events."))])
         self.assertEqual((v["relation"], v["p"], v["call"], v["runs"], v["reason"]),
                          ("unrelated", None, "c1", ["unrelated"], "Different events."))
@@ -78,7 +76,7 @@ class TheKind(unittest.TestCase):
                                                          docs=["example.com/paper"])))
 
     def test_versions_order_by_their_numbers_on_their_line(self):
-        from insight_core.markx import timeline as TL   # 0220: the entity page's version line is the order
+        from insight_core.markx import timeline as TL   # the entity page's version line is the order
         self.assertEqual(TL.line_key([4, 1]), ("", (4, 1)))
         self.assertEqual(TL.line_key(["k", 3, 1]), ("k", (3, 1)))       # a letter is a line of its own
         self.assertEqual(TL.line_key([5, 0]), ("", (5,)))
@@ -226,7 +224,7 @@ class TheJudge(_Graph):
             self.cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s", (entity, post))
 
     def maker_said(self, post):
-        """0234: the post's reading says its maker tells it (a version on the line is one its maker announced)."""
+        """The post's reading says its maker tells it (a version on the line is one its maker announced)."""
         with self.conn.transaction():
             tid, _ = tasks.add(self.cur, "read3", f"read {post}", a=post)
             call_id = repo.add_call(self.cur, task_id=tid, executor="claude-code", model="m", valid=True, answer={})
@@ -292,7 +290,7 @@ class TheJudge(_Graph):
         self.same_subject()
         self.stage()
         tid, statuses = self.answer_runs("relate", ["unrelated"])
-        self.assertEqual(statuses, ["answered"])                       # 0191: never asked again
+        self.assertEqual(statuses, ["answered"])                       # never asked again
         out = self.stage()
         self.assertEqual(self.edges(), [])
         self.assertEqual(out["relate"]["settled"], 1)
@@ -306,9 +304,8 @@ class TheJudge(_Graph):
         self.assertEqual(out["relate"]["settled"], 1)
 
     def test_a_post_linked_after_its_answer_aged_is_read_through_the_hand_off(self):
-        """0227: a post whose mentions are linked later than its answer came (a linking backlog, runs more than an
-        hour apart) is past the stage's look-back by its answer's time: the run hands the posts it linked over
-        (`linked`), and a run whose graph stage did not run keeps them for the next one (`defer`)."""
+        """A post linked later than its answer came is past the stage's look-back: the run hands the posts it linked
+        over (`linked`), and a run whose graph stage did not run keeps them for the next (`defer`) (0227)."""
         newer, older = self.same_subject()
         self.cur.execute("SELECT entity_id::text FROM mx_mentions WHERE post_id = %s", (newer,))
         entity = self.cur.fetchone()[0]
@@ -388,13 +385,13 @@ class TheJudge(_Graph):
         for p in old4:
             self.subject(p, v4)
         self.subject(old41, v41, "Widget 4.1")
-        for k in range(3):                                        # 0220: a version on the line is named by 4+ posts
+        for k in range(3):                                        # a version on the line is named by 4+ posts
             self.subject(self.post(source=self.other, at=self.at(20 + k)), v41, "Widget 4.1", role="mention")
         for k in range(2):
             self.subject(self.post(source=self.other, at=self.at(5 + k)), v5, "Widget 5", role="mention")
         self.subject(new5, v5, "Widget 5")
         self.subject(soon5, v5, "Widget 5")
-        for p in (old4[-1], old41, soon5):                        # 0234: each announced by its maker
+        for p in (old4[-1], old41, soon5):                        # each announced by its maker
             self.maker_said(p)
         # a judge's next_version on the pair first
         with self.conn.transaction():
@@ -420,9 +417,9 @@ class TheJudge(_Graph):
         for p in olds + [late]:
             self.subject(p, v1, "Gadget 1")
         self.subject(new, v2, "Gadget 2")
-        for k in range(3):                  # 0220: named by 4+ posts (a mention is never an edge's side)
+        for k in range(3):                  # named by 4+ posts (a mention is never an edge's side)
             self.subject(self.post(at=self.at(1 + k)), v2, "Gadget 2", role="mention")
-        for p in (olds[-1], new):           # 0234: each announced by its maker
+        for p in (olds[-1], new):           # each announced by its maker
             self.maker_said(p)
         self.stage()
         got = sorted(b for a, b, rel, rule, *_ in self.edges() if rule == "entity_next_version")
@@ -446,14 +443,14 @@ class TheBeforeList(_Graph):
         self.assertEqual([r["post_id"] for r in panel["before"]], olders[::-1][:10])
         row = panel["before"][0]
         self.assertEqual(set(row), {"post_id", "relation", "rule", "p", "reason", "uncertain", "at", "title", "source",
-                                    "label", "byline"})   # 0185: who wrote it, via whom
+                                    "label", "byline"})   # who wrote it, via whom
         self.assertFalse(row["uncertain"])
         self.assertEqual(call("GET", f"/api/markx/posts/{olders[0]}")[1]["before"], [])   # the older post has none
 
 
 class SeriesNavigation(_Graph):
-    """0134: a same-source author link marked series navigation (post_refs.navigation) is next_in_series, rule series,
-    never refers_back, and the judge never asks about it; the flag changing re-reads the edge."""
+    """A same-source author link marked series navigation is next_in_series, never refers_back, never asked of the
+    judge; the flag changing re-reads the edge (0134)."""
 
     def test_a_navigation_link_is_next_in_series_and_never_judged(self):
         part1 = self.post("Part 1: the scheduler", at=self.at(60))

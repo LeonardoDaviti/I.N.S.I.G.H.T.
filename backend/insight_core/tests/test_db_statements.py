@@ -1,4 +1,4 @@
-"""0215: GET /api/operations/db-statements, the database's top statements (pg_stat_statements), read only."""
+"""GET /api/operations/db-statements, the database's top statements (pg_stat_statements), read only (0215)."""
 from __future__ import annotations
 
 import sys
@@ -85,7 +85,7 @@ class TopStatements(unittest.TestCase):
             self.assertEqual(out["indexes"][0]["index"], "mx_embeddings_pkey", "the indexes either way")
 
     def test_each_index_with_its_scans_and_the_buffer_settings(self):
-        """v10.22: whether an index earns its keep (0216 F) and the server's buffers, by a GET."""
+        """Whether an index earns its keep and the server's buffers, by a GET."""
         cur = FakeCursor(SEEN + [(False, False)])
         svc, patched = service(cur)
         with patched:
@@ -100,7 +100,7 @@ class TopStatements(unittest.TestCase):
 @requires_db
 class OnTheDatabase(unittest.TestCase):
     def test_every_statement_is_planned_for_its_values(self):
-        """0215: no generic plan for a prepared statement (an optional filter's index lost: 47 ms -> 4,224 ms)."""
+        """No generic plan for a prepared statement: an optional filter's index would be lost (0215)."""
         from insight_core.db import database
         with database.connection(db_url()) as conn:
             self.assertEqual(conn.execute("SHOW plan_cache_mode").fetchone()[0], "force_custom_plan")

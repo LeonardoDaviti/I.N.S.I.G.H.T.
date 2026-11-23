@@ -1,11 +1,6 @@
-"""Shared DB test helpers (Mark IX).
-
-Two isolation patterns (spec §5 conventions):
-  - rollback: one transaction per test, rolled back in tearDown. Safe on any database,
-    as long as every assertion is scoped to the test's own scratch rows.
-  - scratch-source + commit: rows that must be committed. Those classes are decorated
-    with @requires_test_db, so they only ever run against a database whose name ends in
-    `_test`. run-tests.sh gives each run a database of its own, named so (issue 0071).
+"""Shared DB test helpers. Two isolation patterns: rollback (one transaction per test, rolled back in tearDown; safe on
+any database while every assertion is scoped to the test's own scratch rows), and scratch-source + commit (classes
+decorated @requires_test_db, run only against a database whose name ends in `_test`; run-tests.sh gives each run one).
 """
 from __future__ import annotations
 
@@ -52,25 +47,18 @@ requires_test_db = unittest.skipUnless(
 
 
 def clear_tables(cur, tables, *, cascade: bool = False) -> None:
-    """Empty these tables, as `TRUNCATE a, b, ...` would (v10.17): a TRUNCATE where files are not synced, else DELETEs.
+    """Empty these tables, as `TRUNCATE a, b, ...` would: a TRUNCATE where files are not synced, else DELETEs.
 
-    A TRUNCATE gives every table and index a new file, and Postgres syncs each new index to disk at once
-    (an empty btree's build ends in an immediate fsync): a setUp truncating ~60 Mark X tables issued ~150 syncs,
-    11-48 s a test while other agents' copies kept the disk busy (measured; test_entity_originals had seen ~25 s).
-    A DELETE of a test's few rows writes no new file. The tables are emptied children first (their foreign keys among
-    the set, read from pg_constraint), with every trigger firing as it does in the product: the kept counts of 0132
-    follow a DELETE as they follow a TRUNCATE (a delete with triggers off left them wrong). Tables in a cycle of keys,
-    and the tables with an HNSW index (a DELETE leaves its rows in the graph until a vacuum, and an index scan that
-    meets them returns fewer live neighbours: test_markx_storage's nearest lost one), are truncated.
-    `tables`: names, or one comma-separated string of them. `cascade`: as TRUNCATE ... CASCADE, every table whose
-    foreign keys reach these (at any depth) is emptied too."""
+    A TRUNCATE makes new files and Postgres syncs each new index at once, which made setUp take tens of seconds on a
+    busy disk; a DELETE of a test's few rows writes no file. Tables are emptied children first, with every trigger
+    firing as in the product (the kept counts follow a DELETE as they follow a TRUNCATE). Tables in a cycle of keys,
+    and tables with an HNSW index (a DELETE leaves rows in the graph until a vacuum, so scans return fewer neighbours),
+    are truncated. `tables`: names, or one comma-separated string. `cascade`: as TRUNCATE ... CASCADE."""
     names = [t.strip() for t in (tables.split(",") if isinstance(tables, str) else tables) if t.strip()]
     if not names:
         return
-    # Where Postgres does not sync files (the scratch server: fsync off) a TRUNCATE costs what a DELETE does (56 Mark X
-    # tables: 0.09 s, measured) and is exactly what the tests were written against: a DELETE leaves the dead rows'
-    # space, and where later rows land changes the order a scan returns them in (test_markx_units' NeverAVoice
-    # compared News rows built over two worlds and differed after test_markx_pairing ran before it).
+    # without fsync a TRUNCATE costs what a DELETE does and is what the tests were written against: a DELETE leaves the
+    # dead rows' space, and where later rows land changes the order a scan returns them in
     cur.execute("SELECT current_setting('fsync') = 'off'")
     if cur.fetchone()[0]:
         cur.execute("TRUNCATE " + ", ".join(names) + (" CASCADE" if cascade else ""))
@@ -97,7 +85,7 @@ def clear_tables(cur, tables, *, cascade: bool = False) -> None:
     left = [n for n in names if n not in truncate]
     while left:
         ready = [n for n in left if not (children[n] - done - truncate)]
-        if not ready:             # a cycle of keys: all of them truncated together, as before
+        if not ready:             # a cycle of keys: all of them truncated together
             cur.execute("TRUNCATE " + ", ".join(names))
             return
         for n in ready:

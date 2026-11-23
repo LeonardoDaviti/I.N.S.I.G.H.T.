@@ -1,7 +1,6 @@
-"""Titles of pages you don't follow (issue 0106): one url -> title map per Discover answer (articles, origin
-lines and archive lines alike), Classics titled by the same evidence and read the same once-only way,
-the reads keep Discover's kept list kept, and a paper id is one page on its host whatever its path.
-Fixtures only: nothing is fetched (a fake fetcher answers the reads).
+"""Titles of pages you don't follow (0106): one url -> title map per Discover answer, Classics titled by the same
+evidence and read once, the reads keep Discover's kept list kept, and a paper id is one page on its host whatever its
+path. Fixtures only: a fake fetcher answers the reads.
 """
 from __future__ import annotations
 
@@ -40,7 +39,7 @@ post = partial(story_post, at=DAY)
 
 
 class PaperIdTests(unittest.TestCase):
-    """0080's paper-source shapes, as one page: every shape seen on the lab, on hosts nobody named."""
+    """The paper-source shapes, as one page, on hosts nobody named."""
 
     def test_every_path_of_a_preprint_is_one_paper(self):
         for url in ("https://preprints.example/abs/2005.14165", "https://preprints.example/pdf/2005.14165",
@@ -68,8 +67,8 @@ class PaperIdTests(unittest.TestCase):
             self.assertIsNone(paper_id(url), url)
 
     def test_every_paper_address_has_the_shape_the_classics_query_reads(self):
-        """v10.22: NewsRepository.paper_paths reads only links of PAPER_SHAPE (Postgres's regex; the same in Python's
-        for these classes): every address paper_id names a paper in has it."""
+        """NewsRepository.paper_paths reads only links of PAPER_SHAPE (Postgres's regex agrees with Python's here):
+        every address paper_id names a paper in has it."""
         import re
         from insight_core.utils.addresses import PAPER_SHAPE
         papers = [u for u in ("https://preprints.example/abs/2005.14165", "https://preprints.example/pdf/2005.14165v2",
@@ -119,8 +118,8 @@ class PaperOnePageInStoriesTests(unittest.TestCase):
 
 
 class EvidenceKeptSmallTests(unittest.TestCase):
-    """0231: a linking post is kept as the asked pages' evidence only (page_titles._as_evidence); every title
-    origin_title gives of those pages is the one the whole post gives."""
+    """A linking post is kept as the asked pages' evidence only (page_titles._as_evidence); every title origin_title
+    gives of those pages is the one the whole post gives (0231)."""
     A, B, C = "https://a.example/one-launch", "https://b.example/post", "https://c.example/other"
 
     def posts(self):
@@ -311,8 +310,8 @@ class DiscoverTitleMapTests(unittest.TestCase):
         self.assertEqual({o["url"]: o["title"] for o in missing["origin_stories"]}[older[1]], "Read 1")
 
     def test_the_evidence_read_in_batches_titles_as_read_at_once(self):
-        """0231: the linking posts read a batch at a time (page_titles.LOAD_BATCH) give every page the title one read
-        of them all gives."""
+        """The linking posts read a batch at a time (page_titles.LOAD_BATCH) give every page the title one read of
+        them all gives (0231)."""
         from insight_core.services import page_titles
         m = self.mark
         voices = self._voices(3)
@@ -327,8 +326,8 @@ class DiscoverTitleMapTests(unittest.TestCase):
             self.assertEqual(page_titles.evidence(self.cur, sources, pages), whole)
 
     def test_a_read_batch_keeps_the_list_for_the_next_process(self):
-        """0080 cold open: the reads change Discover's inputs; the batch keeps the list it changed, so a fresh
-        process's first open reads one row and makes nothing."""
+        """The reads change Discover's inputs; the batch keeps the list it changed, so a fresh process's first open
+        reads one row and makes nothing."""
         m = self.mark
         voices = self._voices(3)
         site = f"kept-{m}.example"

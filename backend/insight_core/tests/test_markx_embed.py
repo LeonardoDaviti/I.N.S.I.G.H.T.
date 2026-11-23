@@ -1,10 +1,7 @@
-"""Mark X Shadow's embeddings (issue 0086 B, the build plan's corrections 6) through the app, against the run's own
-_test database: the embed tasks (the text, newest first, one task a text, a duplicate's vector copied), and
-POST /api/markx/embeddings (base64 float16 checked and stored as sent, one build per database, invalid vectors
-back to open, a second vector changing nothing, the switch). A fake embedder: fixed vectors, never the GGUF.
-
-These suites commit (the API opens its own transactions), so they run only on a database whose name ends in
-_test. Every post and source is synthetic."""
+"""Mark X's embeddings (0086 B) through the app: the embed tasks (newest first, one task a text, a duplicate's vector
+copied) and POST /api/markx/embeddings (float16 checked and stored as sent, one build per database, invalid vectors
+back to open, a second vector changing nothing). A fake embedder; these suites commit, so they run only on a _test
+database."""
 from __future__ import annotations
 
 import base64
@@ -72,7 +69,7 @@ class TheText(unittest.TestCase):
                          "Acme released Widget 4.1 today.")
 
     def test_a_post_that_says_nothing_gets_no_text_never_a_constant(self):
-        """embed text v2: v1 embedded these as "(empty)", "[Photo]", "Image", "paper:", one vector for them all."""
+        """Texts that say nothing ("(empty)", "[Photo]", "Image", "paper:") get no shared vector (embed text v2)."""
         for title, text in (("", ""), ("[Photo]", ""), ("Image", ""), ("[Video]", "[Video]"),
                             ("example.com/notes/2501…", "example.com/notes/2501…"),
                             ("paper:", "paper: https://papers.test.invalid/2501.01234"), ("😳", "😳"),
@@ -165,8 +162,7 @@ class Planning(_Embed):
 
 class SaidNothing(_Embed):
     """embed text v2 on the database: a post that says nothing is skipped (recorded, not read again); a v1 vector of
-    a text that said nothing is set aside (kept under SET_ASIDE) and its post planned again; a late answer to a
-    v1 task of nothing is kept aside; the decision run reads embedding candidates by the vectors now."""
+    nothing is set aside (kept under SET_ASIDE) and its post planned again; the decision run reads the vectors now."""
 
     def setUp(self):
         super().setUp()
@@ -362,8 +358,7 @@ class Uploads(_Embed):
         return thread, result
 
     def test_once_the_build_is_stored_an_upload_takes_no_build_lock(self):
-        # v10.38: the lock was held through the whole upload (the vectors' and the names' HNSW inserts), so the
-        # worker's uploads queued behind each other; a transaction holding it stands for an upload still storing
+        # so the worker's uploads never queue behind each other
         a, b = self.embed_task(), self.embed_task()
         self.upload((a, unit((0, 1.0))))
         with psycopg.connect(db_url()) as other:
@@ -375,8 +370,8 @@ class Uploads(_Embed):
         self.assertEqual(result["answer"], (200, {"stored": 1, "invalid": [], "repeated": 0}))
 
     def test_the_first_build_is_still_decided_one_upload_at_a_time(self):
-        # a database of no vector: an upload of one build, not yet committed, holds the lock; another build's
-        # upload waits for it, then sees its vectors and is refused (as before v10.38)
+        # a database of no vector: an uncommitted upload of one build holds the lock; another build's upload waits
+        # for it, then sees its vectors and is refused
         a, b = self.embed_task(), self.embed_task()
         with psycopg.connect(db_url()) as first:
             with first.cursor() as cur:

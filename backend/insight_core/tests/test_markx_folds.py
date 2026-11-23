@@ -1,7 +1,6 @@
-"""0127 (Mark X v10.3): duplicates folded. The rule (ported from the lab's rv3_rules.rv3_roles), the group and the owner's
-answers over it, the `read3` kind (guide read-v3, its input, its answer stored as a reading), its planner (members of
-Mark X stories with 2+ members only, once a post), the News page's lines, the answer and count routes, the migration.
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""Duplicates folded (0127): the rule (ported from the lab's rv3_rules.rv3_roles), the group and the owner's answers,
+the `read3` kind and its planner (members of 2+ member Mark X stories, once a post), the News page's lines, the routes,
+the migration. Synthetic data only; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import hashlib
@@ -26,7 +25,7 @@ def read3(event_type="model_release", origin="other", **over):
 
 
 class TheRule(unittest.TestCase):
-    """rv3_roles, as the lab ran it (round 1, F1 0.70 on unseen clusters)."""
+    """rv3_roles, as the lab ran it."""
 
     def test_the_makers_post_is_the_original_and_the_others_of_the_storys_type_retell_it(self):
         ms = [m(0, "leak_rumour", "other"), m(1, "model_release", "maker"), m(2, "model_release", "other"),

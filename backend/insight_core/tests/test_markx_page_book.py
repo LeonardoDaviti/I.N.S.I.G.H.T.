@@ -1,7 +1,6 @@
-"""v10.17 (issue 0186): a page's entity book. The News page read the whole entity book twice a request (250k entities
-on the server) and walked every typed story of ~60 days for its "came true" links: 20 s a load. A page's book
-(identity.lazy_book) reads only what it is asked and answers as the whole book; the maker's names are found through
-migration 0127's indexes; the News page's reads don't grow with the book. Invented names only; a _test database."""
+"""A page's entity book (0186): identity.lazy_book reads only what it is asked and answers as the whole book; the
+maker's names are found through migration 0127's indexes; the News page's reads don't grow with the book. Invented
+names only; a _test database."""
 from __future__ import annotations
 
 import unittest
@@ -77,7 +76,7 @@ class APagesBook(Ents, built_tests.Stored):
         for f in {f for r in ids for f in fw.of(r)} | {"acmeai", "zetacafé", "nobody", ""}:
             self.assertEqual(fp.roots(f), fw.roots(f), f)
         self.assertEqual(fw.roots("acmeai"), {self.acme})     # an alias of a merged entity names the cluster
-        # v10.17: what the entity page, the queue, research and Discover's originals ask of it
+        # what the entity page, the queue, research and Discover's originals ask of it
         whole = I.load_book(self.cur)
         for r in ids:
             self.assertEqual((page.alias_keys(r), page.with_parent_in(r), page.etype(r), page.subject.get(r, 0),
@@ -177,9 +176,8 @@ class _Counting:
 
 
 class TheNewsPageQueriesDontGrowWithItsRows(Ents, built_tests.Stored):
-    """v10.17 (0186): the News page asks the same number of queries for 2 rows as for 6, in both views (only the
-    differences, and every row): the names, owners and makers its stories ask are read ahead in a few queries
-    (Makers.prepare), the rows' own headline answers in two."""
+    """The News page asks the same number of queries for 2 rows as for 6, in both views: names, owners and makers are
+    read ahead (Makers.prepare), the rows' headline answers in two."""
 
     def rows(self, n, now):
         run = repo.start_run(self.cur, code_version="test", config={})
@@ -260,8 +258,8 @@ class TheEntityPageReadsWhatItShows(Ents, built_tests.Stored):
 
 
 class CameTrueReadsTheConnectedStories(built_tests.Stored):
-    """Only a judged connection links a leak story to its release (0203 dropped SUBJECT_LINKS): built.build reads the
-    stories connected to the viewed ones, not every typed story of the window."""
+    """Only a judged connection links a leak story to its release: built.build reads the stories connected to the
+    viewed ones, not every typed story of the window."""
 
     def test_an_unconnected_story_of_the_window_is_not_read(self):
         now = datetime.now(timezone.utc)

@@ -1,8 +1,5 @@
-"""Full text: a teaser is read from its article page, once (ingestion/full_text.py).
-
-No network: FakeHttp. The kind tests need no database; the upsert and repair tests commit
-rows, so they run only against a *_test database (@requires_test_db).
-"""
+"""Full text: a teaser is read from its article page, once (ingestion/full_text.py). No network (FakeHttp); the
+upsert and repair tests commit rows, so they run only against a *_test database."""
 from __future__ import annotations
 
 import json
@@ -50,8 +47,8 @@ def _src(**settings) -> dict:
 
 PARAGRAPHS = "".join(f"<p>Paragraph {n} of what the author wrote, sentence after sentence.</p>" for n in range(12))
 
-# Modelled on danielmiessler.com (VitePress): preload <link>s, a nav menu in the header,
-# the article in plain <div>s (no <article> or <main>), a related list and a footer.
+# A VitePress page: preload <link>s, a nav menu in the header, the article in plain <div>s (no <article> or <main>),
+# a related list and a footer.
 MIESSLER_PAGE = f"""<html><head>
 <link rel="preload stylesheet" href="/assets/theme.css" as="style">
 <link rel="modulepreload" href="/assets/chunks/framework.js">
@@ -91,7 +88,7 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertTrue(text.endswith("The last word."))
 
     def test_images_stay_in_place_with_their_real_address(self):
-        # anthropic.com/news/2026-us-midterms: 3 charts through Next.js's /_next/image?url=…, in <div>s.
+        # charts through Next.js's /_next/image?url=…, in <div>s
         cdn = "https://www-cdn.anthropic.com/images/chart.png"
         next_src = "/_next/image?url=" + urllib.parse.quote(cdn, safe="") + "&amp;w=3840&amp;q=75"
         page = ("<html><body><main>" + PARAGRAPHS
@@ -107,12 +104,11 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertNotIn("pixel.gif", html)
         self.assertNotIn("srcset", html)
         self.assertLess(html.index("A chart"), html.index("Between the charts."))
-        # Without a base, a relative image can't be fetched, so it goes.
+        # without a base a relative image can't be fetched, so it goes
         self.assertNotIn("local.jpg", parsing.extract_article_html(page))
 
     def test_component_parts_named_share_or_meta_are_chrome_but_a_share_wrapper_is_not(self):
-        # blog.google's "article-share__title", 9to5google's "article__meta-guides" (2026-10-28);
-        # NVIDIA wraps whole articles in "has-highlight-and-share", which must stay.
+        # share and meta-guide parts go; a "has-highlight-and-share" wrapper around a whole article must stay
         page = ('<html><body><main><div class="article-share__title"><p>Share x.com Facebook LinkedIn</p></div>'
                 '<ul class="article__meta-guides"><li class="meta__guide">Samsung</li></ul>'
                 f'<div class="has-highlight-and-share">{PARAGRAPHS}</div></main></body></html>')
@@ -122,15 +118,14 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertIn("Paragraph 11 of what the author wrote", text)
 
     def test_a_hero_meta_wrapper_keeps_the_articles_subtitle(self):
-        # blog.google puts the standfirst in "uni-article-hero__meta-wrapper"; a "meta" part alone
-        # is no list of tags (the before/after check on 48 pages, 2026-10-28).
+        # a standfirst in a "meta-wrapper" stays: a "meta" part alone is no list of tags
         page = ('<html><body><main><div class="uni-article-hero__meta-wrapper"><p class="uni-article-hero__abstract">'
                 'Now, we are expanding alerts to more places and adding new details.</p></div>'
                 f'{PARAGRAPHS}</main></body></html>')
         self.assertIn("expanding alerts to more places", _text(page))
 
     def test_a_table_of_contents_is_not_the_article(self):
-        # anthropic.com: a sticky "Chapter 01: Connecting people to trusted sources" menu.
+        # a sticky chapter menu
         page = ('<html><body><main><div class="StickyTableOfContents-module__Trigger"><p>Chapter 01: '
                 'Connecting people</p></div><div class="toc"><p>Contents</p></div>' + PARAGRAPHS
                 + "</main></body></html>")
@@ -139,7 +134,7 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertNotIn("Contents", text)
 
     def test_a_small_article_card_does_not_hide_the_main_text(self):
-        # deepmind.google: three <article> cards of 4-12 words, the 1,080-word post in <main>.
+        # three short <article> cards, the long post in <main>
         body = "".join(f"<p>Paragraph {n} of the real post, long enough to read as an article.</p>" for n in range(12))
         page = ('<html><body><section><article><h3><a href="/blog/x">Related post</a></h3></article></section>'
                 f'<main><h1>SynthID</h1>{body}</main></body></html>')
@@ -148,8 +143,7 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertNotIn("Related post", text)
 
     def test_a_short_article_is_not_replaced_by_the_whole_page(self):
-        # A matched candidate too short to be the article is no article: the body (here a long
-        # list of other posts) is read only when no candidate matched at all.
+        # a matched candidate too short to be the article is no article: the body is read only when none matched
         short = "<p>" + ("A short post of a few words. " * 9)[:254] + "</p>"
         others = "".join(f"<li><a href='/p/{n}'>Another post of this site, number {n}, worth reading</a></li>"
                          for n in range(20))
@@ -158,14 +152,14 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertIn("Paragraph 11", _text(f"<html><body><section>{PARAGRAPHS}</section></body></html>"))
 
     def test_a_themes_tag_list_goes_but_wordpress_article_classes_stay(self):
-        # The NVIDIA blog's shape: WordPress classes on <article>, a plugin wrapper, a tag list.
+        # WordPress classes on <article>, a plugin wrapper, a tag list
         page = ('<article class="post category-ai tag-agents"><div class="has-highlight-and-share">'
                 f'{PARAGRAPHS}</div><div class="nvidia-tags"><ul><li>Tags:</li><li>Agentic AI</li></ul></div>'
                 '<div class="nvidia-categories"><p>Categories: AI</p></div></article>')
         self.assertEqual(_text(page), parsing.strip_html(PARAGRAPHS))
 
     def test_a_chrome_name_never_drops_most_of_the_page_text(self):
-        # devblogs.microsoft.com: the post sits in "entry-content sharepostcontent" (issue 0032).
+        # the post in "entry-content sharepostcontent"
         page = ('<html><body><aside class="post-sidebar"><p>Contents</p></aside><article>'
                 f'<div class="entry-content sharepostcontent">{PARAGRAPHS}'
                 '<ul class="share-buttons"><li>Share on Facebook</li></ul></div>'
@@ -174,7 +168,7 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertEqual(text, parsing.strip_html(PARAGRAPHS))
 
     def test_a_tag_whose_attribute_holds_a_closing_bracket_is_one_tag(self):
-        # huggingface.co: Tailwind's class="max-md:[&>a]:hidden" on the <h1>.
+        # Tailwind's class="max-md:[&>a]:hidden" on the <h1>
         page = (f'<article><h1 class="group max-md:[&>a]:hidden">The title</h1>{PARAGRAPHS}'
                 '<img class="[&>b]:x" src="https://cdn.example/figure.png" alt="A figure"></article>')
         html = parsing.extract_article_html(page)
@@ -183,7 +177,7 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertIn('<img src="https://cdn.example/figure.png" alt="A figure">', html)
 
     def test_code_blocks_and_captions_are_kept(self):
-        # fastapi.tiangolo.com and huggingface.co code; theguardian.com galleries are captions.
+        # code blocks; gallery captions
         page = (f"<article>{PARAGRAPHS}<pre><code>from fastapi import FastAPI</code></pre>"
                 '<figure><img src="https://cdn.example/a.jpg" alt=""><figcaption>The captain bats.</figcaption></figure>'
                 "</article>")
@@ -192,8 +186,7 @@ class ArticleExtractionTests(unittest.TestCase):
             self.assertIn(kept, text)
 
     def test_a_data_table_is_kept_as_a_table_without_its_styles(self):
-        # gwern.net/spaced-repetition's comparison table read "Metric / Mnemosyne / Anki / …" as
-        # loose paragraphs, and a cell with no <p> was lost (issue 0042).
+        # a comparison table is kept as a table, and a cell with no <p> is not lost
         page = (f'<article>{PARAGRAPHS}<div class="table-small"><table class="wide" style="width:100%">'
                 '<colgroup><col style="width:30%"></colgroup><caption>As of 2011</caption>'
                 '<thead><tr class="header"><th style="text-align: center;"><p>Metric</p></th><th>Anki</th></tr></thead>'
@@ -223,8 +216,7 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertNotIn("<td><p>", html)
 
     def test_a_figure_keeps_its_image_and_caption_together(self):
-        # gwern.net, lilianweng.github.io: <figure> wrappers were dropped, the image and the
-        # caption kept as two loose blocks. A figure left with nothing it can keep goes.
+        # <figure> wrappers are kept with their image and caption; a figure left with nothing it can keep goes
         page = (f'<article>{PARAGRAPHS}<figure class="wp-block-image" style="margin:0"><a href="/full.png"><picture>'
                 '<source srcset="/a.webp"><img src="https://cdn.example/a.png" alt="A chart"></picture></a>'
                 '<figure><figcaption class="caption"><p>Fig. 1. <em>Retention</em> over time.</p></figcaption></figure>'
@@ -236,9 +228,8 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertTrue(html.endswith("</figure>"), html[-80:])
 
     def test_a_heading_with_nothing_under_it_goes(self):
-        # gwern.net ends every page with "Backlinks", "Similar Links" and "Bibliography": section
-        # titles whose content a script fills in. A title over a same-level subtitle (gov.uk) or
-        # over a note's title (the PostgreSQL docs) stays: something follows before a higher heading.
+        # section titles a script fills in ("Backlinks", "Bibliography") go; a title over a same-level subtitle or
+        # over a note's title stays: something follows before a higher heading
         page = ("<article><h1>Income Tax rates</h1><h1>Current rates</h1><h2>Bands</h2>"
                 f"<h3>Serial Types</h3><h3>Note</h3>{PARAGRAPHS}<h3>Empty</h3><h2>Popularity</h2><p>As of 2011.</p>"
                 "<h1>Backlinks</h1><h1>Similar Links</h1><h1>Bibliography</h1><h2>Nothing</h2></article>")
@@ -269,8 +260,7 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertEqual(_text(page), parsing.strip_html(PARAGRAPHS))
 
     def test_an_articles_header_keeps_its_cover_and_an_author_box_goes(self):
-        # anthropic.com and blogs.nvidia.com put the cover in the article's <header>; Ars Technica
-        # ends with an "author-mini-bio" box, 9to5google and GitHub with an "author-bio".
+        # a cover in the article's <header>; author bio boxes at the end
         page = ('<html><body><header><img src="https://cdn.example/logo.png" alt="Logo"></header><article>'
                 '<header><h1>Title</h1><p>Published Oct 14</p><img src="https://cdn.example/cover.jpg" alt="Cover"></header>'
                 f'{PARAGRAPHS}<div class="author-mini-bio"><img src="https://cdn.example/headshot.jpg" alt="">'
@@ -287,10 +277,8 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertIn('<img src="https://cdn.example/lazy-800.jpg" alt="Lazy">', parsing.extract_article_html(page))
 
     def test_the_reading_fidelity_counts_the_articles_images_and_what_was_kept(self):
-        # Related cards dropped as chrome never count (blogs.nvidia.com); an image with an
-        # address the reader can't fetch (relative, with no base) counts as lost; a data:
-        # placeholder with no address is no image. A short first sentence is the hint (a label
-        # like "Share:" is no longer left in: the edge rule drops it).
+        # Related cards dropped as chrome never count; an image the reader can't fetch (relative, no base) counts as
+        # lost; a data: placeholder with no address is no image. A short first sentence is the hint.
         page = (f'<article><p>Read on, then.</p>{PARAGRAPHS}<img src="/a.jpg"><img src="/b.jpg"><img src="/c.jpg">'
                 '<img src="https://cdn.example/d.jpg"><img src="data:image/gif;base64,R0lG">'
                 '<div class="related-news-section"><img src="https://cdn.example/card.jpg"></div></article>')
@@ -305,7 +293,7 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertEqual(parsing.read_article_page("<p>Nothing</p>"), ("", {}))
 
     def test_without_an_article_element_the_block_with_the_paragraphs_is_read(self):
-        # ai.meta.com: no <article> or <main>; menus, the post and a footer in plain <div>s.
+        # no <article> or <main>: menus, the post and a footer in plain <div>s
         page = ("<html><body><div><ul><li>Products</li><li>AI Research</li><li>Try Muse</li></ul></div>"
                 f'<div class="x1"><div class="_a5"><h1>From brain waves to words</h1>{PARAGRAPHS}</div></div>'
                 "<div><p>Resources</p><p>Meta © 2026</p></div></body></html>")
@@ -325,17 +313,17 @@ SENTENCES = " ".join(f"Sentence {n} of a paragraph the author wrote with no tag 
 
 
 class ReaderGapsTests(unittest.TestCase):
-    """Issue 0053: the classes of page the reader missed, each as small as it can be."""
+    """The classes of page the reader missed, each as small as it can be (0053)."""
 
     def test_loose_text_broken_by_double_brs_is_read_as_paragraphs(self):
-        # paulgraham.com: a layout table, one cell, a <font> around everything, <br><br> breaks.
+        # a layout table, one cell, a <font> around everything, <br><br> breaks
         page = ('<html><body><table><tr><td><img src="nav.gif" width="69" height="357"></td>'
                 '<td><font size="2" face="verdana">July 2023<br /><br />'
                 f'{SENTENCES}<br /><br />{SENTENCES} <a href="#f1n"><font>1</font></a><br /><br /></font></td></tr></table></body></html>')
         html = parsing.extract_article_html(page)
         self.assertEqual(html.count(f"<p>{SENTENCES}"), 2, html)
         self.assertNotIn("<font size", html)
-        # incompleteideas.net: the same, straight in <body> under its headings.
+        # the same, straight in <body> under its headings
         page = f"<html><body><span><h1>The Bitter Lesson<br></h1>{SENTENCES}<br>\n<br>{SENTENCES}<br>\n<br></span></body></html>"
         self.assertEqual(parsing.extract_article_html(page).count("<p>Sentence 0"), 2)
 
@@ -347,7 +335,7 @@ class ReaderGapsTests(unittest.TestCase):
         self.assertNotIn("Springfield", text)
 
     def test_a_lone_code_element_is_a_code_block(self):
-        # fasterthanli.me: <figure><code> with highlighting tags and no <pre>.
+        # <figure><code> with highlighting tags and no <pre>
         page = (f'<article>{PARAGRAPHS}<figure class="code-block"><span class="language-tag"></span>'
                 '<code class="scroll-wrapper"><a-k>package</a-k> main\n\n<a-k>func</a-k> main() {}\n</code></figure>'
                 '<p>Run <code>go build</code> first, then a one-liner:</p><div><code>make all</code></div></article>')
@@ -358,7 +346,7 @@ class ReaderGapsTests(unittest.TestCase):
         self.assertEqual(html.count("<pre>"), 1)                         # one line outside a figure is no block
 
     def test_chrome_before_the_first_paragraph_goes_but_the_cover_stays(self):
-        # mistral.ai: an eyebrow, the title again, a date, "Back to Blog", a read time.
+        # an eyebrow, the title again, a date, "Back to Blog", a read time
         page = ('<html><head><title>Build agents | Mistral AI</title></head><body><article>'
                 '<p>Product</p><h1>Build agents</h1><p>May 27, 2025</p><p><a href="/news">Back to Blog</a></p>'
                 '<p>5 min read</p><figure><img src="https://cdn.example/cover.jpg" alt="Cover"></figure>'
@@ -372,13 +360,13 @@ class ReaderGapsTests(unittest.TestCase):
         self.assertTrue(text.strip().endswith("check out our docs ."), text[-60:])
 
     def test_a_link_to_another_site_opens_a_link_post(self):
-        # simonwillison.net: the post's subject, linked, comes first; it is the post's own.
+        # the post's subject, linked, comes first; it is the post's own
         page = (f'<article><p><a href="https://doomql.example/">DOOMQL</a> (<a href="https://x.example/via">via</a>)</p>'
                 f'{PARAGRAPHS}</article>')
         self.assertTrue(_text(page).startswith("DOOMQL ( via )"))
 
     def test_a_tail_of_related_links_goes_with_its_labels(self):
-        # 9to5google, techcrunch, tomsguide: "More on …" lists and related cards end the post.
+        # "More on …" lists and related cards end the post
         related = "".join(f'<li><a href="https://news.example/2026/{n}/">Another story number {n} from us</a></li>'
                           for n in range(3))
         page = (f'<article>{PARAGRAPHS}<h2>More on Nest:</h2><ul>{related}</ul>'
@@ -386,7 +374,7 @@ class ReaderGapsTests(unittest.TestCase):
         text = _text(page)
         self.assertTrue(text.endswith(parsing.strip_html(PARAGRAPHS)[-30:]), text[-80:])
         self.assertNotIn("More on Nest", text)
-        # Cards: a link around a picture and a title, an excerpt under it (github.blog, huggingface.co).
+        # cards: a link around a picture and a title, an excerpt under it
         cards = "".join(f'<a href="/blog/post-{n}"><img src="https://cdn.example/{n}.jpg" alt=""><h3>Post {n}</h3></a>'
                         f"<p>The excerpt of post {n}, a sentence or two long.</p>" for n in range(3))
         page = f'<main><article>{PARAGRAPHS}</article><h2>Related posts</h2>{cards}</main>'
@@ -396,8 +384,8 @@ class ReaderGapsTests(unittest.TestCase):
         self.assertNotIn("excerpt", html)
 
     def test_an_articles_own_closing_links_and_references_stay(self):
-        # nvidia: one closing link line; lilianweng: references that are mostly a linked title;
-        # vuzix: a whole sentence linking to another site; fabiensanglard: notes in a table.
+        # one closing link line; references that are mostly a linked title; a whole sentence linking to another
+        # site; notes in a table
         refs = "".join(f'<p>[{n}] Author et al. <a href="https://arxiv.org/abs/{n}">“A Paper Title {n}.”</a> ICLR 2020.</p>'
                        for n in range(3))
         page = (f'<article>{PARAGRAPHS}<p>Watch the keynote <a href="https://www.example.com/k">in replay</a>.</p>{refs}'
@@ -410,7 +398,7 @@ class ReaderGapsTests(unittest.TestCase):
         self.assertNotIn("See All Posts", text)
 
     def test_notes_after_the_article_are_read(self):
-        # blog.google: the footnotes follow the <article>, linked from its superscripts.
+        # footnotes after the <article>, linked from its superscripts
         page = (f'<main><article>{PARAGRAPHS}<p>A claim.<sup><a href="#footnote-1">1</a></sup></p></article>'
                 '<div id="footnote-1"><a href="#footnote-source-1">1</a><p>The source of the claim.</p></div>'
                 '<div id="comments"><p>A reader wrote this.</p></div></main>')
@@ -419,7 +407,7 @@ class ReaderGapsTests(unittest.TestCase):
         self.assertNotIn("A reader wrote", text)
 
     def test_a_chrome_name_around_the_article_does_not_drop_it(self):
-        # lesswrong.com: the post inside "MultiToCLayout-tableOfContents", comments outweighing it.
+        # the post inside a table-of-contents layout, comments outweighing it
         comments = "".join(f"<p>Comment {n}: {SENTENCES}</p>" for n in range(4))
         page = (f'<body><div class="Layout-tableOfContents"><div class="PostsPage-postContent instapaper_body">'
                 f'{PARAGRAPHS}</div></div><div class="CommentsListSection-root">{comments}</div></body>')
@@ -448,7 +436,7 @@ class ReaderGapsTests(unittest.TestCase):
 
 
 class HiddenLinkLabelTests(unittest.TestCase):
-    """Issue 0063: a link's label for screen readers stays out of the text; other hidden text stays."""
+    """A link's label for screen readers stays out of the text; other hidden text stays (0063)."""
 
     def _text(self, inner: str) -> str:
         page = f"<article>{PARAGRAPHS}<p>{inner}</p></article>"
@@ -490,8 +478,7 @@ HALF = PARAGRAPHS[:PARAGRAPHS.index("<p>Paragraph 6")]
 
 
 class PictureListTests(unittest.TestCase):
-    """Issue 0072: a run of list items, each only a picture linking to a page, is no part of the
-    article (a blog's 6-22 upvoter avatars before its words), by shape, wherever it sits."""
+    """A run of list items, each only a picture linking to a page, is no part of the article (0072)."""
 
     def _read(self, middle: str, title: str = "A post") -> str:
         page = (f'<html><head><title>{title} | Blog</title></head><body><article>'
@@ -527,7 +514,7 @@ class GenericRssFullPageTests(unittest.IsolatedAsyncioTestCase):
         [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
         self.assertIn("Every paragraph of the article", post["content"])
         self.assertTrue(post["metadata"][FULL_TEXT_FLAG])
-        # How well the page was read (issue 0032).
+        # how well the page was read
         self.assertEqual(post["metadata"][PAGE_READ_KEY], {"page_images": 0, "kept_images": 0,
                                                           "text_chars": len(post["content"]), "short_opening": False})
         self.assertEqual(full_text.pages_losing_images([post]), (1, 0))
@@ -582,14 +569,14 @@ class GenericRssFullPageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(post["content"], _text(_article()))
 
     async def test_an_undated_post_takes_the_date_its_page_states(self):
-        # Issue 0070: a feed without dates (Google Developers Blog's) is dated by its pages.
+        # a feed without dates is dated by its pages (0070)
         dated = '<html><head><meta property="article:published_time" content="2026-10-29T16:00:00Z"></head>'
         undated_feed = ('<rss version="2.0"><channel><item><title>A</title><link>https://news.example.com/a</link>'
                         '<description>Short summary.</description></item></channel></rss>')
         http = FakeHttp({FEED_URL: undated_feed, "https://news.example.com/a": dated + _article()[6:]})
         [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
         self.assertEqual(post["date"], datetime(2026, 10, 29, 16, tzinfo=timezone.utc))
-        # The feed's own date stands.
+        # the feed's own date stands
         http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "Short summary.")),
                          "https://news.example.com/a": dated + _article()[6:]})
         [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
@@ -623,7 +610,7 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
 
     def _upsert(self, post: dict, source_id: str | None = None) -> str:
         with psycopg.connect(self.url) as conn, conn.cursor() as cur:
-            # One title per post: one source's same title and body is one post (issue 0070).
+            # one title per post: one source's same title and body is one post (0070)
             post_id, _ = self.repo.upsert_post(cur, {"title": f"T {post['url']}", "date": None, **post},
                                                source_id or self.source_id)
             conn.commit()
@@ -681,7 +668,7 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(again["candidates"], 0)
 
     async def test_repair_dates_an_undated_teaser_by_its_page(self):
-        # Issue 0070: it then sorts at its date, no longer where its first fetch placed it.
+        # it then sorts at its date, no longer where its first fetch placed it
         url = "https://news.example.com/undated"
         post_id = self._upsert({"url": url, "content": "Short summary."})
         with psycopg.connect(self.url) as conn, conn.cursor() as cur:
@@ -705,7 +692,7 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self._repair(FakeHttp(), retry=True, dry_run=True))["to_read"], 1)
 
     async def test_repair_counts_each_read_so_a_failed_one_is_retried_by_the_fetches(self):
-        # Issue 0069: posts stored before 0062 carry no count; the repair's reads count as a fetch's.
+        # posts stored with no count: the repair's reads count as a fetch's (0069)
         read, short, failed = (f"https://news.example.com/{n}" for n in ("read", "short", "failed"))
         ids = {url: self._upsert({"url": url, "content": "Short summary."}) for url in (read, short, failed)}
         await self._repair(FakeHttp({read: _article(), short: _article("Tiny."),
@@ -761,7 +748,7 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metadata["audience"], "everyone")
 
     async def test_a_paid_teaser_is_read_again_however_long(self):
-        # Substack's free opening of a paid post can run past SHORT_BODY_CHARS (kaitchup: 1,614).
+        # a paid post's free opening can run past SHORT_BODY_CHARS
         teaser = "The free opening of a paid post. " * 60
         self._upsert({"url": "https://test.invalid/p/paid", "content": teaser,
                       "metadata": {"audience": "only_paid", "paywalled": True}}, self.substack_id)
