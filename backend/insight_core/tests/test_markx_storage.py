@@ -20,7 +20,7 @@ from insight_core.markx import repo
 from insight_core.tests._db import db_url, requires_db
 
 MIGRATION = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0068_markx_shadow.sql"
-TABLES = {"mx_questions", "mx_guides", "mx_tasks", "mx_calls", "mx_readings", "mx_mentions", "mx_embeddings", "mx_candidates",
+TABLES = {"mx_track_field_dismissals", "mx_questions", "mx_guides", "mx_tasks", "mx_calls", "mx_readings", "mx_mentions", "mx_embeddings", "mx_candidates",
           "mx_runs", "mx_stories", "mx_story_posts", "mx_connections", "mx_news", "mx_briefings", "mx_labels"}
 
 
@@ -127,7 +127,7 @@ class MigrationTests(_Rollback):
         """Idempotent like every migration here: a second run on a migrated database is a no-op."""
         self.cur.execute(MIGRATION.read_text(encoding="utf-8"))
         self.cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE 'mx\\_%' AND relkind = 'r'")
-        self.assertEqual(self.cur.fetchone()[0], 101)      # 0171 one (0275); 0163 four (0245); 0158 one (0232); 0156 one (0222); 0153 one (0217); 0147 two, 0148 two, 0150 drops two (v10.22); 0143 one; 0141 two; 0140 three; 0138 four; 0137 one; 0136 one; 0134 two; 0133 three; 0132 two; 0125 two; 0124 two; 0123 four; 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0106 four, 0107 three, 0108 one, 0110 one, 0112 four, 0113 five, 0116 one, 0117 two, 0118 one
+        self.assertEqual(self.cur.fetchone()[0], 102)      # 0173 one (v10.41); 0171 one (0275); 0163 four (0245); 0158 one (0232); 0156 one (0222); 0153 one (0217); 0147 two, 0148 two, 0150 drops two (v10.22); 0143 one; 0141 two; 0140 three; 0138 four; 0137 one; 0136 one; 0134 two; 0133 three; 0132 two; 0125 two; 0124 two; 0123 four; 0069 adds mx_settings, 0070 mx_jobs, mx_candidate_posts, mx_workers, 0072 seven, 0074 two, 0082 one, 0085 one, 0089 one, 0090 one, 0092 three, 0093 three, 0094 two, 0102 two, 0104 one, 0106 four, 0107 three, 0108 one, 0110 one, 0112 four, 0113 five, 0116 one, 0117 two, 0118 one
 
     def test_only_the_names_vectors_have_an_hnsw_cosine_index(self):
         """0149 (v10.22): the posts' vectors lost theirs (nothing ordered by it); the names' keep theirs
