@@ -552,17 +552,16 @@ def _posts(cur: Any, ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
 def launch_order(facts: Dict[str, Dict[str, Any]], weight: Optional[Dict[str, int]] = None) -> List[str]:
     """0236: the stories a row's headline is taken from, in order, by the owner's rule (a release is named by its
     launch, never by a leak): those holding the maker's own post, then the others of a news type; a story of leaks
-    never. In each, v10.31.1 (0268): a release first (grouping.RELEASES: the launch is the release itself, never a
+    never. In each, v10.31.1 (0268): a release first (event_types.RELEASES: the launch is the release itself, never a
     result the maker announced alongside it, as a research result of the same day), then the story holding most of
     the row's voices (`weight`: {story: its voices in the row}; main_story's rule), then the newest (its release).
     `facts`: {story: {maker, type, at}} (`_story_facts`). Pure."""
     from insight_core.markx import event_types
-    from insight_core.utils.grouping import RELEASES
     floor = datetime.min.replace(tzinfo=timezone.utc)
     weight = weight or {}
 
     def ordered(sids: Iterable[str]) -> List[str]:
-        return sorted(sids, key=lambda s: (facts[s].get("type") in RELEASES, weight.get(s, 0),
+        return sorted(sids, key=lambda s: (facts[s].get("type") in event_types.RELEASES, weight.get(s, 0),
                                            facts[s].get("at") or floor, s), reverse=True)
     makers = [s for s, f in facts.items() if f.get("maker") and f.get("type") != event_types.LEAK]
     news_ = [s for s, f in facts.items() if s not in makers and f.get("type") in event_types.NEWS_TYPES]

@@ -355,8 +355,7 @@ def main_name(story: Story, found: Sequence[Surge]) -> Optional[str]:
 
 
 def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge], *,
-         judged: Optional[Iterable[FrozenSet[str]]] = None, grouped: Optional[Any] = None,
-         releases: Optional[Any] = None) -> List[NewsStory]:
+         judged: Optional[Iterable[FrozenSet[str]]] = None) -> List[NewsStory]:
     """0050's stories joined by the surging names, those with 2+ voices, first first.
 
     A row grows only by what holds against each story's core (0203: one Mark X row chained 57 stories, 397 posts,
@@ -367,15 +366,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     chain's one-happening edges) two stories of any size are joined by a name only when the judge connected them too
     (v10.40: a name alone joined whole small stories into a release row, the GTA VI city built with GPT-6.2 and a
     pricing change into GPT-6.2's launch; a post of no story still joins by its name alone); None (Mark IX: no judge),
-    small stories by a name, large ones by their main names alone.
-
-    `grouped` (0217, a grouping.Evidence): which stories are one row is decided by utils/grouping.py, every join
-    checked against each story's core, the judge's verdicts building and blocking, one release of one exact thing one
-    row; the name guards above are then grouping's admission, not this function's. None: the guards above.
-
-    `releases` (0217's narrow arm, a grouping.Evidence): the guards above, and the owner's release rule on top: the
-    stories and posts of no story about one release of one exact thing (grouping.releases: its stages within the
-    policy's span, its other lines near a stage) are one row."""
+    small stories by a name, large ones by their main names alone."""
     by_id = {p.id: p for p in posts}
     # 0205: the rows depend on the inputs only, never on their order or on which stories a pass hands in first (the
     # incremental job reads its stories by id and their posts in no time order; the full job in its own order)
@@ -447,19 +438,8 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         story = story_of.get(pid)
         return story is None or any(f" {c} " in f" {name} " for c in cores.get(story.id, ()))
 
-    if grouped is not None:
-        root = _grouped(posts, stories, found, story_of, cores, mains, grouped, first_said, nested)
-        find = root.__getitem__
-    else:
-        find = uf.find
-    if releases is not None and grouped is None:
-        from insight_core.utils import grouping
-        items, _ = _items(posts, stories, found, story_of, cores, mains, releases, first_said, nested)
-        for a, b in grouping.releases(items, releases.policy):
-            uf.union(a[4:] if a.startswith("one:") else a, b[4:] if b.startswith("one:") else b)
-        large.clear(), held.clear()   # the guards read their groups by root: by the roots after the release joins
-        _held(stories, uf, large, held)
-    for surge in (found if grouped is None else ()):
+    find = uf.find
+    for surge in found:
         members = sorted((pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)
                           and holds(pid, surge.name)), key=lambda pid: (by_id[pid].t, pid))
         held_by[surge.name, surge.at] = members
@@ -477,14 +457,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     for surge in found:
         said = sorted((pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)),
                       key=lambda pid: (by_id[pid].t, pid))
-        if grouped is None:
-            reached_rows = {find(pid) for pid in held_by[surge.name, surge.at]}
-        else:   # the rows where the name says two or more of its posts' core (grouping admitted it there)
-            seen = defaultdict(int)
-            for pid in said:
-                if holds(pid, surge.name):
-                    seen[find(pid)] += 1
-            reached_rows = {r for r, n in seen.items() if n >= 2}
+        reached_rows = {find(pid) for pid in held_by[surge.name, surge.at]}
         for pid in said:
             if find(pid) in reached_rows:
                 joined_by.setdefault(pid, surge.name)
@@ -523,61 +496,6 @@ def _held(stories: Sequence[Story], uf: _UnionFind, large: Dict[str, Set[str]], 
         held.setdefault(root, set()).add(story.id)
         if len(story.posts) >= LARGE_POSTS:
             large.setdefault(root, set()).add(story.id)
-
-
-def _grouped(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
-             story_of: Dict[str, Story], cores: Dict[str, Set[str]], mains: Dict[str, Optional[str]], evidence: Any,
-             first_said: Any, nested: Any) -> Dict[str, str]:
-    """{post: its row's key} by utils/grouping.py (0217): the stories (sorted by id) and each post of no story as an
-    item; each surge's name an edge between every two items whose posts say it first; a post in two stories a rule
-    edge (an attachment, never a bridge); the judge's story verdicts as given. A post in several stories is in its
-    first story's row (as the guards')."""
-    from insight_core.utils import grouping
-    items, by_id = _items(posts, stories, found, story_of, cores, mains, evidence, first_said, nested)
-    ids = {s.id for s in stories}
-
-    def item_of(pid: str) -> str:
-        return story_of[pid].id if pid in story_of else f"one:{pid}"
-    edges: List[grouping.Edge] = []
-    for surge in found:
-        reached = sorted({item_of(pid) for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)})
-        edges += [grouping.Edge(a, b, "name", name=surge.name) for n, a in enumerate(reached) for b in reached[n + 1:]]
-    in_stories: Dict[str, List[str]] = defaultdict(list)
-    for s in stories:
-        for p in s.posts:
-            in_stories[p.id].append(s.id)
-    for pid, sids in sorted(in_stories.items()):
-        sids = sorted(set(sids))
-        edges += [grouping.Edge(a, b, "rule", "post") for n, a in enumerate(sids) for b in sids[n + 1:]]
-    edges += [e for e in evidence.judged if e.a in ids and e.b in ids]
-    got = grouping.group(items, edges, policy=evidence.policy)
-    return {p.id: got.group_of[item_of(p.id)] for p in posts}
-
-
-def _items(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
-           story_of: Dict[str, Story], cores: Dict[str, Set[str]], mains: Dict[str, Optional[str]], evidence: Any,
-           first_said: Any, nested: Any) -> Tuple[List[Any], Dict[str, StoryPost]]:
-    """grouping's items: each story, and each post of no story as "one:<post>" (its core names the surges it says)."""
-    from insight_core.utils import grouping
-    facts = evidence.posts
-    by_id = {p.id: p for p in posts}
-
-    def fact(p: StoryPost) -> "grouping.Post":
-        got = facts.get(p.id)
-        return got if got is not None else grouping.Post(p.id, p.t)
-    items: List[grouping.Item] = []
-    for s in stories:
-        items.append(grouping.Item(s.id, tuple(fact(p) for p in s.posts), voice.count(s.posts, voice.Policy.NEWS_IX),
-                                   frozenset(cores.get(s.id, ())), evidence.stories.get(s.id), mains.get(s.id)))
-    names_of: Dict[str, Set[str]] = defaultdict(set)
-    for surge in found:
-        for pid in surge.posts:
-            if pid in by_id and pid not in story_of and nested(surge.name, first_said(pid).name):
-                names_of[pid].add(surge.name)
-    for p in posts:
-        if p.id not in story_of:
-            items.append(grouping.Item(f"one:{p.id}", (fact(p),), 1, frozenset(names_of[p.id])))
-    return items, by_id
 
 
 def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = (), roundups: Iterable[str] = (),

@@ -87,6 +87,7 @@ TYPE_GROUPS: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
 # The type lists every consumer reads, each made here from the closed types (schemas.EVENT_TYPES; v10.17, 0190: they
 # were three hand-written copies in folds, event_types and Discover's main source).
 LEAK = "leak_rumour"              # a reported, unconfirmed happening
+RELEASES = frozenset({"model_release", "product_release"})   # a release itself (news.launch_order)
 NOT_HAPPENINGS = ("opinion_analysis", "tutorial_explainer", "digest", "community_post", "other")
 # A confirmed happening's types: what makes a story News (folds.story_type, built), in EVENT_TYPES' order.
 NEWS_TYPES: Tuple[str, ...] = tuple(t for t in schemas.EVENT_TYPES if t != LEAK and t not in NOT_HAPPENINGS)
