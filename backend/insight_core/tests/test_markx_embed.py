@@ -14,8 +14,10 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import psycopg
+
 from insight_core.markx import embed, jobs, repo, schemas, tasks
-from insight_core.tests._db import requires_test_db
+from insight_core.tests._db import db_url, requires_test_db
 from insight_core.tests.test_markx_api import _Api, call
 from insight_core.tests.test_markx_candidates import H, T0, _Cands
 
@@ -325,6 +327,44 @@ class Uploads(_Embed):
         status, body = self.upload((b, unit((1, 1.0))), build=OTHER_BUILD)
         self.assertEqual(status, 409)
         self.assertIn(BUILD, body["detail"])
+        self.assertEqual(self.row(b)["status"], "open")
+        self.assertEqual(repo.embedding_builds(self.cur, "bge-m3"), {BUILD: 1})
+
+    def _upload_aside(self, *rows, build=BUILD):
+        """An upload in a thread (the route opens its own connection): the thread and its result."""
+        import threading
+        result = {}
+        thread = threading.Thread(target=lambda: result.update(answer=self.upload(*rows, build=build)), daemon=True)
+        thread.start()
+        return thread, result
+
+    def test_once_the_build_is_stored_an_upload_takes_no_build_lock(self):
+        # v10.38: the lock was held through the whole upload (the vectors' and the names' HNSW inserts), so the
+        # worker's uploads queued behind each other; a transaction holding it stands for an upload still storing
+        a, b = self.embed_task(), self.embed_task()
+        self.upload((a, unit((0, 1.0))))
+        with psycopg.connect(db_url()) as other:
+            other.execute("SELECT pg_advisory_xact_lock(%s)", (embed.BUILD_LOCK,))
+            thread, result = self._upload_aside((b, unit((1, 1.0))))
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive(), "the upload waited on the build lock")
+            other.rollback()
+        self.assertEqual(result["answer"], (200, {"stored": 1, "invalid": [], "repeated": 0}))
+
+    def test_the_first_build_is_still_decided_one_upload_at_a_time(self):
+        # a database of no vector: an upload of one build, not yet committed, holds the lock; another build's
+        # upload waits for it, then sees its vectors and is refused (as before v10.38)
+        a, b = self.embed_task(), self.embed_task()
+        with psycopg.connect(db_url()) as first:
+            with first.cursor() as cur:
+                embed.store(cur, model="bge-m3", model_sha256=BUILD,
+                            vectors=[{"task_id": str(a), "vector": embed.encode(unit((0, 1.0)))}])
+            thread, result = self._upload_aside((b, unit((1, 1.0))), build=OTHER_BUILD)
+            thread.join(timeout=1)
+            self.assertTrue(thread.is_alive(), "the other build's upload did not wait for the first")
+            first.commit()
+        thread.join(timeout=10)
+        self.assertEqual(result["answer"][0], 409)
         self.assertEqual(self.row(b)["status"], "open")
         self.assertEqual(repo.embedding_builds(self.cur, "bge-m3"), {BUILD: 1})
 

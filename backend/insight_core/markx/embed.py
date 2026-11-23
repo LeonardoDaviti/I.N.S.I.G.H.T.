@@ -356,7 +356,14 @@ def decode(text: Any) -> List[float]:
 
 
 def check_build(cur: Cursor, model: str, model_sha256: str) -> None:
-    """One embedder build per database: BuildMismatch when vectors of another build are stored under `model`."""
+    """One embedder build per database: BuildMismatch when vectors of another build are stored under `model`.
+    The lock decides the first build: two uploads of different builds into a database of none would each see
+    none and both store. It is taken only then (v10.38): once this build's vectors are committed and no other's,
+    an upload of another build sees them and is refused, and uploads of this build need no order, so the upload
+    runs unlocked (the lock is a transaction's: taken, it was held through every vector's insert, the entity
+    names' HNSW insert too, and the worker's uploads queued behind each other, 6-9 s each, production 2026-11-23)."""
+    if set(repo.embedding_builds(cur, model)) == {model_sha256}:
+        return
     cur.execute("SELECT pg_advisory_xact_lock(%s)", (BUILD_LOCK,))
     others = {sha: n for sha, n in repo.embedding_builds(cur, model).items() if sha != model_sha256}
     if others:
