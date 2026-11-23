@@ -250,7 +250,9 @@ class StoredAndRead(_Db):
         self.assertIn("Kestrel Report", names(posts[p]))
         data = source_stats.load(self.cur, T0 + H)
         self.assertNotIn("Word Corp", names(data.mentions.get(p, [])))
-        self.assertIn("Kestrel Report", names(data.mentions.get(p, [])))
+        # v10.38: source_stats reads only the roles the role rule reads (SELF_ROLES, MAKER_ROLES): a "source" mention
+        # of the current set is not loaded there (load_reads above reads it)
+        self.assertNotIn("Kestrel Report", names(data.mentions.get(p, [])))
 
     def test_an_empty_newer_answer_is_current_too(self):
         p = self.post(0, T0)
