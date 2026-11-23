@@ -143,6 +143,19 @@ class Row(unittest.TestCase):
         self.switch = dict(OFF)
         self.assertEqual(len(self.rows(stories)), 3)
 
+    def test_a_leak_begun_before_the_window_never_takes_its_launch_out_of_it(self):
+        # v10.39: the window starts between the leak (hour 0) and the launch (hour 4): the leak story is a row of an
+        # earlier window, the launch story is this window's row (a row begun by the leak was no row of it, and the
+        # launch went with it: Gemini 4 Carbon, Mistral Large 4 out of News)
+        stories, (sl, sm, sr), (leak, launch, rival) = self.case()
+        first = {}
+        rows = N.rows_of(self.cur, stories, T + 3.5 * H, window=set(), first=first)
+        self.assertEqual([[p["post_id"] for p in r["posts"]] for r in rows if r["id"] == launch[0]], [launch])
+        self.assertFalse(any(p["post_id"] in leak for r in rows for p in r["posts"]))
+        self.assertEqual(first[sm], T + 4 * H)
+        # the window before the leak: one row, as before
+        self.assertEqual(len(N.rows_of(self.cur, stories, T - 24 * H, window=set())), 2)
+
     def test_the_joined_row_is_named_by_the_launch(self):
         stories, (sl, sm, sr), (leak, launch, rival) = self.case()
         row = next(r for r in self.rows(stories) if r["id"] == leak[0])
