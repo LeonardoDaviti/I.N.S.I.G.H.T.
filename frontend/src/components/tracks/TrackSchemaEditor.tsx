@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
-  briefApi, PRACTICE_KIND, type ThingFieldDef, type ThingFieldType, type ThingKindDef, type TrackSchemaView,
+  briefApi, OWNER_FIELDS, PRACTICE_KIND, type ThingFieldDef, type ThingFieldType, type ThingKindDef, type TrackSchemaView,
 } from '../../services/tracks';
 import { Button, Input, Select } from '../ui';
 import { errorMessage } from '../../lib/apiError';
@@ -93,7 +93,7 @@ export default function TrackSchemaEditor({ trackId }: { trackId: string }) {
               </li>
             ))}
           </ul>
-          {k.fields.length < 8 ? <AddField kind={k.kind} onAdd={(f) => edit(k.kind, [...k.fields, f])} /> : null}
+          {k.fields.length < OWNER_FIELDS ? <AddField kind={k.kind} onAdd={(f) => edit(k.kind, [...k.fields, f])} /> : null}
         </div>
       ))}
       {practice ? (

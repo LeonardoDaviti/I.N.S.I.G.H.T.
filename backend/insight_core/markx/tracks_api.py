@@ -16,6 +16,9 @@ GET  /api/markx/tracks/{id}/schema               the track's kinds and fields (0
 PUT  /api/markx/tracks/{id}/schema               {kinds} the owner's, a new version (0245)
 GET  /api/markx/tracks/{id}/brief?week=<date>    the week's issue, kept (0245); ?since=seen|<ISO>: the quick look
 GET  /api/markx/tracks/{id}/things?kind=&<field>.min=...   a kind's table, filtered by its fields (0245)
+                 &q=words &entity=name &entity_type=type   v10.41: a search across a row, the entities its posts name
+GET  /api/markx/tracks/{id}/schema/suggestions   v10.41: fields INSIGHT suggests (track_fields; Add = PUT schema)
+POST /api/markx/tracks/{id}/schema/suggestions/dismiss   {kind, name} never suggested again
 
 Every item a track page shows carries its `byline` (issue 0185: who wrote it, via whom).
 """
@@ -27,7 +30,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from insight_core.markx import track_brief, track_subtopics, track_things, track_why, tracks
+from insight_core.markx import track_brief, track_fields, track_subtopics, track_things, track_why, tracks
 
 router = APIRouter()
 
@@ -209,6 +212,35 @@ def mx_track_schema_edit(track_id: str, body: SchemaIn):
             raise HTTPException(status_code=404, detail="No such track")
 
 
+class DismissIn(BaseModel):
+    kind: str
+    name: str
+
+
+@router.get("/tracks/{track_id}/schema/suggestions")
+def mx_track_field_suggestions(track_id: str):
+    """v10.41 (FIX 6): the fields INSIGHT suggests the track's records add (track_fields; never applied)."""
+    from insight_core.markx.api import transaction
+    tid = _id(track_id)
+    with transaction() as cur:
+        try:
+            return track_fields.suggestions(cur, tid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such track")
+
+
+@router.post("/tracks/{track_id}/schema/suggestions/dismiss")
+def mx_track_field_dismiss(track_id: str, body: DismissIn):
+    """v10.41: the owner dismissed a suggested field (never suggested again): the suggestions left."""
+    from insight_core.markx.api import transaction
+    tid = _id(track_id)
+    with transaction() as cur:
+        try:
+            return track_fields.dismiss(cur, tid, body.kind, body.name)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such track")
+
+
 @router.get("/tracks/{track_id}/brief")
 def mx_track_brief(track_id: str, week: Optional[str] = None, since: Optional[str] = None):
     """0245: ?week=<a day of it> the week's issue (kept, built by the jobs process); ?since=seen (the reader's last
@@ -246,10 +278,13 @@ def mx_track_things(track_id: str, request: Request, kind: str = "", limit: int 
     <enum field>=a,b, <text field>=words, <link field>=any)."""
     from insight_core.markx.api import transaction
     tid = _id(track_id)
-    filters = {k: v for k, v in request.query_params.items() if k not in ("kind", "limit", "offset")}
+    params = request.query_params
+    filters = {k: v for k, v in params.items() if k not in ("kind", "limit", "offset") + track_brief.SEARCH_PARAMS}
     with transaction() as cur:
         try:
-            return track_brief.table(cur, tid, kind, filters, limit=max(1, min(limit, 500)), offset=max(0, offset))
+            return track_brief.table(cur, tid, kind, filters, limit=max(1, min(limit, 500)), offset=max(0, offset),
+                                     q=params.get("q", ""), entity=params.get("entity", ""),
+                                     entity_type=params.get("entity_type", ""))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except KeyError:

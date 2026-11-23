@@ -464,8 +464,11 @@ def _valid_answer(cur: Any, task_id: Any) -> Optional[Dict[str, Any]]:
 
 def apply_schema(cur: Any, task: Dict[str, Any], answer: Dict[str, Any]) -> Optional[int]:
     """A schema answer stored as the track's new version, when its description is still the one asked and the track
-    has no schema for that version yet: the version, or None."""
+    has no schema for that version yet: the version, or None. v10.41: only track-schema-v1's (the kind's second guide,
+    track_fields' track-fields-v1, suggests fields; it is never applied)."""
     from insight_core.markx import tracks
+    if task.get("guide", SCHEMA_GUIDE) != SCHEMA_GUIDE:
+        return None
     t = tracks.get(cur, task["a"])
     if not tracks.is_topic(t) or schema_input(t) != task.get("input"):
         return None
@@ -478,13 +481,14 @@ def apply_schema(cur: Any, task: Dict[str, Any], answer: Dict[str, Any]) -> Opti
 
 def set_schema(cur: Any, folder_id: Any, kinds: Any) -> Dict[str, Any]:
     """The owner's schema (PUT .../schema {kinds}: PRACTICE is added by code) stored as a new version: the schema view.
+    v10.41: a kind may have up to schemas.OWNER_FIELDS fields (the owner adds suggested fields to a full kind).
     ValueError: not a valid schema; KeyError: not a topic track."""
     from insight_core.markx import schemas, tracks, validate
     t = tracks.get(cur, folder_id)
     if not tracks.is_topic(t):
         raise KeyError(folder_id)
     answer = {"kinds": [k for k in kinds or [] if not (isinstance(k, dict) and k.get("kind") == PRACTICE_KIND)]}
-    err = validate.schema_error(schemas.TRACK_SCHEMA_SCHEMA, answer) or schema_error(answer)
+    err = validate.schema_error(schemas.OWNER_SCHEMA_SCHEMA, answer) or schema_error(answer)
     if err:
         raise ValueError(err)
     _put_schema(cur, t["folder_id"], with_practice(answer), by="owner", track_version=t["version"])

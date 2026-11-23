@@ -17,6 +17,7 @@ import {
 } from './trackWords';
 import { bylineText } from '../../lib/byline';
 import { QuickLookPanel, ThingTables, WeekIssueView, WhatChanged } from './TrackBrief';
+import TrackFieldSuggestions from './TrackFieldSuggestions';
 import { TRACK_COUNTS_KEY } from '../../hooks/useTrackCounts';
 import { kindWord, mondayOf, newestAt, schemaKey } from './briefWords';
 
@@ -324,6 +325,7 @@ export default function TrackTopic({ folderId }: { folderId: string }) {
           initial={issueWeek ?? look.data?.last_issue ?? look.data?.weeks?.[0] ?? null} />
       </TabsContent>
       <TabsContent value="tables">
+        <TrackFieldSuggestions trackId={folderId} />
         <ThingTables key={tableKind ?? ''} trackId={folderId} kinds={kinds} kind={tableKind} />
       </TabsContent>
     </Tabs>

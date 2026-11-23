@@ -490,6 +490,33 @@ TRACK_SCHEMA_SCHEMA = {
                                           "key": {"type": "boolean"},
                                           "about": _STR_OR_NULL}}}}}}},
 }
+# v10.41 (FIX 6): the owner's schema edit may give a kind more fields than Haiku proposes (fields are the owner's
+# decision: a suggested field added to a full kind); track_things.set_schema checks against this one.
+OWNER_FIELDS = 16
+OWNER_SCHEMA_SCHEMA = {
+    **TRACK_SCHEMA_SCHEMA,
+    "properties": {"kinds": {**TRACK_SCHEMA_SCHEMA["properties"]["kinds"], "items": {
+        **TRACK_SCHEMA_SCHEMA["properties"]["kinds"]["items"],
+        "properties": {**TRACK_SCHEMA_SCHEMA["properties"]["kinds"]["items"]["properties"],
+                       "fields": {**TRACK_SCHEMA_SCHEMA["properties"]["kinds"]["items"]["properties"]["fields"],
+                                  "maxItems": OWNER_FIELDS}}}}},
+}
+# v10.41 (FIX 6): the fields a track's records miss (track-fields-v1, the track_schema kind's second guide; never
+# applied: markx/track_fields.py shows them as suggestions the owner adds or dismisses).
+TRACK_FIELDS_SCHEMA = {
+    "type": "object",
+    "required": ["fields"],
+    "properties": {"fields": {"type": "array", "maxItems": 6, "items": {
+        "type": "object", "required": ["kind", "name", "type", "why"],
+        "properties": {"kind": {"type": "string", "pattern": THING_NAME},
+                       "name": {"type": "string", "pattern": THING_NAME},
+                       "type": {"enum": THING_TYPES},
+                       "unit": _STR_OR_NULL,
+                       "values": {"type": "array", "maxItems": THING_ENUM[1],
+                                  "items": {"type": "string", "minLength": 1, "maxLength": 40}},
+                       "about": _STR_OR_NULL,
+                       "why": {"type": "string", "minLength": 1, "maxLength": 300}}}}},
+}
 THINGS_PER_ANSWER = 20
 TRACK_THINGS_SCHEMA = {
     "type": "object",
@@ -849,6 +876,7 @@ GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "collide-makers-v1": ("collide", COLLIDE_MAKERS_SCHEMA),   # 0250: two maker groups of one bare name (identity.split_names)
     "collide-v2": ("collide", COLLIDE2_SCHEMA),   # 0184's guide; 0274: an entity brief's senses (entity_brief.senses, b set)
     "significance-v3": ("significance", SIGNIFICANCE_V2_SCHEMA),   # 0260: results by what they change (the switch above)
+    "track-fields-v1": ("track_schema", TRACK_FIELDS_SCHEMA),   # v10.41: fields a track's records miss (track_fields.py)
 }
 
 

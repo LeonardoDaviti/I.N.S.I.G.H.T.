@@ -1381,7 +1381,10 @@ def _plan_track_things(kind: str) -> Any:   # 0245: a track's schema, its posts'
         from insight_core.markx import entity_brief, track_things
         if kind == "track_things":   # 0261: a track's posts, then the briefed entities' (the entity as the track)
             return track_things.plan_things(cur, **kw) + entity_brief.plan_things(cur, **kw)
-        return {"track_schema": track_things.plan_schemas, "track_same": track_things.plan_same}[kind](cur, **kw)
+        if kind == "track_schema":   # v10.41: and the fields a schema version's rows miss (track_fields)
+            from insight_core.markx import track_fields
+            return track_things.plan_schemas(cur, **kw) + track_fields.plan(cur, **kw)
+        return track_things.plan_same(cur, **kw)
     return plan
 
 

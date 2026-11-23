@@ -270,9 +270,27 @@ export interface ThingTable {
   about?: string;
   fields: ThingFieldDef[];
   filters: Record<string, string>;
+  /** v10.41: the search asked (words across a row; an entity its posts name; a type of one). */
+  search?: { q: string; entity: string; entity_type: string };
+  /** v10.41: the entities (and their types) the rows' posts name most, offered as filters. */
+  chips?: { entities: Array<{ id: string; name: string; type: string; rows: number }>; types: Array<{ type: string; rows: number }> };
   count: number;
   things: Thing[];
 }
+
+/** v10.41: a field INSIGHT suggests a kind add (never applied: Add is the owner's schema edit). */
+export interface FieldSuggestion extends ThingFieldDef { kind: string; why: string }
+
+export interface FieldSuggestions {
+  on: boolean;
+  /** The schema version the suggestions were asked for. */
+  asked_for: number | null;
+  at: string | null;
+  fields: FieldSuggestion[];
+}
+
+/** v10.41: the fields an owner's kind may have at most (schemas.OWNER_FIELDS). */
+export const OWNER_FIELDS = 16;
 
 export interface TrackSchemaView {
   on: boolean;
@@ -303,4 +321,7 @@ export const briefApi = {
   issue: (id: string, week: string) => request<WeekIssue>(`${base(id)}/brief${query({ week })}`),
   things: (id: string, kind: string, filters: Record<string, string> = {}) =>
     request<ThingTable>(`${base(id)}/things${query({ kind, ...filters, limit: '500' })}`),
+  suggestions: (id: string) => request<FieldSuggestions>(`${base(id)}/schema/suggestions`),
+  dismissField: (id: string, kind: string, name: string) =>
+    request<FieldSuggestions>(`${base(id)}/schema/suggestions/dismiss`, { method: 'POST', body: { kind, name } }),
 };

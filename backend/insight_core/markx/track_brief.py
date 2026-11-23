@@ -22,12 +22,15 @@ on the look): a few indexed reads.
 
 **The tables** (`table`): every current thing of one kind, newest first, filtered by its own fields' values: number
 and money `<field>.min` / `<field>.max` (and money `<field>.currency`), enum `<field>=a,b`, text `<field>=words`
-(contained, folded), link `<field>=any`.
+(its words, numbers whole: v10.41), link `<field>=any`; v10.41 (FIX 5) a search across a row (`q`: words ANDed over its
+fields and its posts' titles) and the entities its posts name (`entity`, `entity_type`; `chips` offers them).
 
 Behind entity_bands.json `tracks.briefs` (track_things.on): off, nothing is planned or kept and every read is empty.
 """
 from __future__ import annotations
 
+import re
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -643,13 +646,94 @@ def _match(f: Dict[str, Any], v: Any, op: str, want: str) -> bool:
         return TT.fold(v) in {TT.fold(w) for w in want.split(",") if w.strip()}
     if t == "link":
         return bool(v)
-    return TT.fold(want) in TT.fold(v)
+    return has_words(words(want), words(TT.shown_value(f, v)))   # v10.41: the field's words, numbers whole
 
 
-def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit: int = 100, offset: int = 0
-          ) -> Dict[str, Any]:
+# ---- v10.41 (FIX 5): search inside a track's table ---------------------------------------------------------------
+
+_THOUSANDS = re.compile(r"(?<=\d)[,\u00a0\u202f'](?=\d{3}(?!\d))")   # not a space: "Qwen3 235B" is two figures
+_GLUED = re.compile(r"(?<=\d)(?=[^\W\d_])|(?<=[^\W\d_])(?=\d)")
+_TOKEN = re.compile(r"[^\W_]+(?:[.,]\d+)*")
+WORD_PREFIX = 3     # a word of letters this long or longer matches a word it starts ("quant": "quantised"); shorter, whole
+ENTITY_CHIPS = 12   # the entities a table offers as filters at most (the most rows first, two rows or more)
+SEARCH_PARAMS = ("q", "entity", "entity_type")   # a table's own params, never a field's filter
+
+
+def words(s: Any) -> List[str]:
+    """Text as search compares it: folded words, a figure's thousands groups joined ("1,500" is 1500), letters and
+    digits glued apart ("i5-2400" is i 5 2400, "24GB" is 24 gb, "Qwen3.8-27B" is qwen 3.8 27 b)."""
+    s = _THOUSANDS.sub("", TT.fold(s))
+    return _TOKEN.findall(_GLUED.sub(" ", s))
+
+
+def _whole(w: str) -> bool:
+    return any(c.isdigit() for c in w) or len(w) < WORD_PREFIX
+
+
+def has_words(want: Sequence[str], have: Sequence[str]) -> bool:
+    """Every wanted word is one of `have`: a number (or a short word) as a whole word ("24" is not "2400", "pi" is not
+    "pipeline"), a longer word as the start of one ("llm": "llms")."""
+    hs = set(have)
+    return all(w in hs if _whole(w) else any(h.startswith(w) for h in hs) for w in want)
+
+
+def row_words(view: Dict[str, Any]) -> List[str]:
+    """What a search reads of a row: every field's value in words and the titles of the posts that gave it."""
+    return words(" ".join([x["shown"] for x in view["fields"].values()] + [p.get("title") or "" for p in view["posts"]]))
+
+
+def _entities(cur: Any, rows: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]]
+              ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """{row: {entity root: {name, type, words}}}: the entities the posts that gave each row name (their current
+    mentions, pins and redirects read: track_things._mentions); `words` its name's, the mention's name and span's."""
+    ments = TT._mentions(cur, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])}))
+    ids = sorted({root for ms in ments.values() for root, _nk, _span in ms})
+    names: Dict[str, Tuple[str, str]] = {}
+    if ids:
+        cur.execute("""SELECT id::text, COALESCE(shown_name, name), COALESCE(shown_type, type) FROM mx_entities
+                        WHERE id = ANY(%s::uuid[])""", (ids,))
+        names = {i: (n, ty or "other") for i, n, ty in cur.fetchall()}
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for x in rows:
+        got: Dict[str, Dict[str, Any]] = {}
+        for r in rs.get(x["id"], []):
+            for root, nk, span in ments.get(r["post"], []):
+                if root in names:
+                    e = got.setdefault(root, {"name": names[root][0], "type": names[root][1],
+                                              "words": {tuple(words(names[root][0]))}})
+                    e["words"].update(tuple(words(k)) for k in (nk, span) if k)
+        out[x["id"]] = got
+    return out
+
+
+def names_entity(want: Sequence[str], e: Dict[str, Any]) -> bool:
+    """The wanted words run, in order, inside one of the entity's names ("raspberry pi" is in "Raspberry Pi 5")."""
+    n, w = len(want), tuple(want)
+    return n > 0 and any(ws[i:i + n] == w for ws in e["words"] for i in range(len(ws) - n + 1))
+
+
+def entity_chips(ents: Dict[str, Dict[str, Dict[str, Any]]], rows: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """The table's entity filters over these rows: the entities the most rows' posts name (ENTITY_CHIPS at most, two
+    rows or more) and the types they have, each with its count of rows."""
+    by: Dict[str, Dict[str, Any]] = {}
+    types: Dict[str, int] = defaultdict(int)
+    for x in rows:
+        for root, e in ents.get(x, {}).items():
+            by.setdefault(root, {"id": root, "name": e["name"], "type": e["type"], "rows": 0})["rows"] += 1
+        for ty in {e["type"] for e in ents.get(x, {}).values()}:
+            types[ty] += 1
+    top = sorted((e for e in by.values() if e["rows"] >= 2), key=lambda e: (-e["rows"], e["name"].casefold()))
+    return {"entities": top[:ENTITY_CHIPS],
+            "types": [{"type": t, "rows": n} for t, n in sorted(types.items(), key=lambda kv: (-kv[1], kv[0]))]}
+
+
+def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit: int = 100, offset: int = 0,
+          q: str = "", entity: str = "", entity_type: str = "") -> Dict[str, Any]:
     """GET .../things?kind=&filters: every current thing of `kind`, newest first, filtered by its fields (see the
-    module). ValueError: an unknown kind, field or operator, or a bad number; KeyError: not a topic track."""
+    module); v10.41: `q` words ANDed across a row's fields and its posts' titles (`has_words`: numbers whole),
+    `entity` a name the row's posts name (its words in order inside the entity's name), `entity_type` a type of one
+    they name; `chips` the entities and types the rows' posts name (before the entity filters).
+    ValueError: an unknown kind, field or operator, or a bad number; KeyError: not a topic track."""
     t = _track(cur, folder_id)
     tid = t["folder_id"]
     kinds = TT._kinds(cur, tid) if TT.on() else {}
@@ -682,10 +766,22 @@ def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit
                 return False
         return True
     kept = [x for x in TT.current(cur, tid, kind) if passes(x)]
+    rs = TT.reports(cur, tid, [x["id"] for x in kept])
+    posts = _posts(cur, tid, sorted({r["post"] for x in kept for r in rs.get(x["id"], [])}))
+    views = {x["id"]: thing_view(d, x, rs.get(x["id"], []), posts) for x in kept}
+    want = words(q)
+    if want:   # the rows whose own fields hold every word first (newest first in each): a title only places a row
+        kept = [x for x in kept if has_words(want, row_words(views[x["id"]]))]
+        kept.sort(key=lambda x: not has_words(want, row_words(dict(views[x["id"]], posts=[]))))
+    ents = _entities(cur, kept, rs)
+    chips = entity_chips(ents, [x["id"] for x in kept])
+    named, typed = words(entity), TT.fold(entity_type)
+    if named or typed:
+        kept = [x for x in kept if (not named or any(names_entity(named, e) for e in ents[x["id"]].values()))
+                and (not typed or any(TT.fold(e["type"]) == typed for e in ents[x["id"]].values()))]
     page = kept[offset:offset + limit]
-    rs = TT.reports(cur, tid, [x["id"] for x in page])
-    posts = _posts(cur, tid, sorted({r["post"] for x in page for r in rs.get(x["id"], [])}))
     return {"on": True, "track": {"id": tid, "name": t["name"]}, "kind": kind, "kinds": list(kinds),
             "about": d.get("about") or "", "fields": [{k: f[k] for k in ("name", "type", "unit", "values") if f.get(k)}
                                                      for f in d["fields"]],
-            "filters": filters, "count": len(kept), "things": [thing_view(d, x, rs.get(x["id"], []), posts) for x in page]}
+            "filters": filters, "search": {"q": q, "entity": entity, "entity_type": entity_type}, "chips": chips,
+            "count": len(kept), "things": [views[x["id"]] for x in page]}

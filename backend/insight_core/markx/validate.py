@@ -705,6 +705,12 @@ def _track_schema(a: Dict[str, Any], _input: str) -> Optional[str]:
     return track_things.schema_error(a)
 
 
+def _track_fields(a: Dict[str, Any], input: str) -> Optional[str]:
+    """v10.41 (track-fields-v1): each field of a kind the question showed, not one it has (track_fields.check)."""
+    from insight_core.markx import track_fields
+    return track_fields.check(a, input)
+
+
 def _track_same(a: Dict[str, Any], _input: str) -> Optional[str]:
     """0245 (track-same-v1): the reason is one line."""
     return "why: one line" if "\n" in a["why"].strip() else None
@@ -1029,7 +1035,8 @@ GUIDE_CHECKS = {"websearch-official-v1": _websearch_official,
                 "digest-v2": _digest_rows,   # 0245: a track brief's points cite its rows
                 "digest-v3": _digest_rows,   # v10.29: digest-v2's points, stating facts
                 "collide-makers-v1": _collide_makers,   # 0250: two maker groups of one bare name
-                "judge-read-v2": _judge_read}           # 0258: join's and pair's quotes are their own question's
+                "judge-read-v2": _judge_read,           # 0258: join's and pair's quotes are their own question's
+                "track-fields-v1": lambda a, input: _track_fields(a, input)}   # v10.41: fields a track misses
 
 
 def unwrap(kind: str, answer: Any) -> Any:

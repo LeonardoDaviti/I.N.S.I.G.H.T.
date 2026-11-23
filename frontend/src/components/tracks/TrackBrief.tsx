@@ -4,10 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import {
   briefApi, type BriefPoint, type QuickLook, type Thing, type ThingFieldDef, type ThingPost, type ThingSection,
 } from '../../services/tracks';
-import { Button, Chip, ExternalLink, FilterChip, TextLink } from '../ui';
+import { Button, Chip, ExternalLink, FilterChip, Input, TextLink } from '../ui';
 import { ErrorState, LoadingState } from '../states';
 import {
-  chipParams, citeMarks, dayWord, fieldWord, filterChips, hostOf, kindWord, nextSort, sinceLine, sortThings,
+  chipParams, citeMarks, dayWord, fieldWord, filterChips, hostOf, kindWord, nextSort, searchParams, sinceLine, sortThings,
   thingFacts, thingLinks, thingName, toggleChip, weekDay, weekLine, type FilterChipDef, type SortState,
 } from './briefWords';
 
@@ -315,25 +315,52 @@ export function WeekIssueView({ trackId, weeks, initial }: { trackId: string; we
 const tableKey = (id: string, kind: string, params: Record<string, string>) =>
   ['markx-track-things', id, kind, params] as const;
 
-/** The tables (0245 moment C): every row of a kind, newest first, filter chips from its typed fields, sortable. */
+/** The tables (0245 moment C): every row of a kind, newest first, filter chips from its typed fields, sortable; v10.41:
+ * a search box (every word across a row and its posts' titles, numbers whole) and the entities its posts name. */
 export function ThingTables({ trackId, kinds, kind: initial }: { trackId: string; kinds: Array<{ kind: string; header: string }>; kind?: string }) {
   const [kind, setKind] = useState(initial && kinds.some((k) => k.kind === initial) ? initial : kinds[0]?.kind ?? '');
   const [chosen, setChosen] = useState<FilterChipDef[]>([]);
   const [sort, setSort] = useState<SortState>(null);
-  const params = chipParams(chosen);
+  const [typed, setTyped] = useState('');
+  const [q, setQ] = useState('');
+  const [entity, setEntity] = useState('');
+  const [entityType, setEntityType] = useState('');
+  const params = { ...chipParams(chosen), ...searchParams(q, entity, entityType) };
+  const narrowed = Object.keys(params).length > 0;
   const all = useQuery({ queryKey: tableKey(trackId, kind, {}), queryFn: () => briefApi.things(trackId, kind), enabled: Boolean(kind), staleTime: 60_000 });
   const filtered = useQuery({
     queryKey: tableKey(trackId, kind, params), queryFn: () => briefApi.things(trackId, kind, params),
-    enabled: Boolean(kind) && chosen.length > 0, staleTime: 60_000,
+    enabled: Boolean(kind) && narrowed, staleTime: 60_000,
   });
   const chips = useMemo(() => (all.data ? filterChips(all.data.fields, all.data.things) : []), [all.data]);
-  const shown = chosen.length ? filtered : all;
-  const pick = (k: string) => { setKind(k); setChosen([]); setSort(null); };
+  const shown = narrowed ? filtered : all;
+  // the entities the rows the words found name (the server's, before its entity filters), else every row's
+  const named = (narrowed ? filtered.data?.chips : undefined) ?? all.data?.chips;
+  const pick = (k: string) => { setKind(k); setChosen([]); setSort(null); setTyped(''); setQ(''); setEntity(''); setEntityType(''); };
   return (
     <section aria-label="Tables">
       <div className="mb-2 flex flex-wrap gap-1.5" role="group" aria-label="Kinds">
         {kinds.map((k) => <FilterChip key={k.kind} selected={k.kind === kind} onClick={() => pick(k.kind)}>{k.header}</FilterChip>)}
       </div>
+      <form role="search" className="mb-2 flex flex-wrap items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); setQ(typed); }}>
+        <Input aria-label="Search the table" placeholder="words, all of them" value={typed}
+          onChange={(e) => { setTyped(e.target.value); if (!e.target.value) setQ(''); }} className="h-8 w-64 text-[0.8125rem]" />
+        <Button size="sm" variant="ghost" type="submit" className="text-[0.75rem]">search</Button>
+      </form>
+      {named && (named.entities.length || named.types.length) ? (
+        <div className="mb-2 flex flex-wrap gap-1.5" role="group" aria-label="Named in the posts">
+          {named.entities.map((e) => (
+            <FilterChip key={e.id} selected={entity === e.name} onClick={() => setEntity(entity === e.name ? '' : e.name)}>{e.name}</FilterChip>
+          ))}
+          {entity && !named.entities.some((e) => e.name === entity) ? (
+            <FilterChip selected onClick={() => setEntity('')}>{entity}</FilterChip>
+          ) : null}
+          {named.types.slice(0, 8).map((t) => (
+            <FilterChip key={`type:${t.type}`} selected={entityType === t.type}
+              onClick={() => setEntityType(entityType === t.type ? '' : t.type)}>any {t.type}</FilterChip>
+          ))}
+        </div>
+      ) : null}
       {chips.length ? (
         <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Filters">
           {chips.map((c) => (

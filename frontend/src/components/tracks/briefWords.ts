@@ -1,7 +1,10 @@
 // 0245 (frontend v10.28): the track briefer's words and the pure parts of its views: days, weeks, a thing's name and
 // facts, the cite numbers, the filter chips a kind's typed fields give, and sorting. Nothing here names a track, a
 // kind or a field: every rule is about a type (text, number, money, link, enum).
-import type { BriefPoint, Thing, ThingFieldDef, ThingSection, ThingValue } from '../../services/tracks';
+import { PRACTICE_KIND } from '../../services/tracks';
+import type {
+  BriefPoint, FieldSuggestion, Thing, ThingFieldDef, ThingKindDef, ThingSection, ThingValue,
+} from '../../services/tracks';
 
 const DAY = 86_400_000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -232,3 +235,27 @@ export function fieldKey(typed: string): string {
 
 /** The track's kinds and fields query (the page and the sheet's editor share it). */
 export const schemaKey = (id: string) => ['markx-track-schema', id] as const;
+
+// ---- v10.41: search inside a table, suggested fields -----------------------------------------------------------------
+
+/** The table's search params: words across a row (`q`), an entity its posts name, a type of one; empty ones left out. */
+export function searchParams(q: string, entity: string, entityType: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (q.trim()) out.q = q.trim();
+  if (entity) out.entity = entity;
+  if (entityType) out.entity_type = entityType;
+  return out;
+}
+
+/** The owner's kinds with a suggested field added (Add: the owner's schema edit). The kind the code adds is left out. */
+export function withField(kinds: ThingKindDef[], s: FieldSuggestion): ThingKindDef[] {
+  const field: ThingFieldDef = {
+    name: s.name, type: s.type, key: false, ...(s.unit ? { unit: s.unit } : {}), ...(s.values?.length ? { values: s.values } : {}),
+    ...(s.about ? { about: s.about } : {}),
+  };
+  return kinds.filter((k) => k.kind !== PRACTICE_KIND)
+    .map((k) => (k.kind === s.kind && !k.fields.some((f) => f.name === s.name) ? { ...k, fields: [...k.fields, field] } : k));
+}
+
+/** The suggested fields query. */
+export const suggestionsKey = (id: string) => ['markx-track-field-suggestions', id] as const;
