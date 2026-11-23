@@ -2,11 +2,9 @@ import type { FeedStory, NewsScore } from '../services/api';
 import { plural } from './format.ts';
 import { coveredNames } from './story.ts';
 
-// News (issue 0051): kept apart from lib/story.ts, which the feed row (the reader's initial JS)
-// imports; only the News view reads these.
+// Kept apart from lib/story.ts, which the feed row (the reader's initial JS) imports; only the News view reads these.
 
-/** What a News story's score is made of, in words: "4 sources (1 share) · in 1 roundup". The number is the
- *  story's voices, as on the feed row and the post page; a share is a source (issue 0069). */
+/** What a News story's score is made of: "4 sources (1 share) · in 1 roundup"; the number is the story's voices. */
 export function newsWords(news: Pick<NewsScore, 'shares' | 'mentions'>, voices: number): string {
   return [
     `${plural(voices, 'source')}${news.shares ? ` (${plural(news.shares, 'share')})` : ''}`,
@@ -14,8 +12,7 @@ export function newsWords(news: Pick<NewsScore, 'shares' | 'mentions'>, voices: 
   ].filter(Boolean).join(' · ');
 }
 
-/** A source's part in a story (issue 0077), sent on a source's page as `news.scope_role` / `classic.scope_role`.
- *  Typed here, optional, until the API sends it (0077 K). */
+/** A source's part in a story, sent on a source's page as `news.scope_role` / `classic.scope_role` (optional). */
 export type ScopeRole = 'origin' | 'report' | 'share' | 'mention';
 export type ScopedNews = NewsScore & { scope_role?: ScopeRole | null };
 const ROLE_WORDS: Record<ScopeRole, string> = { origin: 'Started it', report: 'Covered', share: 'Shared', mention: 'Mentioned' };
@@ -26,8 +23,7 @@ export function scopeRoleWords(row: { scope_role?: string | null }): string | nu
   return role && Object.hasOwn(ROLE_WORDS, role) ? ROLE_WORDS[role as ScopeRole] : null;
 }
 
-/** A News row's line: on a source's page its part first, then its score in words, then who covered it,
- *  the first reporter first. */
+/** A News row's line: on a source's page its part first, then its score, then who covered it, first reporter first. */
 export function newsLine(news: ScopedNews, story: FeedStory): string {
   return [notableWords(news), scopeRoleWords(news), newsWords(news, story.voices), coveredNames(story)].filter(Boolean).join(' · ');
 }
@@ -44,12 +40,11 @@ function weekStart(date: Date): Date {
 }
 
 /**
- * A News story's part (issue 0077), by when it began (`first_at`): "Last 48 hours" (the API's
- * `part === 'recent'`), "This week" (since Monday), then "Week of 12 Oct" for each earlier week.
- * `rank` orders the parts, newest first.
+ * A News story's part by `first_at`: "Last 48 hours" (`part === 'recent'`), "This week" (since Monday), then
+ * "Week of 12 Oct" per earlier week. `rank` orders the parts, newest first.
  */
 export function newsPart(news: Pick<NewsScore, 'part' | 'first_at'> & { notable?: boolean }, now: Date = new Date()): { label: string; rank: number } {
-  // Issue 0208: the significant rows coverage alone would bury, above every part.
+  // The significant rows coverage alone would bury, above every part.
   if (news.notable) return { label: NOTABLE, rank: -1 };
   if (news.part === 'recent') return { label: 'Last 48 hours', rank: 0 };
   const thisWeek = weekStart(now);
@@ -63,7 +58,7 @@ export function newsPart(news: Pick<NewsScore, 'part' | 'first_at'> & { notable?
 
 export const NOTABLE = 'Notable for you';
 
-/** Issue 0208: why a Notable row is there, in a few words: "New method · usable now". */
+/** Why a Notable row is there, in a few words: "New method · usable now". */
 export function notableWords(news: Pick<NewsScore, 'rank' | 'notable'>): string | null {
   const rank = news.rank;
   if (!news.notable || !rank) return null;

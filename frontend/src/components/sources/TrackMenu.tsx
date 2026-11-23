@@ -6,12 +6,8 @@ const ITEM =
   'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-inverse hover:text-inverse-fg '
   + 'focus-visible:bg-inverse focus-visible:text-inverse-fg coarse:py-2.5';
 
-/**
- * The ⋯ menu beside a track title: rare actions live here, off the scanning
- * path (rename, Show in Main feed, delete; on a phone also fetch now). A small hand-rolled menu
- * (button + role="menu"): arrows and Home/End move, Escape, outside click and
- * Tab close it, focus moves into it on open and back to ⋯ on close.
- */
+/** The ⋯ menu beside a track title (rename, Show in Main feed, delete; on a phone also fetch now): a hand-rolled
+ *  role="menu" where arrows and Home/End move, Escape, outside click and Tab close, and focus returns to ⋯. */
 export default function TrackMenu({
   name,
   inMainDigest,
@@ -33,7 +29,7 @@ export default function TrackMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
-  // Items hidden at this width (display: none) have no layout box and are skipped.
+  // items hidden at this width (display: none) have no layout box and are skipped
   const visibleItems = () => [...(rootRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])') ?? [])]
     .filter((item) => getComputedStyle(item).display !== 'none');
 

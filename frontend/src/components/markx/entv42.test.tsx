@@ -11,8 +11,7 @@ import { renderWithProviders } from '../../test/render';
 // the label's and the switch's calls live in the Mark X chunks (not api.ts), so the fake takes them untyped
 const makeFakeApi = (methods: Record<string, unknown>) => makeApi(methods as Parameters<typeof makeApi>[0]);
 
-// Issue 0133 v4.2 (ent-v4.2 in Shadow): the second question's entities marked, right / wrong on every new entity,
-// and the running precision with the lab's stated line on the Worker tab.
+// ent-v4.2 in Shadow (0133): second-question entities marked, right / wrong on each new entity, the running precision.
 const e = (name: string, type: string, role: string, extra: Partial<MarkxPostPanel['entities'][number]> = {}) => ({
   name, type, role, maker: null, family: null, version: null, variant: null, span: name, entity_id: null,
   guide: 'ent-v4.2', ...extra });

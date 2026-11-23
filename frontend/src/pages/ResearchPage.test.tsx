@@ -1,6 +1,5 @@
-// 0162 (research, Mark X): the start page (a seed typed or passed as ?seed=), a run's page (In INSIGHT, the same
-// announcement, the maker with "These are …", channels with Follow / Not this one, papers held or not, discussion,
-// what could not be read), Watch this and Run again, and the lines in words. Synthetic data only.
+// Research (Mark X, 0162): the start page, a run's page, Watch this and Run again, and the lines in words.
+// Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

@@ -6,7 +6,7 @@ import type {
   MarkxConsumer, MarkxEntitiesGuide, MarkxEntityInvariants, MarkxHolds, MarkxHoldState, MarkxJob, MarkxOverview,
   MarkxSettings, MarkxStoryWindow,
 } from '../../services/markx';
-import { request } from '../../lib/request';   // 0133
+import { request } from '../../lib/request';
 import { Button, TextLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState } from '../states';
 import { feedFullTime, postBylineTime } from '../../lib/dates';
@@ -29,9 +29,8 @@ function useOverview() {
   });
 }
 
-/** The decision job's state (issue 0112 Decided 12): running with its stage; else asked for, and under it how the
- *  last run stopped (a stopped run is always asked again, so the stop line must not wait for the ask to clear:
- *  issue 0124, the v10.0.2 review's W6). */
+/** The decision job's state: running with its stage; else asked for, and under it how the last run stopped (a
+ *  stopped run is always asked again, so the stop line must not wait for the ask to clear). */
 export function DecisionJob({ job }: { job: MarkxJob | undefined }) {
   if (!job) return null;
   const lines: string[] = [];
@@ -40,7 +39,7 @@ export function DecisionJob({ job }: { job: MarkxJob | undefined }) {
   } else {
     if (job.wanted_at) lines.push('A decision run is asked for: it starts within a few minutes.');
     if (job.last && job.last.ok === false && job.last.error) {
-      // 0188: a failed run is tried again after its backoff (10 minutes, doubling up to 6 hours)
+      // a failed run is tried again after its backoff (10 minutes, doubling up to 6 hours)
       const retry = job.retry_at ? `It runs again after ${postBylineTime(job.retry_at)}` : 'It runs again within 5 minutes';
       const skip = job.last.skip_next ? `, without its ${job.last.skip_next} stage once` : '';
       lines.push(`The last decision run stopped: ${job.last.error}. ${retry}${skip}.`);
@@ -64,7 +63,7 @@ function Loaded({ children }: { children: (data: MarkxOverview) => ReactElement 
 
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 
-/** Today's briefing (F12), each line with the Mark X stories it cites. */
+/** Today's briefing, each line with the Mark X stories it cites. */
 export function MarkXBriefing() {
   return (
     <Loaded>
@@ -102,7 +101,7 @@ export function MarkXBriefing() {
   );
 }
 
-/** The main-subject entities (F7, a first look; pages and timelines are 0090). */
+/** The main-subject entities. */
 export function MarkXEntities() {
   return (
     <Loaded>
@@ -150,8 +149,8 @@ const WINDOWS: { label: string; days: number | null }[] = [
   { label: '30 days', days: 30 }, { label: '120 days', days: 120 }, { label: 'everything', days: null },
 ];
 
-/** The read, entities and embed planners' window (issue 0112): 30 days, 120, everything, or a number of days. It counts
- *  from the next planner run, with no restart; `markx-worker cycle --days` reads any other window on its own leases. */
+/** The read, entities and embed planners' window (30 days, 120, everything, or a number of days), from the next
+ *  planner run, with no restart; `markx-worker cycle --days` reads any other window on its own leases. */
 function ReadingWindow({ days }: { days: number | null }) {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -205,10 +204,9 @@ function storyWindowApi(api: object): { setMarkxStoryWindow: SetStoryWindow } {
 }
 const pctOf = (p: number | null) => (p === null ? '–' : `${Math.round(p * 100)}%`);
 
-/** 0144 A: how far back the decision run makes Mark X's own stories: 30 days, 120, 365 or everything. Past 30 days the
- *  window grows back a week a run, newest first, once that week's candidates are found and its questions asked; News
- *  keeps its own window. With everything, the old stories' precision (labelled on the entity pages) must stay at 97%
- *  or the window falls back, and says why. */
+/** How far back the decision run makes Mark X's own stories: 30 days, 120, 365 or everything. Past 30 days the
+ *  window grows back a week a run, newest first; News keeps its own window. With everything, the old stories'
+ *  precision must stay at 97% or the window falls back, and says why. */
 export function StoryWindow({ state }: { state: MarkxStoryWindow }) {
   const api = storyWindowApi(useApi());
   const queryClient = useQueryClient();
@@ -245,12 +243,11 @@ export function StoryWindow({ state }: { state: MarkxStoryWindow }) {
   );
 }
 
-/** 0133: which guide new entities tasks are asked under. ent-v3 (1,500 characters) is the default; ent-v4 reads 6,000
- *  with the citation rule, and stays disabled while it is the lab's placeholder. A new guide plans new tasks for the
- *  reading window, newest first; the old answers stay, and each post shows the newest. */
+/** Which guide new entities tasks are asked under (ent-v3 by default; a placeholder guide stays disabled). A new
+ *  guide plans new tasks for the reading window, newest first; the old answers stay, each post shows the newest. */
 type SetGuide = (guide: string) => Promise<{ entities_guide: MarkxEntitiesGuide }>;
-/** The switch's call, here (in this tab's chunk) and not in api.ts (the feed route's bundle): a test's fake api may
- *  provide it. A placeholder guide is refused (409) until the lab's frozen guide replaces it. */
+/** The switch's call, here (in this tab's chunk) and not in api.ts; a test's fake api may provide it. A placeholder
+ *  guide is refused (409). */
 function markxEntitiesGuideApi(api: object): { setMarkxEntitiesGuide: SetGuide } {
   const got = (api as { setMarkxEntitiesGuide?: unknown }).setMarkxEntitiesGuide;
   return { setMarkxEntitiesGuide: typeof got === 'function' ? (got as SetGuide)
@@ -283,7 +280,7 @@ function EntitiesGuide({ state }: { state: MarkxEntitiesGuide }) {
         {save.isError ? <span className="text-fg">× {errorMessage(save.error)}</span> : null}
       </div>
       {state.labels ? (
-        // 0222: a measurement for the operator, never a labelling task for the owner: collapsed
+        // a measurement for the operator, never a labelling task for the owner: collapsed
         <details className="mt-2">
           <summary className="cursor-pointer text-[0.8125rem] text-fg-2">Operator view: {state.labels.guide} precision</summary>
           <Precision got={state.labels} />
@@ -295,8 +292,8 @@ function EntitiesGuide({ state }: { state: MarkxEntitiesGuide }) {
 
 const pct = (x: number | null) => (x == null ? '–' : `${Math.round(x * 100)}%`);
 
-/** 0133 v4.2: the running precision of ent-v4.2's new entities from the owner's labels (Wilson 95%), the second
- *  question's alone, the lab's stated line and the bar for leaving Shadow. */
+/** The running precision of ent-v4.2's new entities from the owner's labels (Wilson 95%), the second question's
+ *  alone, the lab's stated line and the bar for leaving Shadow. */
 function Precision({ got }: { got: NonNullable<MarkxEntitiesGuide['labels']> }) {
   return (
     <section aria-label={`${got.guide} precision`} className="mt-2 text-[0.8125rem] text-fg-2">
@@ -313,7 +310,7 @@ function Precision({ got }: { got: NonNullable<MarkxEntitiesGuide['labels']> }) 
   );
 }
 
-/** 0164 C: the entity invariants the last run counted; a warning when a group holds a product family and an org. */
+/** The entity invariants the last run counted; a warning when a group holds a product family and an org. */
 export function EntityInvariants({ state }: { state: MarkxEntityInvariants | null | undefined }) {
   const got = state?.family_org;
   if (!got || got.count === 0) return null;
@@ -347,7 +344,7 @@ const HOLD_STATE: Record<MarkxHoldState, string> = {
   low: 'asked after everything else', stopped: 'stopped: not asked', released: 'released: asked in its turn',
 };
 
-/** 0210, the re-ask guard: what a planner added past the day's allowance, its price at the API, and your word on it. */
+/** The re-ask guard: what a planner added past the day's allowance, its price at the API, and your word on it. */
 export function Holds({ state }: { state: MarkxHolds | undefined }) {
   const api = holdsApi(useApi());
   const queryClient = useQueryClient();
@@ -394,7 +391,7 @@ function consumersApi(api: object): { setMarkxConsumer: SetConsumer } {
     : (feature, on) => request('/api/markx/settings/consumers', { method: 'POST', body: { feature, on } }) };
 }
 
-/** 0210: the features that read the answers; an off one's questions are not asked (its open tasks closed, kept). */
+/** The features that read the answers; an off one's questions are not asked (its open tasks closed, kept). */
 export function Consumers({ state }: { state: MarkxConsumer[] | undefined }) {
   const api = consumersApi(useApi());
   const queryClient = useQueryClient();
@@ -468,7 +465,7 @@ export function MarkXWorker() {
               )}
             </section>
             {holds || consumers ? (
-              // 0222: operator controls, not the owner's to-do: collapsed
+              // operator controls, not the owner's to-do: collapsed
               <details>
                 <summary className="cursor-pointer text-[0.8125rem] text-fg-2">
                   Operator controls: held tasks{holds?.holds.length ? ` (${holds.holds.length})` : ''} and what is asked

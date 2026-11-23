@@ -6,11 +6,8 @@ import Toaster from '../ui/Toaster';
 
 const ReadingSettingsDialog = lazy(() => import('../post/ReadingSettingsDialog'));
 
-/**
- * The frame every route renders in: a skip link, the top bar, the page and the
- * toaster. Owns the ⌘K / Ctrl+K binding for the quick switcher, and the reading
- * settings it opens (their code loads when first opened).
- */
+/** The frame every route renders in (skip link, top bar, page, toaster); owns the ⌘K binding for the quick switcher
+ *  and the reading settings it opens. */
 export default function AppShell({ children }: { children: ReactNode }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [readingOpen, setReadingOpen] = useState(false);

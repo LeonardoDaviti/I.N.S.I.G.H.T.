@@ -1,9 +1,4 @@
-/**
- * Small display helpers shared by the Mark IX surfaces (spec §F.7): counts go
- * through `Intl.NumberFormat`, plurals through `Intl.PluralRules`, and long
- * handles/URLs are middle-truncated (the start and the end carry the meaning).
- * Pure; the locale is fixed to `en` so labels and tests agree.
- */
+/** Small display helpers: counts via `Intl.NumberFormat`, plurals, middle truncation. Pure; locale fixed to `en`. */
 
 const LOCALE = 'en';
 const numberFormat = new Intl.NumberFormat(LOCALE);
@@ -21,7 +16,7 @@ export function plural(count: number, singular: string, pluralForm: string = `${
   return `${formatCount(count)} ${word}`;
 }
 
-/** "1,675 points · 1,628 comments": a Hacker News item's counts (issue 0070). */
+/** "1,675 points · 1,628 comments": a Hacker News item's counts. */
 export function countsLabel(counts: { points: number; comments: number }): string {
   return `${plural(counts.points, 'point')} · ${plural(counts.comments, 'comment')}`;
 }

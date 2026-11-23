@@ -1,9 +1,5 @@
-/**
- * The prototype registry (Design Studio D6), found by glob: adding a folder
- * under `prototypes/` registers it, deleting it retires it; there is no list
- * to edit. READMEs (and an optional `doc.diff`) load with the studio; each
- * prototype's index.tsx loads only inside the frame that renders it.
- */
+/** The prototype registry, found by glob: a folder under `prototypes/` registers it, deleting it retires it.
+ *  READMEs (and `doc.diff`) load with the studio; each index.tsx only inside the frame that renders it. */
 import { lazy, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
 import { parsePrototype, type Prototype } from './prototypes';
 
@@ -22,12 +18,8 @@ export function prototypeById(id: string): Prototype | undefined {
   return PROTOTYPES.find((prototype) => prototype.id === id);
 }
 
-/**
- * A prototype's index.tsx: its default export receives the real page (the
- * app's routes, inside the shell, on the frame's fixtures) as `children`. An
- * override wraps them (a style, a context); a replacement renders something
- * else and may ignore them.
- */
+/** A prototype's index.tsx: its default export receives the real page as `children`; an override wraps them, a
+ *  replacement renders something else. */
 export type PrototypeComponent = ComponentType<{ children: ReactNode }>;
 
 const modules = import.meta.glob<{ default: PrototypeComponent }>('./prototypes/*/index.tsx');

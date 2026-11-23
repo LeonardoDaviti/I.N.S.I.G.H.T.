@@ -1,8 +1,8 @@
 import { TextLink } from '../ui';
 import type { MarkxBriefLine, MarkxBriefSense, MarkxEntityBrief, MarkxNumberSeries } from '../../services/markx';
 
-/** 0261: an entity's brief on its page: what it is, how it works, its results (who measured them), each line with
- * quiet superscript citations to the posts it rests on (the quote on hover), the way a track's "What changed" cites. */
+/** An entity's brief on its page: what it is, how it works, its results (who measured them), each line with quiet
+ *  superscript citations to its posts (the quote on hover). */
 
 const postHref = (id: string) => `/posts/${encodeURIComponent(id)}`;
 
@@ -42,8 +42,8 @@ function Part({ label, lines, brief }: { label: string; lines: MarkxBriefLine[];
   );
 }
 
-/** 0272: each recurring measure's values over time, a small plain table, oldest first, each value cited; values of
- * one date that disagree are marked as disputed (0097), side by side. */
+/** Each recurring measure's values over time, a small table, oldest first, each value cited; values of one date
+ *  that disagree are marked as disputed, side by side. */
 function Numbers({ series, brief }: { series: MarkxNumberSeries[]; brief: MarkxEntityBrief }) {
   if (!series.length) return null;
   return (
@@ -85,7 +85,7 @@ function Parts({ lines, brief }: {
   );
 }
 
-/** 0274: one brief a sense when the entity's posts hold several things of its name, each from its own posts. */
+/** One brief a sense when the entity's posts hold several things of its name, each from its own posts. */
 export function EntityBrief({ brief }: { brief: MarkxEntityBrief | null | undefined }) {
   if (!brief) return null;
   const senses = brief.senses ?? [];

@@ -1,10 +1,7 @@
 /**
- * A whole INSIGHT backend as data (Design Studio D4): the feed, the tracks, the
- * sources and their health, the connections, the ingestion jobs and the posts.
- * `siteRoutes` turns one into the fixture transport's routes, so a frame can
- * open any page (and, in walk mode, move between them) on the same sample data.
- * The feed honours scope, filter, view and paging like the backend does; search
- * (issue 0040) matches every word in a row's title, excerpt or source, by prefix.
+ * A whole INSIGHT backend as data (feed, tracks, sources and health, connections, ingestion jobs, posts).
+ * `siteRoutes` turns one into the fixture transport's routes, so a frame can open any page on the same sample data.
+ * The feed honours scope, filter, view and paging like the backend; search matches every word by prefix.
  */
 import type {
   ArchiveCatalogEntry, ArchiveStatusResponse, BackgroundWorkResponse, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
@@ -25,7 +22,7 @@ export interface Site {
   /** Newest first; an ingestion run's payload is its run report. */
   jobs: JobRun[];
   scheduler: SchedulerConfig;
-  /** Background work (issue 0062); all done when left out. */
+  /** Background work; all done when left out. */
   background?: BackgroundWorkResponse;
   /** Posts with a hand-written detail; any other feed item opens as a post made from its row. */
   posts?: Record<string, PostDetailResponse>;
@@ -50,7 +47,7 @@ function passes(filter: string | null): (item: FeedItem) => boolean {
 function feedItems(site: Site, query: URLSearchParams): FeedItem[] {
   const inIt = site.items.filter(inScope(site, query.get('scope') ?? 'all'));
   if (query.get('filter') === 'history') {
-    // What you opened (issue 0052): the read posts, at the time read, latest first.
+    // what you opened: the read posts, at the time read, latest first
     return inIt.filter((item) => item.read_at !== null)
       .map((item) => ({ ...item, sort_at: item.read_at as string, opened_at: item.read_at }))
       .sort((a, b) => b.sort_at.localeCompare(a.sort_at));
@@ -94,14 +91,14 @@ function search({ query }: FixtureRequest, site: Site) {
   const words = (query.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   const scope = query.get('scope');
   const filter = query.get('filter');
-  // The fixture site holds no classics; its News stories are its rows with a story (issue 0056).
+  // the fixture site holds no classics; its News stories are its rows with a story
   if (filter === 'classics') return { success: true, classics: [], next_cursor: null };
   const matches = site.items
     .filter(scope ? inScope(site, scope) : () => true)
     .filter((item) => filter !== 'news' || Boolean(item.story))
     .filter((item) => filter !== 'starred' || item.starred_at !== null)
     .filter((item) => filter !== 'later' || Boolean(item.later_at))
-    .filter((item) => filter !== 'history' || item.read_at !== null)   // History: what was opened (issue 0139)
+    .filter((item) => filter !== 'history' || item.read_at !== null)   // History: what was opened
     .filter((item) => words.every((word) => `${item.title} ${item.excerpt} ${item.source_display_name}`.toLowerCase().includes(word)))
     .map((item) => ({ ...item, snippet: markWords(item.excerpt, words) }));
   const { slice, next_cursor } = page(matches, query);
@@ -177,10 +174,8 @@ function sourcesWithSettings(site: Site): { success: true; sources: SourceWithSe
   return { success: true, sources, total: sources.length };
 }
 
-/**
- * The archive catalog the ingestion tab lists, made from the health rows: a
- * feed holds all it lists, a channel has a backlog, Substack never says.
- */
+/** The archive catalog the ingestion tab lists, made from the health rows: a feed holds all it lists, a channel has
+ *  a backlog, Substack never says. */
 export function archiveCatalog(site: Site): ArchiveCatalogEntry[] {
   return site.health.filter((row) => row.enabled).map((row, i) => {
     const stored = row.stored_posts;
@@ -204,8 +199,8 @@ export function archiveCatalog(site: Site): ArchiveCatalogEntry[] {
   });
 }
 
-/** Issue 0143: two feeds the smart archiver measured. One blog's feed lists its latest posts and its platform's
- *  archive API holds 15 more; the other's site was read to its end. */
+/** Two feeds the smart archiver measured: one blog's platform archive API holds 15 more than its feed; the other's
+ *  site was read to its end. */
 export function coverageOf(id: string, stored: number): ArchiveCoverage | null {
   if (id === sourceId('s-simon')) {
     return { stored, estimate: stored + 15, platform: 'wordpress', strategy: 'api', found_more: true, exhausted: false,
@@ -218,7 +213,7 @@ export function coverageOf(id: string, stored: number): ArchiveCoverage | null {
   return null;
 }
 
-/** What a source discovered (issue 0143): the blog's links Discover lists, one followed after it linked it. */
+/** What a source discovered: the blog's links Discover lists, one followed after it linked it. */
 export function discoveriesOf(id: string, now: Date): SourceDiscoveries {
   const day = 24 * 60 * 60 * 1000;
   const ago = (days: number) => new Date(now.getTime() - days * day).toISOString();
@@ -268,7 +263,7 @@ function archiveStatus({ params }: FixtureRequest, site: Site): ArchiveStatusRes
   };
 }
 
-/** Linked, not stored (issue 0084 B): a few of the source's own pages its posts link. */
+/** Linked, not stored: a few of the source's own pages its posts link. */
 function linkedPages({ params }: FixtureRequest, site: Site) {
   const entry = archiveCatalog(site).find((candidate) => candidate.source_id === params.sourceId);
   const count = entry?.platform === 'rss' ? 17 : 0;
@@ -317,7 +312,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
       }),
     },
     { path: '/api/credentials', respond: () => site.credentials },
-    // Mark X's worker token (issue 0086 C): INSIGHT_MARKX is off by default, so the route answers 404.
+    // Mark X's worker token: INSIGHT_MARKX is off by default, so the route answers 404
     { path: '/api/markx/token', respond: () => new Response(JSON.stringify({ detail: 'Not Found' }), { status: 404 }) },
     { path: '/api/markx/on', respond: () => new Response(JSON.stringify({ detail: 'Not Found' }), { status: 404 }) },
     { path: '/api/operations/overview', respond: () => ({ success: true, jobs: site.jobs, alerts: [], scheduler: site.scheduler }) },
@@ -330,13 +325,13 @@ export function siteRoutes(site: Site): FixtureRoute[] {
       respond: ({ params }) => ({ success: true, job: site.jobs.find((job) => job.id === params.jobId) ?? null }),
     },
     { path: '/api/posts/item/:postId', respond: (request) => postDetail(request, site) },
-    // Connected (issue 0125): no fixture post links another, so the block shows nothing.
+    // Connected: no fixture post links another, so the block shows nothing
     {
       path: '/api/posts/item/:postId/connected',
       respond: () => ({ success: true, earlier: [], later: [], outside: [], more: { earlier: 0, later: 0, outside: 0 } }),
     },
     { path: '/api/youtube/progress/:videoId', respond: () => ({ success: true, progress: null }) },
-    // The archive: the ingestion tab's catalog, and each source's status (the sheet and the tab).
+    // the archive: the ingestion tab's catalog, and each source's status
     { path: '/api/archive/catalog', respond: () => ({ success: true, sources: archiveCatalog(site), total: archiveCatalog(site).length }) },
     { path: '/api/archive/:sourceId/status', respond: (request) => archiveStatus(request, site) },
     { path: '/api/archive/:sourceId/linked', respond: (request) => linkedPages(request, site) },

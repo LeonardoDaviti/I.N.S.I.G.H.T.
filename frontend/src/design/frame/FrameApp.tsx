@@ -8,13 +8,8 @@ import { prototypeById, prototypeComponent } from '../prototypeRegistry';
 let booted: BootedFrame | null = null;
 let walk = false;
 
-/**
- * The chromeless frame route, `/design/frame/:page/:state?theme=&data=&walk=`
- * (or `/design/frame/prototype/:id/:state`), as the whole document of an
- * iframe. It boots once per window (StrictMode renders twice): fixture `fetch`,
- * in-memory storage, theme class; then the page renders. A prototype renders on
- * the fixtures of its README's page, for the state in the URL.
- */
+/** The chromeless frame route as the whole document of an iframe. It boots once per window (StrictMode renders
+ *  twice): fixture `fetch`, in-memory storage, theme class; then the page (or prototype) renders. */
 export default function FrameApp() {
   const [frame] = useState(() => {
     if (!booted) {

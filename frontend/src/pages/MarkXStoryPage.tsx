@@ -5,21 +5,20 @@ import { useParams } from 'react-router-dom';
 import { Page, PageHeader, TextLink } from '../components/ui';
 import { EmptyState, ErrorState, LoadingState } from '../components/states';
 import { MemberLine, StorySheet } from '../components/markx/MarkXPerspectives';
-import { BuiltSection } from '../components/markx/MarkXBuilt';   // 0128: how the story is built
+import { BuiltSection } from '../components/markx/MarkXBuilt';
 import type { BuiltStoryView } from '../components/markx/MarkXBuilt';
-import { AlsoInRoundups } from '../components/markx/MarkXRoundup';   // 0181: also in round-ups
-import { StoryChain } from '../components/markx/MarkXChain';   // 0219: what led to it, what followed
-import { StoryThings } from '../components/markx/MarkXEntities';   // 0250: the things in it, each a link to its page
+import { AlsoInRoundups } from '../components/markx/MarkXRoundup';
+import { StoryChain } from '../components/markx/MarkXChain';
+import { StoryThings } from '../components/markx/MarkXEntities';
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 
 /**
- * A Mark X story's perspectives (0119 B6, `/markx/stories/<id>`): the header states the measured accuracy (the lab's,
- * then yours from 50 labels), the story sheet sits above the members, and each member's line shows its label, sign and
- * new facts with the label buttons. Worth opening (original, new facts, opinion) is shown; the rest is folded under
- * "N say the same". Copies are folded into their first.
+ * A Mark X story's perspectives (`/markx/stories/<id>`): the measured accuracy, the story sheet, then each
+ * member's label, sign and new facts with the label buttons. Worth opening is shown; the rest is folded under
+ * "N say the same", copies into their first.
  */
 export default function MarkXStoryPage() {
   const { storyId = '' } = useParams();
@@ -31,7 +30,7 @@ export default function MarkXStoryPage() {
   const d = query.data;
   const built = (d as BuiltStoryView).built;
   const head = built?.original?.post;
-  // the original found by code comes first (0128), the rest in published order as the server sends them
+  // the original found by code comes first, the rest in published order as the server sends them
   const worth = d.members.filter((m) => m.worth).sort((a, b) => Number(b.post === head) - Number(a.post === head));
   const rest = d.members.filter((m) => !m.worth);
   const same = rest.filter((m) => m.label === 'same').length;

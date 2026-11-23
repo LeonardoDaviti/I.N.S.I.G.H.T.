@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
-import { markxRoundupApi, type MarkxRoundupIssue, type MarkxRoundupItem } from '../../services/api';   // 0181
+import { markxRoundupApi, type MarkxRoundupIssue, type MarkxRoundupItem } from '../../services/api';
 import type { MarkxStoryView } from '../../services/markx';
 import { Button, TextLink } from '../ui';
 import { plural } from '../../lib/format';
 
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
 
-/** A story's "also in round-ups" line (0181): the round-ups carrying one of its members. Display only. */
+/** A story's "also in round-ups" line: the round-ups carrying one of its members. Display only. */
 export function AlsoInRoundups({ roundups }: { roundups: MarkxStoryView['roundups'] }) {
   if (!roundups || !roundups.length) return null;
   return (
@@ -66,10 +66,8 @@ function Issue({ issue, offset }: { issue: MarkxRoundupIssue; offset: number }) 
   );
 }
 
-/**
- * INSIGHT's own round-ups (0181): a daily and a weekly issue, each built once after its day or week closes and kept.
- * The latest of each, and the past ones to open.
- */
+/** INSIGHT's own round-ups: a daily and a weekly issue, each built once after its day or week closes and kept; the
+ *  latest of each, and the past ones to open. */
 export default function MarkXRoundup() {
   const [span, setSpan] = useState<'day' | 'week'>('day');
   const [picked, setPicked] = useState<number | null>(null);

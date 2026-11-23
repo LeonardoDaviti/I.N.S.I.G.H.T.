@@ -1,8 +1,5 @@
-/**
- * The studio's map (Handbook mode): where each design doc lives under /design
- * and how the rail groups them. Pure functions over the parsed docs, so the
- * rail is built from whatever files sit in docs/ (D1) and is tested here.
- */
+/** The studio's map (Handbook mode): where each design doc lives under /design and how the rail groups them; pure,
+ *  built from whatever files sit in docs/. */
 import { META_BLOCK, docSlug, type DesignDoc } from './coverage';
 
 /** The doc as it reads: the `meta` block is for the coverage test, not the reader. */
@@ -61,10 +58,8 @@ export function pageDocsInOrder(docs: readonly DesignDoc[]): DesignDoc[] {
 
 const link = (doc: DesignDoc): RailItem => ({ label: docTitle(doc), href: docHref(doc) });
 
-/**
- * The Handbook rail: Studio (principles, system, components, decisions) ·
- * Pages · Prototypes · Parked. Every doc in docs/ has exactly one place in it.
- */
+/** The Handbook rail: Studio (principles, system, components, decisions) · Pages · Prototypes · Parked. Every doc
+ *  has exactly one place in it. */
 export function railGroups(
   docs: readonly DesignDoc[],
   components: readonly string[],
@@ -94,7 +89,7 @@ export function railGroups(
       label: 'Prototypes',
       items: prototypes.map((prototype) => ({ label: prototype.label, href: `/design/prototypes/${prototype.id}`, note: prototype.note })),
     },
-    // Retired pages kept as a doc; hidden while there are none.
+    // retired pages kept as a doc; hidden while there are none
     ...(parked.length ? [{ label: 'Parked', items: parked }] : []),
   ];
 }

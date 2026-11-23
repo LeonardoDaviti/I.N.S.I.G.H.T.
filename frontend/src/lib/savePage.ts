@@ -1,9 +1,6 @@
 /**
- * Save any page (issue 0031): the save page's address and the bookmarklet that opens it.
- *
- * The bookmarklet only opens INSIGHT's own save page in a new tab, with the page's address
- * and title; nothing is saved until the owner presses Save there (a POST from INSIGHT's
- * page), so a website can never save into INSIGHT by itself.
+ * Save any page: the save page's address and the bookmarklet that opens it. The bookmarklet only opens INSIGHT's
+ * save page; nothing is saved until the owner presses Save there, so a website can never save into INSIGHT.
  */
 
 export const SAVE_PATH = '/save';

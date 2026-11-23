@@ -22,7 +22,7 @@ describe('PostDetailPage header', () => {
     expect(within(header).getByText('simonwillison.net')).toBeInTheDocument();
     expect(within(header).queryByText('rss')).toBeNull();
     expect(header.querySelector('time')).toHaveAttribute('dateTime', '2026-09-27T23:54:15+00:00');
-    // The original link is the band's, left of Aa (v10.42).
+    // The original link is the band's, left of Aa.
     const original = within(navBand()).getByRole('link', { name: /open original/i });
     expect(original).toHaveAttribute('href', 'https://simonwillison.net/2026/Sep/27/2026-in-llms-so-far/');
     expect(original).toHaveAttribute('target', '_blank');
@@ -301,7 +301,7 @@ describe('PostDetailPage images', () => {
     render(baseApi(rssPost({ content_html, images: IMAGES } as Partial<Post>)));
     const heading = await screen.findByRole('heading', { level: 1 });
     const figures = Array.from(document.querySelectorAll('[data-post-image]'));
-    // Every image loads through /api/media (issue 0006), naming its post and its original URL.
+    // Every image loads through /api/media, naming its post and its original URL.
     const proxied = (img: Element) => new URL(img.getAttribute('src')!, 'http://insight.test');
     const sources = figures.map((figure) => proxied(figure.querySelector('img')!));
     expect(sources.every((src) => src.pathname === '/api/media')).toBe(true);
@@ -482,7 +482,7 @@ describe('MarkdownRenderer', () => {
     expect(normalizeRendererContent('Text\n\n    code')).toBe('Text\n\n    code');
   });
 
-  // Issue 0069 (R3): a source's newlines inside HTML are spaces; only plain text keeps its lines.
+  // A source's newlines inside HTML are spaces; only plain text keeps its lines (0069).
   it('wraps an HTML paragraph normally, so X breaks and hard-wrapped feeds leave no holes', () => {
     const { container } = rtlRender(
       <MarkdownRenderer content={'<p>One paragraph.<br>\n<br>Another one.</p>\n<p>A line the feed\nwrapped mid-sentence.</p>'} />,
@@ -499,7 +499,7 @@ describe('MarkdownRenderer', () => {
   });
 });
 
-// ---- Mark IX F3: the post page reads through usePost and follows the feed context ----
+// ---- the post page reads through usePost and follows the feed context ----
 
 const NEXT_ID = '9c1d5c1e-2f4b-4f3a-9a49-6f2b1d7e0a11';
 const PREV_ID = '1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d';
@@ -651,7 +651,7 @@ describe('PostDetailPage feed context and keys', () => {
   });
 });
 
-// ---- issue 0014: continuous reading, with a stubbed IntersectionObserver ----
+// ---- continuous reading (0014), with a stubbed IntersectionObserver ----
 
 /** Observers are fired by hand: `see(element)` says the element entered its observer's root. */
 class StubObserver {
@@ -786,7 +786,7 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     expect(within(next).queryByRole('link', { name: 'settings' })).toBeNull();
     expect(within(next).getByRole('link', { name: 'simonwillison.net' })).toHaveAttribute('href', '/read/source/src-1');
     expect(next.querySelector('time')).toHaveAttribute('dateTime', '2026-09-26T10:00:00+00:00');
-    // One set of actions, the current post's, in the band; no header repeats them (v10.42).
+    // One set of actions, the current post's, in the band; no header repeats them.
     expect(within(next).queryByRole('group', { name: 'Post actions' })).toBeNull();
     expect(screen.getAllByRole('group', { name: 'Post actions' })).toHaveLength(1);
   });
@@ -895,7 +895,7 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
   });
 });
 
-// ---- issue 0030: continue where I stopped ----
+// ---- continue where I stopped (0030) ----
 
 /** A long post: 40 paragraphs, about 5,000 characters (more than three screens). */
 const PARAGRAPHS = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1}. ${'Agents shipped everywhere this year and the tools got better. '.repeat(2)}`);

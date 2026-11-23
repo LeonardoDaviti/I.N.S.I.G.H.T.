@@ -1,8 +1,5 @@
-/**
- * Reading the design system from the running page (D3): the tokens come from
- * the CSS custom properties through getComputedStyle, so a specimen can't
- * drift from index.css.
- */
+/** The design system read from the running page: tokens come from the CSS custom properties through
+ *  getComputedStyle, so a specimen can't drift from index.css. */
 import { useSyncExternalStore } from 'react';
 
 export interface DocumentedToken {
@@ -41,7 +38,7 @@ export function rootCustomProperties(prefix: string): string[] {
     try {
       visit(sheet.cssRules);
     } catch {
-      // A cross-origin sheet can't be read; ours are same-origin.
+      // a cross-origin sheet can't be read; ours are same-origin
     }
   }
   return [...names];
@@ -53,10 +50,7 @@ function subscribeToRootClass(onChange: () => void): () => void {
   return () => observer.disconnect();
 }
 
-/**
- * The root's class list, re-read when the theme flips, so live specimens
- * re-render with the other theme's values.
- */
+/** The root's class list, re-read when the theme flips, so live specimens re-render with the other theme. */
 export function useRootClass(): string {
   return useSyncExternalStore(subscribeToRootClass, () => document.documentElement.className);
 }

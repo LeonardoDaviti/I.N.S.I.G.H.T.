@@ -1,5 +1,4 @@
-// The track scout (issue 0148, Mark X): a track finds sources in a sphere INSIGHT doesn't read yet. Its calls and
-// shapes, beside tracks.ts's.
+// The track scout (Mark X): a track finds sources in a sphere INSIGHT doesn't read yet. Its calls and shapes.
 import { request } from '../lib/request';
 
 export type ScoutPlace = 'suggested' | 'judging' | 'below_floor' | 'reads_badly' | 'unreadable' | 'unread';

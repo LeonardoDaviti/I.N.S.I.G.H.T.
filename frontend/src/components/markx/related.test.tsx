@@ -1,4 +1,4 @@
-// v10.36: the post page's Related reading, folded and asked only when opened. Synthetic data only.
+// The post page's Related reading, folded and asked only when opened. Synthetic data only.
 import { describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

@@ -6,10 +6,8 @@ import { errorMessage } from '../../lib/apiError';
 
 export const MARKX_TOKEN_KEY = ['markx-token'] as const;
 
-/**
- * Sources → Connections → Mark X worker (issue 0086 C): the token scripts/markx-worker sends. Shown only
- * while INSIGHT_MARKX is on (the route answers 404 when off). A new token is shown once and replaces the old.
- */
+/** Sources → Connections → Mark X worker: the token scripts/markx-worker sends, only while INSIGHT_MARKX is on. A
+ *  new token is shown once and replaces the old. */
 export default function MarkXToken() {
   const api = useApi();
   const queryClient = useQueryClient();

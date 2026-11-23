@@ -65,10 +65,9 @@ function Verdict({ j, onAgain, busy }: { j: SourceJudgement; onAgain: () => void
 }
 
 /**
- * "Is this worth it?" (issue 0173, Mark X): on the owner's tap only, the worker reads the candidate's newest items with
- * what INSIGHT measured (who links it, the stories it started, its pace, how it reads, whether it repeats your sources)
- * and says follow, maybe or skip, with its reasons and the items it relied on. Nothing is followed: Follow stays the
- * row's own (the Add source dialog). An answer is kept 30 days; Ask again asks again only when it posted something new.
+ * "Is this worth it?" (Mark X): on the owner's tap only, the worker reads the candidate's newest items with what
+ * INSIGHT measured and says follow, maybe or skip, with its reasons and the items it relied on. Nothing is followed
+ * (Follow stays the row's own). An answer is kept 30 days; Ask again asks only when it posted something new.
  * Nothing while Mark X is off.
  */
 export default function SourceJudge({ address, compact = false }: { address: string; compact?: boolean }) {

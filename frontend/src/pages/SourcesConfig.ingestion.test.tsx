@@ -215,7 +215,7 @@ describe('Sources → ingestion tab', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Change interval' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByText(/briefing/i)).toBeNull();
-    // The database is the truth for sources: nothing syncs from the file (issue 0071).
+    // The database is the truth for sources: nothing syncs from the file (0071).
     expect(within(dialog).queryByText(/sources\.json/i)).toBeNull();
     const tick = within(dialog).getByLabelText(/check for due sources every/i);
     await userEvent.clear(tick);
@@ -226,7 +226,7 @@ describe('Sources → ingestion tab', () => {
   });
 
   it('jobs lists the history; a job opens with what it delivered, then its per-source events', async () => {
-    // A job stored before issue 0021: the old summary, and the events that only repeated it.
+    // An old stored job: the old summary, and the events that only repeated it.
     const stored = job({
       id: 'r1',
       payload: {

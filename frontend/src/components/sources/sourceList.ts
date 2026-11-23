@@ -1,16 +1,8 @@
 /**
- * The Sources page as one list (pure, so it is testable): every source is one
- * health row; the toolbar filters it (search + status) and groups it (by track
- * or platform; flat by default), the column headers sort inside each group. The
- * view lives in the URL:
- *
- *   ?q=simon&status=error&group=track&sort=added&dir=asc
- *
- * The old Health tab URL (`?tab=health`) is the flat list, keeping its
- * `?status=` filter, so bookmarks and the command palette still land right.
- * Retired or unknown values (`sort=success`, `group=status`) fall back to the
- * defaults. A track deep link (`?track=<id>`, issue 0003) groups by track so
- * its group is there to scroll to; the first change to the view consumes it.
+ * The Sources page as one list (pure): filtered by the toolbar (search + status), grouped (by track or kind; flat
+ * by default) and sorted by column inside each group. The view lives in the URL
+ * (`?q=simon&status=error&group=track&sort=added&dir=asc`); old `?tab=health` links and unknown values fall back
+ * to the defaults; a `?track=<id>` deep link groups by track until the first view change consumes it.
  */
 import type { Folder, HealthStatus, SourceHealthRow } from '../../services/api';
 import type { Status } from '../ui/styles';
@@ -54,9 +46,8 @@ export const DEFAULT_DIR: Record<SortBy, SortDir> = {
   status: 'desc',
 };
 
-/** A status chip: one health status, `enabled` (every source that is on), `tidy` (Tidy up:
- *  the sources marked quiet or never opened, issue 0046), `silent` (silent far beyond its rhythm, issue 0178) or
- *  `stalled` (stopped without anyone seeing, issue 0242). */
+/** A status chip: one health status, `enabled`, `tidy` (marked quiet or never opened), `silent` (far beyond its
+ *  rhythm) or `stalled` (stopped without anyone seeing). */
 export type StatusFilter = HealthStatus | 'enabled' | 'tidy' | 'silent' | 'stalled';
 const STATUS_FILTER_VALUES: readonly string[] = ['enabled', 'tidy', 'silent', 'stalled', ...HEALTH_STATUS_ORDER];
 
@@ -81,7 +72,7 @@ export interface SourceGroup {
 }
 
 export function readSourcesView(params: URLSearchParams): SourcesView {
-  // ?status=backoff is now part of Failing; ?group=platform is the old name of Group by Kind.
+  // legacy values: ?status=backoff is part of Failing; ?group=platform is Group by Kind
   const status = params.get('status') === 'backoff' ? 'error' : params.get('status');
   const group = params.get('group') === 'platform' ? 'kind' : params.get('group');
   const sort = SORT_BY.includes(params.get('sort') as SortBy) ? (params.get('sort') as SortBy) : 'status';
@@ -95,11 +86,8 @@ export function readSourcesView(params: URLSearchParams): SourcesView {
   };
 }
 
-/**
- * The URL for a view; no grouping, the `status` sort, a column's own direction
- * and empty values stay out of it. The legacy tab and a consumed track deep
- * link go; other params (`data`, `source`) survive.
- */
+/** The URL for a view: defaults stay out of it, the legacy tab and a consumed track deep link go, other params
+ *  (`data`, `source`) survive. */
 export function writeSourcesView(params: URLSearchParams, view: SourcesView): URLSearchParams {
   const next = new URLSearchParams(params);
   next.delete('tab');
@@ -123,13 +111,12 @@ export function rowName(row: Pick<SourceHealthRow, 'display_name' | 'source_id'>
   return sourceLabel(String(row.display_name || row.source_id));
 }
 
-/** Marked quiet or never opened (issue 0046): a source Tidy up lists. */
+/** Marked quiet or never opened: a source Tidy up lists. */
 export function isTidy(row: Pick<SourceHealthRow, 'quiet' | 'never_opened'>): boolean {
   return Boolean(row.quiet || row.never_opened);
 }
 
-/** The rows a status chip keeps: `enabled` is every source that is on, `tidy` the marked ones,
- *  the rest as filterHealthRows. */
+/** The rows a status chip keeps. */
 export function filterByStatus(rows: readonly SourceHealthRow[], status: StatusFilter | null): SourceHealthRow[] {
   if (status === 'enabled') return rows.filter((row) => row.enabled);
   if (status === 'tidy') return rows.filter(isTidy);
@@ -167,11 +154,9 @@ const ASCENDING: Record<Exclude<SortBy, 'status'>, (a: SourceHealthRow, b: Sourc
 };
 
 /**
- * The order inside a group, by one column in a direction (default: the
- * column's own, DEFAULT_DIR). Status descending is worst first; ascending is the
- * status order reversed. A source without posts counts as the oldest. Ties fall
- * back to the name, A to Z, in every column: within a status too, never by the next
- * fetch (a just-fetched source sank to the end of Scheduled).
+ * The order inside a group, by one column in a direction (default: the column's own). Status descending is worst
+ * first; a source without posts counts as the oldest. Ties fall back to the name, A to Z, in every column (never
+ * the next fetch, or a just-fetched source sinks).
  */
 export function sortSources(rows: readonly SourceHealthRow[], sort: SortBy, dir: SortDir = DEFAULT_DIR[sort]): SourceHealthRow[] {
   if (sort === 'status') {
@@ -183,11 +168,9 @@ export function sortSources(rows: readonly SourceHealthRow[], sort: SortBy, dir:
 }
 
 /**
- * Groups in display order. None: one flat list without a header. Track: every
- * track in the folder order (empty ones too, unless a search or filter is on),
- * then the sources in no track, without a header; a source in two tracks shows
- * in both. Kind (as the list's Kind column names it): A to Z. Inside a group, `sort` in `dir` (default: worst
- * status first).
+ * Groups in display order. None: one flat list without a header. Track: every track in folder order (empty ones
+ * too, unless a search or filter is on), then untracked sources without a header; a source in two tracks shows in
+ * both. Kind: A to Z.
  */
 export function groupSources(
   rows: readonly SourceHealthRow[],
@@ -229,11 +212,8 @@ export function stepActive(keys: readonly string[], current: string | null, delt
   return keys[Math.min(keys.length - 1, Math.max(0, index + delta))];
 }
 
-/**
- * Shift-click: the source ids from the anchor row to the target row, both
- * included, in on-screen order (either direction). Without a visible anchor,
- * just the target.
- */
+/** Shift-click: the source ids from the anchor row to the target row, both included, in on-screen order; without
+ *  a visible anchor, just the target. */
 export function rangeIds(keys: readonly { key: string; id: string }[], anchor: string | null, target: string): string[] {
   const to = keys.findIndex((k) => k.key === target);
   if (to < 0) return [];
@@ -260,8 +240,7 @@ export const STATUS_GLYPH: Record<HealthStatus, Status> = {
   disabled: 'disabled',
 };
 
-/** The source doctor's finding in the list (issue 0036): null when it has not looked. A server error
- *  is no move (issue 0072 D3). */
+/** The source doctor's finding in the list: null when it has not looked; a server error is no move. */
 export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_looked_at' | 'server_error' | 'dead'>): string | null {
   if (row.dead) return `Dead host: ${row.dead.host} ${row.dead.reason}`;
   if (row.server_error) return 'Server failing: retrying';
@@ -269,7 +248,7 @@ export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_lo
   return row.doctor_looked_at ? 'Broken: no replacement found' : null;
 }
 
-/** Where a source's posts now live (issue 0108): the owner chooses; nothing is switched off. */
+/** Where a source's posts now live: the owner chooses; nothing is switched off. */
 export function movedNote(row: Pick<SourceHealthRow, 'moved_to'>): string | null {
   const moved = row.moved_to;
   if (!moved) return null;
@@ -277,8 +256,7 @@ export function movedNote(row: Pick<SourceHealthRow, 'moved_to'>): string | null
     : `Its posts now live at ${moved.host}: follow that instead?`;
 }
 
-/** Silent far beyond its own rhythm (issue 0178): "Silent 64 days (usually every 1.4d)", "…: moved to example.org"
- *  when its address now lands elsewhere, "…: new feed found" when the doctor found a live one. */
+/** Silent far beyond its own rhythm: "Silent 64 days (usually every 1.4d)", plus where it moved or a new feed. */
 export function silentNote(row: Pick<SourceHealthRow, 'silent'>): string | null {
   const silent = row.silent;
   if (!silent) return null;
@@ -296,10 +274,7 @@ function hostOf(address: string): string {
   }
 }
 
-/**
- * Source hygiene's notes (issue 0046), quiet first: "Quiet: last post Mar 4" (or "Quiet: no
- * posts yet"), "Never opened: 214 posts". Empty for a source with neither mark.
- */
+/** Source hygiene's notes, quiet first ("Quiet: last post Mar 4", "Never opened: 214 posts"); empty for neither. */
 export function tidyNotes(row: Pick<SourceHealthRow, 'quiet' | 'never_opened' | 'last_post_at' | 'stored_posts'>, now: Date): string[] {
   const notes: string[] = [];
   if (row.quiet) notes.push(row.last_post_at ? `Quiet: last post ${feedDateLabel(row.last_post_at, now)}` : 'Quiet: no posts yet');
@@ -307,14 +282,13 @@ export function tidyNotes(row: Pick<SourceHealthRow, 'quiet' | 'never_opened' | 
   return notes;
 }
 
-/** The URL of the Sources list narrowed to the stopped sources (issue 0242: the reader's nav links it). */
+/** The URL of the Sources list narrowed to the stopped sources. */
 export const STALLED_SOURCES_PATH = '/settings/sources?status=stalled';
 
 /**
- * Why a source stopped (issue 0242), or null when it works: its kind's unavailable reason ("Reddit closed its
- * feeds: add Reddit credentials in Sources → Connections"), its dead host, else "Stopped: nothing fetched for 4 days"
- * / "Stopped: failed 6 times in a row" / "Stopped: never fetched (added 10 days ago)". A source whose live fetch never
- * worked but holds posts (its archive brought them, issue 0254): "Stopped: its live feed fails: <its last error>".
+ * Why a source stopped, or null when it works: its kind's unavailable reason, its dead host, else "Stopped: nothing
+ * fetched for 4 days" / "failed 6 times in a row" / "never fetched"; a source with posts (from its archive) whose
+ * live fetch never worked: "Stopped: its live feed fails: <its last error>".
  */
 export function stalledNote(row: Pick<SourceHealthRow, 'stalled' | 'dead' | 'status' | 'unavailable_reason'>): string | null {
   const stalled = row.stalled;
@@ -334,16 +308,16 @@ export function stalledNote(row: Pick<SourceHealthRow, 'stalled' | 'dead' | 'sta
 export function rowFact(row: SourceHealthRow, now: Date): string {
   if (!row.enabled) return 'off';
   if (row.kind === 'saved') return 'pages you save';
-  // Stopped without anyone seeing (issue 0242): first, it is the one the owner must act on.
+  // stopped first: it is the one the owner must act on
   const stalled = stalledNote(row);
   if (stalled) return stalled;
-  // A source whose posts moved says so first (issue 0108): it also reads as quiet.
+  // moved posts before quiet: a moved source also reads as quiet
   const moved = movedNote(row);
   if (moved) return moved;
-  // Silent far beyond its rhythm (issue 0178): before quiet, which it also is.
+  // silent before quiet, which it also is
   const silent = silentNote(row);
   if (silent) return silent;
-  // Never on a broken source (the doctor's note stays), so it may come before the status.
+  // never on a broken source (the doctor's note stays), so it may come before the status
   const [tidy] = tidyNotes(row, now);
   if (tidy) return tidy;
   if (row.status === 'unavailable') return 'unavailable';
@@ -356,11 +330,8 @@ export function rowFact(row: SourceHealthRow, now: Date): string {
   return `fetched ${formatRelativeTime(row.last_success_at, now)}`;
 }
 
-/**
- * Status chips. The primary ones always show (after All): enabled, disabled and
- * failing (error + backoff, like the "N source errors" chip, so backoff has no chip of its own). The
- * secondary ones narrow further and show only when they have sources.
- */
+/** Status chips: the primary ones always show (All, enabled, disabled, failing = error + backoff); the secondary
+ *  ones only when they have sources. */
 export const STATUS_FILTERS: { value: StatusFilter; label: string; secondary?: boolean }[] = [
   { value: 'enabled', label: 'Enabled' },
   { value: 'disabled', label: 'Disabled' },

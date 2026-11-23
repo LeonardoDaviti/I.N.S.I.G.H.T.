@@ -22,9 +22,8 @@ export function postQueryOptions(api: Api, postId: string, fixture?: string | nu
 }
 
 /**
- * `useQuery(['post', id])` (spec §F.3); the reader prefetches it so `o` opens from
- * cache. `override` is the post page's dev-only `?data=` fixture API (cached apart).
- * While the next post loads, the last one stays: the page keeps its stream (issue 0014).
+ * `useQuery(['post', id])`; the reader prefetches it so `o` opens from cache. `override`: the dev-only `?data=`
+ * fixture API (cached apart). While the next post loads, the last one stays.
  */
 export function usePost(postId: string | undefined, override?: { api: Api; fixture: string | null }) {
   const live = useApi();

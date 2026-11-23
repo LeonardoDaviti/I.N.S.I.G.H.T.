@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-// Issue 0187: nginx's Content-Security-Policy lets only this build's scripts run. index.html's one inline
-// script (the theme, before first paint) runs by its hash: change the script and this fails until the hash
-// in nginx.conf is the new one (a stale hash would only bring back the dark flash, silently).
+// nginx's CSP lets only this build's scripts run (0187); index.html's one inline script runs by its hash: change
+// the script and this fails until nginx.conf has the new hash (a stale one would silently bring back the dark flash).
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const html = read('../../index.html');
 const nginx = read('../../nginx.conf');

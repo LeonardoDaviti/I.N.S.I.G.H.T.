@@ -11,9 +11,8 @@ export interface EmptyStateAction {
   quiet?: boolean;
 }
 
-/** A load that succeeded with nothing to show: copy plus one action ("Show all",
- *  "Add a source", or a quiet link to Sources), Mark IX §F.6. Quiet: a hairline
- *  box, a short headline, the action as the one inverted button or a text link. */
+/** A load that succeeded with nothing to show: a hairline box, a short headline and one action (the inverted button
+ *  or a text link). */
 export default function EmptyState({
   title,
   description,

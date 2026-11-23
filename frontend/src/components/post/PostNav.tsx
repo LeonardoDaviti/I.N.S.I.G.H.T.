@@ -11,11 +11,11 @@ interface PostNavProps {
   step?: { onPrevious: (() => void) | null; onNext: (() => void) | null };
 }
 
-/** The sticky row also holds the post's actions and Aa (issue 0045, v10.42), so under 640px Back,
- *  Previous and Next keep only their arrows there (the words stay their names); the row after the post has room. */
+/** The sticky row also holds the post's actions and Aa, so under 640px Back, Previous and Next keep only their
+ *  arrows there (the words stay their names). */
 const STEP_LABEL = 'max-sm:sr-only';
 
-/** Back / Previous / Next on the post page, on one line at every width (issue 0010). */
+/** Back / Previous / Next on the post page, on one line at every width. */
 export default function PostNav({ label, size, backLabel, onBack, step }: PostNavProps) {
   return (
     <nav aria-label={label} className="-ml-2.5 flex min-w-0 flex-nowrap items-center gap-1">

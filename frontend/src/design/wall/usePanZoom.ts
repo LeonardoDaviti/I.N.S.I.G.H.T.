@@ -23,11 +23,9 @@ function sizeOf(element: HTMLElement | null): Size {
 }
 
 /**
- * Pan and zoom for the Wall: drag anywhere to pan, scroll to pan, pinch or
- * ⌘/ctrl-scroll to zoom about the pointer. Every move writes one `transform`
- * on the world element directly, so a gesture never re-renders React (60fps,
- * transform only); the view reaches React state once it rests. Until you move
- * it, the view keeps the whole wall fitted to the viewport as it resizes.
+ * Pan and zoom for the Wall: drag or scroll to pan, pinch or ⌘/ctrl-scroll to zoom about the pointer. Every move
+ * writes one `transform` on the world element directly, so a gesture never re-renders React; the view reaches React
+ * state once it rests. Until moved, the view keeps the whole wall fitted to the viewport.
  */
 export function usePanZoom(bounds: Rect) {
   const viewport = useRef<HTMLDivElement>(null);
@@ -59,7 +57,7 @@ export function usePanZoom(bounds: Rect) {
     apply(zoomAt(view.current, { x: size.width / 2, y: size.height / 2 }, factor), true);
   }, [apply]);
 
-  // Fit now and whenever the viewport resizes (the walk panel opens), until moved.
+  // fit now and whenever the viewport resizes (the walk panel opens), until moved
   useLayoutEffect(() => {
     fit(false);
     const element = viewport.current;
@@ -74,7 +72,7 @@ export function usePanZoom(bounds: Rect) {
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  // Wheel and pinch: a native listener, so the page itself does not scroll or zoom.
+  // wheel and pinch: a native listener, so the page itself does not scroll or zoom
   useEffect(() => {
     const element = viewport.current;
     if (!element) return undefined;

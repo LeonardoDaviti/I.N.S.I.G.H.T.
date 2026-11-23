@@ -4,11 +4,8 @@ import { cleanup } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterAll, afterEach, vi } from 'vitest';
 
-// sonner removes a closed toast 200 ms after it closes (its TIME_BEFORE_UNMOUNT), on a timer
-// that unmounting the Toaster does not clear. A toast closed in a file's last test could fire
-// that timer after vitest tore the file's jsdom down ("window is not defined", an unhandled
-// error that fails the run), which happened on a loaded machine. A file that made toasts waits
-// that long once at its end, so every such timer runs while the DOM still exists.
+// sonner removes a closed toast 200 ms later on a timer unmounting does not clear; fired after vitest tore the
+// jsdom down, it fails the run. A file that made toasts waits that long once at its end.
 const SONNER_UNMOUNT_MS = 200;
 
 afterEach(() => {

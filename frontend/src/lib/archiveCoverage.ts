@@ -1,7 +1,4 @@
-/**
- * A feed's coverage in words (issue 0143): "stored 19 of ~34", the platform its site is built with, how the
- * rest was found, and why what is missing is missing. Pure.
- */
+/** A feed's coverage in words ("stored 19 of ~34"), its platform, how the rest was found, why some is missing. Pure. */
 import type { ArchiveCoverage, DiscoveredSite } from '../services/smartArchive';
 import { formatCount } from './format.ts';
 

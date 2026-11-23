@@ -74,8 +74,8 @@ function parseWhole(text: string, min: number, max: number, label: string): { va
   return { value };
 }
 
-/** The source's state in words: status, what happens next, the last success and error.
- *  A due source says when the scheduler next checks (`scheduler`, once it is read). */
+/** The source's state in words: status, what happens next, the last success and error; a due source says when the
+ *  scheduler next checks (`scheduler`, once it is read). */
 function HealthSummary({ row, now, scheduler }: { row: SourceHealthRow; now: Date; scheduler?: SchedulerConfig }) {
   const status = row.enabled ? row.status : 'disabled';
   const due = status === 'due';
@@ -119,17 +119,17 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const fetchDelay = parseWhole(fetchDelayText, 0, 60, 'Fetch delay');
   const formValid = 'value' in fetchDelay;
 
-  // Cadence and the main-feed flag come from the health row (one cached query for all sources).
+  // cadence and the main-feed flag come from the health row (one cached query for all sources)
   const health = useSourcesHealth();
   const healthRow = givenRow ?? health.data?.rows.find((row) => row.source_id === source.id) ?? null;
   const { run, isRunning } = useIngestionRun();
   const scheduler = useSchedulerConfig();
   const fetchTarget = { kind: 'source' as const, id: source.id, name: sourceLabel(source.settings.display_name, source.handle_or_url) };
-  // The server's jobs too: a fetch started before this sheet opened (or elsewhere) still shows.
+  // the server's jobs too: a fetch started before this sheet opened (or elsewhere) still shows
   const jobs = useRunningJobs().data?.jobs;
   const fetching = isRunning(fetchTarget) || runningFetchJob(jobs, source.id) !== null;
   const enabled = healthRow?.enabled ?? source.enabled;
-  // The Saved source (issue 0031) is never fetched: no fetch, cadence, archive or delay to set.
+  // the Saved source is never fetched: no fetch, cadence, archive or delay to set
   const saved = healthRow?.kind === 'saved';
   const fetchable = enabled && healthRow?.status !== 'unavailable' && !saved;
   const [inMainDigest, setInMainDigest] = useState<boolean | null>(null);
@@ -153,7 +153,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
     }
   };
 
-  // Watch for changes (issue 0039): only a kind that reads each post from its page can.
+  // watch for changes: only a kind that reads each post from its page can
   const [watchChanges, setWatchChanges] = useState<boolean | null>(null);
   const watching = watchChanges ?? healthRow?.watch_changes ?? Boolean(source.settings.watch_changes);
   const [savingWatch, setSavingWatch] = useState(false);
@@ -221,8 +221,8 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
     setError(null);
 
     try {
-      // Only send non-empty display_name, otherwise send null to use default.
-      // Posts per fetch and fetch order are INSIGHT's own per kind: never sent (issue 0027).
+      // An empty display_name is sent as null (the default). Posts per fetch and fetch order are INSIGHT's own per
+      // kind: never sent.
       const settingsToSave = {
         display_name: displayName.trim() || undefined,
         fetch_delay_seconds: fetchDelay.value,
@@ -254,15 +254,14 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
         description={<>{healthRow ? kindLabel(healthRow) : getPlatformLabel(source.platform)} · <TextLink to={sourceReadPath(source.id)}>Read posts</TextLink></>}
         className="w-[min(32rem,100vw)]"
       >
-        {/* A div, not a form: the cadence editor below is its own form and forms cannot nest. */}
+        {/* a div, not a form: the cadence editor below is its own form and forms cannot nest */}
         <div className="space-y-6">
           <div className="space-y-3">
             <SourceAddress value={source.handle_or_url} />
             {healthRow ? <HealthSummary row={healthRow} now={new Date()} scheduler={scheduler.data} /> : null}
             {healthRow ? <ReplacementNotice row={healthRow} now={new Date()} onSwitched={onSave} /> : null}
             {healthRow?.silent ? <SilentNotice row={healthRow} now={new Date()} onSwitched={onSave} /> : null}
-            {/* A quiet note, after the replacement (an action): the reader keeps less of this
-                source's pages than they show (issue 0032). */}
+            {/* a quiet note, after the replacement: the reader keeps less of this source's pages than they show */}
             {healthRow?.reading_notice ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{healthRow.reading_notice}</p> : null}
             {healthRow && movedNote(healthRow) ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{movedNote(healthRow)}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
@@ -320,8 +319,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <p className={hint(false)}>Select a track to add this source to it. Saves instantly.</p>
           </fieldset>
 
-          {/* A source that is off or cannot be fetched has no cadence, main-feed or archive to set:
-              its one line above says why (issue 0027). */}
+          {/* a source that is off or cannot be fetched has nothing to set here: its one line above says why */}
           {fetchable || (saved && enabled) ? (
             <div className="flex items-start justify-between gap-4">
                 <div>
@@ -374,7 +372,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             </>
           ) : null}
 
-          {/* What this source discovered (issue 0143): read from Discover's and Mark X's stores. */}
+          {/* what this source discovered, read from Discover's and Mark X's stores */}
           <div className="rounded-md border border-line p-3">
             <SourceDiscoveries sourceId={source.id} />
           </div>

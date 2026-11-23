@@ -1,8 +1,7 @@
 /**
- * HTML read where nothing in it can run (issue 0187). A post's HTML is the feed's: setting it as an element's
- * innerHTML in the page loads its images and fires their onerror handlers, even on an element never shown.
- * A document made by DOMParser has no window: its scripts don't run, its images don't load, no handler fires.
- * Every read of HTML for its text goes through here, never through the page's own document.
+ * HTML read where nothing in it can run. A post's HTML is the feed's: as innerHTML it would load its images and
+ * fire their onerror handlers, even on an element never shown. A DOMParser document has no window, so nothing
+ * runs or loads. Every read of HTML for its text goes through here, never through the page's own document.
  */
 
 function inertDocument(html: string): Document {
@@ -15,8 +14,7 @@ export function htmlText(html: string): string {
   return inertDocument(html).body.textContent ?? '';
 }
 
-/** "&lt;p&gt; &amp;" -> "<p> &": entities decoded and tags kept as text, as a textarea reads them, in an inert
- * document (a textarea's content is never markup, and its document runs nothing either way). */
+/** "&lt;p&gt; &amp;" -> "<p> &": entities decoded and tags kept as text, as a textarea reads them, in an inert document. */
 export function decodeEntities(input: string): string {
   if (typeof DOMParser === 'undefined') {
     return input

@@ -1,5 +1,4 @@
-// "Is this worth it?" (issue 0173, Mark X): a candidate source judged by the worker on the owner's tap. Its calls and
-// shapes, and its lines in words.
+// "Is this worth it?" (Mark X): a candidate source judged by the worker on the owner's tap; calls, shapes, lines.
 import { request } from '../lib/request';
 
 export type JudgeStatus = 'reading' | 'asked' | 'answered' | 'unreadable' | 'failed';

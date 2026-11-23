@@ -27,12 +27,8 @@ function status({ current, running, ready, error }: WalkState): string {
   return current === WALK.length - 1 ? `✓ walked all ${WALK.length} steps` : `✓ step ${current + 1} of ${WALK.length}`;
 }
 
-/**
- * The walk (prototype verdict B): one large interactive frame replaying the
- * journey at real speed, with play / pause / step / restart and the steps
- * listed, the one shown marked. It runs on fixtures, whatever the Wall shows:
- * the script clicks fixture pages. A theme change starts it over.
- */
+/** The walk: one large interactive frame replaying the journey at real speed, with play / pause / step / restart
+ *  and the steps listed. It always runs on fixtures (the script clicks fixture pages); a theme change restarts it. */
 export default function WalkPanel({
   state, dispatch, frame, theme, onClose,
 }: {
@@ -43,7 +39,7 @@ export default function WalkPanel({
   onClose: () => void;
 }) {
   const atEnd = state.current >= WALK.length - 1;
-  // A new theme reloads the frame at the feed, so the walk starts over with it.
+  // a new theme reloads the frame at the feed, so the walk starts over with it
   const shownTheme = useRef(theme);
   useEffect(() => {
     if (shownTheme.current === theme) return;

@@ -91,11 +91,10 @@ function Row({ row, onFollow, onHide, onTurnOn }: {
 }
 
 /**
- * Discover → "The main source is missing" (issue 0170): events your sources covered whose actor's own channel you don't
- * hold (Mark X's stories of 2+ sources; never a lawsuit, a regulator's action, a filing or a scoop), the channel's
+ * Discover → "The main source is missing": events your sources covered whose actor's own channel you don't hold
+ * (Mark X's stories of 2+ sources; never a lawsuit, a regulator's action, a filing or a scoop), with the channel's
  * section to follow, a followed site's other section, or a turned-off source that was the event's own. Follow… opens
- * Add source on the channel (the feed finder, then page watching, as every add); Not interested hides the row for good.
- * Shows nothing when there is nothing, or when Mark X is off.
+ * Add source; Not interested hides the row for good. Nothing when there is nothing, or when Mark X is off.
  */
 export default function MainSourceMissing({ onFollow }: { onFollow: (url: string) => void }) {
   const api = useApi();

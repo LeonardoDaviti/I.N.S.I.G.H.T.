@@ -7,12 +7,11 @@ import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
 import type { FeedFinding, PageOffer } from '../services/api';
 
-// The server's Telegram bridge (issue 0135): asked only when the Telegram template is chosen.
+// the server's Telegram bridge (0135): asked only when the Telegram template is chosen
 const bridge = vi.hoisted(() => vi.fn<() => Promise<string | null>>());
 vi.mock('../services/api', async (actual) => ({ ...(await actual<typeof import('../services/api')>()), telegramBridge: bridge }));
 
-// stripe.com's home page would follow /customers/ (557 links, 0 articles); its /blog had 269
-// dated articles (2026-10-28).
+// a home page whose most-linked section holds no articles: its blog (dated articles) is chosen
 const offer = (url: string, prefix: string, found: number): PageOffer => ({
   url, prefix, found, sitemap: false,
   items: [{ url: `${url}/post`, title: `A post from ${prefix}`, published_at: '2026-10-12T00:00:00+00:00' }],
@@ -95,8 +94,7 @@ describe('a home page with no feed offers its blog (issue 0041)', () => {
   });
 });
 
-// claude.com from Discover (2026-10-31): its home page offered /resources/ (546 articles); 21 of
-// the 24 claude.com articles your sources linked are under /blog/, now /resources/articles/.
+// from Discover: the home page offers a section; most of the articles your sources linked moved under it
 describe('findings ranked by the articles your sources linked (issue 0060)', () => {
   const ARTICLES = { ...offer('https://lab.example/resources/articles', '/resources/articles/', 273), holds: 21 };
   const RESOURCES = { ...offer('https://lab.example/resources', '/resources/', 546), holds: 21 };

@@ -7,7 +7,7 @@ import type { MarkxNews } from '../../services/markx';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 
-// v10.22 (0216 D): the Labels tab and its queue are removed; the one tap on a News member stays.
+// The Labels tab is gone (0216); the one tap on a News member stays.
 const now = new Date().toISOString();
 
 describe('one tap on a Mark X News member', () => {

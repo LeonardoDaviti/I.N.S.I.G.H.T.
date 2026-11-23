@@ -4,8 +4,7 @@ import './index.css'
 import App from './App.tsx'
 import { reloadOnce } from './lib/staleTab'
 
-// A tab open across a deploy asks for chunks that are gone (issue 0061): reload once into
-// the new build. When that did not help, the error screen offers the reload instead.
+// A tab open across a deploy asks for chunks that are gone: reload once into the new build (else the error screen).
 window.addEventListener('vite:preloadError', (event) => {
   if (reloadOnce(window.sessionStorage, import.meta.url, Date.now())) {
     event.preventDefault()

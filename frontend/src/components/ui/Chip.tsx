@@ -29,10 +29,7 @@ export function Chip({
   );
 }
 
-/**
- * A toggle chip for filters ("failing 3"). Selected = inverted block, with
- * `aria-pressed`; the count is tabular and formatted (`Intl.NumberFormat`).
- */
+/** A toggle chip for filters ("failing 3"): selected = inverted block with `aria-pressed`; the count is formatted. */
 export const FilterChip = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & { selected: boolean; count?: number | null; children: ReactNode }

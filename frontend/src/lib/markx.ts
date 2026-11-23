@@ -1,5 +1,4 @@
-// Mark X Shadow's words (issue 0086 E): why a post is in a Mark X story, what Mark IX did with it, a tag's meaning.
-// Used by the Mark X page and the post page's panel only (their own chunks).
+// Mark X's words: why a post is in a Mark X story, what Mark IX did with it, a tag's meaning. Mark X chunks only.
 
 export type Why = {
   role: string;
@@ -88,7 +87,7 @@ export function ixWords(ix: { title: string | null; same_row: boolean } | null |
   return `Mark IX: in “${ix.title ?? 'another row'}”`;
 }
 
-/** The labels' one-tap answers (0086 F), as the buttons say them. */
+/** The labels' one-tap answers, as the buttons say them. */
 export const ANSWER_WORDS: Record<string, string> = {
   same_event: 'same event',
   follow_up: 'follow-up',

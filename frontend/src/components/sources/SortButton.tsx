@@ -1,11 +1,8 @@
 import { cn } from '../../lib/utils';
 import { DIR_ARROWS, DIR_WORDS, SORT_BY_LABELS, type SortBy, type SortDir } from './sourceList';
 
-/**
- * One sortable column: the column headers and the narrow-screen sort choices
- * are both these. The active one is pressed, carries the arrow and says its
- * direction; pressing it again reverses (nextSort).
- */
+/** One sortable column (header or narrow-screen choice): the active one is pressed with its arrow; pressing it again
+ *  reverses. */
 export default function SortButton({
   column,
   sort,

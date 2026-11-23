@@ -1,16 +1,4 @@
-/**
- * Durations, the one place that turns a length of time into words. Each screen
- * keeps its own style, so there is one named function per style:
- *
- *   formatClock         4:02:07, 0:45            video lengths and positions
- *   formatElapsed       <1s, 42s, 2m 5s, 1h 2m   how long a job or run took
- *   formatSpan          25m, 3h, 5d              one unit, floored ("in 3h", "3h ago")
- *   formatTimeRemaining 2d 3h 4m, 1h 5m 2s, 9s   the scheduler's countdown
- *   formatEstimate      under a minute, ~2h 10m  the archive plan's estimate
- *   formatHours         30m, 1.5h, 2d            cadence intervals given in hours
- *
- * Pure.
- */
+/** Durations, the one place that turns a length of time into words: one named function per screen's style. Pure. */
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -26,10 +14,7 @@ export function formatClock(seconds?: number | null): string {
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-/**
- * "<1s", "42s", "2m 5s", "1h 2m"; null when unknown. `hours: false` keeps
- * counting in minutes past the hour ("75m 0s"), as the run report does.
- */
+/** "<1s", "42s", "2m 5s", "1h 2m"; null when unknown. `hours: false` counts minutes past the hour ("75m 0s"). */
 export function formatElapsed(seconds: number | null | undefined, { hours = true }: { hours?: boolean } = {}): string | null {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return null;
   if (seconds < 1) return '<1s';
@@ -47,10 +32,7 @@ export function formatSpan(ms: number): string {
   return `${Math.floor(ms / DAY)}d`;
 }
 
-/**
- * "2d 3h 4m", "1h 5m 2s", "4m 10s", "9s": the two or three largest units.
- * `seconds: false` drops the trailing seconds once there are minutes ("1h 5m", "4m").
- */
+/** "2d 3h 4m", "1h 5m 2s", "9s": the two or three largest units; `seconds: false` drops seconds once there are minutes. */
 export function formatTimeRemaining(milliseconds: number, { seconds: withSeconds = true }: { seconds?: boolean } = {}): string {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
   const days = Math.floor(totalSeconds / 86400);

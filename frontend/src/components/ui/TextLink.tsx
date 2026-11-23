@@ -4,10 +4,8 @@ import { cn } from '../../lib/utils';
 
 const LINK = 'text-link rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg';
 
-/**
- * An underlined link in the text colour (smol-style). Internal paths go through
- * the router; `external` opens a new tab with `rel="noreferrer"`.
- */
+/** An underlined link in the text colour; internal paths go through the router, `external` opens a new tab
+ *  (`rel="noreferrer"`). */
 export const TextLink = forwardRef<HTMLAnchorElement, LinkProps & { muted?: boolean }>(function TextLink(
   { className, muted = false, ...props },
   ref,

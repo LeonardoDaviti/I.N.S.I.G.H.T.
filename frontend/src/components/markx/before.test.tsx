@@ -1,5 +1,4 @@
-// 0131 (Stalker's first edges): the Mark X post panel's Before list, its uncertain marks and their ✓ / ✗, and the
-// Worker tab's relate queue. Synthetic data only.
+// The post panel's Before list (0131): its uncertain marks and their ✓ / ✗, and the relate queue. Synthetic data only.
 import { describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

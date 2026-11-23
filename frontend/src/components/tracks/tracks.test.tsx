@@ -1,5 +1,4 @@
-// 0145 (tracks as topics, Mark X): the track's topic view (sections by sub-topic, Discover with its rank, joined by
-// INSIGHT, ✓ / ✗), a folder that is no topic yet, the sheet (describe, sub-topics), the sources it found, and the lines
+// Tracks as topics (0145): the topic view, a folder that is no topic yet, the sheet, the sources it found, the lines
 // in words. Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';

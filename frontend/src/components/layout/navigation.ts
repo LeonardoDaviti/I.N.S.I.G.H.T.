@@ -1,13 +1,8 @@
 import { folderReadPath } from '../../lib/feedContext';
 
 /**
- * The information architecture (design docs system/information-architecture.md): the nav words in the top bar,
- * and the destinations the ⌘K quick switcher can jump to, and its "Search posts…"
- * (issue 0040).
- *
- * The app has three places, feed / sources / post (reading-finish R3 and
- * Decision 2). The top bar is `feed / sources / blog`; tracks are read from the
- * reader rail and reached in ⌘K one entry per track.
+ * The information architecture: the top bar's nav words (`feed / sources / blog`) and the destinations the ⌘K
+ * quick switcher jumps to, plus its "Search posts…". Tracks are read from the reader rail and reached in ⌘K.
  */
 export type NavKey = 'feed' | 'sources' | 'blog' | 'markx';
 
@@ -17,10 +12,8 @@ export interface NavItem {
   to: string;
 }
 
-/**
- * The blog and the Design Studio are dev-only pages (v10.17, issue 0190: never in the production bundle, App.tsx),
- * so their nav word and ⌘K entries are too: a production build links to no page it does not have.
- */
+/** The blog and the Design Studio are dev-only pages (never in the production bundle), so their nav word and ⌘K
+ *  entries are too. */
 export const DEV_PAGES: boolean = import.meta.env.DEV;
 
 /** The top bar's words. */
@@ -30,7 +23,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   ...(DEV_PAGES ? [{ key: 'blog', label: 'blog', to: '/blog' } as const] : []),
 ];
 
-/** Mark X's page (issue 0086 E): one more word, only while INSIGHT_MARKX is on. */
+/** Mark X's page: one more word, only while INSIGHT_MARKX is on. */
 export const MARKX_NAV: NavItem = { key: 'markx', label: 'mark x', to: '/markx' };
 
 /** The top bar's words, with Mark X's when it is on. */
@@ -38,8 +31,8 @@ export function navItems(markx: boolean): readonly NavItem[] {
   return markx ? [...NAV_ITEMS, MARKX_NAV] : NAV_ITEMS;
 }
 
-/** Which nav word is current for a pathname; null when none is (an unknown route).
- *  A track page and search belong to the feed: tracks live in the reader rail. */
+/** Which nav word is current for a pathname; null for an unknown route. A track page and search belong to the
+ *  feed. */
 export function activeNavKey(pathname: string): NavKey | null {
   const path = pathname.replace(/\/+$/, '') || '/';
   const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
@@ -60,7 +53,7 @@ export interface Destination {
   keywords?: string;
 }
 
-/** The fixed switcher entries; the tracks go in after the feed ones. Ingestion is a tab under sources (reading-finish R3). */
+/** The fixed switcher entries; the tracks go in after the feed ones. */
 export const DESTINATIONS: readonly Destination[] = [
   { id: 'feed-main', label: 'Main feed', group: 'feed', to: '/', keywords: 'home reader feed inbox new unread all posts' },
   { id: 'feed-later', label: 'Later', group: 'feed', to: '/?filter=later', keywords: 'read later saved bookmarks queue' },
@@ -69,14 +62,10 @@ export const DESTINATIONS: readonly Destination[] = [
   { id: 'ingestion', label: 'Ingestion', group: 'sources', to: '/settings/sources?tab=ingestion', keywords: 'run cycle fetch jobs report' },
   { id: 'data', label: 'Export data', group: 'sources', to: '/settings/sources?tab=data', keywords: 'export backup dump download database zip csv sources.json' },
   ...(DEV_PAGES ? [{ id: 'blog', label: 'Blog', group: 'blog', to: '/blog', keywords: 'posts articles engineering learning' }] : []),
-  // Save any page (issue 0031): the save page with a field for the address.
   { id: 'save-page', label: 'Save a page…', group: 'save', to: '/save', keywords: 'save page url link bookmark bookmarklet keep saved paste' },
 ];
 
-/**
- * The Design Studio (design docs, specimens, prototypes): reached only from
- * ⌘K, never from the top bar (Design Studio D8).
- */
+/** The Design Studio: reached only from ⌘K, never from the top bar. */
 export const DESIGN_STUDIO: Destination = {
   id: 'design-studio',
   label: 'Design studio',
@@ -96,12 +85,10 @@ export interface TrackRef {
 }
 
 /**
- * What ⌘K can jump to: the feed entries, then one entry per track (to
- * `/read/folder/:id`, the reader scoped to it) in the order given, then the rest.
- * The design studio comes last, unless `studio` is false (⌘K inside one of the
- * studio's own frames) or the build is a production one (DEV_PAGES).
+ * What ⌘K can jump to: the feed entries, one entry per track (in the order given), then the rest; the design
+ * studio last, unless `studio` is false (inside a studio frame) or the build is a production one.
  */
-/** Mark X's page in ⌘K (issue 0086 E), only while it is on. */
+/** Mark X's page in ⌘K, only while it is on. */
 export const MARKX_DESTINATION: Destination = {
   id: 'markx', label: 'Mark X', group: 'mark x', to: '/markx', keywords: 'shadow haiku stories news judge worker briefing entities',
 };

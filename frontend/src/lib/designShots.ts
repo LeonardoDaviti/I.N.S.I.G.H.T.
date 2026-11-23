@@ -1,8 +1,6 @@
 /**
- * `npm run design:shots` (Design Studio D9), its pure half: the arguments and
- * the shot list. The state matrix comes from the frame scenarios and the
- * prototype registry; this file only crosses it with widths and themes and
- * applies the filters. scripts/design-shots.mjs drives the browser.
+ * `npm run design:shots`, its pure half: the arguments and the shot list (the frame scenarios and prototypes
+ * crossed with widths and themes, filtered). scripts/design-shots.mjs drives the browser.
  */
 import { frameUrl, prototypeFrameUrl, type FrameTheme } from '../design/frame/frameUrl.ts';
 
@@ -50,7 +48,6 @@ export interface Shot {
   state: string;
   width: number;
   theme: FrameTheme;
-  /** The frame path, without the origin. */
   url: string;
   /** `<page>/<state>.<width>.<theme>.png`. */
   file: string;
@@ -80,10 +77,8 @@ function studioSubjects(prototypes: ShotMatrix['prototypes']): { state: string; 
   ];
 }
 
-/**
- * Every page × state, then every prototype × its states, each at both widths
- * (and a state's own) and both themes; then the studio's pages. Filtered.
- */
+/** Every page × state, then every prototype × its states, at both widths (and a state's own) and both themes;
+ *  then the studio's pages. Filtered. */
 export function shotList(matrix: ShotMatrix, filters: ShotFilters = {}): Shot[] {
   const subjects = [
     ...matrix.scenarios.map(({ page, state, width }) => ({ page, state, width, id: undefined as string | undefined })),

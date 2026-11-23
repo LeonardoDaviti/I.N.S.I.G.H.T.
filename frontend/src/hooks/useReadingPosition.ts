@@ -11,15 +11,12 @@ export const LONG_POST_CHARS = 4500;
 /** Saved once scrolling has stopped this long, and at once on leaving. */
 export const SAVE_AFTER_MS = 3000;
 
-/** The body's text blocks, in order: what a position counts. */
 const BLOCKS = 'p, li, h1, h2, h3, h4, h5, h6, pre, blockquote, table, figure';
 
-/** The line under the sticky navigation: the top of what can be read. */
 function readingLine(): number {
   return document.querySelector('[data-nav-band]')?.getBoundingClientRect().bottom ?? 0;
 }
 
-/** The top block in view of `body`, or null when the line is not inside the body. */
 function topBlock(body: HTMLElement): [number, number] | null {
   const line = readingLine();
   const rect = body.getBoundingClientRect();
@@ -34,11 +31,9 @@ function topBlock(body: HTMLElement): [number, number] | null {
 interface Options {
   postId: string;
   api: Api;
-  /** The post body: its text blocks are counted. */
   body: RefObject<HTMLElement | null>;
   /** The end of the post: once it passes the top half of the screen, the post is finished. */
   end: RefObject<HTMLElement | null>;
-  /** Where the post was left, from its reader state. */
   saved: { resume_block?: number | null; resume_blocks?: number | null } | null;
   /** Long enough to track at all (LONG_POST_CHARS); off for fixtures and videos. */
   enabled: boolean;
@@ -47,11 +42,9 @@ interface Options {
 }
 
 /**
- * Continue where I stopped (issue 0030). The position is a block, not a scroll offset,
- * so images loading or another width do not move it. Nothing is saved until you scroll;
- * then a few seconds after scrolling stops, and at once when the tab hides or the post
- * leaves; while the offer stands, only a place past the old one replaces it. Reaching
- * the end clears it. Nothing scrolls by itself: `resume` is a button's.
+ * Continue where I stopped. The position is a block, not a scroll offset, so images loading or another width
+ * do not move it. Saved a few seconds after scrolling stops and at once when the tab hides or the post leaves;
+ * while the offer stands, only a place past the old one replaces it. The end clears it. Nothing scrolls by itself.
  */
 export function useReadingPosition({ postId, api, body, end, saved, enabled, offer }: Options) {
   const queryClient = useQueryClient();
@@ -136,7 +129,6 @@ export function useReadingPosition({ postId, api, body, end, saved, enabled, off
   }, [body, saved]);
 
   return {
-    /** The offer's percentage while it is shown, else null. */
     offerPercent: offerOpen && offered !== null ? Math.round(offered * 100) : null,
     resume,
   };

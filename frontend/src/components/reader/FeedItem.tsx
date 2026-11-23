@@ -21,7 +21,7 @@ import {
 import { bylineName, carried, carriedLine } from '../../lib/byline';
 import { TextLink } from '../ui/TextLink';
 
-// "Also on <channel>" (issue 0132 A): its own chunk, loaded the first time a row has one (the reader's JS budget).
+// "Also on <channel>": its own chunk, loaded the first time a row has one (the reader's JS budget).
 const AlsoOn = lazy(() => import('./AlsoOn'));
 
 function lengthLabel(item: FeedItemData): string | null {
@@ -30,23 +30,21 @@ function lengthLabel(item: FeedItemData): string | null {
   return null;
 }
 
-/** A story line, and its indent in the tree (issue 0064): two levels at most, one on a phone (issue 0068),
- *  where the title takes a line of its own under source and date (issue 0070). */
+/** A story line and its indent in the tree: two levels at most, one on a phone, where the title takes its own line
+ *  under source and date. */
 const STORY_LINE = 'flex min-w-0 items-baseline gap-x-1.5 max-sm:flex-wrap text-[0.8125rem] leading-5 text-fg-3';
 const INDENT = ['', 'pl-2 sm:pl-4', 'pl-2 sm:pl-8'];
 
 const CHEVRON = 'h-3 w-3 shrink-0 max-sm:mt-1';
 
-/** On a phone, a line at the deepest indent names its parent instead (issue 0068): "↳ Mat Duggan". */
+/** On a phone, a line at the deepest indent names its parent instead: "↳ Mat Duggan". */
 const Under = ({ name }: { name?: string }) =>
   name ? <span className="max-w-[30%] shrink-0 truncate sm:hidden">↳ {sourceLabel(name)}</span> : null;
 
 /**
- * A folded story's line under its lead (issue 0050): "covered by 3 · Anthropic, Simon Willison, +1"
- * opens the story's other posts, each a quiet link to the post (its source, title and date; a
- * share says so). Opening one comes back to the lead's row. The posts are the story's tree (issue
- * 0064): what came from the lead indented under it, and when the lead is not the origin, the
- * origin first (a page outside INSIGHT opens in Save any page) and the lead's place as "this post".
+ * A folded story's line under its lead ("covered by 3 · Anthropic, Simon Willison, +1"): opens the story's tree
+ * of other posts, each a quiet link; when the lead is not the origin, the origin comes first (a page outside
+ * INSIGHT opens in Save any page) and the lead shows as "this post".
  */
 function StoryPosts({ story, label, lead, now }: { story: FeedStory; label: string; lead: FeedItemData; now?: Date }) {
   const [open, setOpen] = useState(false);
@@ -58,7 +56,6 @@ function StoryPosts({ story, label, lead, now }: { story: FeedStory; label: stri
         aria-expanded={open}
         aria-controls={listId}
         onClick={() => setOpen((value) => !value)}
-        // On a phone the line may take two lines, so its names show (issue 0073).
         className={`-ml-1 inline-flex max-w-full items-center gap-1 rounded-sm px-1 text-[0.8125rem] leading-5 text-fg-3 hover:text-fg-2 coarse:min-h-[44px] max-sm:items-start max-sm:py-3 max-sm:text-left ${FOCUS_RING}`}
       >
         {open ? <ChevronDown aria-hidden="true" className={CHEVRON} /> : <ChevronRight aria-hidden="true" className={CHEVRON} />}
@@ -72,7 +69,7 @@ function StoryPosts({ story, label, lead, now }: { story: FeedStory; label: stri
         </ul>
       ) : null}
       {open && story.roundups?.length ? (
-        // The roundups that mention the story and are not in it, each source once (issue 0068).
+        // the roundups that mention the story and are not in it, each source once
         <p className="mb-1 pl-3 text-[0.8125rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">
           Also in roundups:{' '}
           {story.roundups.map((roundup, i) => (
@@ -147,7 +144,7 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
   );
 }
 
-/** A line of a row's meta: below `sm` a line of its own, from `sm` up part of one line (issue 0073). */
+/** A line of a row's meta: below `sm` a line of its own, from `sm` up part of one line. */
 const META_LINE = 'contents max-sm:flex max-sm:min-w-0 max-sm:items-center max-sm:gap-x-1.5';
 
 /** A meta line's dot, shown from `sm` up (`wide`) and below it (`phone`), each where something comes before it. */
@@ -156,7 +153,7 @@ function Dot({ wide, phone, className = '' }: { wide: boolean; phone: boolean; c
   return <span aria-hidden="true" className={`shrink-0 ${wide ? '' : 'sm:hidden'} ${phone ? '' : 'max-sm:hidden'} ${className}`}>·</span>;
 }
 
-/** Quiet 32px icon buttons that grow to 44px on touch (spec §F.6). */
+/** Quiet 32px icon buttons that grow to 44px on touch. */
 const ICON_BUTTON = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg coarse:h-11 coarse:w-11 ${PRESS_FEEDBACK} ${FOCUS_RING}`;
 
 export interface FeedItemProps {
@@ -170,11 +167,7 @@ export interface FeedItemProps {
   onToggleRead: (item: FeedItemData) => void;
   onToggleStar: (item: FeedItemData) => void;
   onToggleLater: (item: FeedItemData) => void;
-  /**
-   * What the left column shows. `date` ("Sep 29", relative inside 24h) when the
-   * row stands alone; `time` ("14:05") when it already sits under a day header,
-   * so the column does not repeat the header on every row.
-   */
+  /** The left column: `date` ("Sep 29", relative inside 24h) for a lone row; `time` ("14:05") under a day header. */
   dateColumn?: 'date' | 'time';
   /** With `dateColumn="time"`: the day the visual header names ("Today"), read out with the time. */
   dayLabel?: string;
@@ -184,46 +177,39 @@ export interface FeedItemProps {
   now?: Date;
   /** False on one source's own page, where the name would only link to the page you are on. */
   showSource?: boolean;
-  /** A search result's matching line (issue 0040), shown instead of the excerpt, its words in bold. */
+  /** A search result's matching line, shown instead of the excerpt, its words in bold. */
   snippet?: SnippetPart[] | null;
-  /** Issue 0139: `markx` when only Mark X's English layer matched: the line is its headline, labelled "Mark X". */
+  /** `markx` when only Mark X's English layer matched: the line is its headline, labelled "Mark X". */
   snippetFrom?: 'markx' | 'meaning' | null;
-  /** A story's line in place of "covered by …": News says what its score is made of (issue 0051). */
+  /** A story's line in place of "covered by …": what its News score is made of. */
   storyLine?: string;
 }
 
 /**
- * One feed row (spec §F.6): an `<article>` whose links are the title and the
- * source name (which reads that source, issue 0019), with the read circle and one
- * save button as siblings (32px, 44px on touch): Read later (the clock) on an unread
- * row, Keep (the star) on a read one (issue 0022); a save already on keeps its button,
- * so it can be undone by hand. Laid out like
- * the news.smol.ai list: a hairline-bordered row, a muted date column ("Sep 29",
- * relative only inside 24h), a bold title when unread. Selection is a roving
- * tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
+ * One feed row: an `<article>` whose links are the title and the source name, with the read circle and one save
+ * button as siblings: Read later on an unread row, Keep on a read one (a save already on keeps its button so it can
+ * be undone). Selection is a roving tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
  */
 function FeedItem({
   item, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onToggleLater, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
   snippet, snippetFrom, storyLine,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
-  // A News row (issue 0238) is read when every post of it is: a read row a new post joined is bold again, "N new".
+  // a News row is read when every post of it is: a read row a new post joined is bold again, "N new"
   const row = item.news ? newsReadState(item) : null;
   const isRead = row ? row.read : Boolean(item.read_at);
   const fresh = row?.fresh ?? 0;
   const isStarred = Boolean(item.starred_at);
   const isLater = Boolean(item.later_at);
-  // Unread: "I want this, not now" (Later); read: "this mattered" (Keep).
   const offerLater = !isRead || isLater;
   const offerKeep = isRead || isStarred;
   const titleId = `${feedItemDomId(item.id)}-title`;
-  // The API's title already falls back to the body (display_title), as on the post page.
+  // the API's title already falls back to the body (display_title), as on the post page
   const title = item.title?.trim() || 'Untitled post';
   const length = lengthLabel(item);
   const share = resumeShare(item.resume_block, item.resume_blocks);
   const progress = share === null ? null : Math.round(share * 100);
-  // The feed's own order key (when it reached you if later than its date, else published, else
-  // fetched; issue 0039), so the column and the day headers agree.
+  // the feed's own order key, so the column and the day headers agree
   const time = item.sort_at ?? item.published_at;
   const showThumb = item.media_thumb && !thumbFailed;
   const excerpt = item.excerpt?.trim();
@@ -234,8 +220,7 @@ function FeedItem({
     onSelect(item.id);
   };
 
-  // Relative labels only move by the minute, so a re-render inside the same
-  // minute reuses the label (and the formatters are cached in lib/dates).
+  // relative labels only move by the minute, so a re-render inside the same minute reuses the label
   const minute = Math.floor((now ? now.getTime() : Date.now()) / 60_000);
   const timeLabel = useMemo(
     () => (dateColumn === 'time' ? feedTimeLabel(time) : feedDateLabel(time, now ?? new Date())),
@@ -245,28 +230,24 @@ function FeedItem({
   const fullTime = useMemo(() => feedFullTime(time), [time]);
   const source = sourceLabel(item.source_display_name);
   const carriedText = carriedLine(item);
-  // The date column is when the post reached you; a changed or late-found page says why.
+  // when the post reached you; a changed or late-found page says why
   const pageNote = item.update
     ? `updated ${updateChanges(item.update)}`.trim()
     : lateFind(item) ? `published ${feedDateLabel(item.published_at, now ?? new Date())}` : null;
-  // Below `sm` the meta line is up to three lines beside the actions (issue 0073): the source, the
-  // time and the length; a repost's line, a Hacker News item's counts and a reading bar (with its
-  // length); a page's note. From `sm` up they are one line, in this order (`sm:order-*`).
+  // below `sm` the meta line is up to three lines beside the actions; from `sm` up one line, in `sm:order-*` order
   const barLine = progress !== null;
   const lengthPart = length ? (
     <>
       <Dot wide={showSource || Boolean(carriedText || item.counts)} phone={!barLine || Boolean(carriedText || item.counts)} className="sm:order-2" />
-      {/* On a phone a long source name gives way first; beside a short one the length may, rather than
-          run under the actions (issue 0073). */}
+      {/* on a phone a long source name gives way first; beside a short one the length may */}
       <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap sm:order-2 ${showSource && source.length > 12 ? '' : 'max-sm:min-w-0 max-sm:shrink'}`}>
         {item.duration_seconds ? <PlayCircle aria-hidden="true" className="h-3 w-3 shrink-0" /> : null}
         <span className="truncate">{length}</span>
       </span>
     </>
   ) : null;
-  // On a real pointer the actions wait for hover or focus; on touch (phones
-  // included), and on the selected row, they stay visible (lead review #1). The
-  // reveal is instant: hovering rows happens hundreds of times a day.
+  // on a real pointer the actions wait for hover or focus; on touch and on the selected row they stay visible.
+  // The reveal is instant: hovering rows happens hundreds of times a day.
   const actionsReveal = selected
     ? ''
     : '[@media(hover:hover)_and_(pointer:fine)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100';
@@ -316,16 +297,14 @@ function FeedItem({
               <TextLink
                 to={sourceReadPath(item.source_id)}
                 title={item.source_display_name}
-                // A name up to 12 characters stays whole. On a phone its line holds only the time and the
-                // length, so a longer one is cut only as far as they need (issues 0070, 0073).
+                // a name up to 12 characters stays whole; a longer one is cut only as far as the phone line needs
                 className={`min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3 ${source.length > 12 ? '' : 'shrink-0'}`}
               >
                 {middleTruncate(source, 56)}
               </TextLink>
             ) : null}
-            {/* A page you saved that is its source's post (issue 0122). */}
+            {/* a page you saved that is its source's post */}
             {item.saved_by_you ? <span className="shrink-0">{showSource ? '· ' : ''}saved by you</span> : null}
-            {/* On a phone the time column's time joins the meta line (issue 0073). */}
             <Dot wide={false} phone={showSource} />
             <time dateTime={time} title={fullTime} className="shrink-0 sm:hidden">
               {dayLabel && dateColumn === 'time' ? <span className="sr-only">{dayLabel}, </span> : null}
@@ -335,9 +314,8 @@ function FeedItem({
           </span>
           {carriedText || item.counts || barLine ? (
             <span className={META_LINE}>
-              {/* A repost or forward (issue 0066): its author, beside the source that carried it (issue 0070); whom it quotes (Byline, 0185). */}
+              {/* a repost or forward: its author beside the source that carried it; whom it quotes */}
               {carriedText ? <span className="min-w-0 truncate sm:order-1">{carriedText}</span> : null}
-              {/* A Hacker News item's counts (issue 0070), no longer its text. */}
               {item.counts ? (
                 <>
                   <Dot wide={showSource || Boolean(carriedText)} phone={Boolean(carriedText)} className="sm:order-1" />
@@ -348,7 +326,7 @@ function FeedItem({
               {barLine ? (
                 <>
                   <Dot wide phone={Boolean(carriedText || item.counts || length)} className="sm:order-2" />
-                  {/* Started, not finished (issue 0030): a hairline track, filled as far as read. */}
+                  {/* started, not finished: a hairline track, filled as far as read */}
                   <span aria-hidden="true" data-reading-progress className="h-px w-10 shrink-0 bg-line sm:order-2">
                     <span className="block h-px bg-fg-3" style={{ width: `${progress}%` }} />
                   </span>
@@ -360,7 +338,7 @@ function FeedItem({
           {pageNote ? (
             <span className={META_LINE}>
               <Dot wide={showSource || Boolean(length || carriedText || item.counts)} phone={false} className="sm:order-3" />
-              {/* A watched page that changed, or a page new to you long after its date (issue 0039). */}
+            {/* a watched page that changed, or a page new to you long after its date */}
               <span data-page-note className="min-w-0 truncate sm:order-3" title={item.update ? updateLine(item.update, now) : undefined}>{pageNote}</span>
             </span>
           ) : null}
@@ -369,13 +347,13 @@ function FeedItem({
           {isStarred ? <span className="sr-only">Kept</span> : null}
         </p>
         {snippet?.length ? (
-          // The words that matched carry weight and the full tone, never a fill (P2, P3).
+          // the words that matched carry weight and the full tone, never a fill
           <p dir="auto" data-snippet className="mt-0.5 line-clamp-2 max-sm:col-start-1 max-sm:row-start-3 text-sm leading-5 text-fg-2 [overflow-wrap:anywhere]">
             {snippetFrom === 'markx' ? (
-              // Why it matched (issue 0139): Mark X's English reading of the post, not its own words.
+              // why it matched: Mark X's English reading of the post, not its own words
               <span data-snippet-from="markx" className="mr-1.5 text-[0.75rem] text-fg-3">Mark X ·</span>
             ) : snippetFrom === 'meaning' ? (
-              // Issue 0247: no word of the query is in it; its meaning is near the query's.
+              // no word of the query is in it; its meaning is near the query's
               <span data-snippet-from="meaning" className="mr-1.5 text-[0.75rem] text-fg-3">By meaning ·</span>
             ) : null}
             {snippet.map((part, index) => (part.mark
@@ -391,7 +369,7 @@ function FeedItem({
           <StoryPosts story={item.story} label={storyLine ?? coveredBy(item.story, item.source_id) ?? ''} lead={item} now={now} />
         ) : null}
         {item.news?.analysis?.length ? (
-          // Issue 0208: a News row's expert breakdowns, apart from its reports, each with its author.
+          // a News row's expert breakdowns, apart from its reports, each with its author
           <ul aria-label="Analysis" className="mt-1 flex flex-col gap-0.5 max-sm:col-start-1 text-[0.8125rem] leading-5">
             {item.news.analysis.map((post) => (
               <li key={post.id} className="min-w-0 truncate text-fg-2">

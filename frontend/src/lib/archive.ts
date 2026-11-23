@@ -1,8 +1,6 @@
 /**
- * The source sheet's archive section in words and numbers: what "available" means
- * for the source's kind, where the archive continues from, and the plan's estimate.
- * Honest by construction: a figure the source did not report is never shown as one.
- * Pure.
+ * The source sheet's archive section in words and numbers. A figure the source did not report is never shown
+ * as one. Pure.
  */
 import type { ArchivePlan, ArchiveRateLimit, AvailableBasis, LinkedPagesSummary } from '../services/api';
 import { formatCount, plural } from './format.ts';
@@ -40,8 +38,7 @@ export function describeAvailable({ available, basis, stored }: {
 const planDates = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 /**
- * The plan in one line: what is stored, where the archive starts, and how much is older.
- * "You have 120 posts, back to 3 Mar 2025. The archive continues from there: about 2,180
+ * The plan in one line: "You have 120 posts, back to 3 Mar 2025. The archive continues from there: about 2,180
  * older posts · ~18 min"; "… · size unknown" when the source reports no size.
  */
 export function describePlan(plan: ArchivePlan, estimate: string | null): string {
@@ -91,10 +88,9 @@ export function archiveResultLine(result: {
 }
 
 /**
- * Linked, not stored (issue 0084 B) in one line and what to offer: "Linked by your posts, not stored: 17"
- * with Fetch them (`fetch`) when one fetch can read them; the archive first (`archiveFirst`) when it pages
- * back and has not run ("Run the archive: it holds them"), these alone still offered beside it (fewer
- * requests than a whole archive); only the count when nothing reads them one by one. Null when none.
+ * Linked, not stored, in one line and what to offer: Fetch them (`fetch`) when one fetch can read them; the
+ * archive first (`archiveFirst`) when it pages back and has not run; only the count when nothing reads them
+ * one by one. Null when none.
  */
 export function describeLinked(linked: Pick<LinkedPagesSummary, 'count' | 'readable' | 'archive_holds' | 'archive_ran'>,
   estimate: string | null): { line: string; fetch: boolean; archiveFirst: boolean; note: string } | null {

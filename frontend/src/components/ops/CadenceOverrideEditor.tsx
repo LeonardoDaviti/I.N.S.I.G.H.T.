@@ -8,11 +8,8 @@ import { errorMessage } from '../../lib/apiError';
 import { cadenceLine, parseOverrideHours } from '../../lib/sourceSchedule';
 import { Button, Input } from '../ui';
 
-/**
- * How often one source is fetched, and why, with "Set your own" hours (spec §F.4):
- * hours in [1, 2160], or empty to go back to automatic. Validation happens here, before the API
- * call; the server re-validates. Saves on submit and reports the fresh row.
- */
+/** How often one source is fetched, and why, with "Set your own" hours in [1, 2160] (empty: automatic again).
+ *  Validated here and again by the server; saves on submit and reports the fresh row. */
 export default function CadenceOverrideEditor({
   row,
   onSaved,
@@ -38,7 +35,7 @@ export default function CadenceOverrideEditor({
   const mutation = useMutation({
     mutationFn: (hours: number | null) => api.setCadenceOverride(row.source_id, hours),
     onSuccess: (response) => {
-      // The PUT answers with the source's fresh row, so the cache is updated in place.
+      // the PUT answers with the source's fresh row, so the cache is updated in place
       replaceHealthRow(queryClient, response.row);
       onSaved?.(response.row);
     },

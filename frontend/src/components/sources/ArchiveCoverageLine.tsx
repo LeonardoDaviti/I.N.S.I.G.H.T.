@@ -3,11 +3,8 @@ import { describeCoverage } from '../../lib/archiveCoverage';
 import { errorMessage } from '../../lib/apiError';
 import { smartArchiveApi, type ArchiveCoverage } from '../../services/smartArchive';
 
-/**
- * A feed's coverage (issue 0143), under the archive's counts: "Stored 19 of ~34", the platform its site is built
- * with and how the rest is read, each other way's reason in `text-fg-3`, and the last resort the owner opts in to:
- * the Web Archive's index of the site's addresses.
- */
+/** A feed's coverage under the archive's counts: "Stored 19 of ~34", the site's platform and how the rest is read,
+ *  and the last resort the owner opts in to: the Web Archive's index of the site's addresses. */
 export default function ArchiveCoverageLine({ sourceId, coverage, onChanged }: {
   sourceId: string;
   coverage: ArchiveCoverage;

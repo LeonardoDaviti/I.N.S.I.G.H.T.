@@ -1,10 +1,6 @@
 import type { Post, PostDetailResponse } from '../services/api';
 
-/**
- * Dev-only `?data=` fixtures for the post page (spec §F.7, break-ui). The post id in
- * the URL is ignored: every fixture answers for whichever post is open. The page
- * imports this file on demand, in dev only.
- */
+/** Dev-only `?data=` fixtures for the post page, imported on demand; each answers for whichever post is open. */
 
 const UNBROKEN = 'https://github.com/anthropics/claude-code/commit/' + 'f0aaf74ef7184398'.repeat(6);
 
@@ -54,7 +50,7 @@ const DETAILS: Record<string, PostDetailResponse> = {
   slow: { success: true, post: post({ title: 'Slow load: the skeleton should match this layout', content: WORST_HTML, content_html: WORST_HTML }) },
 };
 
-/** The post detail behind `?data=<name>`, for the post page and the studio's frames (Design Studio D4). */
+/** The post detail behind `?data=<name>`, for the post page and the studio's frames. */
 export function postFixtureDetail(name: string): PostDetailResponse | null {
   return DETAILS[name] ?? null;
 }

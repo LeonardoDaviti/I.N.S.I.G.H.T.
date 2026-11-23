@@ -1,14 +1,7 @@
 /**
- * Clipboard writes that survive a non-secure context.
- *
- * navigator.clipboard is gated behind a *secure context*: HTTPS, or a localhost/127.0.0.1
- * origin. INSIGHT is served over plain HTTP on a LAN/Tailscale address, so on the deployed
- * instance `navigator.clipboard` is undefined entirely - reading `.writeText` off it throws
- * a TypeError. The copy button therefore worked in local dev (localhost IS a secure
- * context) and failed on the only machine anyone actually reads posts on.
- *
- * document.execCommand('copy') is deprecated, but it is the only clipboard path browsers
- * still offer over plain HTTP, and it works as long as it runs inside a user gesture.
+ * Clipboard writes that survive a non-secure context. INSIGHT is served over plain HTTP on a LAN/Tailscale
+ * address, where `navigator.clipboard` is undefined; deprecated document.execCommand('copy') is the only path
+ * browsers still offer there, and it works inside a user gesture.
  */
 
 export type ClipboardWriter = {
@@ -27,8 +20,7 @@ export async function writeToClipboard(
       await writeText.call(navigatorRef!.clipboard, text);
       return;
     } catch {
-      // Permission denied, or a browser that exposes the API but refuses it here.
-      // Fall through rather than surfacing an error we can still recover from.
+      // Permission denied, or an API that refuses here: fall through to the recoverable path.
     }
   }
 

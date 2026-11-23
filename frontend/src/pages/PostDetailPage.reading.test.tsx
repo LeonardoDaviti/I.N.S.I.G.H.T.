@@ -7,7 +7,7 @@ import { resetStoredChoices } from '../hooks/useShortcutPreference';
 import { READING_KEYS } from '../hooks/useReadingSettings';
 import { READING_TEXT_CLASS, SERIF_STACK } from '../lib/readingSettings';
 
-// Reading settings (issue 0045): font, size and width, in the Aa popover, per device.
+// Reading settings (0045): font, size and width, in the Aa popover, per device.
 
 const STRUCTURED = rssPost({
   content_html: '<p>Opening line.</p><figure><img src="https://example.com/a.png" alt="A chart"><figcaption>The chart.</figcaption></figure>'

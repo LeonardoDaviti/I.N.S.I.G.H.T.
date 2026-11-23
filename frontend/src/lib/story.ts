@@ -5,9 +5,8 @@ import { bareAddress, publicationOf } from './addresses.ts';
 import { SAVE_PATH } from './savePage.ts';
 
 /**
- * A line of a story's tree (issue 0064): its outside origin, another post, the post you are on, or who
- * reposted the tweet above (issue 0068). `under`: on a line at the deepest indent, its parent's name,
- * shown on a phone in place of more indent (issue 0068).
+ * A line of a story's tree: its outside origin, another post, the post you are on, or who reposted the tweet
+ * above. `under`: at the deepest indent, its parent's name, shown on a phone in place of more indent.
  */
 export type StoryLine =
   | { kind: 'page'; origin: StoryOrigin; depth: number }
@@ -16,9 +15,8 @@ export type StoryLine =
   | { kind: 'reposts'; by: string[]; depth: number };
 
 /**
- * A story line's name and title (issue 0070). From sm up one row: name · title, its role, its date. On a
- * phone (the line wraps) the title is a row of its own under the name, role and date; the name takes the
- * room they leave (no width of its own, so they never wrap) and keeps its words in the order read.
+ * A story line's name: one row from sm up (name · title, role, date); on a phone the title wraps to its own
+ * row and the name takes the room left, so role and date never wrap.
  */
 export const LINE_NAME = 'min-w-0 shrink-0 truncate max-w-[40%] max-sm:max-w-none max-sm:shrink max-sm:basis-0 max-sm:grow';
 export const LINE_TITLE = 'min-w-0 truncate max-sm:order-1 max-sm:basis-full';
@@ -28,12 +26,9 @@ const MAX_DEPTH = 2;
 const PAGE = '\u0000origin';
 
 /**
- * The story as a small tree (issue 0064): the origin first, then its children, then theirs, each
- * level in time order. `selfId` is the row or the post page the list belongs to: when it is the
- * origin it is not repeated (the list holds what came from it, one level less indented);
- * otherwise it is a `self` line in its place. A story without a tree (before the job drew it,
- * News) lists its posts as before, flat. A thread's replies (issue 0066) keep their parent's indent,
- * so a thread reads as a list, in its order.
+ * The story as a small tree: the origin first, then its children, each level in time order. `selfId` (the row
+ * or post page) is not repeated when it is the origin, else it is a `self` line in its place. A story without
+ * a tree (News) lists its posts flat; a thread's replies keep their parent's indent.
  */
 export function storyTree(story: FeedStory, selfId: string, selfAt?: string | null, selfName = ''): StoryLine[] {
   const hasTree = Boolean(story.origin) || Boolean(story.parent_reason)
@@ -88,26 +83,23 @@ export function storyTree(story: FeedStory, selfId: string, selfAt?: string | nu
   return lines;
 }
 
-/** "openai.com · Introducing GPT-6.1 Terra · linked by 14": an outside origin's line. */
 export function originLabel(origin: StoryOrigin): { site: string; title: string; linkedBy: string } {
   const site = publicationOf(origin.url) || origin.url;
   return { site, title: origin.title?.trim() || bareAddress(origin.url), linkedBy: `linked by ${origin.linked_by}` };
 }
 
-/** Opening an outside origin: Save any page (issue 0031) on its address as linked, saving nothing until you press Save. */
+/** Opening an outside origin: Save any page on its address as linked, saving nothing until you press Save. */
 export function originHref(origin: StoryOrigin): string {
-  // The link as its post wrote it (issue 0126): a gift link opens the article.
+  // The link as its post wrote it: a gift link opens the article.
   const params = new URLSearchParams({ url: origin.href || origin.url });
   if (origin.title) params.set('title', origin.title);
   return `${SAVE_PATH}?${params.toString()}`;
 }
 
-/** The names a folded story's row shows before "+N" (issue 0050), and a News row (issue 0051). */
 const NAMES_SHOWN = 2;
 
-/** "Anthropic, Simon Willison, +1": a story's voices in the order they covered it, two named; "+N" the
- *  voices not named (issues 0069, 0082). A Reddit author reads "u/a in r/x", one subreddit named once:
- *  "u/a, u/b in r/x". */
+/** "Anthropic, Simon Willison, +1": a story's voices in coverage order, two named. A Reddit author reads
+ *  "u/a in r/x", one subreddit named once: "u/a, u/b in r/x". */
 export function coveredNames(story: Pick<FeedStory, 'sources' | 'voices'>): string {
   const shown = story.sources.slice(0, NAMES_SHOWN);
   const named = shown.map((voice, i) => voice.place && shown[i + 1]?.place !== voice.place
@@ -116,13 +108,11 @@ export function coveredNames(story: Pick<FeedStory, 'sources' | 'voices'>): stri
   return `${named.join(', ')}${more > 0 ? `, +${more}` : ''}`;
 }
 
-/** "covered by 3 · Anthropic, Simon Willison, +1": the story's voices, its sources named in the order they
- *  covered it; one number in News, the feed row and the post page (issue 0069). "Thread · 6 posts" for one
- *  account's thread (issue 0066). One voice copied or forwarded by other sources reads "also shared by
- *  <source>", the row's own source not named; nothing when no other source shared it (issue 0072). A thread
- *  under another source's row (a page you saved from it) reads "<its author>'s thread · 6 posts" (issue 0072 D4). */
+/** "covered by 3 · Anthropic, Simon Willison, +1"; "Thread · 6 posts" for one account's thread ("<author>'s
+ *  thread" under another source's row); one voice copied by others reads "also shared by <source>"; null when
+ *  no other source shared it. */
 export function coveredBy(story: FeedStory, selfSourceId?: string): string | null {
-  // A thread another source holds (a page you saved from it) names whose it is (issue 0072 D4).
+  // A thread another source holds (a page you saved from it) names whose it is.
   const author = story.thread && selfSourceId && story.sources.every((source) => source.id !== selfSourceId) ? story.sources[0] : null;
   if (story.thread) return `${author ? `${sourceLabel(author.name)}'s thread` : 'Thread'} · ${story.posts.length + 1} posts`;
   if (story.voices < 2) {
@@ -132,15 +122,13 @@ export function coveredBy(story: FeedStory, selfSourceId?: string): string | nul
   return `covered by ${story.voices} · ${coveredNames(story)}`;
 }
 
-/** "↻ reposted by @toolsmith_pete, @oddlogic_games": under a tweet in "covered by" (issue 0068). */
 export const repostedBy = (by: string[]) => `↻ reposted by @${by.join(', @')}`;
 
 
-/** The names a suggestion's reason shows before "+N". */
 const VOICES_SHOWN = 3;
 
 /** Discover: "linked by 6 of your sources (Simon Willison, Anthropic, One Useful Thing, +3) · 9 articles",
- *  and " · 2 classics" when it holds some (issue 0051). */
+ *  plus " · 2 classics" when it holds some. */
 export function suggestionReason(s: SuggestedSource): string {
   const names = s.voice_names.map((name) => sourceLabel(name));
   const more = names.length - VOICES_SHOWN;
@@ -149,16 +137,14 @@ export function suggestionReason(s: SuggestedSource): string {
   return `linked by ${s.voices} of your sources (${who}) · ${plural(s.article_count, 'article')}${classics}`;
 }
 
-/** Issue 0238: a News row's posts as the reader sees them: its lead and its lines, each once. */
 export function rowPosts(item: Pick<FeedItem, 'id' | 'source_id' | 'read_at' | 'story'>): Pick<StoryPost, 'id' | 'source_id' | 'read_at'>[] {
   const seen = new Set<string>();
   return [item, ...(item.story?.posts ?? [])].filter((post) => !seen.has(post.id) && Boolean(seen.add(post.id)));
 }
 
 /**
- * Issue 0238: a News row's read state from its posts' own read state. The row is read when every post is;
- * `fresh` ("N new") counts the unread posts of a row with at least one read post (posts that joined it after
- * the reader read it); 0 when none is read or every one is.
+ * A News row's read state: read when every post is; `fresh` ("N new") counts the unread posts of a row with
+ * at least one read post (posts that joined after the reader read it).
  */
 export function newsReadState(item: Pick<FeedItem, 'id' | 'source_id' | 'read_at' | 'story'>): { read: boolean; unread: number; fresh: number } {
   const posts = rowPosts(item);

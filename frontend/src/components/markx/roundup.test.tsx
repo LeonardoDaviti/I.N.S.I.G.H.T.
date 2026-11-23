@@ -1,5 +1,4 @@
-// 0181 (own round-ups): the /markx section with the latest daily and weekly issue and the past ones (curators, "only
-// in round-ups"), and a story's "also in round-ups" line. Synthetic data only.
+// Own round-ups (0181): the /markx section and a story's "also in round-ups" line. Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

@@ -2,12 +2,8 @@ import { useState } from 'react';
 import { proxiedImage } from '../../lib/mediaProxy';
 import type { PostImage } from './media';
 
-/**
- * One post image, full colour. The feed gives no dimensions, so the frame is
- * reserved at 16:10 before the file arrives and keeps that ratio after: the
- * picture is contained in it, never cropped, and the text below never moves
- * (no layout shift while reading). A dead link removes the frame entirely.
- */
+/** One post image, full colour, in a frame reserved at 16:10 before the file arrives (contained, never cropped), so
+ *  the text never shifts; a dead link removes the frame. */
 export function PostFigure({ image, postId, alt = '', className = '' }: { image: PostImage; postId?: string; alt?: string; className?: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) return null;

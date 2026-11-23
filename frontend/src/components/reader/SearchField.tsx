@@ -3,11 +3,8 @@ import { Search } from 'lucide-react';
 
 import { fieldClass } from '../ui/styles';
 
-/**
- * The search field (issue 0040): a `search` landmark whose Enter searches; empty searches
- * nothing. In the reader's toolbar it is compact and scoped to what is on screen; on the
- * search page it is the page's own field, holding the query.
- */
+/** The search field: a `search` landmark whose Enter searches (empty searches nothing); compact and scoped in the
+ *  reader's toolbar, the page's own field on the search page. */
 export default function SearchField({ label, initial = '', onSearch, autoFocus = false, className = '' }: {
   /** The accessible name, which says the scope ("Search Main feed"). */
   label: string;

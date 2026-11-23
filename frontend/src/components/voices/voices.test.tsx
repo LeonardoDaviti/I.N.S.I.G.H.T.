@@ -10,8 +10,7 @@ import { renderWithProviders } from '../../test/render';
 import type { Voice, VoiceSuggestions } from '../../services/api';
 import { voicesApi } from '../../services/voices';
 
-// Issue 0132 A: suggested voices with their evidence, the owner's Join / Not the same / Related, a voice's channel
-// tabs, "Also on <channel>". Every name is invented.
+// Voices (0132 A): suggestions with evidence, Join / Not the same / Related, channel tabs, "Also on". Invented names.
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
