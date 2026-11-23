@@ -1,7 +1,5 @@
-"""
-Repository for sources table operations.
-Handles all SQL queries for source management.
-"""
+"""SQL for the sources table: listing, adding, removing (remembered), switching, settings merged with the
+platform defaults."""
 import json
 import psycopg
 from psycopg import Cursor
@@ -19,7 +17,6 @@ class SourcesRepository:
         self.logger = get_component_logger("repo_sources")
     
     def get_all_sources(self, cur: Cursor) -> List[Dict[str, Any]]:
-        """Get all sources."""
         query = """
             SELECT id, platform, handle_or_url, enabled, created_at, updated_at, in_main_digest
             FROM sources
@@ -44,7 +41,6 @@ class SourcesRepository:
         return sources
 
     def get_source_by_id(self, cur: Cursor, source_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single source by UUID."""
         query = """
             SELECT id, platform, handle_or_url, enabled, settings, created_at, updated_at
             FROM sources
@@ -67,7 +63,6 @@ class SourcesRepository:
         }
     
     def update_enabled(self, cur: Cursor, source_id: str, enabled: bool) -> bool:
-        """Update source enabled status."""
         query = """
             UPDATE sources
             SET enabled = %s, updated_at = now()
@@ -85,7 +80,6 @@ class SourcesRepository:
             return False
     
     def insert_source(self, cur: Cursor, platform: str, handle: str, *, in_main_digest: bool = True) -> str:
-        """Insert new source."""
         query = """
             INSERT INTO sources (platform, handle_or_url, enabled, in_main_digest)
             VALUES (%s, %s, TRUE, %s)
@@ -100,8 +94,8 @@ class SourcesRepository:
         return source_id
     
     def delete_source(self, cur: Cursor, source_id: str) -> bool:
-        """Delete source (cascade deletes posts). A removed source is never suggested again (issue
-        0050), and an import never adds it back (remember_removed, issue 0072)."""
+        """Delete source (cascade deletes posts). A removed source is never suggested again, and an import never
+        adds it back (remember_removed)."""
         StoriesRepository().hide_removed_source(cur, source_id)
         query = "DELETE FROM sources WHERE id = %s RETURNING platform, handle_or_url"
         cur.execute(query, (source_id,))
@@ -117,8 +111,8 @@ class SourcesRepository:
 
     @staticmethod
     def remember_removed(cur: Cursor, platform: str, handle: str) -> None:
-        """An address no source has any more (removed, or switched away from): an import never
-        adds it back (issue 0072). Removed again: the latest time."""
+        """An address no source has any more (removed, or switched away from): an import never adds it back.
+        Removed again: the latest time."""
         cur.execute("""
             INSERT INTO removed_sources (platform, handle_or_url) VALUES (%s, %s)
             ON CONFLICT (platform, handle_or_url) DO UPDATE SET removed_at = now()
@@ -136,9 +130,9 @@ class SourcesRepository:
 
     def set_address(self, cur: Cursor, source_id: str, handle: str,
                     page_watch: Optional[Dict[str, Any]]) -> bool:
-        """A new handle_or_url, and settings.page_watch set (page_watch given) or removed (None):
-        the source's id, name, tracks and posts stay (issue 0036). False when there is no such
-        source; UniqueViolation when the address is already another source."""
+        """A new handle_or_url, and settings.page_watch set (page_watch given) or removed (None): the source's id,
+        name, tracks and posts stay. False when there is no such source; UniqueViolation when the address is
+        already another source."""
         cur.execute(
             """
             UPDATE sources
@@ -154,13 +148,7 @@ class SourcesRepository:
         return cur.fetchone() is not None
 
     def get_sources_with_post_counts(self, cur: Cursor) -> List[Dict[str, Any]]:
-        """
-        Get all sources with their post counts and cadence columns.
-
-        Returns:
-            List of source dicts with post_count, mean_gap_seconds, cadence_sample_size,
-            cadence_tier and fetch_interval_hours_override (the inputs cadence_stats reads)
-        """
+        """All sources with post_count and the cadence columns cadence_stats reads."""
         query = """
             SELECT
                 s.id,
@@ -179,7 +167,7 @@ class SourcesRepository:
             JOIN ({stats}) ps ON ps.source_id = s.id
             ORDER BY s.platform, s.handle_or_url
         """
-        # Issue 0195: each source's kept post count (repo_post_stats), not a count of every post per request.
+        # each source's kept post count (repo_post_stats), not a count of every post per request
         from insight_core.db.repo_post_stats import stats_sql
         cur.execute(query.format(stats=stats_sql()))
         rows = cur.fetchall()
@@ -215,10 +203,8 @@ class SourcesRepository:
     def load_for_ingestion(self, cur: Cursor, selector_kind: str, selector_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """The sources a fetch request targets, in one query (the ingestion SourceCatalog).
 
-        all / folder: enabled sources only (folder: its enabled members). source: that source
-        even when disabled - fetch-now on a disabled source is explicit. Settings come back
-        merged with the platform defaults; post_count and the cadence columns are the inputs
-        cadence_stats reads.
+        all / folder: enabled sources only. source: that source even when disabled (fetch-now is explicit).
+        Settings come back merged with the platform defaults, with post_count and the cadence columns.
         """
         if selector_kind == "all":
             cur.execute(self._INGESTION_SELECT + " WHERE s.enabled ORDER BY s.platform, s.handle_or_url")
@@ -251,16 +237,7 @@ class SourcesRepository:
         ]
 
     def get_source_settings(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
-        """
-        Get settings for a source with defaults.
-        
-        Args:
-            cur: Database cursor
-            source_id: UUID of the source
-            
-        Returns:
-            Dict with settings (defaults + source overrides)
-        """
+        """A source's settings: its overrides over the platform defaults."""
         query = """
             SELECT s.platform, s.settings
             FROM sources s
@@ -278,11 +255,9 @@ class SourcesRepository:
         return merged
 
     def listed_settings(self, cur: Cursor) -> Dict[str, Dict[str, Any]]:
-        """Every source's settings as the list shows them (issue 0105): merged with the defaults, as
-        get_source_settings, in one query, without the archive's history and the checkpoint's resume lists. The history stays in the row
-        (left out in the query, so it is never read); the source's own settings still carry it."""
-        # Issue 0195: nor the checkpoint's resume lists (the candidate URLs and the ladder an archive goes on from,
-        # 48% of the answer on the server); the list reads its counts, the archive status the whole checkpoint.
+        """Every source's settings as the list shows them: merged with the defaults, in one query, without the
+        archive's history and the checkpoint's resume lists (left out in the query, never read; the row keeps
+        them). The list reads the checkpoint's counts only."""
         cur.execute("SELECT id, platform, settings #- '{archive,history}' #- '{archive,checkpoint,urls}' "
                     "#- '{archive,checkpoint,ladder}' FROM sources")
         out = {}
@@ -315,8 +290,8 @@ class SourcesRepository:
         return self._deep_merge_dicts(defaults, source_settings)
 
     def name_if_unnamed(self, cur: Cursor, source_id: str, name: str) -> bool:
-        """Its own name (issue 0178) for a source that has none: one UPDATE whose WHERE is the guard, so a name the
-        owner set (now or meanwhile) is never written over. True when it was named."""
+        """Its own name for a source that has none: the UPDATE's WHERE is the guard, so a name the owner set is
+        never written over. True when it was named."""
         cur.execute(
             """
             UPDATE sources
@@ -329,15 +304,9 @@ class SourcesRepository:
         return (cur.rowcount or 0) > 0
 
     def merge_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Merge new settings into the existing JSONB payload and persist the result.
-
-        Returns:
-            The merged settings dict, or None when the source does not exist.
-        """
-        # FOR UPDATE: a plain read let two concurrent merges both read the old JSONB and
-        # the second write silently drop the first one's keys. The row lock makes the
-        # second merge wait for the first to commit and then merge on top of it.
+        """Merge new settings into the stored JSONB and persist it; None when the source does not exist."""
+        # FOR UPDATE: without the row lock two concurrent merges read the old JSONB and the second drops the
+        # first's keys.
         cur.execute("SELECT settings FROM sources WHERE id = %s FOR UPDATE", (source_id,))
         locked = cur.fetchone()
         if not locked:
@@ -373,11 +342,8 @@ class SourcesRepository:
         return cur.fetchone() is not None
 
     def set_in_main_digest_for_folder(self, cur: Cursor, folder_id: str, in_main_digest: bool) -> int:
-        """Apply the digest switch to every source in a folder. Returns rows changed.
-
-        This is the bulk action behind a track's "exclude from main digest" toggle. The
-        authority stays on sources so a source shared with a normal folder keeps exactly
-        one answer.
+        """Apply the digest switch to every source in a folder (a track's toggle). Returns rows changed. The
+        authority stays on sources, so a source shared with a normal folder keeps exactly one answer.
         """
         cur.execute(
             """
@@ -389,17 +355,7 @@ class SourcesRepository:
         return cur.rowcount or 0
 
     def update_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> bool:
-        """
-        Update settings for a source.
-        
-        Args:
-            cur: Database cursor
-            source_id: UUID of the source
-            settings: Dict of settings to update
-            
-        Returns:
-            True if updated, False if source not found
-        """
+        """Merge `settings` into a source's settings. False if the source is not found."""
         merged = self.merge_source_settings(cur, source_id, settings)
         return merged is not None
 

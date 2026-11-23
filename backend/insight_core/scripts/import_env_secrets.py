@@ -1,12 +1,10 @@
-"""One-off: copy the API keys of an old .env into Sources → Connections (S6).
+"""One-off: copy the API keys of an old .env into Sources → Connections.
 
     docker compose exec backend python -m insight_core.scripts.import_env_secrets
 
-Secrets are read only from the encrypted Connections store now. This copies, from the
-process environment, TELEGRAM_API_ID, TELEGRAM_API_HASH and SUBSTACK_SID into the store,
-encrypted by the same service the UI uses. It skips empty values and template placeholders, never
-overwrites a value that is already stored, and prints only the names it stored or
-skipped, never a value. Afterwards remove those lines from .env.
+Copies TELEGRAM_API_ID, TELEGRAM_API_HASH and SUBSTACK_SID from the process environment into the encrypted
+Connections store. Skips empty values and placeholders, never overwrites a stored value, and prints only names,
+never a value. Afterwards remove those lines from .env.
 """
 from __future__ import annotations
 

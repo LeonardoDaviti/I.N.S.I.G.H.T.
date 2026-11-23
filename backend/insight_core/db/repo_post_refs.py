@@ -1,17 +1,11 @@
-"""A post's references (issue 0125, migration 0076): storage, the backfill, the signature pass and the Connected read.
+"""A post's references (post_refs): storage, the backfill, the signature pass and the Connected read.
 
-- **Written** where post_links is (StoriesRepository.save_post_links: ingestion's post writer for new and updated
-  posts; fill_missing_links: the story job's link reading), and by the one-off backfill (`fill_missing`, 500 posts a
-  transaction, `FOR UPDATE SKIP LOCKED`, resumable: posts.refs_scanned_at). Only the rows that differ are written; a
-  link gone from the text is closed (valid_to), never deleted.
-- **The signature pass** (`mark_boilerplate`, called by StoriesRepository.mark_boilerplate): a link in
-  SIGNATURE_SHARE of its source's posts and SIGNATURE_MIN_POSTS at least is boilerplate, never a row.
-- **Connected** (`connected`): Earlier, the stored posts a post links, in the text's order; Later, the stored posts
-  that link it, oldest first (the newest kept by the cap); Outside, its kept links (post_links, not boilerplate)
-  no post is at. Resolved by address at read time, as the post page's internal links are (0057): the post with that
-  exact url, else the first seen at its normalized address, never the post itself.
-
-Every method takes the caller's cursor and never commits.
+Written where post_links is (StoriesRepository.save_post_links, fill_missing_links) and by the resumable
+backfill (`fill_missing`); only rows that differ are written, and a link gone from the text is closed
+(valid_to), never deleted. `mark_boilerplate` marks a source's signature links. `connected`: Earlier (stored
+posts it links, in text order), Later (stored posts linking it, oldest first), Outside (kept links no post is
+at), resolved by address at read time, never the post itself. Every method takes the caller's cursor and
+never commits.
 """
 from __future__ import annotations
 
@@ -29,15 +23,13 @@ from insight_core.utils.url_normalization import normalize_url
 from insight_core.markx import pairing
 
 REFS_BATCH = 500
-# The caps of the Connected groups (0125 decision 2, the default): each group says how many more it has.
+# The caps of the Connected groups: each group says how many more it has.
 EARLIER_SHOWN, LATER_SHOWN, OUTSIDE_SHOWN = 10, 10, 5
 GROUPS = ("earlier", "later", "outside")
 POST_DATE = pairing.ix_date("p")
 
 
 class PostRefsRepository:
-    # ---- writing ------------------------------------------------------------------------
-
     @staticmethod
     def write(cur: Cursor, post_id: str, refs: Sequence[PostRef]) -> None:
         """One post's open refs become exactly `refs`: the others are closed, a closed one linked again opens."""
@@ -66,7 +58,7 @@ class PostRefsRepository:
 
     @classmethod
     def fill_missing(cls, cur: Cursor, limit: int = REFS_BATCH) -> int:
-        """The backfill: the refs of up to `limit` posts never read (stored before 0125). Returns how many posts."""
+        """The backfill: the refs of up to `limit` posts never read. Returns how many posts."""
         cur.execute(
             """
             SELECT id, url, content_html, content FROM posts
@@ -89,8 +81,6 @@ class PostRefsRepository:
         """Whether a post's refs still wait to be read, locked rows too."""
         cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE refs_scanned_at IS NULL)")
         return cur.fetchone()[0]
-
-    # ---- the signature pass -----------------------------------------------------------------
 
     @staticmethod
     def mark_boilerplate(cur: Cursor, source_ids: Optional[Sequence[str]] = None) -> int:
@@ -121,8 +111,6 @@ class PostRefsRepository:
         )
         return cur.rowcount
 
-    # ---- Connected ----------------------------------------------------------------------
-
     @classmethod
     def connected(cls, cur: Cursor, post_id: str, *, full: bool = False) -> Optional[Dict[str, Any]]:
         """{earlier, later, outside, more: {group: rows not shown}} of one post, None for no such post. Each row:
@@ -136,7 +124,7 @@ class PostRefsRepository:
         groups = {"earlier": cls._earlier(cur, post_id, url, source_id),
                   "later": cls._later(cur, post_id, url, normalized, source_id),
                   "outside": cls._outside(cur, post_id)}
-        # 0134: series navigation (post_refs.navigation, same source) shows under the Series line, not as Earlier/Later
+        # series navigation (post_refs.navigation, same source) shows under the Series line, not as Earlier/Later
         navigation: List[Dict[str, Any]] = []
         for g in ("earlier", "later"):
             kept = []
@@ -146,7 +134,7 @@ class PostRefsRepository:
                 else:
                     kept.append(r)
             groups[g] = kept
-        # issue 0185: each stored row's byline (who wrote it, via whom), one query
+        # each stored row's byline, one query
         from insight_core.utils.byline import bylines
         stored = [r for rows in (groups["earlier"], groups["later"], navigation) for r in rows if r.get("post_id")]
         bys = bylines(cur, [r["post_id"] for r in stored])
@@ -158,15 +146,15 @@ class PostRefsRepository:
             shown = rows if full else (rows[-caps[group]:] if group == "later" else rows[:caps[group]])
             out[group] = shown
             out["more"][group] = len(rows) - len(shown)
-        out["navigation"] = sorted(navigation, key=lambda r: (r["date"] or "", r["post_id"]))   # 0134
-        out["series"] = SeriesRepository.line(cur, post_id)   # 0134
-        out["references"] = cls._references(cur, post_id)    # 0137 B8: the reference list, shown folded
+        out["navigation"] = sorted(navigation, key=lambda r: (r["date"] or "", r["post_id"]))
+        out["series"] = SeriesRepository.line(cur, post_id)
+        out["references"] = cls._references(cur, post_id)    # the reference list, shown folded
         return out
 
     @staticmethod
     def _references(cur: Cursor, post_id: str) -> List[Dict[str, Any]]:
-        """The links of its references or bibliography section (post_links kind 'reference', issue 0137 B8), in the
-        text's order: {url (as written), address, host, title (the link's words)}. Every one: the list is folded."""
+        """The links of its references or bibliography section (post_links kind 'reference'), in text order: {url
+        (as written), address, host, title (the link's words)}. Every one: the list is folded."""
         cur.execute("""SELECT target_url, COALESCE(shared_url, target_url), link_text FROM post_links
                        WHERE post_id = %s AND kind = 'reference' ORDER BY position""", (post_id,))
         return [{"url": href, "address": address, "host": host_of(address), "title": words}

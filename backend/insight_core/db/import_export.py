@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
-"""Restore INSIGHT's own export (issue 0079) into a new or empty database.
+"""Restore INSIGHT's own export into a new or empty database.
 
     python insight_core/db/import_export.py insight-….zip --into insight_restored
 
-DATABASE_URL names the server (and the database, without --into).
-
-The export (services/export_service.py, Settings → Data) is a zip: one CSV per table, written
-by `COPY … TO STDOUT (FORMAT csv, HEADER)`; schema.sql, the migrations it was made at;
-manifest.json; README.txt. The restore:
-  1. checks the manifest: an INSIGHT export of a format this code reads, and every migration
-     it was made at is here (an export from a newer INSIGHT is refused);
-  2. creates the database if it doesn't exist, and refuses one that has a table of its own:
-     a restore never replaces data;
-  3. in one transaction: the export's migrations (only those), every table emptied (a
-     migration may seed rows), the keys and the indexes no constraint owns taken off, each
-     CSV loaded with `COPY … FROM STDIN` in the order the foreign keys need, with the
-     tables' own triggers off while it loads (the rows come back as they were: nothing queued,
-     nothing refilled), each count checked against the manifest, then the keys, the indexes
-     and the foreign keys (each checked by one join) made again, the sequences set;
+DATABASE_URL names the server (and the database, without --into). The export (services/export_service.py) is
+a zip: one CSV per table, schema.sql, manifest.json, README.txt. The restore:
+  1. checks the manifest (format, and every migration it was made at is here: a newer export is refused);
+  2. creates the database if missing, and refuses one with a table of its own: a restore never replaces data;
+  3. in one transaction: the export's migrations, every table emptied, keys and constraint-less indexes taken
+     off, each CSV loaded in foreign-key order with triggers off (nothing queued or refilled), counts checked
+     against the manifest, then keys, indexes and foreign keys made again and sequences set;
   4. then the normal migrations (migrate.py) bring it up to this version.
-A failure before the commit leaves the database empty. Logins left out of the export are
-re-entered in Sources → Connections; included ones read only with the same secret key.
-
-The catalog reads here (the tables in load order, the sequences) are the export's too.
+A failure before the commit leaves the database empty. The catalog reads here are the export's too.
 """
 from __future__ import annotations
 
@@ -78,9 +67,9 @@ def sequences(cur: psycopg.Cursor) -> Dict[str, int]:
 
 
 def _load_constraints(cur: psycopg.Cursor) -> List[tuple]:
-    """(table, name, definition, kind) of the constraints a restore takes off for the load and adds back after it: the
-    valid foreign keys (kind 'f'), then the primary and unique keys whose index has the constraint's name (adding the
-    constraint makes that index again). The foreign keys come first: they are dropped before the keys they need."""
+    """(table, name, definition, kind) of the constraints taken off for the load and added back after: the valid
+    foreign keys first (dropped before the keys they need), then the primary and unique keys whose index has the
+    constraint's name (adding the constraint makes that index again)."""
     cur.execute(
         """SELECT k.conrelid::regclass::text, k.conname, pg_get_constraintdef(k.oid), k.contype FROM pg_constraint k
             WHERE k.connamespace = current_schema()::regnamespace
@@ -142,8 +131,8 @@ def _columns(archive: zipfile.ZipFile, name: str) -> List[str]:
 
 
 def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
-    """Load the export into the empty database at `url` at the export's migrations (steps 1-3);
-    {table: rows} loaded. ValueError for an export or a database it won't restore."""
+    """Load the export into the empty database at `url` at the export's migrations (steps 1-3); returns {table:
+    rows} loaded. ValueError for an export or a database it won't restore."""
     from insight_core.db import migrate
 
     with zipfile.ZipFile(archive_path) as archive:
@@ -164,22 +153,17 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
             unknown = sorted(set(expected) - set(order))
             if unknown:
                 raise ValueError(f"the export has tables its migrations don't make: {', '.join(unknown)}")
-            # Triggers off first: a TRUNCATE trigger (0139's kept inputs log one change) must not add rows the
-            # export doesn't hold.
+            # triggers off first: a TRUNCATE trigger must not add rows the export doesn't hold
             for table in order:
                 cur.execute(sql.SQL("ALTER TABLE {} DISABLE TRIGGER USER").format(sql.Identifier(table)))
             if order:
                 cur.execute(sql.SQL("TRUNCATE {}").format(sql.SQL(", ").join(map(sql.Identifier, order))))
-            # The keys come off for the load and back after it, as pg_restore does (0253): a foreign key checked
-            # row by row (2.3M story_keys rows: 59 s on the server's export) is one join when added after it, and a
-            # primary or unique key's index is built once, not kept up row by row in the CSV's order. Foreign keys
-            # first (they need the keys), then the keys whose index is their own name (pg_get_constraintdef makes
-            # the same constraint and index again). A NOT VALID foreign key stays: it checks new rows as it did.
+            # Keys come off for the load and back after, as pg_restore does: a foreign key added after is one join,
+            # not a row-by-row check, and a key's index is built once. A NOT VALID foreign key stays.
             constraints = _load_constraints(cur)
             for table, name, _definition, _kind in constraints:
                 cur.execute(sql.SQL("ALTER TABLE {} DROP CONSTRAINT {}").format(sql.SQL(table), sql.Identifier(name)))
-            # Indexes no constraint owns are built once after the load, as pg_restore does: the
-            # lab's posts load in 53 s with the search index kept up row by row.
+            # indexes no constraint owns are built once after the load, as pg_restore does
             cur.execute("""SELECT c.relname, pg_get_indexdef(i.indexrelid) FROM pg_index i
                              JOIN pg_class c ON c.oid = i.indexrelid
                             WHERE c.relnamespace = current_schema()::regnamespace
@@ -201,9 +185,9 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
                 if loaded[table] != expected[table]["rows"]:
                     raise ValueError(f"{file}: {loaded[table]} rows loaded, the manifest says {expected[table]['rows']}")
                 print(f"  {table}: {loaded[table]} rows, {time.monotonic() - started:.1f} s", flush=True)
-            cur.execute("SET CONSTRAINTS ALL IMMEDIATE")   # the deferred foreign keys, checked before the indexes and triggers
+            cur.execute("SET CONSTRAINTS ALL IMMEDIATE")   # deferred foreign keys, checked before indexes and triggers
             started = time.monotonic()
-            # 256 MB for the sorts, or the server's own setting when larger (0253: the scratch server's 2 GB)
+            # 256 MB for the sorts, or the server's own setting when larger
             cur.execute("SELECT greatest(setting::bigint, 262144) FROM pg_settings WHERE name = 'maintenance_work_mem'")
             cur.execute(f"SET LOCAL maintenance_work_mem = '{int(cur.fetchone()[0])}kB'")
             for table, name, definition, kind in constraints:

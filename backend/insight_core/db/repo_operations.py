@@ -62,10 +62,8 @@ class JobRunsRepository:
 
     @staticmethod
     def latest_for_source(cur: Cursor, job_type: str, source_id: str) -> Optional[dict]:
-        """The newest job of this type for one source, summarised (no event log), or None.
-
-        The source sheet reads it to attach to a running archive and to show the last result.
-        """
+        """The newest job of this type for one source, summarised (no event log), or None: the source sheet's
+        running archive and last result."""
         cur.execute(
             """
             SELECT id, status, message, started_at, finished_at,

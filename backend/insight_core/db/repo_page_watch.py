@@ -1,14 +1,10 @@
-"""Watched pages (issue 0039, migration 0037): which are due, what each check found, and what the
-saver does when a watched post's text changes.
+"""Watched pages: which are due, what each check found, and what the saver does when a watched post's text
+changes.
 
-When a page is due again (next_check_at): half the time since it last changed (else since it
-was published, else first seen), at least CHECK_MIN and at most CHECK_MAX. A page changed
-yesterday is looked at daily, one untouched for a month or more every two weeks, so a site's
-recently edited pages are re-read most and its old ones still come round.
-
-A meaningful change (utils.text_changes.meaningful) brings the post back: surfaced_at is now
-(the feed shows it at the top), metadata.page_update says what changed, and a post the owner
-had read becomes unread again. A tiny change keeps the new text silently.
+A page is due again after half the time since it last changed (else since its date), between CHECK_MIN and
+CHECK_MAX, so recently edited pages are re-read most and old ones still come round. A meaningful change
+(utils.text_changes.meaningful) brings the post back: surfaced_at is now, metadata.page_update says what
+changed, and a read post becomes unread again. A tiny change keeps the new text silently.
 """
 from __future__ import annotations
 
@@ -59,9 +55,8 @@ class PageWatchRepository:
         ]
 
     def checked(self, cur: Cursor, source_id: str, checks: Sequence[Dict[str, Any]], *, now: datetime) -> None:
-        """Record checks ({post_id, text_hash, modified, head_missed, etag, last_modified,
-        learned_at}): when each was checked and is due again. The saver has already recorded a
-        change (changed_at), so a page that just changed is due again soonest."""
+        """Record checks ({post_id, text_hash, modified, head_missed, etag, last_modified, learned_at}): when each
+        was checked and is due again (a page that just changed is due soonest)."""
         cur.executemany(
             f"""
             INSERT INTO post_watch (post_id, source_id, text_hash, modified, head_missed, etag, last_modified,
@@ -80,9 +75,8 @@ class PageWatchRepository:
 
     def saved(self, cur: Cursor, post_id: str, source_id: str, post: Dict[str, Any],
               old: Optional[Dict[str, Any]]) -> bool:
-        """After a watched post was written: keep its text's hash and, when the text changed
-        meaningfully since `old` ({content, content_html} before the write; None for a new
-        post), bring it back. Returns whether it came back."""
+        """After a watched post was written: keep its text's hash and, when the text changed meaningfully since
+        `old` ({content, content_html}; None for a new post), bring it back. Returns whether it came back."""
         new_hash = text_hash(post.get("content"))
         stated = parse_datetime_value(str((post.get("metadata") or {}).get("modified") or "")) or None
         modified = stated.isoformat() if stated else None   # as page_changes reads it: parsing.page_modified

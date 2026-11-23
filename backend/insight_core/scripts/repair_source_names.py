@@ -5,17 +5,11 @@
     python -m insight_core.scripts.repair_source_names --no-fetch     # no request: the stored evidence only
     python -m insight_core.scripts.repair_source_names --source <id>  # one source
 
-A source with no display_name showed its feed address as its name everywhere. For each such source (the
-owner's saved pages aside), the name is, first found:
-  1. what its address says (a subreddit: "r/<name>", source_names.address_name);
-  2. the name another source of the same platform account has (repo_stories.source_account: a native Telegram
-     channel and the bridge's feed of it; never a website's, whose sections are other sources);
-  3. unless --no-fetch: what its feed or page calls itself (source_names.own_name: the feed's <title>, else the
-     site's home page; a followed page's site name, else its <title>), one source at a time, PAGE_GAP_S apart.
-INSIGHT stores no feed's title, so 3 asks the site. A name the owner set is never written over: only a source
-with no name is a candidate, and the write's own WHERE checks it again (SourcesRepository.name_if_unnamed).
-Nothing is deleted. Prints the report as JSON: `would_name`, `named`, each source with its name and where it came
-from, and the ones left unnamed with why.
+For each source with no display_name (saved pages aside) the name is, first found: what its address says
+(source_names.address_name); the name another source of the same platform account has (never a website's
+section); unless --no-fetch, what its feed or page calls itself (source_names.own_name), PAGE_GAP_S apart.
+A name the owner set is never written over (SourcesRepository.name_if_unnamed checks it again). Nothing is
+deleted. Prints the report as JSON: `would_name`, `named`, and the ones left unnamed with why.
 """
 from __future__ import annotations
 
@@ -38,7 +32,7 @@ from insight_core.ingestion import source_names  # noqa: E402
 logger = logging.getLogger("insight.repair_source_names")
 
 PAGE_GAP_S = 1.0     # between two sources' requests (one source at a time)
-# The accounts a name is shared across (a channel and a bridge's feed of it); a website's sections are not one account.
+# the accounts a name is shared across (a channel and a bridge's feed of it); a website's sections are not one
 PLATFORM_ACCOUNTS = ("t.me/", "x.com/", "reddit.com/r/", "youtube.com/")
 
 

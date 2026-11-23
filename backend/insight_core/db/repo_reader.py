@@ -1,27 +1,11 @@
 """Reader repository: the one post listing, read state, bounded mark-through, unread counts.
 
-Every post list the reader shows (the feed, a source, a track, one day) is `list_posts` with a
-`FeedQuery`: scope, read-state filter, an optional time bound (the last N days or one day),
-a keyset cursor and a view (a stream, or one group per source).
-
-Read state lives in the `post_reader_state` projection (0020). `post_interactions` stays the
-audit log; a list query cannot aggregate it per row cheaply.
-
-Every feed is ordered by the sort key `(pairing.ordinary_date, id)` (surfaced, else published, else fetched)
-descending, which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort
-node). surfaced_at (0037, issue 0039) is set only for a page that was new to you long after its
-date, or a watched page that changed: it sorts at when it reached you, every other post as before;
-the Later list (issue 0022) instead by when each post was saved, oldest first; History (issue
-0052) by when you last opened or read each post, newest first, from the interaction log.
-"Unread" means no read_at, over every post the source ever gave us: an archived post from
-2015 is as unread as this morning's. INSIGHT_UNREAD_WINDOW_DAYS=N narrows unread (and the
-grouped "all" view) back to the last N days; unset or 0 means no window.
-
-One story, many sources (issue 0050): the Main feed and a track (the stream, Show unread or all)
-show a story once, at its lead: its first report among the posts the view shows, else its first
-share. The lead carries `story` (who covered it and its other posts). A source's own view, the
-by-source view, Later and Kept show every post; search folds at the best-matching post (0056). The Main feed's and a track's unread
-counts count rows; marking a story's lead read marks its shares read too.
+Every post list the reader shows is `list_posts` with a `FeedQuery` (scope, read-state filter, time bound,
+keyset cursor, stream or by-source view). Read state lives in the `post_reader_state` projection;
+`post_interactions` stays the audit log. Feeds order by `(pairing.ordinary_date, id)` descending, served by
+`posts_feed_order_idx` / `posts_source_feed_order_idx`; Later by when saved (oldest first), History by last
+open. "Unread" is all-time unless INSIGHT_UNREAD_WINDOW_DAYS sets a window. The Main feed and a track show a
+story once, at its lead (with `story`); marking a lead read marks its shares read too.
 """
 from __future__ import annotations
 
@@ -54,7 +38,7 @@ FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"] 
 FeedView = Literal["stream", "by_source"]
 FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "later", "starred", "updated", "history")
 FEED_VIEWS: Tuple[str, ...] = ("stream", "by_source")
-SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source", "voice")   # voice: issue 0132 A, every channel of it
+SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source", "voice")   # voice: every channel of it
 
 MAX_FEED_LIMIT = 100
 MAX_FEED_GROUPS = 50
@@ -63,31 +47,27 @@ EXCERPT_CHARS = 280
 CHARS_PER_READING_MINUTE = 1100  # about 200 words a minute
 
 SORT_KEY = pairing.ordinary_date("p")
-# "Unread" as an anti-join, not `rs.read_at IS NULL` on the LEFT JOIN: the planner
-# estimates a null-extended LEFT JOIN column at ~0 rows, gives up on the LIMIT, and
-# seq-scans + sorts posts. The anti-join keeps the posts_feed_order_idx Index Scan.
+# "Unread" as an anti-join, not `rs.read_at IS NULL` on the LEFT JOIN: the planner estimates that at ~0 rows
+# and seq-scans + sorts posts; the anti-join keeps the posts_feed_order_idx Index Scan.
 UNREAD_SQL = (
     "NOT EXISTS (SELECT 1 FROM post_reader_state r WHERE r.post_id = p.id AND r.read_at IS NOT NULL)"
 )
-# A Telegram album's picture (issue 0069) is no row and no unread count: its post shows it.
-# A post that is part of another (issue 0069: a Telegram album's piece; issue 0076: a tweet with nothing of
-# its own that quotes its own account's tweet, stored, folds into it) is no row of its own on any page.
+# A post that is part of another (a Telegram album's picture, a tweet that only quotes its own account's
+# tweet) is no row and no unread count on any page.
 NOT_ALBUM_PIECE = ("p.album_of IS NULL AND NOT EXISTS (SELECT 1 FROM post_parts f JOIN posts q ON q.normalized_url = f.folds_into "
                    "WHERE f.post_id = p.id)")
-# A page Collect originals stored (issue 0126) is shown only inside its story: no row of a feed (the Main feed,
-# a track, a source's list) and no unread count. Later, Kept and History list it when you put it there.
-# 0196: so is a post its source's item filter hid (a build of a release feed): stored, counted on its source's page.
+# A page Collect originals stored (0126) is shown only inside its story, and a post its source's item filter
+# hid (0196) is no feed row either; Later, Kept and History still list what you put there.
 NOT_STORY_ONLY = f"NOT (p.metadata ? '{STORY_ONLY_KEY}') AND p.filtered_by IS NULL"
-# A scope's restriction to some posts (FeedScope.only, v10.12.1), its one parameter the ids.
+# A scope's restriction to some posts (FeedScope.only); its one parameter is the ids.
 ONLY_SQL = "p.id = ANY(%s::uuid[])"
 _YOURS_FILTERS = ("later", "starred", "history")
-# A post's length in minutes: the reading estimate, or a video's duration.
 MINUTES_SQL = (
     "CASE WHEN s.platform = 'youtube' THEN CASE WHEN p.metadata->>'duration_seconds' ~ '^[0-9]+([.][0-9]+)?$'"
     " THEN ceil((p.metadata->>'duration_seconds')::numeric / 60) ELSE 0 END"
     f" ELSE ceil(COALESCE(length(p.content), 0)::numeric / {CHARS_PER_READING_MINUTE}) END"
 )
-# History (issue 0052): what you opened or read, never what "mark read" cleared in bulk.
+# History: what you opened or read, never what "mark read" cleared in bulk.
 HISTORY_SQL = (
     "EXISTS (SELECT 1 FROM post_interactions i WHERE i.post_id = p.id"
     " AND i.interaction_type IN ('opened', 'reading_session'))"
@@ -101,20 +81,17 @@ HISTORY_CTE = (
 _EVERY_SOURCE_FILTERS = ("later", "history")
 
 
-# A story's posts, first posted first (its lead: the first report shown, else the first share).
-_STORY_RANK = pairing.IX_DATE + ", {p}.id"   # Mark IX's time
-# A story post's place in its story's order (issue 0072 D: a date alone counts as that day's earliest
-# timed post), then the time: compares two posts of one story ({sp}: story_posts' or news_posts' row).
+# A story's posts, first posted first.
+_STORY_RANK = pairing.IX_DATE + ", {p}.id"
+# A story post's place in its story's order, then the time ({sp}: story_posts' or news_posts' row).
 _ORDER_RANK = "COALESCE({sp}.position, 0), " + _STORY_RANK
-# Where a story post sits in its tree (issue 0064), the lead's first test: 0 the origin (no parent
-# and no reason: also every post before the job has drawn the tree), 1 a post citing the story's
-# outside page origin, 2 the rest.
+# A story post's place in its tree, the lead's first test: 0 the origin (or no tree drawn yet), 1 a post
+# citing the story's outside origin page, 2 the rest.
 _TREE_RANK = ("(CASE WHEN {sp}.parent_reason IS NULL THEN 0"
               " WHEN {sp}.parent_id IS NULL AND {sp}.parent_url IS NOT NULL AND {sp}.parent_reason = 'citation' THEN 1"
               " ELSE 2 END)")
-# The story posts that a lead's read marks read: the shares of a story whose report (or, when
-# it has none, whose share) was read, and the rest of a thread read at one of its posts (0066).
-# A Telegram album's pictures are read with its post (issue 0069).
+# The story posts a lead's read marks read: the shares of a story whose report (else share) was read, the
+# rest of a thread read at one of its posts, and a Telegram album's pictures.
 _SHARES_OF_READ = """
     WITH RECURSIVE thread AS (
         SELECT post_id FROM story_posts WHERE post_id = ANY(%(read)s::uuid[])
@@ -150,13 +127,11 @@ def _require_uuid(value: str, what: str) -> str:
 
 @dataclass(frozen=True)
 class FeedScope:
-    """Which posts a feed shows. 'all' honours sources.in_main_digest (but not under the
-    later filter: a post put in Later is there whatever its source); starred is a filter."""
+    """Which posts a feed shows. 'all' honours sources.in_main_digest, except under Later; starred is a filter."""
 
     kind: Literal["all", "folder", "source", "voice"]
     id: Optional[str] = None
-    # Only these posts of the scope (v10.12.1: a topic track's items, which Mark X decides; the reader stays generic).
-    # None (every scope the API parses): no restriction, and the SQL is as it always was.
+    # Only these posts of the scope (a topic track's items); None: no restriction.
     only: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self) -> None:
@@ -276,13 +251,10 @@ def _excerpt(content: str | None) -> str:
 
 def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[str, Dict[str, str]]],
                  owners: Optional[Mapping[str, str]] = None) -> List[Dict[str, Any]]:
-    """A story's voices, named (story_rules.named_voices, issue 0082: the count's names), from its
-    posts as the reader reads them, in the order to name them: each {source_id, name, platform,
-    handle, voice (story_posts.voice), content_hash, text_chars, author, reposted_by}. Who else of
-    yours wrote or reposted a tweet is read as the story job reads it (StoriesService._story_post);
-    `followed` (followed_accounts) is asked only when a post may hold one. A story of one voice has no
-    count ("also shared by", 0072): its names are that voice's sources (voice_sources). `owners` (News,
-    issue 0111: SourceFacts.owners, as the job kept them): a voice -> its owner's, one owner's channels one voice."""
+    """A story's voices, named (story_rules.named_voices), in naming order: each {source_id, name, platform,
+    handle, voice, content_hash, text_chars, author, reposted_by}. Who else of yours wrote or reposted a tweet
+    is read as the story job reads it; `followed` is asked only when a post may hold one. A story of one voice
+    has no count: its names are that voice's sources. `owners` (News): a voice -> its owner's."""
     owners = owners or {}
 
     def owner(key: str) -> Optional[str]:
@@ -308,8 +280,8 @@ def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[st
 
 
 def confirmed_owners(cur: Cursor) -> Dict[str, str]:
-    """The owners the last story run counted stories by (issue 0132 A): a voice -> its confirmed voice, only the
-    channels the owner joined (the rest of News's owners count News alone), a Reddit poster never."""
+    """The owners the last story run counted stories by: a voice -> its confirmed voice, only the channels the
+    owner joined, a Reddit poster never."""
     from insight_core.db.repo_news import NewsRepository
     return {v: o for v, o in NewsRepository.owners(cur).items() if voice.is_confirmed(o) and not voice.is_poster(v)}
 
@@ -329,9 +301,8 @@ def voice_sources(voices: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-# Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection, `pp` the post's
-# parts (issue 0076: read once, when it was saved; LEFT JOINed): its title, its lead, the tweet it only
-# quotes and hnrss's counts. A post not parsed yet reads its stored title and text.
+# Item columns, in the order _item() reads them. `rs` is the read-state projection, `pp` the post's parts
+# (LEFT JOINed: a post not parsed yet reads its stored title and text).
 _ITEM_COLUMNS = f"""
     p.id, COALESCE(pp.title, p.title), COALESCE(pp.lead, left(p.content, {EXCERPT_CHARS} * 2)), p.url, p.source_id,
     COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform,
@@ -344,8 +315,7 @@ _ITEM_COLUMNS = f"""
 
 
 def _item(row: Sequence[Any]) -> Dict[str, Any]:
-    # The excerpt starts after a title taken from the text, without a feed's own lines (hnrss's
-    # counts: the row says them), issue 0070: the post's lead (post_parts).
+    # the excerpt starts after a title taken from the text, without a feed's own lines (post_parts' lead)
     title, excerpt = row[1], _excerpt(row[2])
     platform = row[6]
     duration = row[12]
@@ -375,13 +345,10 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "media_thumb": feed_thumb(row[13], row[3]),
         "resume_block": row[14],
         "resume_blocks": row[15],
-        # A watched page's last meaningful change (issue 0039): {at, words, words_added, ...}.
+        # a watched page's last meaningful change: {at, words, words_added, ...}
         "update": row[17],
-        # A repost (issue 0066): "↻ @by, from @author".
         "repost": repost_of(platform, row[20], row[18], row[19]),
-        # A page you saved that is a followed source's post (issue 0122): "<source> · saved by you".
         "saved_by_you": bool(row[23]),
-        # Who wrote it, via whom, quoting whom (issue 0185: Byline).
         "byline": byline_of(row[5], platform, row[20], row[18], row[24], row[25]),
     }
 
@@ -403,14 +370,10 @@ class ReaderRepository:
             return "TRUE", []
         return f"{SORT_KEY} >= now() - make_interval(days => %s)", [self.unread_window_days]
 
-    # ---- predicates ---------------------------------------------------------------
-
     @staticmethod
     def _scope_sql(scope: FeedScope, filter: str = "all") -> Tuple[str, List[Any]]:
-        """The posts a scope lists; never a Telegram album's picture, which its post shows (issue 0069), nor a
-        page shown only inside its story (issue 0126) unless you put it in Later, Kept or History.
-        A scope with `only` (v10.12.1, a topic track) lists those posts, whatever their source (a post INSIGHT
-        joined to the track may come from a source outside the folder)."""
+        """The posts a scope lists; never an album piece, nor a story-only page unless you put it in Later, Kept
+        or History. A scope with `only` lists those posts whatever their source."""
         shown = NOT_ALBUM_PIECE if filter in _YOURS_FILTERS else f"{NOT_ALBUM_PIECE} AND {NOT_STORY_ONLY}"
         if scope.only is not None:
             return f"{shown} AND {ONLY_SQL}", [list(scope.only)]
@@ -419,7 +382,7 @@ class ReaderRepository:
         if scope.kind == "folder":
             return (f"{shown} AND p.source_id IN (SELECT sf.source_id FROM source_folders sf"
                     " WHERE sf.folder_id = %s)"), [scope.id]
-        if scope.kind == "voice":   # every channel of the voice (issue 0132 A)
+        if scope.kind == "voice":   # every channel of the voice
             return f"{shown} AND p.source_id IN (SELECT vs.id FROM sources vs WHERE vs.voice_id = %s)", [scope.id]
         return f"{shown} AND p.source_id = %s", [scope.id]
 
@@ -431,15 +394,13 @@ class ReaderRepository:
             return "rs.starred_at IS NOT NULL", []
         if filter == "later":
             return "rs.later_at IS NOT NULL", []
-        if filter == "updated":   # a watched page that changed (issue 0039), latest change first
+        if filter == "updated":   # a watched page that changed
             return "p.metadata ? 'page_update'", []
-        if filter == "history":   # opened or read (issue 0052); the stream orders it by last open
+        if filter == "history":   # opened or read; the stream orders it by last open
             return HISTORY_SQL, []
         if filter == "all":
             return "TRUE", []
         raise ValueError(f"invalid feed filter: {filter!r}")
-
-    # ---- the post listing ----------------------------------------------------------
 
     @staticmethod
     def _bounds_sql(since: datetime | None, until: datetime | None, key: str = SORT_KEY
@@ -453,8 +414,6 @@ class ReaderRepository:
             params.append(until)
         return " AND ".join(where), params
 
-    # ---- stories (issue 0050) -------------------------------------------------------
-
     @staticmethod
     def folds(scope: FeedScope, filter: str) -> bool:
         """The Main feed and a track, unread or all, show a story once."""
@@ -462,9 +421,8 @@ class ReaderRepository:
 
     def _lead_sql(self, scope: FeedScope, filter: str, since: datetime | None = None,
                   until: datetime | None = None) -> Tuple[str, List[Any]]:
-        """`p` is its story's lead among the posts this view shows (or in no story): no other
-        shown post of its story ranks first (the origin, issue 0064; then a report before a share,
-        then the first posted)."""
+        """`p` is its story's lead among the posts this view shows (or in no story): no other shown post of its
+        story ranks first (the origin, then a report before a share, then the first posted)."""
         scope_sql, params = self._scope_sql(scope, filter)
         filter_sql, filter_params = self._filter_sql(filter)
         bounds_sql, bounds_params = self._bounds_sql(since, until)
@@ -484,26 +442,16 @@ class ReaderRepository:
 
     @staticmethod
     def attach_stories(cur: Cursor, items: List[Dict[str, Any]]) -> None:
-        """Give each item that leads a story its `story` (else None): {id, voices, first (its origin
-        post, issue 0064; before the tree is drawn its first report, else its first share: issue
-        0055; None when another post of the story came before it, issue 0072 D), sources: its voices
-        named, in the order they covered it (story_voices, issue 0082: {id, name, place, with}), posts: the story's other posts, in the story's order}. The post
-        page (0055) asks it too.
+        """Give each item that leads a story its `story` (else None): {id, voices, first (its origin post, else
+        first report, else first share; None when another post came before it), sources (story_voices, in
+        covering order), posts (the other posts, in story order), origin, thread, roundups}. The post page asks
+        it too.
 
-        The tree (issue 0064): each post has `parent_id` (a post of the story) and `parent_reason`
-        (address, citation, copy, time, none); the origin has neither. A post with a reason and no
-        `parent_id` hangs from the story's `origin` {url, title, linked_by}, a page outside INSIGHT
-        (else `origin` is None). The item's own place: `parent_id` and `parent_reason` of the story.
-        On X (issue 0066): `thread` when the story is one account's replies to itself or quotes of
-        itself; a reply in it carries its `text`, and its title loses Nitter's "R to @…: ".
-        Issue 0068: each post (and the item's own place) carries `reposted_by`, the accounts that
-        reposted it, and your sources that wrote or reposted it join `sources`; `roundups` [{id, title,
-        source_display_name}] are the roundups that mention the story and are not in it, each
-        source once. Issue 0069: a source's roundup is the one that links the story's pages earliest
-        in it, then the first, and a source in the story has none. Issue 0070: a post its source
-        reposted carries `repost` {by, author}, and `reposted_by` leaves that source out (its line
-        names the author and the reposter once). Issue 0072: a post that only quotes a post of its story
-        is no line (`_without_quotes_of_itself`)."""
+        Each post has `parent_id` and `parent_reason` (the tree); a post with a reason and no parent hangs from
+        the story's outside `origin` {url, title, linked_by}. `thread`: one account's replies or quotes of itself.
+        Posts carry `reposted_by` and `repost` {by, author}; `roundups` are each other source's roundup that
+        mentions the story (the one linking its pages earliest). A post that only quotes a post of its story is
+        no line (`_without_quotes_of_itself`)."""
         if not items:
             return
         cur.execute(
@@ -529,7 +477,7 @@ class ReaderRepository:
         stories: Dict[str, Dict[str, Any]] = {}
         voiced: Dict[str, List[Dict[str, Any]]] = {}   # lead -> its story's posts, as story_voices reads them
         addresses: Dict[str, set] = {}   # lead -> its story's posts' addresses
-        quoting: Dict[str, str] = {}   # a post that only quotes a tweet -> that tweet (issue 0072)
+        quoting: Dict[str, str] = {}   # a post that only quotes a tweet -> that tweet
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
              origin_linked_by, reposted_by, author, handle, quotes, address, position, voice, content_hash,
@@ -548,19 +496,18 @@ class ReaderRepository:
             if str(post_id) != str(lead) and parent_reason and (quoted := quotes):
                 quoting[str(post_id)] = quoted
             story["thread"] |= parent_reason in ("thread", "quote")
-            # The origin post first (issue 0064); before the tree is drawn, the first report.
+            # the origin post first; before the tree is drawn, the first report
             rank = (0 if parent_reason is None else 1, 0 if role == "report" else 1)
             if story["first"] is None or rank < story["_first_rank"]:
                 story["first"], story["_first_rank"], story["_first_position"] = str(post_id), rank, position
-            # Saved is never a voice (issue 0070 A8), so never named (issue 0072).
+            # Saved is never a voice, so never named
             if platform != "saved" and not any(source["id"] == str(source_id) for source in story["sources"]):
                 story["sources"].append({"id": str(source_id), "name": name})
-            # A repost's line names its author and who of yours reposted it once (issue 0070).
             repost = repost_of(platform, handle, author, reposted_by)
             parent = {"parent_id": str(parent_id) if parent_id else None, "parent_reason": parent_reason,
                       "reposted_by": (repost["by"] if repost else reposted_by) or None}
             if str(post_id) != str(lead):
-                thread = parent_reason == "thread"   # a reply in a thread (issue 0066): its own words, read in order
+                thread = parent_reason == "thread"   # a reply in a thread: its own words, read in order
                 story["posts"].append({
                     "id": str(post_id), "title": title,
                     "text": clean_text(content) if thread else None, "url": url,
@@ -573,19 +520,17 @@ class ReaderRepository:
         for lead, story in list(stories.items()):
             if ReaderRepository._without_quotes_of_itself(story, {i for i, q in quoting.items() if q in addresses[lead] and i != lead}) \
                     and story["voices"] < 2:
-                del stories[lead]   # nothing left but the post it quotes: no story (issue 0072)
+                del stories[lead]   # nothing left but the post it quotes: no story
                 continue
-            # One account's replies to itself, or its quotes of itself, read as a thread (issue 0066).
             story["thread"] = story["thread"] and len(story["sources"]) == 1
-            # A story whose origin is a page outside INSIGHT has no first post.
             if story["origin"] is not None and story["_first_rank"][0] != 0:
                 story["first"] = None
-            # "First" only when it is (issue 0072 D): the origin a post of the story came before is no first.
+            # the origin a post of the story came before is no first
             if story["_first_position"]:
                 story["first"] = None
             del story["_first_rank"], story["_first_position"]
-        # An outside origin opens as its first member's link wrote it (issue 0126: a gift link opens the article;
-        # its address, `url`, is the compared one, without the token).
+        # An outside origin opens as its first member's link wrote it (a gift link keeps its token; `url`, the
+        # compared address, has none).
         with_origin = [story["id"] for story in stories.values() if story["origin"] is not None]
         if with_origin:
             cur.execute(f"""SELECT DISTINCT ON (sp.story_id) sp.story_id, pl.shared_url
@@ -598,14 +543,13 @@ class ReaderRepository:
             for story in stories.values():
                 if story["origin"] is not None:
                     story["origin"]["href"] = shared.get(story["id"]) or story["origin"]["url"]
-        # Named as counted (issue 0082): one name a voice, your sources that wrote or reposted a tweet
-        # of the story among them (issue 0068).
+        # Named as counted: one name a voice, with your sources that wrote or reposted a tweet of the story.
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
-        joined = confirmed_owners(cur) if stories else {}   # one confirmed voice one name, as counted (issue 0132 A)
+        joined = confirmed_owners(cur) if stories else {}   # one confirmed voice one name, as counted
         for lead, story in stories.items():
             story["sources"] = story_voices(voiced[lead], followed, joined)
-        # Each source's roundup that is most about the story (issue 0069): the one that links the story's
-        # pages earliest in it (post_links.position), then the first; none of a source in the story.
+        # Each source's roundup most about the story: the one linking its pages earliest, then the first; none of
+        # a source in the story.
         cur.execute(
             f"""
             SELECT * FROM (
@@ -640,9 +584,8 @@ class ReaderRepository:
 
     @staticmethod
     def _without_quotes_of_itself(story: Dict[str, Any], quotes: set) -> bool:
-        """A post with nothing of its own that only quotes a post of its story (issue 0072: a reply
-        repeating the thread's first tweet) is no line: what hung from it hangs from its parent.
-        True when that leaves the story no other post."""
+        """A post with nothing of its own that only quotes a post of its story is no line: what hung from it hangs
+        from its parent. True when that leaves the story no other post."""
         if not quotes:
             return False
         parents = {p["id"]: (p["parent_id"], p["parent_reason"]) for p in story["posts"]}
@@ -662,8 +605,8 @@ class ReaderRepository:
 
     @staticmethod
     def _with_shares(cur: Cursor, read: List[str], marked: List[str], *, at: datetime | None = None) -> List[str]:
-        """`read` were marked read (`marked`: the ones that were unread): mark their stories'
-        shares read too. Returns every id marked."""
+        """Mark the stories' shares of `read` read too (`marked`: the ones that were unread). Returns every id
+        marked."""
         if not read:
             return marked
         cur.execute(_SHARES_OF_READ, {"read": read})
@@ -695,11 +638,8 @@ class ReaderRepository:
 
     def _history(self, cur: Cursor, query: FeedQuery, *, since: datetime | None, until: datetime | None
                  ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
-        """What you opened or read (issue 0052): each post once, latest open first.
-
-        A row's `sort_at` is that last open, so the day headers, the time column and the
-        cursor all follow it; `opened_at` says so by name. A time bound bounds the open.
-        """
+        """What you opened or read: each post once, latest open first; `sort_at` (and `opened_at`) is that open,
+        so day headers, time column, cursor and time bound follow it."""
         scope_sql, params = self._scope_sql(query.scope, "history")
         bounds_sql, bounds_params = self._bounds_sql(since, until, "h.opened_at")
         where = [scope_sql, bounds_sql]
@@ -779,10 +719,8 @@ class ReaderRepository:
                    ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
         """One group per source, newest group first; keyset on (newest_sort_at, source_id).
 
-        `count` honours the filter and, when one is set, the unread window: it then bounds
-        `unread` and `all` (an explicit star or Later never ages out).
-        The time bound (`days` or `day`) bounds both the counts and the items. Two queries per
-        page whatever its size: the groups, then every group's newest items in one LATERAL.
+        `count` honours the filter and the unread window (never on star or Later) and the time bound. Two queries
+        per page: the groups, then every group's newest items in one LATERAL.
         """
         scope, filter, group_cursor = query.scope, query.filter, query.cursor
         groups, per_source = min(query.limit, MAX_FEED_GROUPS), query.per_source
@@ -824,7 +762,7 @@ class ReaderRepository:
         group_rows = cur.fetchall()
         page = group_rows[:groups]
         items_by_source: Dict[str, List[Dict[str, Any]]] = {str(row[0]): [] for row in page}
-        # A restricted scope (v10.12.1) lists only its posts in each group too; else nothing is added.
+        # a restricted scope lists only its posts in each group too
         only_sql, only_params = ("", []) if scope.only is None else (f" AND {ONLY_SQL}", [list(scope.only)])
         if page:
             cur.execute(
@@ -866,8 +804,6 @@ class ReaderRepository:
             next_cursor = FeedCursor(last["newest_sort_at"], last["source_id"])
         return out, next_cursor
 
-    # ---- read state ---------------------------------------------------------------
-
     def set_read(self, cur: Cursor, post_ids: Sequence[str], read: bool) -> List[str]:
         """Mark posts read (keeping the first read time; a story's shares with its report) or
         unread. Returns the ids changed."""
@@ -886,7 +822,6 @@ class ReaderRepository:
                 """,
                 (ids,),
             )
-            # A story read at its lead: its copies and shares are read too (issue 0050).
             return self._with_shares(cur, ids, [str(r[0]) for r in cur.fetchall()])
         cur.execute(
             """
@@ -917,7 +852,7 @@ class ReaderRepository:
             )
 
     def set_position(self, cur: Cursor, post_id: str, block: int | None, blocks: int | None) -> None:
-        """Where a long post was left: the top block in view of `blocks` (issue 0030). None clears it."""
+        """Where a long post was left: the top block in view of `blocks`. None clears it."""
         post_id = _require_uuid(post_id, "post id")
         if block is None:
             self.clear_positions(cur, [post_id])
@@ -948,8 +883,8 @@ class ReaderRepository:
 
     def set_later(self, cur: Cursor, post_ids: Sequence[str], later: bool, *, at: datetime | None = None
                   ) -> List[str]:
-        """Put posts in Later (at `at`, default now; a post already there keeps its time) or take
-        them out. Returns the ids changed. Nothing calls this on a clock: Later never expires."""
+        """Put posts in Later (at `at`, default now; one already there keeps its time) or take them out. Returns
+        the ids changed. Later never expires."""
         ids = [_require_uuid(pid, "post id") for pid in post_ids]
         if not ids:
             return []
@@ -980,16 +915,14 @@ class ReaderRepository:
                           now: datetime) -> List[str]:
         """Mark unread posts in `scope` from `newest` down to `through` (inclusive) read.
 
-        Bounded by the page: posts newer than `newest` (arrived after the page rendered) stay
-        unread, nothing older than `through` is touched (nor, with a window set, anything
-        outside it), and only rows with read_at IS NULL are written. Returns the ids
-        marked, so the UI can undo with set_read(ids, False).
+        Bounded by the page: newer posts stay unread, nothing older than `through` or outside the window is
+        touched, only read_at IS NULL rows are written. Returns the ids marked (undo: set_read(ids, False)).
         """
         scope_sql, params = self._scope_sql(scope)
         window_sql, window_params = "TRUE", []
         if self.unread_window_days is not None:
             window_sql, window_params = f"{SORT_KEY} >= %s", [now - timedelta(days=self.unread_window_days)]
-        # The rows the unread view shows: a story's lead, not the reports folded under it (0050).
+        # the rows the unread view shows: a story's lead, not the reports folded under it
         lead_sql, lead_params = self._lead_sql(scope, "unread") if self.folds(scope, "unread") else ("TRUE", [])
         cur.execute(
             f"""
@@ -1015,11 +948,9 @@ class ReaderRepository:
         return self._with_shares(cur, marked, marked, at=now)
 
     def unread_counts(self, cur: Cursor) -> Dict[str, Any]:
-        """{total (main digest), by_source: {id: n}, by_folder: {id: n}} of unread posts (all-time unless a window is set),
-        `newest_unread`: {id: when} each source's newest unread post, as "By source" orders its groups (issue 0088),
-        and `later`: {count, minutes}, every post in Later and what reading them costs. The total and a
-        track's count are rows, as those feeds show them (a story with unread posts is one, issue 0050);
-        a source's count is its posts."""
+        """Unread counts: {total (main digest), by_source, by_folder, newest_unread: {source id: when}, later:
+        {count, minutes}}. The total and a track's count are rows (a story with unread posts is one); a source's
+        count is its posts."""
         window_sql, window_params = self._window_sql()
         cur.execute(
             f"""
@@ -1071,8 +1002,8 @@ class ReaderRepository:
                 "later": {"count": int(later_count), "minutes": int(later_minutes)}}
 
     def scope_unread(self, cur: Cursor, scope: FeedScope) -> int:
-        """One scope's unread rows, as unread_counts counts a track's (a story with unread posts is one): for a scope
-        restricted to some posts (v10.12.1, a topic track's items), which unread_counts has no key for."""
+        """One scope's unread rows, counted as unread_counts counts a track's: for a scope with `only`, which
+        unread_counts has no key for."""
         scope_sql, params = self._scope_sql(scope, "unread")
         window_sql, window_params = self._window_sql()
         cur.execute(

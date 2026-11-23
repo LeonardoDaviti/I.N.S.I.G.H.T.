@@ -5,17 +5,14 @@
     python -m insight_core.scripts.story_identity [held] [batches] [hours]
 
 It changes the database it is given, so only a copy: it refuses the live and the lab's databases.
-1. The newest `held` posts (by when they were stored) are held back, with their links, and removed.
+1. The newest `held` posts (by when stored) are held back, with their links, and removed.
 2. A full run builds the state.
-3. They come back in `batches` "fetches", the oldest stored first (posts and links, one transaction
-   each), with an incremental run after each, the clock `hours` on each time (News's window moves).
-4. Every derived table is kept in the copy (`keep`: one unlogged table each, its rows and each row's
-   md5 of its text), a full run at the last clock rebuilds over the same posts, the tables are kept
-   again, and the two are compared row by row in SQL (`compare_kept`, 0253): only the differing rows
-   come to Python, as `compare` shows them. `snapshot` and `compare` hold every row as JSON text in
-   Python (4M rows at the server's size, twice): `same_rows` (two databases) still uses them.
-`run(mode, clock)` runs a job ("full" or "incremental"): in this process unless the caller times
-it in its own (the lab's measurements did).
+3. They come back in `batches` "fetches", oldest first, each followed by an incremental run, the clock `hours`
+   on each time.
+4. Every derived table is kept in the copy (`keep`), a full run rebuilds over the same posts, and the two are
+   compared row by row in SQL (`compare_kept`): only differing rows come to Python. `same_rows` (two
+   databases) still holds every row in Python (`snapshot`, `compare`).
+`run(mode, clock)` runs a job ("full" or "incremental").
 """
 from __future__ import annotations
 
