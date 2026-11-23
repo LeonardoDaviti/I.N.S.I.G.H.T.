@@ -1,4 +1,4 @@
--- 0173_track_thing_splits.sql (Stealth v10.41: one row a thing)
+-- 0174_track_thing_splits.sql (Stealth v10.41: one row a thing)
 --
 -- A track's thing joined reports that were not one thing (before v10.41 a shared link or hardware string sufficed, and
 -- joins followed through it). track_things.repair splits such a row, never deleting: a member thing merged into it is
