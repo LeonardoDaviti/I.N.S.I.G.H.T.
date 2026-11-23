@@ -1,5 +1,5 @@
-"""The API watchdog (services/api_watchdog.py, issue 0117): the judge in insight-ingestion, the door in the API
-container, and the stack dump the API registers."""
+"""The API watchdog (services/api_watchdog.py, 0117): the judge in insight-ingestion, the door in the API container,
+and the stack dump the API registers."""
 from __future__ import annotations
 
 import json
@@ -97,7 +97,7 @@ class Judge(unittest.TestCase):
         self.assertEqual(sum("keeps failing" in line for line in logs.output), 1)
 
     def test_keeps_failing_is_recorded_once_even_with_an_answer_between(self):
-        """Measured on a copy: the API answered once between two hangs, and the give-up was recorded twice."""
+        """The API answering once between two hangs records the give-up once."""
         self.ops = FakeOps(recent=[self.now[0] - 600] * 3)
         dog = self.dog()
         self.answers = [False, False, False, False, True, False, False, False, False]
@@ -128,9 +128,8 @@ class Judge(unittest.TestCase):
 
 
 class TimesForTheReader(unittest.TestCase):
-    """0124 (the v10.0.2 review's W7): "The API was restarted at 10:53" (the container's UTC) sat over the page's
-    "2:53:23 PM". The record says no clock time: the times are ISO UTC in its payload, and the page writes them in
-    the reader's zone."""
+    """The record says no clock time: its times are ISO UTC in the payload, and the page writes them in the reader's
+    zone (0124)."""
 
     def setUp(self):
         Judge.setUp(self)
@@ -162,10 +161,8 @@ class TimesForTheReader(unittest.TestCase):
 
 
 class AStaleRequest(unittest.TestCase):
-    """0124 (the v10.0.2 review's M1): the API was stopped for 2 minutes; the judge recorded "The API was restarted"
-    though nothing had been, and at the next start the door took that old request and killed the API 4 s in (a
-    record counting toward the 3-an-hour cap). A missing API is no hang, and the door ignores a request written
-    before its API started or more than a minute ago."""
+    """A missing API is no hang, and the door ignores a request written before its API started or more than a minute
+    ago, so a stopped API is never killed on its next start (0124)."""
 
     def setUp(self):
         Judge.setUp(self)

@@ -1,8 +1,7 @@
-"""0208 (Stealth v10.19): News ranked for the reader. The significance question (its input from the existing signals,
-which members it shows, the counts in buckets), the answer's checks and score, when a row is asked (once, again only
-when its posts changed and the gap passed, never while one waits), the reader's fit, the rank and the Notable lane,
-the kept ranks (the jobs process), the Mark X page's and the reader's News order (the switch, `order=coverage`).
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""News ranked for the reader (0208): the significance question and its checks and score, when a row is asked (once,
+again only when its posts changed and the gap passed, never while one waits), the reader's fit, the rank and the
+Notable lane, the kept ranks, and the Mark X page's and reader's News order (`order=coverage`). Synthetic data; DB
+tests only on a _test database."""
 from __future__ import annotations
 
 import unittest
@@ -84,8 +83,7 @@ class TheQuestion(unittest.TestCase):
 
 
 class TheResultsGuide(unittest.TestCase):
-    """0260 (v10.30): significance-v3, a result scored by what it changes in the field, behind entity_bands.json
-    `significance.results`."""
+    """significance-v3: a result scored by what it changes in the field, behind `significance.results` (0260)."""
 
     def switched(self, on):
         bands = dict(identity.bands(), significance={"results": on})
@@ -262,8 +260,8 @@ class Ranked(_Api):
         self.assertEqual(len([r for r, *_ in self.asks() if r == b]), 2)
 
     def test_the_results_guide_asks_new_and_changed_rows_only(self):
-        """0260: switching the guide asks no row again by itself (no mass re-ask): a row is asked under the new
-        guide when it is new, or when its posts changed past the gap."""
+        """Switching the guide re-asks no row by itself: a row is asked under the new guide when it is new, or when its
+        posts changed past the gap (0260)."""
         bands_off = dict(identity.bands(), significance={"results": False})
         bands_on = dict(identity.bands(), significance={"results": True})
         a, b = self.post(title="An old result"), self.post(title="Its follow-up")
@@ -341,8 +339,8 @@ class Ranked(_Api):
 
 
 class Analysis(Ranked):
-    """0208: a row's expert breakdowns: named by its answer, read as commentary, long; kept in the rank, shown on the
-    reader's News only when Analysis is on (a Shadow by default: under its bar)."""
+    """A row's expert breakdowns: named by its answer, read as commentary, long; kept in the rank, shown on the reader's
+    News only when Analysis is on (0208)."""
 
     def reading(self, post, kind):
         from insight_core.markx import tasks

@@ -1,6 +1,5 @@
-"""Issue 0137: new spheres, round 2. No network: every request is a FakeHttp answer, every feed and page a
-fixture with invented hosts. B6 (series) is in test_series, B8 (references) in test_reference_links_0137,
-B10 (Bluesky) in test_bluesky_0137."""
+"""New spheres, round 2 (0137). No network: every request a FakeHttp answer, invented hosts. B6 is in test_series,
+B8 in test_reference_links_0137, B10 in test_bluesky_0137."""
 from __future__ import annotations
 
 import asyncio
@@ -154,7 +153,7 @@ class ParseWhatIsOfferedTests(unittest.TestCase):
                          ["Rates & prices", "Two"])
 
     def test_a_feed_the_parser_refuses_is_never_offered_and_says_why(self):
-        # Broken outside its items (issue 0254: one broken item is skipped, the rest offered).
+        # broken outside its items (one broken item is skipped, the rest offered: 0254)
         broken = BARE_AMP.replace("</channel>", "<image><title>a < b</title></image></channel>")
         page = '<html><head><link rel="alternate" type="application/rss+xml" href="/rss.xml"></head></html>'
         finding, _ = finder({"https://bank.example/": page, "https://bank.example/rss.xml": broken}, "https://bank.example/")

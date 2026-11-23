@@ -1,9 +1,7 @@
-"""X: reposts, quotes and threads become connections (issue 0066).
-
-One address per tweet whatever the host; a repost names its original author and is a share; a
-quote hangs from the tweet it quotes; an author's replies to itself within 24 hours are one
-thread, one row in the feed, read together. The rules are tested as pure functions; the saver,
-the job, the feed and migration 0047 on the database in one transaction per test, rolled back.
+"""X: reposts, quotes and threads become connections (0066). One address per tweet whatever the host; a repost names
+its original author and is a share; a quote hangs from the tweet it quotes; an author's replies to itself within 24
+hours are one thread. Rules as pure functions; the saver, the job, the feed and migration 0047 on the database in one
+rolled-back transaction per test.
 """
 from __future__ import annotations
 
@@ -90,7 +88,7 @@ class AddressTests(unittest.TestCase):
                          "how i work with agents in 2026.", "who reposted it is said beside the title")
 
     def test_a_repost_line_names_its_source_once(self):
-        # Issue 0070: "oddlogic_games ↻ from @tl_codex", not "oddlogic_games · ↻ @oddlogic_games, from @tl_codex".
+        # "oddlogic_games ↻ from @tl_codex", not "oddlogic_games · ↻ @oddlogic_games, from @tl_codex" (0070)
         nitter = "https://nitter.local/oddlogic_games/rss"
         self.assertEqual(repost_of("rss", nitter, "tl_codex", ["oddlogic_games"]), {"by": [], "author": "tl_codex"})
         self.assertEqual(repost_of("rss", nitter, "tl_codex", ["Oddlogic_games", "toolsmith_pete"]),
@@ -151,8 +149,8 @@ class XRulesTests(unittest.TestCase):
         self.assertEqual(story.voices, 1, "one source's thread is a story of one voice")
 
     def test_a_page_saved_days_after_a_thread_about_it_is_in_the_thread(self):
-        """0113: one account's thread links the page you saved later, dated by its first link (the save path): one
-        place, no link join, but its date joins it to the thread (the lab's case: a saved essay under its author's thread)."""
+        """One account's thread links a page saved later, dated by its first link: one place, no link join, but its
+        date joins it to the thread (0113)."""
         page = "https://essays.example/blog/matmul"
         saved = StoryPost(id="s", source_id="saved-src", kind="saved", own_site="", home_site="",
                           t=NOON, url=page, title="Inside the GPU")   # no date of its own: its first link's
@@ -164,9 +162,8 @@ class XRulesTests(unittest.TestCase):
         self.assertEqual(story.voices, 1)
 
     def test_a_run_of_replies_hours_later_is_another_thread(self):
-        """v10.39: Artificial Analysis's Muse Ember thread (its first tweet not stored) hung from the Decision Index
-        thread of 18 hours before. A reply opening a run of replies (the next within 2 minutes) an hour or more after
-        the tweet before it continues no stored tweet; a lone reply hours later still continues the one before it."""
+        """A reply opening a run of replies (the next within 2 minutes) an hour or more after the tweet before it
+        continues no stored tweet; a lone reply hours later still continues the one before it."""
         posts = [tweet("d0", "aa", "artanalysis", n=ID),
                  tweet("d1", "aa", "artanalysis", n=ID + 1, minutes=0.1, reply_to="artanalysis"),
                  tweet("m1", "aa", "artanalysis", n=ID + 2, minutes=18 * 60, reply_to="artanalysis"),
@@ -235,8 +232,8 @@ class XRulesTests(unittest.TestCase):
         self.assertEqual(threads(posts)["a1"], "b2", "its target isn't stored: the post before it")
 
     def test_a_self_reply_quoting_its_stored_tweet_from_two_days_ago_continues_the_tweet_before_it(self):
-        # Measured on the lab (0103): "Related tweet from earlier…", "oh yeah i should have linked…" quote
-        # an older tweet as a reference, inside the thread right before them.
+        # replies like "Related tweet from earlier…" quote an older tweet as a reference, inside the thread right
+        # before them (0103)
         old = f"https://x.com/ann/status/{ID}"
         posts = [tweet("a", "ann", "ann", n=ID),
                  tweet("b", "ann", "ann", n=ID + 10, minutes=47 * 60),
@@ -312,7 +309,7 @@ class XJobTests(unittest.TestCase):
                                                sorted([f"paperfeed{self.mark}", f"toolsmith_pete{self.mark}"])))
         items, _ = ReaderRepository(unread_window_days=None).list_posts(self.cur, FeedQuery(limit=100), now=self.now)
         [row] = [i for i in items if i["id"] == first]
-        # The row is toolsmith_pete's: it names the other reposter, never its own source again (issue 0070).
+        # the row is toolsmith_pete's: it names the other reposter, never its own source again (0070)
         self.assertEqual(row["repost"], {"by": [f"paperfeed{self.mark}"], "author": author})
         self.assertEqual(row["title"], "how i work with agents in 2026.")
 
@@ -349,7 +346,7 @@ class XJobTests(unittest.TestCase):
         self.assertEqual(set(marked), {root, *replies}, "opening the thread marks its posts read")
 
     def test_a_replys_quote_of_its_own_thread_is_no_card(self):
-        # Issue 0070: ravi_codes's replies each quote the thread's first tweet; it is read once.
+        # ravi_codes's replies each quote the thread's first tweet; it is read once (0070)
         user = f"ann{self.mark}"
         source = self._x(user)
         root = self._save(source, user, ID, "Model Y leaks: codenamed Q")
@@ -362,8 +359,8 @@ class XJobTests(unittest.TestCase):
         self.assertEqual((line["quotes_above"], line["html"]), (True, "<p>Its out guys.<br>\n</p>"))
 
     def test_a_reply_that_only_quotes_its_thread_is_no_line(self):
-        # Issue 0072: a reply with nothing of its own, only a quote of the thread's first tweet, is no
-        # line in the tree or the thread page; the reply after it hangs from the post before.
+        # a reply with nothing of its own, only a quote of the thread's first tweet, is no line in the tree or the
+        # thread page; the reply after it hangs from the post before (0072)
         user = f"ann{self.mark}"
         source = self._x(user)
         root = self._save(source, user, ID, "Model Z one more output.")
@@ -378,13 +375,13 @@ class XJobTests(unittest.TestCase):
         item = {"id": only}
         ReaderRepository.attach_stories(self.cur, [item])
         self.assertEqual(item["story"]["parent_id"], root, "opened at itself, the post still has its place")
-        both = [{"id": root}, {"id": only}]   # one page holding both (issue 0072 D1: this raised KeyError)
+        both = [{"id": root}, {"id": only}]   # one page holding both (0072 D1)
         ReaderRepository.attach_stories(self.cur, both)
         self.assertEqual([p["id"] for p in both[0]["story"]["posts"]], [after])
         self.assertEqual(both[1]["story"]["parent_id"], root)
 
     def test_a_thread_posts_quote_of_its_first_tweet_is_no_card_on_its_page(self):
-        # Issue 0072 D4: the opened reply's card repeats the thread's first tweet, which the thread lists below.
+        # the opened reply's card repeats the thread's first tweet, which the thread lists below (0072 D4)
         user = f"ann{self.mark}"
         source = self._x(user)
         self._save(source, user, ID, "Model Z benchmarks are out")
@@ -405,7 +402,7 @@ class XJobTests(unittest.TestCase):
         self.assertEqual(post["content"], "Benchmarks", "its text without the quoted words: the page reads its title once")
 
     def test_a_quote_s_byline_opens_the_quoted_post_on_its_page(self):
-        # Issue 0126 (3): the card says who it quotes and links the quoted tweet's x.com address, inside INSIGHT when stored.
+        # the card says who it quotes and links the quoted tweet's x.com address, inside INSIGHT when stored (0126)
         user, other = f"ann{self.mark}", f"bob{self.mark}"
         source = self._x(user)
         card = (f'<p>Worth reading</p>\n<p><a href="https://nitter.net/{other}/status/{ID}?s=20">nitter.net/{other}/status…</a></p>\n'
@@ -429,8 +426,8 @@ class XJobTests(unittest.TestCase):
         self.assertEqual(post["internal_links"].get(address), str(stored), "stored: it opens inside INSIGHT")
 
     def test_a_reply_quoting_an_earlier_tweet_of_its_own_joins_that_tweets_story_only(self):
-        # Issue 0103: a reply quoting the account's tweet of an hour ago hangs under it, not under the
-        # account's thread on another subject posted in between.
+        # a reply quoting the account's tweet of an hour ago hangs under it, not under the account's thread on another
+        # subject posted in between (0103)
         user = f"ann{self.mark}"
         source = self._x(user)
 

@@ -1,5 +1,5 @@
-"""The API container's supervisor (scripts/api_supervisor.py, issue 0112 Decided 11): with two API processes, the
-start's work runs once per container, never once per process."""
+"""The API container's supervisor (scripts/api_supervisor.py, 0112): with two API processes, the start's work runs
+once per container, never once per process."""
 from __future__ import annotations
 
 import asyncio
@@ -63,8 +63,8 @@ class Supervisor(unittest.TestCase):
         self.assertEqual(sent, [(21, signal.SIGUSR1), (22, signal.SIGUSR1)])
 
     def test_the_interrupted_jobs_are_closed_in_a_child_the_supervisor_waits_for(self):
-        """0202: building the services to close them cost the long-lived supervisor ~36 MB for the container's
-        life; a spawned child does it, and the start waits for it."""
+        """A spawned child builds the services to close them, so the long-lived supervisor never holds their memory;
+        the start waits for it (0202)."""
         self.assertIs(S.Supervisor(["uvicorn"]).close_jobs, S.close_interrupted_jobs_in_child)
         made = []
 
@@ -113,7 +113,7 @@ class TheLifespan(unittest.TestCase):
         with mock.patch.object(main, "services"), mock.patch.object(main.database, "close_all"), \
                 mock.patch.object(main, "freeze_start") as freeze:
             asyncio.run(go())
-        freeze.assert_called_once()    # 0202: each process's start objects out of the GC's reach
+        freeze.assert_called_once()    # each process's start objects out of the GC's reach (0202)
 
     def test_under_the_supervisor_a_process_starts_nothing(self):
         with mock.patch.dict(os.environ, {S.SUPERVISED: "1"}), mock.patch.object(main, "start_once") as once:
@@ -128,10 +128,8 @@ class TheLifespan(unittest.TestCase):
 
 
 class OpenFiles(unittest.TestCase):
-    """0124 (the v10.0.2 review's W4): after a 15-minute hang of both API processes, one came back holding 1,006
-    sockets against the container's 1,024 open files (2,096 "Too many open files" in a second), and stayed so: then
-    a fresh hang of the other process stalled 11 of 40 requests. The limit is raised, the queue bounded, and a
-    process left at its limit is replaced."""
+    """After a long hang a process can be left at its open-files limit: the limit is raised, the queue bounded, and a
+    process left at its limit is replaced (0124)."""
 
     def test_the_soft_limit_is_raised_to_the_hard_one_capped(self):
         got = []

@@ -1,12 +1,8 @@
-"""A page's own source takes its row back from a source that stored it first (issue 0167, part 1).
-
-An aggregator (a link blog, a news aggregator's feed) stores a company's page first; the company's own followed
-source (its feed, its page watch) fetches the same address later. The row moves to the company's source (its id
-kept: stories, notes, reader state stay), and the aggregator keeps a post citing the page. The repair finds the pages
-held so and moves those the owner's listing names.
-
-The rows are committed (the save path commits), so this runs only against a `_test` database; it owns every source
-and post on the invented sites below. No network: the repair's listing reads answer from FakeHttp.
+"""A page's own source takes its row back from a source that stored it first (0167, part 1). An aggregator stores a
+company's page first; when the company's own followed source fetches the same address, the row moves to it (its id
+kept: stories, notes, reader state stay) and the aggregator keeps a post citing the page. The repair finds the pages
+held so and moves those the owner's listing names. Rows are committed, so only against a `_test` database; no network
+(FakeHttp).
 """
 from __future__ import annotations
 

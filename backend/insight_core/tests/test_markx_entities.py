@@ -1,7 +1,6 @@
-"""Mark X entities (issue 0119 A): the name key and the version parser (0090 B: the lab's gold cases, rewritten with
-invented names), linking, the merge rules and guards, the review queue and the owner's answers, the collision judge,
-surges, and the pages. Synthetic posts in one transaction rolled back after each test (the mx_* tables emptied inside
-it), so only on a database whose name ends in _test."""
+"""Mark X entities (0119): the name key and version parser, linking, the merge rules and guards, the review queue
+and the owner's answers, the collision judge, surges and the pages. Synthetic posts in one rolled-back transaction,
+so only on a database whose name ends in _test."""
 from __future__ import annotations
 
 import json
@@ -24,7 +23,7 @@ H, D = timedelta(hours=1), timedelta(days=1)
 
 
 class Names(unittest.TestCase):
-    """0090 B's gold (the lab's frozen parser cases), as regression tests with invented names."""
+    """The parser's gold cases (0090 B), with invented names."""
 
     def test_the_key(self):
         self.assertEqual(N.key("Nimbus3.8‑Flash"), N.key("nimbus 3.8 flash"))
@@ -49,8 +48,8 @@ class Names(unittest.TestCase):
         self.assertEqual(N.parse("Orbit V4.1 Flash 1017", "model")["build"], "1017")
 
     def test_a_size_is_a_models_number_with_no_leading_zero(self):
-        """v10.35: "GR00T" writes o as zeros (no size "00t", no version); a product's SKU ("285K", "780M") is a variant,
-        only a model's size or build makes a checkpoint (identity.level_of)."""
+        """"GR00T" writes o as zeros (no size, no version); a product's SKU is a variant, only a model's size or
+        build makes a checkpoint (identity.level_of)."""
         self.assertEqual(N.parse("Isaac GR00T N1.5", "model"),
                          {"family": "isaac gr00t", "version": "n1.5", "variant": None, "size": None, "build": None})
         self.assertEqual(N.parse("Qwen3-0.6B", "model")["size"], "0.6b")
@@ -70,7 +69,7 @@ class Names(unittest.TestCase):
 
     def test_the_maker_prefix(self):
         self.assertEqual(N.parse("Zeta Z200", "product", "Zeta"), N.parse("Z200", "product"))   # dropped
-        # 0119's fix: the maker is the family ("Acme V4 Pro" by Acme) and stays
+        # the maker is the family ("Acme V4 Pro" by Acme) and stays (0119)
         self.assertEqual(N.parse("Acme V4 Pro", "model", "Acme"),
                          {"family": "acme", "version": "v4", "variant": "pro", "size": None, "build": None})
         self.assertEqual(N.fields_key(N.parse("Zeta Kestrel 5", "model", "Zeta"), "Zeta")[0], "kestrel")
@@ -129,9 +128,9 @@ class Rules(unittest.TestCase):
 
     def test_a_one_sided_version_and_a_type_mismatch_are_queued(self):
         a, b = self.ent("a", "Acme Box Pro", "product"), self.ent("b", "Acme Box 2 Pro", "product")
-        self.assertEqual(self.decide(a, b, self.same(0.95)).reason, "version_one_side")   # 0130 A3: one Box version
+        self.assertEqual(self.decide(a, b, self.same(0.95)).reason, "version_one_side")   # one Box version (0130 A3)
         a, b = self.ent("a", "Acme", "org"), self.ent("b", "Acme", "product")
-        # v10.18: a rule's `same` across two types is Haiku's to decide (asked), never queued on the rule alone
+        # a rule's `same` across two types is Haiku's to decide (asked), never queued on the rule alone
         d = self.decide(a, b, None, auto={"squash"})
         self.assertEqual((d.tier, d.rules), ("ask", ("squash",)))
         d = self.decide(a, b, self.same(0.95), auto={"squash"})
@@ -140,10 +139,10 @@ class Rules(unittest.TestCase):
     def test_an_edition_year_on_one_side(self):
         a, b = self.ent("a", "Acme Awards 2031", "event"), self.ent("b", "Acme Awards", "event")
         d = self.decide(a, b, self.same(0.95))
-        self.assertEqual((d.tier, d.reason, d.ask2), ("queue", "version_year", True))   # 0130 A3: the second opinion
+        self.assertEqual((d.tier, d.reason, d.ask2), ("queue", "version_year", True))   # the second opinion (0130 A3)
 
     def test_the_version_guard_holds_a_family_with_several_versions(self):
-        """0130 A3: one name states a version the other lacks and the family has several: held, never asked again."""
+        """One name states a version the other lacks and the family has several: held, never asked again (0130 A3)."""
         a, b = self.ent("a", "Nimbus Phone Max", "product"), self.ent("b", "Nimbus Phone 17 Max", "product")
         c = self.ent("c", "Nimbus Phone 16 Max", "product")
         book = self.book(a, b, c)
@@ -152,7 +151,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(I.soft_reason(self.book(a, b), a, b), "version_one_side")
 
     def test_the_bands_are_config(self):
-        """0130 A1: the measured table decides, not a constant in code."""
+        """The measured table decides, not a constant in code (0130 A1)."""
         self.assertEqual(I.band_of(0.93), ">=0.90")
         self.assertEqual(I.band_of(0.87), "0.85-0.90")
         self.assertEqual(I.band_of(0.5), "<0.80")
@@ -161,7 +160,7 @@ class Rules(unittest.TestCase):
         for r in I.bands()["rows"]:     # a row is on only when it meets the bar (a second row: no wrong merge)
             if r["auto"] and r["opinion"] == "first":
                 self.assertGreaterEqual(r["right"] / r["n"], I.bands()["bar"]["point"])
-            if r["auto"] and r["opinion"] == "second":   # no wrong merge, or (v10.18) the bar's point and Wilson bound
+            if r["auto"] and r["opinion"] == "second":   # no wrong merge, or the bar's point and Wilson bound
                 p_, n_, z = r["right"] / r["n"], r["n"], 1.96
                 low = (p_ + z * z / (2 * n_) - z * math.sqrt(p_ * (1 - p_) / n_ + z * z / (4 * n_ * n_))) / (1 + z * z / n_)
                 self.assertTrue(r["right"] == r["n"] or (p_ >= I.bands()["bar"]["point"]
@@ -179,8 +178,8 @@ class Rules(unittest.TestCase):
             I._BANDS.update(saved)
 
     def test_the_second_opinion(self):
-        """0130 A2: a held-back `same` >= 0.85 is asked again; two agreeing `same` >= 0.85 merge, a disagreement stays
-        queued with the second answer; below 0.85, a type mismatch or a held version is never asked again."""
+        """A held-back `same` >= 0.85 is asked again; two agreeing merge, a disagreement stays queued; below 0.85,
+        a type mismatch or a held version is never asked again (0130 A2)."""
         a, b = self.ent("a", "Kestrel Coder", "software"), self.ent("b", "KestrelCoder CLI", "software")
         book = self.book(a, b)
         p = I.Pooled(*I.pair("a", "b"))
@@ -200,7 +199,7 @@ class Rules(unittest.TestCase):
         self.assertFalse(d.ask2)                                            # "X (Y)" is not measured: off
         a2 = self.ent("a", "Kestrel", "org")
         d = I.decide_pair(self.book(a2, b), p, set(), set(), self.same(0.95), "c1")
-        self.assertEqual((d.tier, d.reason, d.ask2), ("queue", "type", True))   # v10.18: measured 88/89, on
+        self.assertEqual((d.tier, d.reason, d.ask2), ("queue", "type", True))   # measured: on
         d = I.decide_pair(self.book(a2, b), p, set(), set(), self.same(0.95), "c1", self.same(0.95), "c2")
         self.assertEqual((d.tier, d.reason), ("auto", "second"))
         d = I.decide_pair(self.book(a2, b), p, set(), set(), self.same(0.95), "c1", self.same(0.8), "c2")
@@ -222,8 +221,8 @@ class Rules(unittest.TestCase):
         self.assertIsNone(I.fields_rule(self.ent("a", "Mimo-2.6", maker="Acme", fields=dict(a.haiku)), d))
 
     def test_one_name_in_another_word_order(self):
-        """v10.38: "Zentra Opus 4.5" and "Zentra 4.5 Opus" (the parser: family "zentra opus" / variant "opus") are one
-        name when Haiku's fields are one; never two different words, versions or sizes, nor without Haiku's fields."""
+        """"Zentra Opus 4.5" and "Zentra 4.5 Opus" are one name when Haiku's fields are one; never two different
+        words, versions or sizes, nor without Haiku's fields."""
         f = {"family": "Zentra", "version": "4.5", "variant": "Opus", "size": None, "build": None}
         a, b = self.ent("a", "Zentra Opus 4.5", fields=dict(f)), self.ent("b", "Zentra 4.5 Opus", fields=dict(f))
         self.assertTrue(N.reordered(a.pk, b.pk))
@@ -363,8 +362,7 @@ class Linking(_Db):
 
 
 class TheStagesOwnBudget(_Db):
-    """0128: the full pass decides its entities in chunks; past its budget it stops after a chunk, and the next run
-    resumes it where it stopped, until its last chunk (only then is the night's pass done)."""
+    """The full pass decides in chunks; past its budget it stops after a chunk and the next run resumes it (0128)."""
 
     def names(self):
         pairs = [("Deep Kestrel", "DeepKestrel"), ("Orbit Labs", "OrbitLabs"), ("Nimbus Coder", "NimbusCoder")]
@@ -389,7 +387,7 @@ class TheStagesOwnBudget(_Db):
         first = self.run_stage(full=True, budget=0)
         self.assertEqual(first["kind"], "full")
         self.assertFalse(first["full"]["done"])
-        # v10.13.9: the relinking's one page, then the budget is spent: the pool's first chunk is the next run's
+        # the relinking's one page, then the budget is spent: the pool's first chunk is the next run's
         self.assertEqual((first["full"]["phase"], first["full"]["chunks"], first["full"]["after"]), ("pool", 0, None))
         self.assertEqual(first["check"], {"same": True, "relinked": 0})
         second = self.run_stage(budget=0)
@@ -429,9 +427,8 @@ class TheStagesOwnBudget(_Db):
 
 
 class BothPassesKeepToTheBudget(_Db):
-    """v10.13.9: the incremental pass links, pools and decides in chunks and stops after the chunk past its budget;
-    the mentions it leaves stay unlinked and the next runs take them (nothing lost, nothing done twice). The full
-    pass's relinking stops between its pages likewise."""
+    """The incremental pass works in chunks and stops after the chunk past its budget; the mentions it leaves are
+    taken by the next runs (nothing lost, nothing done twice). The full pass's relinking stops between pages."""
 
     names = TheStagesOwnBudget.names
     run_stage = TheStagesOwnBudget.run_stage
@@ -474,7 +471,7 @@ class BothPassesKeepToTheBudget(_Db):
             out = self.run_stage(budget=None)
         for k in ("seconds", "collide_rate", "timing", "reading", "part_seconds", "part_took"):   # durations
             out["incremental"].pop(k)
-        self.assertEqual(out["incremental"].pop("pairs"), n)                 # v10.25: the pairs the parts decided
+        self.assertEqual(out["incremental"].pop("pairs"), n)                 # the pairs the parts decided
         self.assertEqual(out["incremental"], {"done": True, "parts": 2 * n, "of": 2 * n, "left": 0})
         self.assertEqual((out["link"]["linked"], out["merged"], self.unlinked()), (2 * n, n, 0))
 
@@ -493,10 +490,8 @@ class BothPassesKeepToTheBudget(_Db):
                          (a, b))
 
     def test_a_part_is_expected_to_take_a_plain_parts_seconds(self):
-        """v10.25 (0226): the first part also decides the pairs answered since the last run and the open items'
-        backlog (once a run), so its seconds are not what the next part is expected to take: the last plain part's
-        are (this run's, else the last run's `part_took`). v10.24 took the first part's: on the server no second
-        part fitted, and the linking did 1 part of 13 a run."""
+        """The first part also decides the pairs answered since the last run and the open items' backlog, so the next
+        part is expected to take the last plain part's seconds, not the first's (0226)."""
         self.nights_pass_done()
         self.names()
         self.stage()                                        # linked, merged
@@ -542,11 +537,8 @@ class BothPassesKeepToTheBudget(_Db):
         self.assertFalse(entity_stage.full_due(self.cur, T0 + 2 * D))
 
     def test_a_half_done_full_pass_waits_for_the_new_mentions_then_goes_on(self):
-        """v10.24 (0221): the budget is spent in order: the new mentions' linking first, then the full pass. With no
-        budget at all, a run does the first unit of the most urgent work pending and nothing else: a part of the
-        linking while mentions wait to be linked, then, once they are all linked, a chunk of the full pass a run, until
-        it is done. (v10.22's LINK_SHARE gave each a step a run, and the stage ran 55-87 s against its 45 on the
-        server, linking 1 part of 13 a run for days.)"""
+        """The budget is spent in order: the new mentions' linking first, then the full pass. With no budget, a run does
+        the first unit of the most urgent pending work only (0221)."""
         n = self.names()
         self.stage()                                            # linked and merged
         self.cur.execute("DELETE FROM mx_entity_redirects")     # as if never merged: the full pass must find them
@@ -583,8 +575,8 @@ class BothPassesKeepToTheBudget(_Db):
 
 
 class QueueState(_Db):
-    """v10.25 (0226): the decisions' pairs' alias items read in one go: an item closed or refreshed only where the pair
-    has one open, a new one only where it has none open or answered (was a statement or two a decision)."""
+    """The decisions' alias items read in one go: closed or refreshed only where the pair has one open, a new one only
+    where it has none open or answered (0226)."""
 
     names = TheStagesOwnBudget.names
 
@@ -610,8 +602,7 @@ class QueueState(_Db):
 
 
 class PublishedIndexed(unittest.TestCase):
-    """v10.13.9: published() reads a publisher's type from an index of the mentions, not a scan of them for each
-    document; on random mentions it does exactly what the scan did."""
+    """published() reads a publisher's type from an index of the mentions; on random mentions it matches the scan."""
 
     class Cur:
         def __init__(self):
@@ -632,7 +623,7 @@ class PublishedIndexed(unittest.TestCase):
 
     @staticmethod
     def scan(cur, book, w, ms):
-        """published() as it was before v10.13.9 (the scan), the reference."""
+        """The scan published() replaced, the reference."""
         added = 0
         for m in ms:
             if not (m.by_name and m.entity_id and I.schemas_type(m.type) == "document"):
@@ -673,7 +664,7 @@ class PublishedIndexed(unittest.TestCase):
 
 
 class CompactIndex(unittest.TestCase):
-    """0218: the run's book keeps a key of one id as the id alone; read and grown as the list it was."""
+    """The run's book keeps a key of one id as the id alone; read and grown as a list (0218)."""
 
     def test_a_key_of_one_id_reads_and_grows_as_a_list(self):
         from collections import defaultdict
@@ -796,8 +787,8 @@ class Merging(_Db):
         self.assertEqual(self.cur.fetchone()[0], 1)                    # asked of Haiku, queued only if same
 
     def test_an_asked_pair_is_found_by_its_pair_and_never_asked_again(self):
-        """0211: a pair's question is its pair, never its input text: new posts change the text it would show, a full
-        pass pools it again, and it is not asked again; the lookup reads only the pairs it is given, either order."""
+        """A pair's question is its pair, never its input text: new posts don't make it asked again; the lookup reads
+        only the given pairs, either order (0211)."""
         a, b = self.post(0, T0), self.post(1, T0 + H)
         self.mentions(a, ("Kestrel Coder", "software", "subject"))
         self.mentions(b, ("Kestrel Coder CLI", "software", "subject"))
@@ -858,7 +849,7 @@ class Merging(_Db):
         self.assertEqual([i["reason"] for i in q], ["handle_extra_word"])
 
     def test_the_queue_answers_its_open_items_a_page_at_a_time(self):
-        # Issue 0195: 12,572 open items answered 28.9 MB in 14.7 s; a page is the whole queue's top items.
+        # a page is the whole queue's top items (0195)
         for n, (x, y) in enumerate([("Acme", "AcmeAI"), ("Borealis", "BorealisHQ"), ("Corvid", "CorvidLabs")]):
             a, b = self.post(n, T0 + n * H), self.post((n + 3) % 5, T0 + n * H)
             self.mentions(a, (x, "org", "subject"))
@@ -903,7 +894,7 @@ class Merging(_Db):
         return ps, item
 
     def test_two_agreeing_opinions_merge_and_close_the_queued_item(self):
-        """0130 A2: the second opinion agrees: a redirect by 'second' (undoable), the queue item closed, kept."""
+        """The second opinion agrees: a redirect by 'second' (undoable), the queue item closed (0130 A2)."""
         ps, item = self._queued_below_the_bar()
         self.since = datetime.now(timezone.utc) - H
         self.answer_task("alias2", {"evidence": "same tool", "relation": "same", "confidence": 0.9})
@@ -943,7 +934,7 @@ class Merging(_Db):
         self.assertEqual(self.cur.execute("SELECT count(*) FROM mx_entity_redirects").fetchone()[0], 0)
 
     def test_x_y_read_a_page_of_texts_at_a_time_finds_the_same_pairs(self):
-        """v10.24 (0221): paren_by_post reads its posts' texts PAREN_PAGE at a time (a hub's chunk read ~28k at once)."""
+        """paren_by_post reads its posts' texts PAREN_PAGE at a time (0221)."""
         from insight_core.markx import schemas
         ps = [self.post(0, T0, title="Boxwrap (Kernel) gets a sandbox"), self.post(1, T0 + H, title="Tarn (Vesk) ships"),
               self.post(2, T0 + 2 * H, title="Nothing in brackets here")]
@@ -960,7 +951,7 @@ class Merging(_Db):
 
 
 class RuleProposedPairs(_Db):
-    """v10.18: a name rule's `same` across two types is decided by Haiku; the open backlog is decided again."""
+    """A name rule's `same` across two types is decided by Haiku; the open backlog is decided again."""
 
     def setUp(self):
         super().setUp()
@@ -997,10 +988,10 @@ class RuleProposedPairs(_Db):
         self.assertIsNone(item["band"])
 
     def test_the_backlog_is_decided_again_and_closed_items_kept(self):
-        """An item queued before v10.18 (a rule's 0.97, Haiku never asked): asked, then closed by Haiku's answer."""
+        """An item queued on a rule alone (Haiku never asked): asked, then closed by Haiku's answer."""
         a, b = self._pair()
         self.stage()
-        self.cur.execute("DELETE FROM mx_tasks WHERE kind = 'alias'")    # as before v10.18: never asked
+        self.cur.execute("DELETE FROM mx_tasks WHERE kind = 'alias'")    # never asked
         ea, eb = I.pair(self.entity_of(a), self.entity_of(b))
         self.assertTrue(I.queue_item(self.cur, kind="alias", a=ea, b=eb, proposal="same", reason="type", conf=I.RULE_CONF,
                                      evidence={"rules": ["squash"], "judge": None}, call_id=None, run_id=None))
@@ -1018,7 +1009,7 @@ class RuleProposedPairs(_Db):
         self.assertEqual(self.cur.fetchall(), [(True, None, "apart:judge", "different")])   # kept, with why
 
     def test_part_where_a_rule_says_same_stays_queued(self):
-        """`part` on a rule's pair (a company and its same-name product) measured 10/16: the owner's."""
+        """`part` on a rule's pair (a company and its same-name product) is the owner's to decide."""
         self._pair()
         self.stage()
         self.answer_task("alias", {"evidence": "a company and its tool", "relation": "part", "confidence": 0.9})
@@ -1041,7 +1032,7 @@ class RuleProposedPairs(_Db):
 
 
 class TheUnsureQueue(_Db):
-    """0201: a `same` still queued for a chain (or a weak first answer) is asked alias-v2; its answer decides."""
+    """A `same` still queued for a chain (or a weak first answer) is asked alias-v2; its answer decides (0201)."""
 
     def setUp(self):
         super().setUp()
@@ -1073,8 +1064,8 @@ class TheUnsureQueue(_Db):
         self.assertEqual(I.third(book, [d], {}), [])                        # a reason the config doesn't name
 
     def test_a_weak_same_is_its_own_kind_and_model(self):
-        """v10.18: the weak class is asked as alias4, with the model the config gives it; a `same` whose second
-        opinion is still to come, or disagrees, is never asked here."""
+        """The weak class is asked as alias4 with the config's model; a `same` whose second opinion is still to come,
+        or disagrees, is never asked here."""
         I._BANDS["third"] = dict(I._BANDS["third"], reasons=["chain", "below_bar"], kinds={"below_bar": "alias4"})
         I._BANDS["models"] = {"alias4": "claude-haiku-4-5"}
         book, d = self._decision()
@@ -1104,8 +1095,8 @@ class TheUnsureQueue(_Db):
         self.assertEqual(I.third(book, [d], {}), [])
 
     def test_several_merges_into_one_cluster_in_one_chunk_keep_to_its_cap(self):
-        """0211 C: each `third` merge is counted as it is made: three into a cluster of 4 names in one chunk merge
-        two (6 names), the third stays queued (each was checked alone against the cluster of 4 before: 7 names)."""
+        """Each `third` merge is counted as it is made: of three into a cluster of 4 in one chunk, two merge and the
+        third stays queued (0211 C)."""
         names = ["Kestrel Coder", "Kestrel-Coder", "KestrelCoder", "Kestrel Coder AI", "Kestrel Code", "KCoder",
                  "Kestrel Coding"]
         book = Rules.book(Rules, *[Rules.ent(Rules, f"e{n}", nm, "software") for n, nm in enumerate(names)])
@@ -1125,9 +1116,8 @@ class TheUnsureQueue(_Db):
         self.assertEqual([d.tier for d in ds], ["auto", "auto", "queue"])
 
     def test_only_haiku_is_ever_named_for_a_task(self):
-        """Owner 2026-11-16 (v10.19.1): the worker never uses Sonnet. model_for refuses any configured model that is
-        not a Haiku (the task goes with the worker's own Haiku), and the shipped config routes no kind elsewhere: the
-        classes only Sonnet passed the bar for (a weak first `same`, the version-held ones) stay queued."""
+        """The worker never uses Sonnet: model_for refuses a non-Haiku model and the shipped config routes no kind
+        elsewhere; the classes only Sonnet passed stay queued."""
         for other in ("sonnet", "claude-sonnet-4-5", "opus", "gpt-4o"):
             I._BANDS["models"] = {"alias4": other}
             self.assertIsNone(I.model_for("alias4"))
@@ -1205,8 +1195,8 @@ class Collisions(_Db):
         self.assertIn("store agent", book.ents[new].name)
 
     def test_the_odd_keys_are_those_whose_first_mention_a_post_differs(self):
-        """v10.22 (0216): the database counts the odd keys (each post's first mention; a type left out counts as a
-        type, an empty maker as none), as the Python test of every mention read did."""
+        """The database counts the odd keys (each post's first mention; a type left out counts as a type, an empty maker
+        as none) (0216)."""
         ps = [self.post(n, T0 + n * H) for n in range(4)]
         self.mentions(ps[0], ("Kora", "org", "subject"), ("Vexa", "org", "subject", ""),
                       ("Tamo", "model", "subject"), ("Tamo", "product", "actor"))
@@ -1250,7 +1240,7 @@ class CollisionsAgree(_Db):
 
 
     def test_a_first_run_that_finds_one_thing_settles_it_alone(self):
-        # 0191: the second and third runs are asked only when the first finds a split, a part or an unclear mention
+        # the second and third runs are asked only when the first finds a split, a part or an unclear mention (0191)
         ps = [self.post(n, T0 + n * H) for n in range(2)]
         self.mentions(ps[0], ("Luma", "model", "subject", "Acme"))
         self.mentions(ps[1], ("Luma", "product", "subject", "Orbit"))
@@ -1280,8 +1270,7 @@ class CollisionsAgree(_Db):
 
 class Anchors(_Db):
     def test_an_address_names_a_thing_only_by_its_whole_name(self):
-        """A short name inside a longer repository name is no anchor (the scratch copy: a maker's model merged into
-        its coding tool by the lab's containment test); a build tag after the name is dropped."""
+        """A short name inside a longer repository name is no anchor; a build tag after the name is dropped."""
         url = "https://github.com/acme/kestrel-coder"
         a = self.post(0, T0, links=[url])
         b = self.post(1, T0 + H, links=[url])
@@ -1290,7 +1279,7 @@ class Anchors(_Db):
         self.mentions(b, ("Kestrel Coder", "software", "subject"))
         self.mentions(c, ("Nimbus 7", "model", "subject"))
         self.stage()
-        an = I.anchors(self.cur, self.book(), schemas.mention_guides())   # 0133: the current set, any guide
+        an = I.anchors(self.cur, self.book(), schemas.mention_guides())   # the current set, any guide
         self.assertIn(self.entity_of(b), an)
         self.assertNotIn(self.entity_of(a), an)
         self.assertIn(self.entity_of(c), an)
@@ -1316,7 +1305,7 @@ class Surges(_Db):
         self.assertEqual(got[acme][0]["via"][0]["name"], "Nimbus 5")
         self.assertEqual(got[book.by_key("nimbus 5")][0]["via"], [])
         self.assertNotIn(book.by_key("nimbus 4"), got)
-        # 0204: the stage reads a page's book (the entities its days credit), which counts as the whole book does
+        # the stage reads a page's book (the entities its days credit), which counts as the whole book does (0204)
         guide = schemas.mention_guides()
         self.assertEqual(S.count(self.cur, I.lazy_book(self.cur), None, T0.date() - D, guide),
                          S.count(self.cur, I.load_book(self.cur), None, T0.date() - D, guide))
@@ -1351,7 +1340,7 @@ class Pages(_Db):
         self.assertEqual(len(page["loose"]), 3)
         self.assertEqual(page["loose"][0]["roles"], ["mention"])
         self.assertEqual(len(page["sources"]), 3)
-        # issue 0195: the loose posts and the story blocks listed are capped; the totals count them all
+        # the loose posts and story blocks listed are capped; the totals count them all (0195)
         capped = entity_views.entity_page(self.cur, self.entity_of(ps[0]), now=T0 + D, loose_limit=2, stories_limit=1)
         self.assertEqual((capped["loose"], capped["loose_total"]), (page["loose"][:2], 3))
         self.assertEqual({k: v for k, v in capped.items() if k != "loose"}, {k: v for k, v in page.items() if k != "loose"})

@@ -1,12 +1,8 @@
-"""Issue 0144: stories for all history and the person page.
-
-A: the story window (a setting, read by the decision run, the candidate finder's backfill and plan_checks), its
-backfill newest first and resumable (old questions in pages, at the backfill's priority), News unchanged.
-B: an entity's page lists the posts of the sources that are it (`by`: through its voice, or a handle the owner
-confirmed), every Mark X story and, when none, the Mark IX story of its posts with all their posts and the original
-first, and its loose posts by role. C: the old stories offered to label (10 a page, 30 a day) and the fallback.
-
-Invented names and example hosts only. Every test rolls back (a database whose name ends in _test)."""
+"""Stories for all history and the person page (0144). A: the story window (a setting read by the decision run, the
+candidate finder's backfill and plan_checks), its backfill newest first and resumable, News unchanged. B: an entity's
+page lists the posts of the sources that are it, every Mark X story (else the Mark IX story of its posts) and its loose
+posts by role. C: the old stories offered to label and the fallback. Invented names; every test rolls back on a _test
+database."""
 from __future__ import annotations
 
 import json
@@ -53,8 +49,8 @@ class Rules(unittest.TestCase):
         self.assertNotIn("feed", PP.source_keys("rss", "https://news.example/feed.xml", None))
 
     def test_room_half_the_limit_and_twice_the_entities_budget(self):
-        """v10.13.9: the window steps back only after a run under half its limit whose entities stage stayed within
-        twice its budget."""
+        """The window steps back only after a run under half its limit whose entities stage stayed within twice its
+        budget."""
         self.assertIsNone(W.room(59, 120, entities=90, entity_budget=45))
         self.assertEqual(W.room(60, 120), "held: run took 60 s (steps back under 60 s, 50% of 120 s)")
         self.assertIn("held: the entities stage took 441 s", W.room(10, 120, entities=441, entity_budget=45))
@@ -171,8 +167,8 @@ class Window(unittest.TestCase):
                                 "no post for a year: one step on to the older post's week, not 52 empty ones")
 
     def test_a_step_needs_room_else_the_window_holds_and_says_why(self):
-        """v10.13.9: every step makes the next run bigger, so a run that used half its limit (or twice the entities
-        budget) holds the window, all else ready."""
+        """Every step makes the next run bigger, so a run that used half its limit (or twice the entities budget)
+        holds the window."""
         W.set_window(self.cur, None)
         self.post(T - 400 * DAYS, "An old post")
         self.post(T - 33 * DAYS, "A post of the next step")
@@ -349,7 +345,7 @@ class Page(_Db):
                          "the Mark X story of a, and the Mark IX story of his own post (in no Mark X story); most voices first")
         x = page["stories"][1]
         self.assertEqual((x["original"]["post"], x["original"]["why"]), (a, "root"))
-        # issue 0195: one block listed of two; the timeline still reads both stories
+        # one block listed of two; the timeline still reads both stories (0195)
         one = entity_views.entity_page(self.cur, eid, now=E0 + DAY, stories_limit=1)
         self.assertEqual((one["stories"], one["stories_total"]), (page["stories"][:1], 2))
         self.assertEqual(one["timeline"], page["timeline"])

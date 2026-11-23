@@ -1,16 +1,8 @@
-"""0207 (Stealth v10.18): a track's evolving sub-topics, a digest per sub-topic, "new since you looked", the tools in
-use, and the track's finders and source suggestions fixed for practitioner tools.
-
-  - sub-topics found from the posts' vectors: groups appear, keep their ids across rebuilds, a quiet one fades, an
-    emptied one closes; the owner's rename, merge, split, add and lock are kept by the clustering;
-  - named by the worker (subtopics-v2) and digested (digest-v1): asked once per members, citations checked;
-  - seen: the reader's looks, each item's joined time and each section's joined times on the page;
-  - tools in use: tools named by 2+ voices of the track's posts in, linked to their entities; never an org, a generic
-    word or a post the owner marked out;
-  - finders: the track's own posts in teach the word finder without any owner label; a passive post naming a tool the
-    track's practitioners discuss is put up (`tool`);
-  - suggestions: a source is suggested by the share of its posts in the track, not by how many.
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""A track's evolving sub-topics (0207): found from the posts' vectors (stable ids across rebuilds, quiet ones fade,
+emptied ones close, the owner's rename/merge/split/add/lock kept), named and digested by the worker (citations
+checked), "new since you looked", the tools in use (named by 2+ voices, never an org, a generic word or a post the
+owner marked out), the track's finders, and source suggestions by the share of a source's posts in the track.
+Synthetic data; DB tests on a _test database."""
 from __future__ import annotations
 
 import json
@@ -99,8 +91,8 @@ class _Subtopics(_Tracks):
         return ps
 
     def page(self):
-        """The page as the jobs process keeps it after the clustering or an answer (the API alone sends a kept page
-        until the owner changes something: 0206)."""
+        """The page as the jobs process keeps it after the clustering or an answer (the API sends the kept page until
+        the owner changes something)."""
         self.cur.execute("DELETE FROM mx_kept_pages WHERE page = 'track'")
         return super().page()
 

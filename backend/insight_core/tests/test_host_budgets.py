@@ -1,7 +1,6 @@
-"""Issue 0107: each host's budget, learned from the limits an archive meets.
-
-A measure is the requests that went through from one recovery (an archive's start, or the first
-success after a limit) to the next limit, over the time from that recovery to the next one.
+"""Each host's budget, learned from the limits an archive meets (0107). A measure is the requests that went through
+from one recovery (an archive's start, or the first success after a limit) to the next limit, over the time from that
+recovery to the next one.
 """
 import sys
 import unittest
@@ -67,8 +66,8 @@ class HostBudgetsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(learned, self.budgets.learned(HOST))
         self.assertEqual(learned.limits, 2)
         self.assertEqual(learned.requests, 40)
-        # From recovery to recovery, not the minutes waited: 40 per 400 s + 10 min and per 400 s + 12 min. Both
-        # refused at 400 s, so one window under 400 s + 10 min: the narrower (issue 0107's follow-up).
+        # from recovery to recovery, not the minutes waited; both refused at 400 s, so one window under 400 s + 10 min:
+        # the narrower
         self.assertEqual(learned.window_s, 400 + 10 * 60)
         self.assertEqual(learned.line(), f"{HOST}: about 40 requests per 17 min, learned from 2 limits")
 
@@ -144,9 +143,8 @@ class HostBudgetsTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AWindowMeasuredOnceTests(unittest.IsolatedAsyncioTestCase):
-    """Issue 0107's follow-up: once one window is measured for a host, a limit is measured from the start of
-    the window it hit (its budget's requests back), and the wait aims at that window's refill, 5 min past
-    the latest refusal at most, instead of 5, 10, 20, 40 min."""
+    """Once one window is measured for a host, a limit is measured from the start of the window it hit, and the wait
+    aims at that window's refill (5 min past the latest refusal at most) instead of the doubling ladder."""
 
     def setUp(self):
         self.clock = Clock()

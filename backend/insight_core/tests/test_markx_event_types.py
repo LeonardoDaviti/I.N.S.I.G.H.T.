@@ -1,9 +1,7 @@
-"""0175 (Stealth v10.16 slice H): the event-type seam (markx/event_types.py). Its pure mapping is the one Happening
-used (0166's verbatim copy, tests/legacy/happening_784d232.py), and every consumer moved to it reads what it read
-before: folds' story folds, built's members and "came true" neighbours, News sections' row types and Discover's
-main-source stories, each run against its old query (copied here verbatim from 784d232) on seeded random worlds.
-
-The DB part runs only on a database whose name ends in _test (it empties the mx_* tables inside its transaction)."""
+"""The event-type seam (0175, markx/event_types.py): its pure mapping is Happening's
+(tests/legacy/happening_784d232.py), and every consumer moved to it reads what it read before (folds, built's members
+and "came true" neighbours, News sections' row types, Discover's main-source stories), each run against its old query
+on seeded random worlds. DB part only on a _test database (it empties the mx_* tables inside its transaction)."""
 from __future__ import annotations
 
 import json
@@ -39,7 +37,7 @@ class Mapping(unittest.TestCase):
             self.assertEqual(HP._group(v), OLD._group(v), v)
 
     def test_the_type_lists_are_made_here_from_the_closed_types(self):
-        """v10.17 (0190): one owner; the values the three hand-written copies had."""
+        """One owner; the values the three hand-written copies had (0190)."""
         news = ("model_release", "product_release", "research_result", "business_event", "policy_legal", "incident",
                 "public_statement", "promotion_event")
         self.assertEqual(ET.NEWS_TYPES, news)
@@ -211,8 +209,8 @@ class Consumers(unittest.TestCase):
                 self.cur.execute("SAVEPOINT w")
                 rnd, posts, stories, rows = self.world(seed)
                 self.assertEqual(folds.story_folds(self.cur, stories), old_story_folds(self.cur, stories))
-                # members in any order: neither query orders its rows (the plan decides; v10.17's ANALYZE moved it)
-                # 0189: built's members also carry their source's kind (a saved page is no voice); the types as before
+                # members in any order: neither query orders its rows; built's members also carry their source's kind
+                # (a saved page is no voice, 0189)
                 by_id = lambda got: {s: sorted(({k: v for k, v in m.items() if k != "kind"} for m in ms),  # noqa: E731
                                                key=lambda m: m["id"]) for s, ms in got.items()}
                 self.assertEqual(by_id(built._load(self.cur, stories)), by_id(old_built_load(self.cur, stories)))
@@ -224,7 +222,7 @@ class Consumers(unittest.TestCase):
                 self.assertEqual(news_sections._types(self.cur, rows), old_types(self.cur, rows))
                 self.assertEqual(news_sections._types(self.cur, []), old_types(self.cur, []))
                 kindless = {s: {**x, "posts": {p: replace(post, kind=None) for p, post in x["posts"].items()}}
-                            for s, x in DMS._stories(self.cur, T0 + 5 * 24 * H).items()}   # 0189: and each source's kind
+                            for s, x in DMS._stories(self.cur, T0 + 5 * 24 * H).items()}   # and each source's kind
                 self.assertEqual(kindless, old_discover_stories(self.cur, T0 + 5 * 24 * H))
                 self.cur.execute("ROLLBACK TO SAVEPOINT w")
 

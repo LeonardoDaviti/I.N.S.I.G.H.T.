@@ -1,10 +1,8 @@
-"""One name, many things (issue 0250), with invented names only: a bare name three invented companies use ("Vexa" by
-Kestrel, Lumora and Brightwell) is never split by its makers alone (v10.28): each pair of maker groups is asked once
-(the collide kind, identity.PAIR_GUIDE) and split only when every run says "different" (identity.split_names, 0230's
-maker rule deepened); an owner change, a founder and a legal name asked and kept one thing; one company's aliases never
-asked, the mentions with no maker go by their post (its other makers, its links, the settled
-collision answer, else unsure), the links follow the split and a single contradicted `released` is held, the timeline's
-outside events are posts about the thing, and a story page lists its things."""
+"""One name, many things (0250), invented names: a bare name several companies use is never split by its makers
+alone; each pair of maker groups is asked once (the collide kind, identity.PAIR_GUIDE) and split only when every run
+says "different" (identity.split_names). An owner change, a founder and a legal name stay one thing; one company's
+aliases are never asked; a mention with no maker goes by its post; links follow the split and a single contradicted
+`released` is held; the timeline's outside events are posts about the thing; a story page lists its things."""
 from __future__ import annotations
 
 import json
@@ -35,8 +33,8 @@ def all_apart(a, b):
 
 
 class Plan(unittest.TestCase):
-    """identity.split_plan, no database: maker groups are candidates, never a split by themselves (v10.28); which
-    maker each mention is once a pair is settled apart, and when a name is one thing."""
+    """identity.split_plan, no database: maker groups are candidates, never a split by themselves; which maker each
+    mention is once a pair is settled apart, and when a name is one thing."""
     ent, book = base.Rules.ent, base.Rules.book
 
     def rows(self, *makers, **kw):
@@ -357,7 +355,7 @@ class Split(tl._Db):
 
 @base.requires_test_db
 class Links(tl._Db):
-    """0250 #2: the links follow the split; a single `released` another maker states is held."""
+    """The links follow the split; a single `released` another maker states is held (0250 #2)."""
     state, graph, edges, touched = tl.ThingLinks.state, tl.ThingLinks.graph, tl.ThingLinks.edges, tl.ThingLinks.touched
     pairs, answer_pairs = Split.pairs, Split.answer_pairs
 
@@ -429,7 +427,7 @@ class Links(tl._Db):
 
 @base.requires_test_db
 class Outside(tl._Db):
-    """0250 #3: an outside event is a post about the thing, never one that only names it."""
+    """An outside event is a post about the thing, never one that only names it (0250 #3)."""
 
     def test_a_post_that_only_names_the_thing_is_no_outside_event(self):
         own = self.post_at(0, T0 - 30 * D, "Kestrel ships Vexa")
@@ -448,14 +446,14 @@ class Outside(tl._Db):
         self.assertTrue({about, vs} & posts)
         from insight_core.markx import stops as ST
         off = {**ST.config(), "outside_roles": False}
-        with mock.patch.object(ST, "config", lambda: off):                  # off: as before 0250
+        with mock.patch.object(ST, "config", lambda: off):                  # off
             evs = TL.events(self.cur, I.load_book(self.cur), book.root(self.entity_of(own)))
         self.assertIn(named, {e["post"] for e in evs if e["kind"] in ("outside", "first_outside", "birth")})
 
 
 @base.requires_test_db
 class StoryThings(tl._Db):
-    """0250 #4: a story page's things, ranked by role then count, through the split."""
+    """A story page's things, ranked by role then count, through the split (0250 #4)."""
 
     def test_the_things_rank_by_role_then_count(self):
         a = self.post_at(0, T0 - 2 * D, "Kestrel opens Vexa")

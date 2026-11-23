@@ -1,8 +1,6 @@
-"""Each source's post statistics, kept (issue 0195, migration 0131, db/repo_post_stats.py).
-
-Source health read six subqueries per source over posts on every request; they are kept now and read. The promise:
-a read always equals the live statistics (the old subqueries), whoever wrote the posts and whether or not the refresh
-ran since. One transaction per test, rolled back; scratch sources only."""
+"""Each source's post statistics, kept (0195, migration 0131, db/repo_post_stats.py). The promise: a read always
+equals the live statistics (the old per-request subqueries), whoever wrote the posts and whether or not the refresh
+ran since. One rolled-back transaction per test; scratch sources only."""
 from __future__ import annotations
 
 import json

@@ -1,19 +1,10 @@
-"""0245 (built 0249, Stealth v10.27): the general track briefer. One briefer for every track: the tests run the same
-code over three invented tracks of different kinds (hardware setups, printable designs, cooking recipes) to show that
-nothing in it is about one track; none of these words is in the code.
-
-  - the kinds, guides, planners and the switch (entity_bands.json tracks.briefs, default off: nothing is planned);
-  - the checks: a value's quote is in the post; a number's or money's digits (and range, unit, currency) are in its own
-    quote, a link inside its own quote, an enum one of its values, text at most 120 characters; a thing whose name did
-    not stand is dropped; every drop kept with its reason; the salvage is idempotent;
-  - the schema: proposed from the description, the general practice kind added by code, versioned, proposed again on
-    a new description, the owner's edit a version of its own (the API);
-  - the things: asked only for posts in the track, every window of a long post, the post's own address never offered;
-    reports joined by a key value (a link, a name), a practice only within its post; by a shared entity; two practices
-    naming one entity asked "same claim?" and joined on `same`;
-  - the brief: digest-v2 cites rows (checked: only its rows, its figures in them), the week's issue kept with code's
-    counts and the posts with no row, the quick look since the reader's look, the tables with typed filters.
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""The general track briefer (0245): one briefer for every track; the tests run the same code over three invented
+tracks of different kinds (hardware setups, printable designs, cooking recipes), none of whose words is in the code.
+Covers the kinds, guides, planners and switch (tracks.briefs, default off); the checks (quotes, digits, links, enums,
+lengths; every drop kept with its reason; salvage idempotent); the schema (proposed, versioned, the owner's edit a
+version); the things (joined by a key value or a shared entity, practices by "same claim?"); and the brief (digest-v2
+cites only its rows, the week's issue kept, the quick look, typed filters). Synthetic data; DB tests on a _test
+database."""
 from __future__ import annotations
 
 import json
@@ -81,7 +72,7 @@ class Switch:
 class Pure(Switch, unittest.TestCase):
     def test_the_kinds_guides_planners_and_the_switch(self):
         for kind, guide in (("track_schema", "track-schema-v1"), ("track_things", "track-things-v3"),
-                            ("track_same", "track-same-v2")):   # v10.41: v3 (a catalog one row), v2 (every kind)
+                            ("track_same", "track-same-v2")):   # v3 (a catalog one row), v2 (every kind)
             self.assertEqual(schemas.KINDS[kind].guide, guide)
             self.assertTrue(schemas.guide_body(guide).startswith("#"))
             self.assertIn(kind, tasks.PLANNERS)
@@ -220,7 +211,7 @@ class Pure(Switch, unittest.TestCase):
                           "digest-v1 (a sub-topic's) keeps its own checks")
 
     def test_what_the_reader_is_spared(self):
-        """v10.29: the brief's view keeps every value but shows what tells rows apart."""
+        """The brief's view keeps every value but shows what tells rows apart."""
         self.assertEqual(TT.reader_link("https://raw.githubusercontent.com/zq-o/zq-r/main/docs/A.md"),
                          "https://github.com/zq-o/zq-r/blob/main/docs/A.md")
         self.assertEqual(TT.reader_link("https://raw.githubusercontent.com/zq-o/zq-r/main"), "https://github.com/zq-o/zq-r")
@@ -447,14 +438,14 @@ class Flow(_Briefer):
         self.assertEqual(len(prints), 1, "one link, one thing")
         rs = TT.reports(self.cur, f, [prints[0]["id"]])[prints[0]["id"]]
         self.assertEqual({r["post"] for r in rs}, {a, b})
-        # v10.41: one link and names that agree ("desk clip"); each field the value most posts give, a tie the earliest's
+        # one link and names that agree ("desk clip"); each field the value most posts give, a tie the earliest's
         self.assertEqual(prints[0]["fields"]["material"]["value"], "pla", "a tie: the earliest post's value")
         self.assertEqual(prints[0]["fields"]["material"]["post"], a)
         self.assertEqual(len(TT.current(self.cur, f, TT.PRACTICE_KIND)), 1)
 
     def test_an_explainer_that_links_a_release_joins_its_row(self):
-        """v10.29: a page listing many items keeps each item's anchor (two releases on one page stay two rows); a post
-        that gives one thing is that thing's page, so a later post linking that address joins its row."""
+        """A page listing many items keeps each item's anchor (two releases on one page stay two rows); a post giving
+        one thing is that thing's page, so a later post linking that address joins its row."""
         self.assertEqual(TT.norm_url("https://Zq.example/releases#2026111800"), "zq.example/releases#2026111800")
         self.assertEqual(TT.norm_url("https://nitter.local/zq/status/1#m"), "nitter.local/zq/status/1")
         self.assertEqual(TT.norm_url("https://zq.example/a/#comments"), "zq.example/a")
@@ -614,9 +605,9 @@ class Flow(_Briefer):
                          "v10.29: a thing from an older post, found since the look, is in the tables, not new")
         self.assertEqual(look["points"], [], "last week's points cite none of the new things")
         self.assertEqual(look["weeks"], [TB.monday(now).isoformat(), last.isoformat()], "the issue strip, newest first")
-        # v10.36: the rail's "N new things" is gone (owner 2026-11-22: always "9+", it told nothing)
+        # the rail's "N new things" count is gone
         self.assertNotIn("things", call("GET", "/api/markx/tracks/counts")[1]["by_track"][f])
-        # 0271: "Since you looked" reads the track's lines from the quick look; the reader's one look moves the track's
+        # "Since you looked" reads the track's lines from the quick look; the reader's one look moves the track's
         from insight_core.markx import track_subtopics as TS
         seen = datetime.fromisoformat(TS.seen(self.cur, f)["track"])
         got = TB.since_lines(self.cur, f, seen)
@@ -631,9 +622,8 @@ class Flow(_Briefer):
         self.assertEqual(call("GET", f"/api/markx/tracks/{uuid.uuid4()}/brief", query={"week": last.isoformat()})[0], 404)
 
     def test_points_about_rows_that_left_the_week_are_not_shown_and_the_week_is_asked_again(self):
-        """0269 (production: a week's points asked in the morning cited old rows that re-dating their posts moved out
-        of the week): a point is shown only when every row it cites is in the issue's sections; the week in progress
-        whose brief's cited rows mostly left is asked again within BRIEF_EVERY."""
+        """A point is shown only when every row it cites is in the issue's sections; a week in progress whose brief's
+        cited rows mostly left is asked again within BRIEF_EVERY (0269)."""
         f = self.track("recipes")
         self.schema(f, "recipes")
         now = datetime.now(timezone.utc)

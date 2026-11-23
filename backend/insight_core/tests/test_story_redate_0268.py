@@ -1,11 +1,7 @@
-"""Issue 0268 (v10.31.1): a change of the dating rule re-dates the stories already stored.
-
-0263's rule (a Saved page more than 72 h before its story's first report never dates it) was written by
-decide.persist only for the stories a run reads, so a Mark X story stored before the deploy kept the date of a Saved
-paper it cites. The rule is stamped now (decide.dates_stamp over stamps.story_dates): a run finding another stamp
-than the one kept re-dates every current story once (decide.redate_due). Mark IX's stories regroup once by its own
-stamp (stamps.posts' 0263 case; tests/test_stamps.py). Invented release "Glimmer 3"; the DB tests run on a database
-whose name ends in _test, each in one transaction rolled back."""
+"""A change of the dating rule re-dates the stories already stored (0268). The rule is stamped (decide.dates_stamp
+over stamps.story_dates): a run finding another stamp than the one kept re-dates every current story once
+(decide.redate_due); Mark IX's stories regroup by its own stamp (tests/test_stamps.py). DB tests on a _test database,
+each in one rolled-back transaction."""
 from __future__ import annotations
 
 import json

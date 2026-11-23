@@ -1,9 +1,6 @@
-"""Saving a page of a source you follow (issue 0122): the source is fetched first, the page is its post
-(found by the fetch, or saved as its post), and a feed that brings it later makes one post, not two.
-
-No network: the fetch job is stubbed (main._run_ingestion_job) and FakeHttp answers the page. The tests
-commit rows, so they run only against a `_test` database; they own every source and post on the
-example sites below.
+"""Saving a page of a source you follow (0122): the source is fetched first, the page is its post (found by the
+fetch, or saved as its post), and a feed that brings it later makes one post, not two. No network (the fetch job is
+stubbed, FakeHttp answers the page); rows are committed, so only against a `_test` database.
 """
 from __future__ import annotations
 
@@ -205,8 +202,8 @@ class FetchFirstTests(unittest.TestCase):
         self.job.assert_not_awaited()
 
     def test_a_page_no_source_owns_that_states_no_date_is_dated_by_its_first_link_too(self):
-        """Issue 0113 (0122's open point 5): a Saved page with no date of its own takes its first link's, not the
-        save time, so its story's 72 hours are its links'. It still sorts at the save."""
+        """A Saved page with no date of its own takes its first link's, not the save time, so its story's 72 hours are
+        its links'; it still sorts at the save (0113)."""
         url = f"{ELSEWHERE}/an-undated-essay"
         other = self._source("rss", "https://chan.ffchans.example/feed.xml")
         first_link = self.now - timedelta(days=6)
@@ -259,7 +256,7 @@ class FetchFirstTests(unittest.TestCase):
         self.assertEqual(self._rows("SELECT count(*) FROM posts WHERE url LIKE %s", PAGE + "%"), [(1,)])
 
     def test_a_collected_page_moving_to_the_source_that_owns_it_is_that_source_s_post(self):
-        """Issue 0126 (2): a page shown only inside its story is a row of the feed once it is a followed source's post."""
+        """A page shown only inside its story is a row of the feed once it is a followed source's post (0126)."""
         saved_source = registry.services().saved.saved_source_id()
         old = self._post(saved_source, PAGE, "The new post", self.now - timedelta(hours=1),
                          metadata={"adapter": "saved", "collected_original": self.now.isoformat(), "story_only": True})

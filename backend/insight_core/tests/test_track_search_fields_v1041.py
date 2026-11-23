@@ -1,11 +1,8 @@
-"""Stealth v10.41: search inside a track's table (FIX 5) and suggested fields (FIX 6), the same code for any track.
-
-  - search: words ANDed across a row's fields and its posts' titles, numbers as whole words ("24" is not "i5-2400"),
-    a text field's filter by the same rule; the entities a row's posts name (a name's words in order, a type);
-  - suggested fields: the schema planner's second guide (track-fields-v1), one question a schema version once it has
-    rows; its answer checked (a kind shown, a field it lacks) and never applied; shown less the fields the schema has
-    and those dismissed; Add is the owner's schema edit (a kind may then hold up to OWNER_FIELDS fields).
-Synthetic data only; the DB tests run on a database whose name ends in _test."""
+"""Search inside a track's table and suggested fields, the same code for any track. Search: words ANDed across a
+row's fields and its posts' titles, numbers as whole words, the entities a row's posts name. Suggested fields: the
+schema planner's second guide (track-fields-v1), one question a schema version once it has rows; checked, never
+applied; shown less the schema's and dismissed fields; Add is the owner's schema edit. Synthetic data; a _test
+database."""
 from __future__ import annotations
 
 import unittest

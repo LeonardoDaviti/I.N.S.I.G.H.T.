@@ -1,7 +1,6 @@
-"""Issue 0133 v4.2 (ent-v4.2 in Shadow): the switch arm, the main question at 6,000 characters, the second question
-(`cite`: its schema, its input, planned only for cue posts), the merge (own-title drop, cite_fix, merge_cite, q2
-marks), the citation rule off, and the owner's right / wrong labels and their running precision. Fixed answers,
-never the guides' wording. Synthetic posts with invented names; the database tests roll back."""
+"""ent-v4.2 (0133): the switch arm, the main question at 6,000 characters, the second question (`cite`: schema, input,
+planned only for cue posts), the merge (own-title drop, cite_fix, merge_cite, q2 marks), the citation rule off, and the
+owner's right / wrong labels and their running precision. Fixed answers; invented names; DB tests roll back."""
 from __future__ import annotations
 
 import hashlib
@@ -65,7 +64,7 @@ class TheCiteSchema(unittest.TestCase):
         self.assertIsNotNone(self.check(ent("Acme Corp", "Acme Corp", "model", "source")))      # three types only
         self.assertIsNotNone(self.check(ent("Nowhere Paper", "Nowhere Paper", "document", "source")))  # not in the post
         self.assertIsNone(self.check(*[ent("Acme Corp", "Acme Corp", "org", "source")] * 30))
-        # v10.20: past the 30th, the rest is dropped (kept under "dropped"), the first 30 stored
+        # past the 30th, the rest is dropped (kept under "dropped"), the first 30 stored
         answer, error = validate.check("cite", {"entities": [ent("Acme Corp", "Acme Corp", "org", "source")] * 31},
                                        self.INPUT, "cite-v1")
         self.assertIsNone(error)

@@ -1,12 +1,11 @@
-"""v10.22 (issue 0216, migration 0147): the change markers the planners and the passes read instead of scanning.
+"""The change markers the planners and passes read instead of scanning (0216, migration 0147).
 
-  - a post's text stamp (plan_marks.STAMP): its row's version and mx_post_stamps' n. Each write of what tasks.load_posts
-    reads moves it (the post's row, its parts, its kept links, its source's shown name, the `linked` original its page
-    is), only for that post (a source's rename: its posts only); a write of something else moves nothing;
-  - mx_tasks' stamp (unchanged.table_stamps): its change log, by kind. An insert, update, delete of a kind moves that
-    kind's stamp and no other's; a TRUNCATE moves every kind's; the log's prune never leaves a stamp where it was.
+  - a post's text stamp (plan_marks.STAMP): each write of what tasks.load_posts reads moves it, only for that post;
+    a write of something else moves nothing;
+  - mx_tasks' stamp (unchanged.table_stamps), by kind: a write of a kind moves that kind's stamp only; a TRUNCATE
+    moves every kind's; the log's prune never leaves a stamp where it was.
 
-Invented names and example hosts only. Every test rolls back (a database whose name ends in _test)."""
+Invented names and example hosts. Every test rolls back (a _test database)."""
 from __future__ import annotations
 
 import unittest
