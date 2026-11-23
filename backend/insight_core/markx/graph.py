@@ -1493,7 +1493,9 @@ def label(cur: Any, *, newer: str, older: str, answer: str, note: Optional[str] 
 # edge: a = the later story, b = the earlier, a_kind = b_kind = 'story', rule CHAIN_RULE (the candidate rule that
 # proposed them) and call_id the judge's call. decide's story connections never read or close them (their rule).
 
-CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v2"   # v10.34: v2 (chain-v1's same_release pairs asked again)
+CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v3"   # v10.34: v2 (chain-v1's same_release pairs asked again); v10.38: v3
+                                                # (same_launch: sibling things' one launch; chain-v2's sibling pairs
+                                                # that linked nothing asked again)
 CHAIN_RULE = "chain_stops"            # both stories are stops of one thing (stored stop answers saying about)
 CHAIN_DAYS = 30                       # the later story's first post at most this many days after the earlier's
 CHAIN_PREV = 3                        # a stop is paired with at most this many stops before it (and after it)
@@ -1504,16 +1506,26 @@ CHAIN_MARK = "chains_planned"         # mx_settings: the last pass's clock (the 
 CHAIN_SYNCED = "chains_synced"        # mx_settings: the last sync's clock (the pairs answered since are read again)
 CHAIN_DEPTH = 3                       # links followed from a story, each way
 CHAIN_SHOWN = 12                      # links shown each way, at most
-CHAIN_RELATIONS = ("same_release", "same_event", "follows_up", "development", "reaction", "builds_on", "unrelated")
+CHAIN_RELATIONS = ("same_release", "same_launch", "same_event", "follows_up", "development", "reaction", "builds_on",
+                   "unrelated")
 CHAIN_LINKS = CHAIN_RELATIONS[:-1]    # what makes an edge (unrelated makes none)
+ONE_ROW = ("same_release", "same_launch")   # v10.38: the relations a News row may fold (release_groups)
+# v10.38: an earlier guide's sibling pair is asked again under chain-v3 when its verdict linked nothing that same_launch
+# could replace (that guide could not answer same_launch); a pair it linked otherwise (a release, an event) stands
+CHAIN_REASK_SIBLINGS = ("unrelated", "builds_on", UNKNOWN)
 
 
 def chain_question(thing: Dict[str, Any], earlier: Tuple[Optional[str], Sequence[Any]],
-                   later: Tuple[Optional[str], Sequence[Any]]) -> str:
+                   later: Tuple[Optional[str], Sequence[Any]], later_thing: Optional[Dict[str, Any]] = None) -> str:
     """One chain item: THING, the EARLIER and the LATER story (each its headline, dates and earliest posts, as the stop
-    question shows a story: stops.story_lines), and the days between their first posts. Pure."""
+    question shows a story: stops.story_lines), and the days between their first posts. v10.38: `later_thing` (a
+    sibling pair, chain_siblings): two things, THING OF THE EARLIER STORY (`thing`) and THING OF THE LATER STORY, each
+    story's posts as they treat its own. Pure."""
     from insight_core.markx import stops as ST
-    out = [ST.thing_line(thing), *ST.story_lines(earlier[0], earlier[1], "EARLIER STORY"),
+    heads = [ST.thing_line(thing)] if later_thing is None else \
+        [ST.thing_line(thing).replace("THING:", "THING OF THE EARLIER STORY:", 1),
+         ST.thing_line(later_thing).replace("THING:", "THING OF THE LATER STORY:", 1)]
+    out = [*heads, *ST.story_lines(earlier[0], earlier[1], "EARLIER STORY"),
            *ST.story_lines(later[0], later[1], "LATER STORY")]
     firsts = [min((x.at for x in side[1]), default=None) for side in (earlier, later)]
     if firsts[0] is not None and firsts[1] is not None:
@@ -1532,6 +1544,114 @@ def chain_config() -> Dict[str, Any]:
     return {"on": bool(got.get("on", False)),
             "shown": tuple(r for r in got.get("shown") or () if r in CHAIN_LINKS),
             "one_row": bool(got.get("one_row", False))}
+
+
+def chain_builds(book: Any, roots: Iterable[str]) -> Dict[str, str]:
+    """v10.38: {build: its version} of these things: a build (identity.is_build: GGUF, NVFP4, quantised weights, a
+    checkpoint naming one) and the thing of its family (same parent cluster) that states the same version, variant and
+    size and no build (the row entity_views.family_versions nests it under; a version, variant or a checkpoint stating
+    no build first), the lowest id when several; a build with no such version is in none. A build's stories are stops of its version's line too (chain_candidates)."""
+    from insight_core.markx import identity as I, names as N
+    out: Dict[str, str] = {}
+    fams: Dict[str, List[str]] = {}
+
+    def same(e: Any) -> Tuple[Any, str, str]:
+        return (N.vt(e.version), (e.variant or "").strip().lower(), (e.size or "").strip().lower())
+    for r in sorted(set(roots)):
+        e = book.ents.get(r)
+        if e is None or not I.is_build(e) or not e.parent or not (e.version or e.variant):
+            continue
+        fam = book.root(e.parent)
+        if fam not in fams:
+            fams[fam] = [x for x in book.with_parent_in(fam) if book.root(x) == x]
+        want = same(e)
+        # the version states no build; a checkpoint stating none (a dated snapshot, an adapter checkpoint) is a
+        # version only to a build that states one (its GGUF), never to another checkpoint
+        got = sorted((book.ents[x].level == "checkpoint", x) for x in fams[fam]
+                     if x != r and x in book.ents and not book.ents[x].build and book.ents[x].status != "not_entity"
+                     and same(book.ents[x]) == want and (e.build or book.ents[x].level != "checkpoint"))
+        if got:
+            out[r] = got[0][1]
+    return out
+
+
+def chain_kin(book: Any, roots: Iterable[str]) -> Dict[str, str]:
+    """v10.38: {thing: its family} of these things (the cluster its parent leads to): the things of one family are
+    siblings (chain_siblings); a thing of no family is in none, and an org or a person is no family (an org's things
+    are not its versions: entity_views' rule)."""
+    out: Dict[str, str] = {}
+    for r in sorted(set(roots)):
+        e = book.ents.get(r)
+        if e is None or not e.parent:
+            continue
+        fam = book.root(e.parent)
+        if fam and fam != r and fam in book.ents and (book.shown_type(fam) or book.ents[fam].type) not in MAKER_TYPES:
+            out[r] = fam
+    return out
+
+
+def chain_siblings(stops: Dict[str, Sequence[Tuple[datetime, str]]], kin: Dict[str, str],
+                   fresh: Optional[Set[str]] = None, *, days: int = CHAIN_DAYS, prev: int = CHAIN_PREV
+                   ) -> Dict[Tuple[str, str], Tuple[str, str]]:
+    """v10.38 (one launch, one row): the candidate pairs {(later, earlier): (the later's thing, the earlier's thing)}
+    of two sibling things' stops (`kin`: {thing: family}): a stop and the stops of the family's OTHER things among the
+    `prev` stories before it whose first post is at most `days` earlier (chain_pairs' window and cap); `fresh`: only
+    the pairs with a story in it. Each story only of its own thing: a story that is a stop of the other's thing too is
+    no sibling pair (its own thing's line pairs them); a pair two thing pairs propose goes to the narrower (fewer
+    stops), then the lower ids. Pure."""
+    size = {t: len(v) for t, v in stops.items()}
+    of = {t: {s for _at, s in v} for t, v in stops.items()}
+    groups: Dict[str, Set[Tuple[datetime, str, str]]] = defaultdict(set)
+    for t, v in stops.items():
+        if t in kin:
+            groups[kin[t]].update((at, s, t) for at, s in v)
+    span = timedelta(days=days)
+    out: Dict[Tuple[str, str], Tuple[str, str]] = {}
+    for fam in sorted(groups):
+        order = sorted(groups[fam])
+        for j, (at_j, s_j, t_j) in enumerate(order):
+            back: List[str] = []
+            for i in range(j - 1, -1, -1):
+                at_i, s_i, t_i = order[i]
+                if at_j - at_i > span:
+                    break
+                if t_i == t_j or s_i == s_j or s_i in of[t_j] or s_j in of[t_i]:
+                    continue
+                if s_i not in back:
+                    if len(back) >= prev:
+                        break
+                    back.append(s_i)
+                key = (s_j, s_i)
+                if fresh is not None and not ({s_j, s_i} & fresh):
+                    continue
+                cand = (t_j, t_i)
+                if key not in out or (size[t_j] + size[t_i], cand) < (size[out[key][0]] + size[out[key][1]], out[key]):
+                    out[key] = cand
+    return out
+
+
+def chain_candidates(cur: Any, book: Any, *, since: Optional[datetime] = None
+                     ) -> Tuple[Dict[Tuple[str, str], Tuple[str, ...]], Dict[str, List[str]], Set[Tuple[str, str]],
+                                Dict[str, datetime]]:
+    """The proposed pairs {(later, earlier): its things}: (thing,) for two stops of one thing (chain_pairs; v10.38: a
+    build's stories are on its version's line too, chain_builds), (later's thing, earlier's thing) for two sibling
+    things' stops (chain_siblings: each story only of its own thing), shown so even when a broader thing's line (the
+    base model both adapt, the family) pairs them too; `since`: only the pairs touching a stop answered since. Also
+    {thing: the roots whose roles its questions read (itself, its builds)}, the sibling keys (what chain_asked may ask
+    again) and {story: its first post}."""
+    stops, fresh = chain_stops(cur, book, since=since)
+    builds = chain_builds(book, stops)
+    lines: Dict[str, List[str]] = {t: [t] for t in stops}
+    for b, v in sorted(builds.items()):
+        stops[v] = sorted(set(stops.get(v, [])) | set(stops[b]))
+        lines.setdefault(v, [v]).append(b)
+    f = fresh if since is not None else None
+    one = chain_pairs(stops, f)
+    sib = chain_siblings({t: v for t, v in stops.items() if t not in builds}, chain_kin(book, stops), f)
+    cands: Dict[Tuple[str, str], Tuple[str, ...]] = {k: (t,) for k, t in one.items()}
+    cands.update(sib)
+    firsts = {s: at for v in stops.values() for at, s in v}
+    return cands, lines, set(sib), firsts
 
 
 def chain_pairs(stops: Dict[str, Sequence[Tuple[datetime, str]]], fresh: Optional[Set[str]] = None,
@@ -1615,23 +1735,18 @@ def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_
     since = (datetime.fromisoformat(mark["at"]) - MARGIN if mark.get("at") and mark.get("guide", "chain-v1") == CHAIN_GUIDE
              else None)
     book = I.lazy_book(cur)
-    stops, fresh = chain_stops(cur, book, since=since)
-    pairs = chain_pairs(stops, fresh)
+    pairs, lines, sib, firsts = chain_candidates(cur, book, since=since)
     out["pairs"] = len(pairs)
     todo: List[Tuple[str, str]] = []
     if pairs:
         keys = sorted(pairs)
-        asked = chain_asked(cur, keys)
-        firsts = {s: at for v in stops.values() for at, s in v}
+        asked = chain_asked(cur, keys, siblings=sib)
         todo = sorted((k for k in keys if k not in asked), key=lambda k: (firsts[k[0]], k), reverse=True)
         out["again"] = len(keys) - len(todo)
     if todo[:limit]:
         shown, roles, heads = ST.stories_shown(cur, book, sorted({s for k in todo[:limit] for s in k}))
         for later, earlier in todo[:limit]:
-            thing = pairs[(later, earlier)]
-            text = chain_question(ST._thing(book, thing),
-                                  (heads.get(earlier), ST.lines_for(shown.get(earlier, []), roles, thing)),
-                                  (heads.get(later), ST.lines_for(shown.get(later, []), roles, thing)))
+            text = chain_text(book, pairs[(later, earlier)], lines, shown, roles, heads, later, earlier)
             _tid, new = tasks.add(cur, CHAIN_KIND, text, a=later, b=earlier, priority=0)
             out["asked"] += bool(new)
     if len(todo) <= limit:
@@ -1639,11 +1754,32 @@ def plan_chains(cur: Any, *, now: Optional[datetime] = None, limit: int = CHAIN_
     return out
 
 
-def chain_asked(cur: Any, keys: Sequence[Tuple[str, str]]) -> Set[Tuple[str, str]]:
+def chain_text(book: Any, things: Tuple[str, ...], lines: Dict[str, List[str]], shown: Dict[str, Any],
+               roles: Dict[str, Dict[str, str]], heads: Dict[str, Optional[str]], later: str, earlier: str) -> str:
+    """A pair's question (chain_question) from what stops.stories_shown read: one thing (a post's role the first of
+    the thing's and its builds': a build's posts name the build), or two siblings (each story as its own thing's)."""
+    from insight_core.markx import stops as ST
+    t_later, t_earlier = (things[0], things[0]) if len(things) == 1 else things
+
+    def side(s: str, t: str) -> Tuple[Optional[str], List[Any]]:
+        roots = lines.get(t, [t])
+        got = []
+        for at, p, src, title in sorted(shown.get(s, [])):
+            r = roles.get(p) or {}
+            got.append(ST.Line(at, src, title, next((r[x] for x in roots if r.get(x)), None)))
+        return heads.get(s), got
+    return chain_question(ST._thing(book, t_earlier), side(earlier, t_earlier), side(later, t_later),
+                          None if len(things) == 1 else ST._thing(book, t_later))
+
+
+def chain_asked(cur: Any, keys: Sequence[Tuple[str, str]], siblings: Iterable[Tuple[str, str]] = ()
+                ) -> Set[Tuple[str, str]]:
     """The pairs (later, earlier) already asked: a task under the current guide, or under an earlier one whose
-    verdict (`chain_verdict`) is not same_release (or not settled yet). v10.34: an earlier guide's same_release is
-    asked again under CHAIN_GUIDE (chain-v2: a result achieved with the thing is no part of its release); its edge
-    stands until the new task's runs are in (sync_chains reads the newest answered task)."""
+    verdict (`chain_verdict`) is not same_release (or not settled yet). v10.34: a chain-v1 same_release is asked again
+    under CHAIN_GUIDE (chain-v2: a result achieved with the thing is no part of its release); its edge stands until
+    the new task's runs are in (sync_chains reads the newest answered task). v10.38: a pair two sibling things propose
+    (`siblings`) whose earlier guide's verdict is in CHAIN_REASK_SIBLINGS is asked again (chain-v3's same_launch: an
+    earlier guide could not say it); every other earlier answer stands."""
     if not keys:
         return set()
     cur.execute("""SELECT t.a::text, t.b::text, t.guide, t.id::text FROM mx_tasks t WHERE t.kind = %s
@@ -1659,7 +1795,13 @@ def chain_asked(cur: Any, keys: Sequence[Tuple[str, str]]) -> Set[Tuple[str, str
                         ORDER BY created_at, ctid""", (sorted(earlier),))
         for tid, cid, ans in cur.fetchall():
             calls[tid].append((cid, ans or {}))
-    again = {k for t, k in earlier.items() if (chain_verdict(calls.get(t) or []) or {}).get("relation") == "same_release"}
+    sib = set(siblings)
+    guide = {t: g for _a, _b, g, t in rows}
+    again = set()
+    for t, k in earlier.items():
+        rel = (chain_verdict(calls.get(t) or []) or {}).get("relation")
+        if (rel == "same_release" and guide.get(t) == "chain-v1") or (k in sib and rel in CHAIN_REASK_SIBLINGS):
+            again.add(k)
     return current | ({k for k in earlier.values()} - again)
 
 
@@ -1677,8 +1819,7 @@ def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[
     current edge is still checked against the pairs proposed). Every relation is stored; what is shown is
     chain_config's."""
     from insight_core.markx import identity as I
-    stops, _ = chain_stops(cur, I.lazy_book(cur))
-    cands = chain_pairs(stops)
+    cands, _lines, _sib, _firsts = chain_candidates(cur, I.lazy_book(cur))
     cur.execute(f"""SELECT DISTINCT ON (t.a, t.b) t.a::text, t.b::text, t.id::text FROM mx_tasks t
                      WHERE t.kind = %(k)s AND t.status = 'answered'
                        {"AND (t.a, t.b) IN (SELECT a, b FROM mx_tasks WHERE kind = %(k)s AND answered_at >= %(since)s)"
@@ -1699,7 +1840,7 @@ def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[
     for key, tid in newest.items():
         v = chain_verdict(calls.get(tid) or [])
         if v and v["relation"] in CHAIN_LINKS:
-            want[key] = dict(v, thing=cands[key])
+            want[key] = dict(v, things=cands[key])
     out = {"opened": 0, "closed": 0}
     kept = set()
     for e in _chain_current(cur):
@@ -1718,7 +1859,9 @@ def sync_chains(cur: Any, *, now: datetime, run_id: Any = None, since: Optional[
                        VALUES ('story', %s, 'story', %s, %s, 1.0, %s, %s, %s, %s::jsonb, %s)
                        ON CONFLICT (a_kind, a, b_kind, b, relation) WHERE valid_to IS NULL DO NOTHING""",
                     (a, b, v["relation"], v["call"], CHAIN_RULE, run_id,
-                     json.dumps({"reason": v["reason"], "thing": v["thing"], "runs": v["runs"]}, ensure_ascii=False), now))
+                     json.dumps({"reason": v["reason"], "thing": v["things"][-1], "runs": v["runs"],
+                                 **({"things": list(v["things"])} if len(v["things"]) > 1 else {})},
+                                ensure_ascii=False), now))
         out["opened"] += cur.rowcount
     return out
 
@@ -1749,7 +1892,7 @@ def chain(cur: Any, story_id: str, *, as_of: Optional[datetime] = None, depth: i
               FROM walk w JOIN mx_stories s ON s.id = w.story
              ORDER BY w.story, w.depth, w.relation""",
                     {"rels": rels, "at": as_of or datetime.now(timezone.utc), "s": story_id,
-                     "depth": depth})
+                     "depth": depth, "sib": siblings_shown(rels)})
         rows = cur.fetchall()
         firsts = _story_firsts(cur, [r[0] for r in rows])
         items = [{"story": s, "via": via, "relation": rel, "reason": reason, "depth": d, "headline": head,
@@ -1778,7 +1921,7 @@ def row_chains(cur: Any, rows: Dict[str, Iterable[str]], *, shown: int = ROW_CHA
         return {}
     cur.execute(f"""SELECT x.a::text, x.b::text, x.relation, x.evidence->>'reason' FROM mx_connections x
                      WHERE {_CHAIN_VALID} AND (x.a = ANY(%(s)s::uuid[]) OR x.b = ANY(%(s)s::uuid[]))""",
-                {"rels": rels, "at": datetime.now(timezone.utc), "s": ids})
+                {"rels": rels, "at": datetime.now(timezone.utc), "s": ids, "sib": siblings_shown(rels)})
     edges = cur.fetchall()
     every = sorted({s for a, b, *_x in edges for s in (a, b)})
     firsts = _story_firsts(cur, every)
@@ -1837,23 +1980,69 @@ def release_components(edges: Iterable[Tuple[str, str, Optional[str]]]) -> List[
     return sorted(g for g in groups.values() if len(g) >= 2)
 
 
+def launch_components(releases: Sequence[Sequence[str]], launches: Iterable[Tuple[str, str]]) -> List[List[str]]:
+    """v10.38 (one launch, one row): the one-release groups (`release_components`) joined by same_launch edges [(a, b)]:
+    two sibling things' releases the maker launched as one are one group (a story in no release group joins as
+    itself); each group 2+ stories, sorted. Pure."""
+    parent: Dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    def union(x: str, y: str) -> None:
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[max(rx, ry)] = min(rx, ry)
+    every: Set[str] = set()
+    for g in releases:
+        every |= set(g)
+        for s in g[1:]:
+            union(g[0], s)
+    for a, b in launches:
+        if a != b:
+            every |= {str(a), str(b)}
+            union(str(a), str(b))
+    groups: Dict[str, List[str]] = defaultdict(list)
+    for s in sorted(every):
+        groups[find(s)].append(s)
+    return sorted(g for g in groups.values() if len(g) >= 2)
+
+
 def release_groups(cur: Any, story_ids: Iterable[str]) -> List[List[str]]:
     """0236 (the one-release row, 0217's input): the groups of `story_ids` the current same_release chain edges join
     (`release_components`: one thing a group); [] while chain_config's `one_row` is off. An edge is between two stops
     of one exact thing (stop-v1 says each story is about it), so a story that only mentions the thing is in none (the
-    runaway guard). One read of the chain rows."""
+    runaway guard). v10.38: with same_launch shown, its edges (two sibling things' stops, both runs agreeing) join
+    those groups (`launch_components`: one launch, one row). One read of the chain rows."""
     ids = sorted({str(s) for s in story_ids if s})
-    if not ids or not chain_config().get("one_row"):
+    cfg = chain_config()
+    if not ids or not cfg.get("one_row"):
         return []
-    cur.execute(f"""SELECT a::text, b::text, evidence->>'thing' FROM mx_connections
+    rels = [r for r in ONE_ROW if r == "same_release" or r in cfg["shown"]]
+    cur.execute(f"""SELECT a::text, b::text, evidence->>'thing', relation FROM mx_connections
                      WHERE valid_to IS NULL AND a_kind = 'story' AND b_kind = 'story' AND rule = '{CHAIN_RULE}'
-                       AND relation = 'same_release' AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])""", {"s": ids})
-    return release_components(cur.fetchall())
+                       AND relation = ANY(%(r)s) AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])
+                       AND (%(sib)s OR evidence->'things' IS NULL)""",
+                {"s": ids, "r": rels, "sib": siblings_shown(cfg["shown"])})
+    rows = cur.fetchall()
+    groups = release_components([(a, b, t) for a, b, t, rel in rows if rel == "same_release"])
+    launches = [(a, b) for a, b, _t, rel in rows if rel == "same_launch"]
+    return launch_components(groups, launches) if launches else groups
 
 
 # the rule written as a literal, so the planner proves migration 0154's partial indexes even from a prepared plan
 _CHAIN_VALID = (f"x.a_kind = 'story' AND x.b_kind = 'story' AND x.rule = '{CHAIN_RULE}' AND x.relation = ANY(%(rels)s) "
-                "AND x.valid_from <= %(at)s AND (x.valid_to IS NULL OR x.valid_to > %(at)s)")
+                "AND x.valid_from <= %(at)s AND (x.valid_to IS NULL OR x.valid_to > %(at)s) "
+                "AND (%(sib)s OR x.evidence->'things' IS NULL)")
+
+
+def siblings_shown(rels: Iterable[str]) -> bool:
+    """v10.38: whether a sibling pair's edge (two things: evidence `things`, chain_siblings) is read by the pages and
+    News, whatever its relation: only while same_launch is shown (its bar: plan 0279's measure). Until then the
+    sibling pairs are asked and their edges stored, never shown nor folded."""
+    return "same_launch" in set(rels)
 
 
 def _story_firsts(cur: Any, story_ids: Sequence[str], *, current: bool = False) -> Dict[str, datetime]:

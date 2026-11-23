@@ -42,6 +42,80 @@ class Rules(unittest.TestCase):
         self.assertEqual(got[("b", "a")], "version")
         self.assertEqual(got[("x", "b")], "family")
 
+    def test_two_sibling_things_stops_are_paired_across_their_lines(self):
+        """v10.38: the stops of two things of one family (an adapter and its sibling, launched together) are paired
+        across the things, within the window and the cap; a story that is a stop of both, or two stops of one thing
+        (its own line pairs them), is no sibling pair; a thing of no family is in none."""
+        s = {"pi": [(T0, "p1"), (T0 + D, "p2")], "opencode": [(T0 + H, "o1"), (T0 + 2 * D, "o2")],
+             "super": [(T0 + 3 * D, "s1")], "far": [(T0 + 40 * D, "f1")], "lone": [(T0 + D, "l1")],
+             "both": [(T0 + 2 * H, "p1")]}
+        kin = {"pi": "qwen", "opencode": "qwen", "super": "qwen", "far": "qwen", "both": "qwen"}
+        got = G.chain_siblings(s, kin, days=30, prev=3)
+        self.assertEqual(got[("o1", "p1")], ("opencode", "pi"))
+        self.assertEqual(got[("s1", "o2")], ("super", "opencode"))
+        self.assertNotIn(("p2", "p1"), got)                      # one thing's two stops: its own line
+        self.assertFalse(any("l1" in k for k in got))            # no family
+        self.assertFalse(any("f1" in k for k in got))            # 37 days later: out of the window
+        self.assertFalse(any(k[0] == k[1] for k in got))
+        self.assertNotIn(("o1", "p1"), G.chain_siblings({**s, "opencode": [(T0 + H, "o1"), (T0 + 3 * H, "p1")]}, kin))
+        self.assertEqual(set(G.chain_siblings(s, kin, {"s1"})), {k for k in got if "s1" in k})
+        self.assertEqual(len([k for k in got if k[0] == "s1"]), 3)   # the 3 stories just before it, at most
+
+    def test_a_build_is_on_its_versions_line(self):
+        """v10.38: a build (GGUF) of a version is matched to the thing of its family stating the same version and
+        variant and no build: its stories are paired with the version's (chain_candidates)."""
+        from insight_core.markx import identity as I
+
+        class Book:
+            def __init__(self, ents):
+                self.ents = ents
+
+            def root(self, x):
+                return x
+
+            def with_parent_in(self, fam):
+                return [x for x, e in self.ents.items() if e.parent == fam]
+
+            def shown_type(self, x):
+                return self.ents[x].type
+        mk = lambda i, name, **kw: I.Ent(id=i, type="model", name=name, key=name.lower(), **kw)   # noqa: E731
+        ents = {"fam": mk("fam", "Qwen", level="family"),
+                "oc": mk("oc", "Qwen3.8-27B-opencode-adapted", level="checkpoint", parent="fam", version="3.8",
+                         variant="opencode-adapted"),
+                "gguf": mk("gguf", "Qwen3.8-27B-opencode-adapted-GGUF", level="checkpoint", parent="fam",
+                           version="3.8", variant="opencode-adapted", build="GGUF"),
+                "pi": mk("pi", "Qwen3.8-27B-pi-adapted", level="checkpoint", parent="fam", version="3.8",
+                         variant="pi-adapted"),
+                "pigguf": mk("pigguf", "Qwen3.8-27B-pi-adapted-GGUF", level="checkpoint", parent="fam",
+                             version="3.8", variant="pi-adapted", build="GGUF"),
+                "lost": mk("lost", "Qwen 9 Q4", level="checkpoint", parent="fam", version="9", build="Q4")}
+        # the server's case: the adapters are checkpoints stating no build, their GGUFs checkpoints stating one
+        self.assertEqual(G.chain_builds(Book(ents), ents), {"gguf": "oc", "pigguf": "pi"})   # "lost": no version
+        ents["snap"] = mk("snap", "Qwen3.8-27B-pi-adapted 0324", level="checkpoint", parent="fam", version="3.8",
+                          variant="pi-adapted")
+        self.assertEqual(G.chain_builds(Book(ents), ents)["pigguf"], "pi")   # two no-build checkpoints: the lower id
+        self.assertNotIn("snap", G.chain_builds(Book(ents), ents))           # a checkpoint is never another's build
+        ents["piv"] = mk("piv", "Qwen3.8 pi-adapted", level="variant", parent="fam", version="3.8", variant="pi-adapted")
+        self.assertEqual(G.chain_builds(Book(ents), ents)["pigguf"], "piv")  # a variant first
+        self.assertEqual(G.chain_builds(Book(ents), ents)["snap"], "piv")    # a dated snapshot on its variant's line
+        self.assertEqual(G.chain_kin(Book(ents), ["oc", "pi", "fam"]), {"oc": "fam", "pi": "fam"})
+
+    def test_a_launch_joins_its_things_release_groups(self):
+        """v10.38: one launch, one row: the same_release groups of two sibling things joined by a same_launch edge."""
+        self.assertEqual(G.launch_components([["a", "b"], ["c", "d"], ["x", "y"]], [("c", "b"), ("e", "d")]),
+                         [["a", "b", "c", "d", "e"], ["x", "y"]])
+        self.assertEqual(G.launch_components([], [("b", "a")]), [["a", "b"]])
+        self.assertEqual(G.launch_components([["a", "b"]], []), [["a", "b"]])
+
+    def test_a_sibling_question_shows_both_things(self):
+        text = G.chain_question({"name": "Orbit 2 Small", "type": "model", "maker": "Vantor Labs"},
+                                ("Vantor releases Orbit 2 Small", [line(T0, "Introducing Orbit 2 Small and Large")]),
+                                ("Vantor releases Orbit 2 Large", [line(T0 + H, "Orbit 2 Large")]),
+                                {"name": "Orbit 2 Large", "type": "model", "maker": "Vantor Labs"})
+        self.assertEqual(text.splitlines()[:2], ['THING OF THE EARLIER STORY: "Orbit 2 Small" (model, by Vantor Labs)',
+                                                 'THING OF THE LATER STORY: "Orbit 2 Large" (model, by Vantor Labs)'])
+        self.assertNotIn("\nTHING:", text)
+
     def test_an_edge_needs_its_runs_to_agree(self):
         one = [("c1", {"relation": "same_release", "reason": "the launch, then its benchmarks"})]
         self.assertIsNone(G.chain_verdict(one, runs=2))
@@ -70,12 +144,19 @@ class Rules(unittest.TestCase):
         import hashlib
         import pathlib
         k = schemas.KINDS["chain"]
-        self.assertEqual((k.guide, k.subject), ("chain-v2", "story_story"))   # v10.34: v2 (chain-v1 kept, frozen)
+        self.assertEqual((k.guide, k.subject), ("chain-v3", "story_story"))   # v10.38: v3 (v1, v2 kept, frozen)
         self.assertEqual(G.CHAIN_GUIDE, k.guide)
         self.assertIn("chain-v1", schemas.answer_guides("chain"))             # its tasks kept and read
+        self.assertIn("chain-v2", schemas.answer_guides("chain"))
+        self.assertNotIn("same_launch", schemas.schema_for("chain", "chain-v2")["properties"]["relation"]["enum"])
+        v3 = (pathlib.Path(G.__file__).parent / "guides" / "chain-v3.md").read_text()
         v2 = (pathlib.Path(G.__file__).parent / "guides" / "chain-v2.md").read_text()
-        self.assertIn("a result achieved WITH the thing", v2)                 # the owner's rule (2026-11-21)
-        self.assertIn("demos of what it can do", v2)                          # demos and benchmarks stay its release
+        for v in (v2, v3):
+            self.assertIn("a result achieved WITH the thing", v)              # the owner's rule (2026-11-21)
+            self.assertIn("demos of what it can do", v)                       # demos and benchmarks stay its release
+        self.assertIn("`same_launch`", v3)                                     # v10.38: one launch, one row
+        self.assertIn("its maker's own builds of it", v3)                      # the maker's GGUF is its release
+        self.assertNotIn("same_launch", v2)
         self.assertNotIn("next_version", schemas.CHAIN_RELATIONS)   # a successor is identity's, never the judge's
         self.assertEqual(tuple(schemas.CHAIN_RELATIONS), G.CHAIN_RELATIONS)
         path = pathlib.Path(G.__file__).parent / "guides" / "chain-v1.md"
@@ -187,8 +268,8 @@ class Chains(TL._Db):
         (_v1, *_r), (v2, a, b, _text, status) = self.chain_tasks()
         self.assertEqual((a, b, status), (x["b"], x["a"], "open"))
         self.cur.execute("SELECT guide FROM mx_tasks WHERE id = %s", (v2,))
-        self.assertEqual(self.cur.fetchone()[0], "chain-v2")
-        self.assertEqual(repo.get_setting(self.cur, G.CHAIN_MARK)["guide"], "chain-v2")
+        self.assertEqual(self.cur.fetchone()[0], G.CHAIN_GUIDE)
+        self.assertEqual(repo.get_setting(self.cur, G.CHAIN_MARK)["guide"], G.CHAIN_GUIDE)
         self.assertEqual(G.plan_chains(self.cur)["asked"], 0)                 # asked once
         self.assertEqual([r[2] for r in self.edges()], ["same_release"])      # stands while the new runs wait
         self.answer_chain("unrelated", "unrelated", task=v2)
