@@ -33,23 +33,23 @@ LINKED = frozenset({"citation", "quote", "address"})    # joined by a link to th
 ABOUT = frozenset({"same_event", "development", "reaction"})
 ORDER = {"check": 0, "join": 1, "pair": 2, "merge": 3}
 LATE = timedelta(hours=72)                              # Mark IX's link window
-_SAME = pairing.POLICIES[pairing.SAME_STORY]             # the bars below default to Pairing's policy rows
+_SAME = pairing.POLICIES[pairing.SAME_STORY]
 _CONNECTED = pairing.POLICIES[pairing.CONNECTED]
 
 
 @dataclass(frozen=True)
 class Config:
     """The bars and rules. `prototype()` is the recorded prototype run's (no guards, no late rule)."""
-    tau_join: float = 0.60          # joins and new stories
-    tau_merge: float = 0.85         # merges
+    tau_join: float = 0.60
+    tau_merge: float = 0.85
     tau_keep: float = 0.30          # a check removes below it ...
     tau_keep2: float = 0.15         # ... in a 2-voice story below this (rule B)
-    tau_connect: float = 0.60       # typed connections
+    tau_connect: float = 0.60
     tau_refuse: float = 0.60        # a merge or connect "different" at this p or more is stored (mx_refusals)
-    min_words: int = _SAME.min_words                # rule A
-    cand_lo: float = _SAME.cosine                   # an embedding candidate's cosine
-    story_lo: float = _SAME.story_cosine            # story pairs' centroid cosine
-    story_days: int = _SAME.story_window.days       # story pairs' first posts at most this far apart
+    min_words: int = _SAME.min_words
+    cand_lo: float = _SAME.cosine
+    story_lo: float = _SAME.story_cosine
+    story_days: int = _SAME.story_window.days
     connect_lo: float = _CONNECTED.story_cosine     # connect questions: story pairs at this centroid cosine ...
     connect_days: int = _CONNECTED.story_window.days   # ... at most this far apart ...
     connect_voices: int = _CONNECTED.min_voices     # ... both stories of this many voices or more ...
@@ -59,12 +59,12 @@ class Config:
     # every pair is asked (measured: plan/issues/0210)
     connect_settle_below: Optional[float] = None
     connect_shadow_below: Optional[float] = 0.45    # counted (tasks_shadow_settled), asked anyway
-    relate_open: int = 100          # no new relate question while this many wait (open or leased)
-    back_open: int = 50             # no new back question while this many wait (open or leased)
-    check_threads: bool = True      # also check a member Mark IX joined by `thread`
+    relate_open: int = 100
+    back_open: int = 50
+    check_threads: bool = True
     roundup_first: bool = True      # ... and a roundup that is its story's first post
     two_event_guard: bool = True    # a post with several events is demoted, never removed
-    late_rule: bool = True          # the late-post table
+    late_rule: bool = True
     confirm: bool = True            # a story-changing join, pair or merge counts once asked again
     reason_rule: bool = True        # ... and never while its own reason says the post is not about the story
     # a story-changing answer with no quote of its own post is asked again under the current guide (it counts until
@@ -120,18 +120,18 @@ class Member:
 @dataclass(frozen=True)
 class Question:
     tid: str
-    type: str                                 # check, join, pair, merge
+    type: str
     story: Optional[str] = None               # check, join: the story; merge: one story
     post: Optional[str] = None                # check, join, pair: the post asked about
     anchor: Optional[str] = None              # join: the candidate's other post; pair: the post asked against
-    other: Optional[str] = None               # merge: the other story
+    other: Optional[str] = None
     voices: int = 0                           # check: the story's voices (rule B)
     cos: Optional[float] = None
-    why: Optional[str] = None                 # check: the member's tree reason
-    roundup: bool = False                     # check: the member is a roundup
+    why: Optional[str] = None
+    roundup: bool = False
     side: Tuple[str, ...] = ()                # the story's posts the question shows
-    side_b: Tuple[str, ...] = ()              # merge: the other story's posts shown
-    second: bool = False                      # merge: asked by the second pass
+    side_b: Tuple[str, ...] = ()
+    second: bool = False
     last_voice: bool = False                  # check: taking it out leaves its story one voice
 
 
@@ -140,7 +140,7 @@ class Verdict:
     relation: str
     p: float                                  # p "about": the confidence when the relation is about, else 1 - it
     reason: Optional[str] = None
-    call: Optional[str] = None                # the valid mx_calls row
+    call: Optional[str] = None
 
     @staticmethod
     def of(answer: Dict[str, Any], call: Optional[str] = None) -> "Verdict":
@@ -153,15 +153,15 @@ class Verdict:
 @dataclass
 class Outcome:
     about: Dict[str, Dict[str, Dict[str, Any]]]       # story -> post -> evidence (after glue and merges)
-    mentions: Dict[str, Dict[str, Dict[str, Any]]]    # story -> post -> evidence (as demoted)
+    mentions: Dict[str, Dict[str, Dict[str, Any]]]
     log: List[Dict[str, Any]]
-    connections: List[Dict[str, Any]]                 # typed connections (development links, late posts)
-    merged_into: Dict[str, str]                       # a story merged away -> the story it went into
-    ix: Set[str]                                      # Mark IX's story keys
+    connections: List[Dict[str, Any]]
+    merged_into: Dict[str, str]
+    ix: Set[str]
     final: Dict[str, str] = field(default_factory=dict)        # every key -> the story it ended in (glue, merges)
-    merge_calls: Dict[str, Optional[str]] = field(default_factory=dict)   # a key merged away -> the merge's call
+    merge_calls: Dict[str, Optional[str]] = field(default_factory=dict)
     came_from: Dict[Tuple[str, str], str] = field(default_factory=dict)   # (story, post) -> the key it was in before merges
-    refusals: List[Dict[str, Any]] = field(default_factory=list)  # merges answered "different" (keys, shown)
+    refusals: List[Dict[str, Any]] = field(default_factory=list)
 
     def stories(self, posts: Dict[str, Post], min_posts: int = 2) -> List[Dict[str, Any]]:
         """Every story of `min_posts`+ known posts, posts earliest first."""
@@ -251,7 +251,7 @@ def plan_pass1(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], kin
             continue
         sa, sb = home.get(a, []), home.get(b, [])
         if set(sa) & set(sb):
-            continue                                           # one Mark IX story already
+            continue
         multi_a = [s for s in sa if nv[s] >= 2]
         multi_b = [s for s in sb if nv[s] >= 2]
         if multi_a and multi_b:
@@ -563,7 +563,6 @@ def settle_check(answers: Sequence[Verdict], bar: float, config: Config = Config
 
 
 def answered_pairs(questions: Sequence[Question], verdicts: Dict[str, Verdict]) -> List[Tuple[Question, Verdict]]:
-    """The questions that have a verdict, with it."""
     return [(q, verdicts[q.tid]) for q in questions if q.tid in verdicts]
 
 
@@ -594,16 +593,16 @@ class Ask:
         self.old_added: Counter = Counter()
         self.waiting_old: Counter = Counter()
         self.memo = memo                      # the snapshot's tasks and calls (incremental.refresh)
-        self.dry = dry                        # nothing added, nothing reopened
+        self.dry = dry
         self.added: Counter = Counter()
         self.raced: Counter = Counter()
         self.waiting: Counter = Counter()
         self.answered: Counter = Counter()
-        self.settled: Counter = Counter()     # questions a cheap signal settled, never asked
-        self.shadow_settled: Counter = Counter()   # questions a Shadow gate would settle (asked anyway)
+        self.settled: Counter = Counter()
+        self.shadow_settled: Counter = Counter()
         self.again: Dict[str, str] = {}       # a first call whose question is to be asked again -> its kind
-        self.reasked: Counter = Counter()     # unquoted story-changing answers asked under the current guide
-        self.last_earlier = False             # whether the last answer read came from an earlier guide's task
+        self.reasked: Counter = Counter()
+        self.last_earlier = False
     def answer(self, kind: str, text: Any, *, a: Any = None, b: Any = None, day: Any = None,
                priority: int = 0, add: bool = True) -> Optional[Tuple[Dict[str, Any], str]]:
         """(the valid answer, its call id), or None: a new task is added up to the kind's cap a run (`caps`, else
@@ -726,12 +725,12 @@ class World:
     text), the readings, and the window's start."""
     since: datetime
     stories: Dict[str, List[Member]]
-    text: Dict[str, Any]                       # post id -> tasks.Post
-    posts: Dict[str, Post]                     # post id -> the rules' Post
+    text: Dict[str, Any]
+    posts: Dict[str, Post]
     readings: Dict[str, dict]
     candidates: List[Tuple[str, str, Optional[float]]]
     ix_mentions: Dict[str, Set[str]] = field(default_factory=dict)   # Mark IX story -> the roundups mentioning it
-    memo: Any = None                           # the reading's state (incremental.State), when kept
+    memo: Any = None
 
     def kinds(self) -> Dict[str, Optional[str]]:
         if self.memo is not None:
@@ -827,7 +826,7 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
     table = embed.current_pairs(cur, rows_sql, {"since": since})
     cur.execute(f"SELECT DISTINCT unnest(ARRAY[a, b])::text FROM {table}")
     ids = {r[1] for r in rows} | {r[0] for r in cur.fetchall()}
-    if memo is not None:       # the rules' posts kept by their stamps; texts and readings read on use
+    if memo is not None:
         text, posts, readings = incremental.world(cur, memo, ids)
     else:
         text = tasks.load_posts(cur, ids)
@@ -841,7 +840,7 @@ def load(cur: Any, now: datetime, config: Config, memo: Any = None) -> World:
         ms.sort(key=lambda m: (posts[m.post].at, m.post))
     window = _window(cur, table, posts, since)
     cur.execute(f"DROP TABLE IF EXISTS {table}")
-    if memo is not None:   # the texts a question can show, read in pages
+    if memo is not None:
         incremental.ahead(memo, {m.post for ms in stories.values() if len(ms) > 1 for m in ms}
                           | {p for a, b, _ in window for p in (a, b)})
     cur.execute("SELECT story_id::text, post_id::text FROM story_mentions WHERE story_id = ANY(%s::uuid[])", (sorted(stories),))
@@ -1513,7 +1512,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
         check = _digest(p_out, p_ids, p_world, p_conns, p_news)
         del prev, p_world, p_ask, p_out, p_ids, p_conns, p_news
     cur.execute("SELECT max(started_at) FROM mx_runs WHERE finished_at IS NOT NULL")
-    previous = cur.fetchone()[0]                    # what the entities stage reads as new since
+    previous = cur.fetchone()[0]
     run_id = repo.start_run(cur, code_version=CODE_VERSION, config={**config.as_dict(), "guides": guides})
     mark("questions and decisions")
     world, ask, out, counts = _reading(cur, memo, now, config)
@@ -1551,7 +1550,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
             return default
     mark("back")
     from insight_core.markx import back
-    from insight_core.markx import consumers   # a stage whose answers no feature reads is not run
+    from insight_core.markx import consumers
     counts["back"] = (guarded("back", lambda: back.stage(cur, now=now, run_id=run_id, open_cap=config.back_open))
                       if consumers.wanted(cur, back.KIND) else {"off": consumers.NOT_ASKED})
     mark("headlines")
@@ -1559,9 +1558,9 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
     mark("news")
     counts["news"] = mx_news.write(cur, run_id, out=out, ids=ids, world=world, now=now, ask=ask,
                                    headed={ids[k] for k in news_keys})
-    from insight_core.markx import news_sections   # a row still titled by its lead has its headline asked first
+    from insight_core.markx import news_sections
     counts["news_titles"] = guarded("news_titles", lambda: news_sections.title_rows(cur, now=now))
-    from insight_core.markx import significance   # each row's significance asked once, again when its posts change
+    from insight_core.markx import significance
     counts["news_significance"] = guarded("news_significance", lambda: significance.plan(cur, now=now))
     if check is not None:
         diff = incremental.differences(check, _digest(out, ids, world, conns, memo.news["rows"] if memo.news else []))
@@ -1605,7 +1604,7 @@ def run(cur: Any, *, config: Config = Config(), now: Optional[datetime] = None,
                                                                       limit=BRIEFING_STORIES))
     if deferred:
         counts["deferred"] = deferred
-    if config.story_window and story_window.backfilling(cur):   # steps back once this step is asked and found
+    if config.story_window and story_window.backfilling(cur):
         from insight_core.markx import candidates as mx_candidates
         since_next = story_window.next_since(cur, now)
         from insight_core.markx import jobs as mx_jobs

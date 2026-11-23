@@ -78,7 +78,6 @@ def code_stamp(modules: Sequence[str]) -> str:
 
 
 def stamp(cur: Any, tables: Sequence[str], key: Any) -> str:
-    """The inputs' stamp: the key and each table's stamp, as one sha256."""
     body = json.dumps([key, sorted(table_stamps(cur, sorted(set(tables))).items())], sort_keys=True, default=str)
     return hashlib.sha256(body.encode()).hexdigest()
 

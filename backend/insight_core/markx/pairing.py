@@ -191,19 +191,19 @@ class Policy:
     relation: str
     sources: Tuple[str, ...]
     window: Optional[timedelta] = None          # two posts at most this far apart (post_date)
-    cosine: Optional[float] = None              # embedding: a pair's cosine, at least
+    cosine: Optional[float] = None
     nearest: Optional[int] = None               # embedding: one post among the other's k nearest
     types: Optional[Tuple[str, ...]] = None     # entity: the subject types that name one thing
     late_after: Optional[timedelta] = None      # burst: both posts this long after the page's first linker
     story_window: Optional[timedelta] = None    # stories: first posts at most this far apart
-    story_cosine: Optional[float] = None        # stories: centroid cosine, at least
+    story_cosine: Optional[float] = None
     document_window: Optional[timedelta] = None  # document: two linkers at most this far apart
     happening_windows: Mapping[str, timedelta] = field(default_factory=dict)   # happening: by action group
     happening_window: Optional[timedelta] = None                               # ... any other group
     happening_groups: Tuple[str, ...] = ()                                     # happening: the groups paired
     independence: str = OTHER_SOURCE
-    min_voices: int = 2                         # stories: each of this many voices
-    min_words: Optional[int] = None             # judged: each post of this many words
+    min_voices: int = 2
+    min_words: Optional[int] = None
     roundups: str = ROUNDUP_WHOLE_EXCLUDED
     units: str = "post"
     # develops: a follow-up of an anchor (markx/anchors.py; back.py and later.py read these, never their own)

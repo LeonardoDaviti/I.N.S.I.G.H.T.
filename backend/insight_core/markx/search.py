@@ -111,7 +111,6 @@ def fill_batch(cur: Cursor, batch: int = FILL_BATCH) -> int:
 
 
 def pending(cur: Cursor) -> bool:
-    """Whether a post still waits for its row."""
     cur.execute(f"SELECT EXISTS ({_STALE})", (VERSION,))
     return bool(cur.fetchone()[0])
 

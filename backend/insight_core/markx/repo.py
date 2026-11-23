@@ -23,7 +23,6 @@ KIND_ATTEMPTS = {"track": 2}
 
 
 def max_attempts(kind: Optional[str]) -> int:
-    """How many invalid answers a task of `kind` takes before it fails."""
     return KIND_ATTEMPTS.get(kind or "", MAX_ATTEMPTS)
 DIMENSIONS = 1024      # halfvec(1024): BGE-M3
 
@@ -121,7 +120,6 @@ def get_task(cur: Cursor, task_id: Id) -> Optional[Dict[str, Any]]:
 
 
 def task_for(cur: Cursor, *, kind: str, guide: str, input: str) -> Optional[Dict[str, Any]]:
-    """The task already asking this question, if any."""
     cur.execute("SELECT * FROM mx_tasks WHERE kind = %s AND guide = %s AND input_hash = %s",
                 (kind, guide, sha256_hex(input)))
     return _one(cur)
@@ -524,7 +522,6 @@ def close_connection(cur: Cursor, *, a_kind: str, a: Id, b_kind: str, b: Id, rel
 
 
 def current_connections(cur: Cursor, kind: str, thing: Id) -> List[Dict[str, Any]]:
-    """The current connections touching a post or story, either end."""
     cur.execute("""SELECT * FROM mx_connections WHERE valid_to IS NULL
                      AND ((a_kind = %s AND a = %s) OR (b_kind = %s AND b = %s))
                    ORDER BY valid_from, relation""", (kind, thing, kind, thing))

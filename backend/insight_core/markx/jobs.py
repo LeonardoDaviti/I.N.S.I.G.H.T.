@@ -27,15 +27,15 @@ from insight_core.utils.idle_trim import libc_trim, rss_mb
 
 log = logging.getLogger(__name__)
 
-POLL = 30.0                      # seconds between the runner's looks
+POLL = 30.0
 SETTLE = 60.0                    # a decision run waits this long after work arrived, so a burst of uploads is one run
 GAP = 300.0                      # a failed job's backoff unit (GAP x 2^failures)
 RUN_GAP = 900.0                  # at most one decision run starts this often while uploads stream in (0199)
-EVERY = 3600.0                   # and runs at least hourly
+EVERY = 3600.0
 LIMIT = 120.0                    # a decision run over this stops between stages, writes nothing, retries
 CATCH_UP_LIMIT = 600.0           # a full run's, and the next run's after one stopped over its limit (`limit_for`)
 ENTITY_BUDGET = 45.0             # the entities stage's own seconds, outside LIMIT; its full pass resumes next run
-OWN_BUDGET = ("entities",)       # the stages whose time LIMIT doesn't count
+OWN_BUDGET = ("entities",)
 MENTIONS_MARGIN = timedelta(minutes=2)   # entities committed by a transaction that began before the last run's start
 FIRST_SINCE = timedelta(days=1)          # the first candidates run looks back this far for new entities
 WAIT_PAGE = 1000                 # waiting posts a candidates run reads (the rest: the next run, wanted at once)
@@ -46,14 +46,14 @@ JOBS = ("candidates", "decide", "plan", "news", "tracks", "unread", "main_source
 STORIES_GAP = 120.0              # a rebuild's next slice starts this long after the last ended
 ORIGINALS_GAP = 1800.0           # the originals follow a wanted story run at most this often
 STARVE_AFTER = 900.0             # candidates or official due this long go before the kept views
-OFFICIAL_EVERY = 1800.0          # the official channels' pass at most this often
-REBUILD_GAP = 60.0               # News whose inputs changed between runs is built again at most this often
-ENTITIES_GAP = 60.0              # the entity views whose inputs changed, at most this often
-UNREAD_GAP = 30.0                # the unread counts whose inputs changed, at most this often
-PLAN_EVERY = 300.0               # the background planners (tasks.BACKGROUND_PLANNED) run at most this often
+OFFICIAL_EVERY = 1800.0
+REBUILD_GAP = 60.0
+ENTITIES_GAP = 60.0
+UNREAD_GAP = 30.0
+PLAN_EVERY = 300.0
 MAX_BACKOFF = 6 * 3600.0         # a failing job is tried at least this often
-FAILING_AFTER = 3                # this many failed runs in a row show the job as failing
-SKIPPABLE = ("graph", "back", "later", "entities", "surges", "perspectives_plan")   # stages a run may defer
+FAILING_AFTER = 3
+SKIPPABLE = ("graph", "back", "later", "entities", "surges", "perspectives_plan")
 
 
 @dataclass(frozen=True)
@@ -362,7 +362,6 @@ BRIEF = ("ok", "seconds", "peak_mb", "cpu_s", "stage")
 
 
 def _counted(last: Dict[str, Any], failed: bool) -> Dict[str, Any]:
-    """`_COUNTED`'s parameters for a run that ended with `last`."""
     return {"ok": last.get("ok") is True, "failed": failed, "ring": f"$[0 to {RECENT - 1}]",
             "entry": _json({k: last[k] for k in BRIEF if last.get(k) is not None})}
 
@@ -450,7 +449,6 @@ class Jobs:
         return counts
 
     def plan(self) -> Dict[str, Any]:
-        """The job "plan": plan_background, its outcome recorded."""
         t0 = time.monotonic()
         self._begin("plan", "planning")
         out = self.plan_background()
@@ -603,7 +601,6 @@ class Jobs:
         return {"tracks": got, "seconds": round(time.monotonic() - t, 1)}
 
     def unread(self) -> Optional[Dict[str, Any]]:
-        """The unread counts counted and kept (reader_service.keep_unread_counts)."""
         from insight_core.services.reader_service import keep_unread_counts
         return self._keep("unread", keep_unread_counts)
 

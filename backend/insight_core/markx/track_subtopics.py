@@ -86,7 +86,6 @@ _SUB_COLS = ("id", "name", "definition", "keys", "locked", "made_by", "created_a
 
 
 def current(cur: Cursor, folder_id: Any) -> List[Dict[str, Any]]:
-    """The track's current sub-topics (oldest first)."""
     cur.execute("""SELECT id::text, name, definition, keys, locked, made_by, created_at, named_by, last_member_at,
                           named_members::text[]
                      FROM mx_track_subtopics WHERE track_id = %s AND valid_to IS NULL
@@ -481,7 +480,6 @@ def names_input(cur: Cursor, track: Dict[str, Any], subs: Sequence[Dict[str, Any
 
 
 def keys_of(input: str) -> List[str]:
-    """The group keys (g1..gK) of a naming question."""
     return _KEY.findall(input)
 
 
@@ -586,7 +584,6 @@ def digest_input(cur: Cursor, track: Dict[str, Any], sub: Dict[str, Any], ps: Se
 
 
 def numbered(input: str) -> int:
-    """How many posts a digest question shows."""
     return len(_POST.findall(input))
 
 
@@ -676,7 +673,6 @@ def place_input(cur: Cursor, track: Dict[str, Any], subs: Sequence[Dict[str, Any
 
 
 def place_keys(input: str) -> Tuple[List[str], List[str]]:
-    """(the sub-topic keys, the post keys) of a placement question."""
     return _SUB_KEY.findall(input), _POST_KEY.findall(input)
 
 

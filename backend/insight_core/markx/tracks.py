@@ -102,7 +102,6 @@ def _sha(text: str) -> str:
 
 
 def fold_key(s: Optional[str]) -> str:
-    """A sub-topic string as it is compared (track_subtopics.fold_key)."""
     from insight_core.markx import track_subtopics
     return track_subtopics.fold_key(s)
 
@@ -128,7 +127,6 @@ def get(cur: Cursor, folder_id: Any) -> Optional[Dict[str, Any]]:
 
 
 def described(cur: Cursor) -> List[Dict[str, Any]]:
-    """Every track that is a topic (a description), oldest first."""
     cur.execute(_select("t.description IS NOT NULL AND btrim(t.description) <> ''") + " ORDER BY t.created_at, t.folder_id")
     return [dict(zip(_COLS, r)) for r in cur.fetchall()]
 
@@ -745,13 +743,11 @@ def after_answer(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: Dict[s
 # ---- sub-topics: markx/track_subtopics.py ------------------------------------------------------------
 
 def subtopics(cur: Cursor, folder_id: Any) -> List[Dict[str, Any]]:
-    """The track's current sub-topics (oldest first): track_subtopics.current."""
     from insight_core.markx import track_subtopics
     return track_subtopics.current(cur, folder_id)
 
 
 def edit_subtopics(cur: Cursor, folder_id: Any, **edit: Any) -> List[Dict[str, Any]]:
-    """The owner's edit of the sub-topics (track_subtopics.edit)."""
     from insight_core.markx import track_subtopics
     return track_subtopics.edit(cur, folder_id, **edit)
 
