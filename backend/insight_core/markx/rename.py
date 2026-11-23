@@ -1,24 +1,12 @@
 """Renames proposed by shared evidence (issue 0165 B): one thing under an earlier name is a question, never a merge.
 
-Two entities (clusters, read through the merges) of one maker, both a thing a maker ships (a model, product, software,
-project or dataset; never an org, a person, a version or variant), become a **rename candidate** when one is older
-(its last post before the other's first, or after it by less than `rename_overlap_days`, 7) and one of:
-  - **address**: they share an own address (0138's mx_entity_addresses: a code repository, a release page, a demo;
-    compared by host and path, a code platform's page by its owner and repository), or a post whose subject is one
-    links an own address of the other (the birth post linking the repository the launch's entity holds);
-  - **named**: the newer one's first posts about it (its subject, up to NAMED_POSTS) name the older one by one of its
-    names (2+ words, or 5+ characters run together; never its maker's name alone); `formerly` when that post also
-    says so ("formerly", "renamed", "now called", "previously known as", "rebranded", ...).
-The guards: never a pair the owner kept apart (an alias or rename answered other than `same`, or a merge the owner
-undid), never one cluster already, never one's part or version of the other (one's parent in the other's cluster), never
-two names of different versions (identity.vconflict: a version bump is not a rename).
-
-A candidate is asked once (`rename`, rename-v1: both names with their first and last posts, their addresses and why it
-is asked). Haiku's `renamed` goes to the review queue (mx_entity_queue kind 'rename', a = the older, b = the newer,
-proposal 'same', its confidence); anything else keeps the pair apart (it is never asked again). **Never automatic**
-(0165: questions only until measured). The owner's `same` merges the older cluster into the newer as a redirect of kind
-'rename' (`merge`; its names shown as "earlier names", undone like any merge); other answers keep them apart for good.
-Off with entity_bands.json `timeline.renames`.
+Two clusters of one maker, both a thing a maker ships (never an org, a person, a version or variant), the older
+ending before the newer begins (or overlapping by less than `rename_overlap_days`), are a rename candidate
+(`candidates`) when they share an own address, or the newer one's first posts name the older one (`formerly` when they
+say so). Guards (`guard`): never a pair the owner kept apart, one cluster already, a part or version of the other, or
+two versions of one family. A candidate is asked once (`stage`); Haiku's `renamed` goes to the owner's review queue,
+never automatic. The owner's `same` redirects the older cluster into the newer (`merge`, kind 'rename', undoable);
+other answers keep them apart for good. Off with entity_bands.json `timeline.renames`.
 """
 from __future__ import annotations
 
@@ -84,7 +72,7 @@ def maker_index(book: I.Book) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]
     """({root: its maker ids}, {maker id: the roots it makes}), one pass over the entities: a stated maker is its
     cluster (or its key when no entity has it), a thing's org or person parent its cluster. Versions are their family's."""
     makers: Dict[str, Set[str]] = defaultdict(set)
-    # v10.23 (0218): the things naming a maker or a parent, read row by row from a book read by need
+    # the things naming a maker or a parent, read row by row from a book read by need
     named = [e for e in book.walk("e.level <> ALL(%s) AND e.status <> 'not_entity' AND "
                                   "((e.maker IS NOT NULL AND e.maker <> '') OR e.parent IS NOT NULL)",
                                   (list(I.VERSION_LEVELS),))
@@ -358,9 +346,8 @@ def asked(cur: Any) -> Dict[Tuple[str, str], Tuple[str, str]]:
 def stage(cur: Any, book: I.Book, *, ask: Any, run_id: Any, full: bool, since: Optional[datetime],
           seeds: Iterable[str] = (), deadline: Optional[float] = None) -> Dict[str, Any]:
     """The decision run's rename step (after the addresses): the candidates touching the run's linked entities
-    (every thing on the full pass) asked, and the answers come since (every answer on the full pass) queued.
-    v10.22.2: past the stage's `deadline` no candidates are found nor asked (`stopped`; the next run's posts and the
-    nightly pass find them); the answers are still queued."""
+    (every thing on the full pass) asked, and the answers come since (every answer on the full pass) queued. Past the
+    stage's `deadline` no candidates are found nor asked (`stopped`); the answers are still queued."""
     import time
     from insight_core.markx import entity_addresses as EA, tasks
     cfg = config()

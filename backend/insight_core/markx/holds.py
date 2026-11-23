@@ -1,26 +1,12 @@
 """The re-ask guard (issue 0210): a planner that adds more of a kind's tasks in a day than the day's allowance has the
-rest held, so a backfill or a guide change that re-asks the archive can no longer spend a week's model use in a night.
+rest held, so a backfill or a guide change that re-asks the archive cannot spend a week's model use in a night.
 
-Measured 2026-11-14: the worker answered ~125,000 questions in one night (about $85 at API prices), mostly a one-off
-re-read of long posts' later windows across the archive (entities 61,659 answers, alias 28,096, track 10,900),
-while the steady state is about 1,000 new posts a day. Nothing told the owner before it was spent.
-
-The rule (repo.add_task asks `hold_for` before every insert; one decision, one place):
-  - A kind's tasks planned today (UTC) count against `reask_guard_per_day` (mx_settings; default PER_DAY, null: no
-    guard). New posts' tasks (a post fetched or surfaced in the last tasks.FRESH_HOURS and dated in the last week:
-    tasks.fresh_sql, the fresh lane's rule) never count and are never held; nor the embedder's kinds (FREE_KINDS: asked
-    on the owner's device, no model cost).
-  - Past the allowance, a new task is born held: mx_tasks.hold = '<kind>:<day>' (no row written anywhere else, so a
-    planner's long transaction shares no lock with a lease).
-  - A held task is leased only after every other task of the kinds a lease asks for (low priority: the excess is
-    asked when nothing else waits; nothing is dropped). The owner may stop a hold (none of its tasks is leased) or
-    release it (its tasks are leased as any other, and the rest of that kind's excess that day is not held):
-    mx_holds, POST /api/markx/holds. /markx shows each hold with its open tasks and their estimated API price
-    (`view`).
-
-Counting is per process and cheap: the day's count is read from the database (the (kind, created_at) index) at most
-every RECOUNT_SECONDS a kind, and again when the cached count reaches the allowance; between reads each new task adds
-one. A post's freshness is read only once a kind is past its allowance.
+`hold_for` is repo.add_task's one decision: a kind's tasks planned today (UTC) count against `reask_guard_per_day`
+(mx_settings; null: no guard); new posts' tasks (the fresh lane's rule) and the embedder's kinds (FREE_KINDS) never
+count. Past the allowance a new task is born held (mx_tasks.hold = '<kind>:<day>', no other row written, so a planner
+shares no lock with a lease); a held task is leased after every other (nothing is dropped). The owner may stop or
+release a hold (`set_state`); /markx shows each with its estimated price (`view`). Counting is per process and
+cheap: the database count is read at most every RECOUNT_SECONDS a kind, and again at the allowance.
 """
 from __future__ import annotations
 
@@ -200,7 +186,7 @@ def price_per_task(cur: Cursor, kinds: Sequence[str]) -> Dict[str, Optional[floa
 
 def held(cur: Cursor) -> List[Dict[str, Any]]:
     """The holds with tasks still to answer: [{key, kind, state, open, leased}] (the partial index of held tasks; no
-    price). `view` and GET /metrics (0216) read them."""
+    price). `view` and GET /metrics read them."""
     cur.execute("""SELECT t.hold, t.kind, COALESCE(h.state, 'low'), t.n_open, t.n_leased
                      FROM (SELECT hold, kind, count(*) FILTER (WHERE status = 'open') AS n_open,
                                   count(*) FILTER (WHERE status = 'leased') AS n_leased

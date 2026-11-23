@@ -1,17 +1,9 @@
 """Who reads each kind's answers (issue 0210): a question is asked only while a feature that reads its answer is on.
 
-Measured 2026-11-14 on the server's counts and the worker's logs: questions were still planned for a feature that is
-not shipped (Back in the news failed its bar, 68%: 0136). The dropped features (Later developments, the components
-rule, suffix merges: 0203) plan nothing any more. Perspectives, story sheets and stance stay asked (the owner,
-2026-11-16: used later). Every kind names its consumer here (`CONSUMER`: a feature in
-`FEATURES`), and a feature is on by its default or by the owner's word (mx_settings `consumers`: {feature: bool}).
-
-While a feature is off:
-  - its kinds' planners add nothing (api.work skips them; the decision run skips the back and perspectives stages);
-  - a task of its kinds still added by any path is born closed: status `failed`, last_error NOT_ASKED (kept, with its
-    reason; repo.add_task asks `born_closed`);
-  - its kinds' open tasks are closed the same way (`close_off`, each plan job and at the switch).
-Switched on again, the tasks it closed are open again (`set_on`).
+Every kind names its consumer here (`CONSUMER`: a feature in `FEATURES`); a feature is on by its default or the
+owner's word (mx_settings `consumers`, `set_on`). While a feature is off its kinds' planners add nothing, a task still
+added is born closed (failed, NOT_ASKED: kept with its reason; `born_closed`), and its open tasks are closed
+(`close_off`). Switched on again, the tasks it closed are open again.
 """
 from __future__ import annotations
 
@@ -53,15 +45,15 @@ CONSUMER: Dict[str, str] = {
     "connect": "news", "card": "news", "headline": "news", "briefing": "briefing", "translate": "news",
     "embed": "embeddings", "embed_name": "embeddings", "alias": "entities", "alias2": "entities", "alias3": "entities",
     "alias4": "entities", "collide": "entities", "rename": "entities", "perspective": "perspectives",
-    "sheet": "perspectives", "dispute": "perspectives", "read3": "news", "relate": "graph", "chain": "graph",   # 0219: story chains
-    "derive": "graph",   # 0234: based_on from new posts
+    "sheet": "perspectives", "dispute": "perspectives", "read3": "news", "relate": "graph", "chain": "graph",
+    "derive": "graph",
     "stance": "sources", "back": "back", "cite": "entities",
     "track": "tracks", "subtopics": "tracks", "digest": "tracks", "subtopic_place": "tracks", "probes": "tracks",
     "scout": "tracks", "identity": "sources", "websearch": "sources", "source_judge": "sources",
-    "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news", "stop": "entities",   # 0165 C: the timeline stops
-    "track_schema": "tracks", "track_things": "tracks", "track_same": "tracks",   # 0245 (behind tracks.briefs too)
-    "question": "questions",   # 0275: the reader's questions on the search page (asked only by the reader)
-    "reading": "news",   # 0212: ent-v5 (planned only while its own switch is shadow or on)
+    "news_sections": "news", "news_place": "news", "unit_types": "news", "significance": "news", "stop": "entities",
+    "track_schema": "tracks", "track_things": "tracks", "track_same": "tracks",   # behind tracks.briefs too
+    "question": "questions",   # the reader's questions on the search page (asked only by the reader)
+    "reading": "news",   # ent-v5 (planned only while its own switch is shadow or on)
 }
 
 _LOCK = threading.Lock()

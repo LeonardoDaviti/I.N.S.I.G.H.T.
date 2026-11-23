@@ -1,28 +1,13 @@
-"""An entity's brief (issues 0156 the knowledge page and 0245 the general briefer; built: 0261, Stealth v10.31): what
-it is, how it works, and is it good (measured results and who measured them), every line cited, read on its page.
+"""An entity's brief: what it is, how it works, and its measured results, every line cited, read on its page
+(issues 0156, 0245).
 
-**One briefer, not a second one.** An entity is briefed as a track whose subject is the entity: its "track" is the
-entity's root id, its description is the entity's own words (name, type, maker, other names: `subject`), and its
-schema is the general one below (`SCHEMA`, the same for every entity; code writes it, Haiku never proposes it). From
-there everything is track_things' and track_brief's: the questions (`track_things.ask_posts`: windows, links, the
-maker's linked pages, kind `track_things`, guide track-things-v2), the checks (every value's quote in what the
-question showed: `track_things.salvage`, the worker too), the reports, the joins by key, and "what changed"
-(digest-v3, the digest kind) over every row so far. Nothing here names an entity or a type.
-
-Stored where a track's things are (mx_track_schemas / mx_track_things / mx_track_thing_reports / mx_track_brief_asks,
-`track_id` the entity's root): a schema row says whose it is (`subject` 'entity', `by` 'code': migration 0167). An
-entity merged later keeps its rows under the root it was briefed as (keep everything); the page reads its root's.
-
-**Which posts**: the posts whose current reading names the entity (through its merges and pins) as their subject or
-actor (entity_views.ROLE_REPORT), newest first, MAX_POSTS at most. A post that only mentions it is not read for it.
-**Which entities**: the ones the owner opens (kept_pages.most_opened, OPENED pages of the last 14 days) with
-MIN_POSTS such posts or more; ASKS_A_DAY things questions a day across entities at most (bounded cost).
-
-**The brief** (`view`): `what` (what_it_is rows: definition, its stage, its maker), `how` (how_it_works rows),
-`results` (the practice_or_claim rows: what, result, evidence, and `who`: the sources of the posts that reported it,
-from the posts, never from Haiku), each line with its cites (the posts, numbered for superscripts, each cite with the
-quote it rests on), and `points` (digest-v3 over the rows), `as_of` (the newest report). Rows reported by more
-sources come first. Behind entity_bands.json `entities.brief` (`on`): off, nothing is asked and the page has no brief.
+One briefer, not a second one: an entity is briefed as a track whose "track" is the entity's root id, its description
+the entity's own words (`subject`) and its schema the general code-written `SCHEMA`; from there everything is
+track_things' (questions, value checks, reports, joins) and track_brief's ("what changed"). Stored where a track's
+things are, `track_id` the root (a merged entity keeps its rows under the root it was briefed as). It reads the
+posts naming the entity as subject or actor (MAX_POSTS), for the most opened entity pages with MIN_POSTS+ such posts,
+ASKS_A_DAY questions a day at most. `view` builds the brief (per sense when its posts hold several, `senses`).
+Nothing here names an entity or a type. Behind entity_bands.json `entities.brief` (`on`).
 """
 from __future__ import annotations
 
@@ -36,17 +21,16 @@ from insight_core.markx import track_things as TT
 SWITCH = ("entities", "brief")
 SUBJECT = "entity"
 SCHEMA_VERSION = 2      # the general schema's version (its track_version): a change here re-reads every post
-                        # (0269: 2, what_it_is says whose definition it is: `subject`)
-NUMBERS_VERSION = 3     # 0272: the schema's version with the measure kind (entities.numbers on): its posts read again
-MIN_POSTS = 5           # an entity is briefed with this many subject/actor posts or more (0269: was 3)
-SHOW_POSTS = 5          # 0269: a brief is shown only when this many of its posts were read (one post misled)
+NUMBERS_VERSION = 3     # the schema's version with the measure kind (entities.numbers on): its posts read again
+MIN_POSTS = 5           # an entity is briefed with this many subject/actor posts or more
+SHOW_POSTS = 5          # a brief is shown only when this many of its posts were read (one post misled)
 MAX_POSTS = 12          # posts read for an entity at most (newest first)
 OPENED = 50             # the most opened entity pages considered (kept_pages.most_opened, 14 days)
 ASKS_A_DAY = 150        # things questions a day across entities at most
 PERIOD = "everything its posts say so far"
 SHOWN = {"what": 3, "how": 6, "results": 8}
 WHAT, HOW, MEASURE = "what_it_is", "how_it_works", "measure"
-NUMBERS_SWITCH = ("entities", "numbers")   # 0272: the numbers over time on the page (the rows are asked either way)
+NUMBERS_SWITCH = ("entities", "numbers")   # the numbers over time on the page (the rows are asked either way)
 NUMBERS_SHOWN = 12      # measures shown at most (the most reported first)
 SCHEMA = {"kinds": [
     {"kind": WHAT, "about": "what the subject itself is: a definition line, its stage, who makes it",
@@ -92,14 +76,14 @@ def on() -> bool:
 
 
 def numbers_on() -> bool:
-    """entity_bands.json `entities.numbers` (0272, default off): the page shows the numbers over time."""
+    """entity_bands.json `entities.numbers` (default off): the page shows the numbers over time."""
     from insight_core.markx import identity
     return bool((identity.bands().get(NUMBERS_SWITCH[0]) or {}).get(NUMBERS_SWITCH[1]))
 
 
 def schema() -> Dict[str, Any]:
-    """The general schema with the practice kind code always adds (its results); 0272: with the measure kind while
-    entities.numbers is on (off: the schema the brief was measured with, unchanged)."""
+    """The general schema with the practice kind code always adds; with the measure kind while entities.numbers is
+    on."""
     return TT.with_practice({"kinds": SCHEMA["kinds"] + ([MEASURE_KIND] if numbers_on() else [])})
 
 
@@ -128,8 +112,8 @@ def _subject(cur: Any, book: Any, root: str) -> Dict[str, Any]:
 
 
 def own_sources(cur: Any, book: Any, root: str) -> set:
-    """0269: the sources that are the entity or its maker (person_page.by_sources: via its voice, or the owner's yes):
-    their posts are its own announcements, read first."""
+    """The sources that are the entity or its maker (person_page.by_sources): their posts are its own announcements,
+    read first."""
     from insight_core.markx import entity_views as EV, person_page
     out = set()
     mk = EV._ent_view(book, root).get("maker_id")
@@ -139,7 +123,7 @@ def own_sources(cur: Any, book: Any, root: str) -> set:
 
 
 def report_posts(cur: Any, book: Any, root: str) -> List[str]:
-    """The posts naming the entity (its merges and pins) as subject or actor, MAX_POSTS at most: 0269, its own and its
+    """The posts naming the entity (its merges and pins) as subject or actor, MAX_POSTS at most: its own and its
     maker's posts first (`own_sources`), then the newest."""
     from insight_core.markx import entity_views as EV
     at: Dict[str, Any] = {}
@@ -204,7 +188,7 @@ def plan_things(cur: Any, *, now: Optional[datetime] = None, roots: Optional[Seq
     now = now or datetime.now(timezone.utc)
     schemas.ensure_guides(cur)
     book, worth = _worth(cur, roots)
-    added = plan_senses(cur, book, worth)   # 0274: the sense question of each, before its things
+    added = plan_senses(cur, book, worth)   # the sense question of each, before its things
     for root, posts in worth:
         room = ASKS_A_DAY - asked_today(cur, now)
         if room <= 0:
@@ -215,7 +199,7 @@ def plan_things(cur: Any, *, now: Optional[datetime] = None, roots: Optional[Seq
 
 
 def plan_points(cur: Any, *, now: Optional[datetime] = None, roots: Optional[Sequence[str]] = None, **_kw: Any) -> int:
-    """The digest planner's part: a digest-v3 question over each briefed entity's rows when they changed
+    """The digest planner's part: a "what changed" question over each briefed entity's rows when they changed
     (track_brief.plan_subject). How many were added."""
     from insight_core.markx import track_brief
     if not on():
@@ -250,10 +234,9 @@ def _val(t: Dict[str, Any], name: str) -> Optional[str]:
 
 
 def line_parts(kind: str, t: Dict[str, Any], names: Sequence[str] = ()) -> Tuple[str, Optional[str]]:
-    """A row as one line of the brief, from its own fields only: (its text, its note or None), shown apart, never
-    glued into one string of labels (0269). what_it_is: the definition, its note the stage and maker; how_it_works: the
-    step, its note the detail; a result: "what → result" ("what" left out when it is the entity's own name), its note
-    the evidence only when it gives figures the line does not."""
+    """A row as one line of the brief, from its own fields only: (its text, its note or None), shown apart.
+    what_it_is: the definition, noted with stage and maker; how_it_works: the step, noted with its detail; a result:
+    "what → result" (no "what" when it is the entity's own name), noted with the evidence only when it adds figures."""
     from insight_core.markx import track_brief as TB
     if kind == WHAT:
         note = " · ".join(x for x in (_val(t, "stage"), ("by " + _val(t, "maker")) if _val(t, "maker") else None) if x)
@@ -270,16 +253,14 @@ def line_parts(kind: str, t: Dict[str, Any], names: Sequence[str] = ()) -> Tuple
 
 
 def own_what(t: Dict[str, Any], names: Sequence[str]) -> bool:
-    """0269: a what_it_is row about the entity itself: its `subject` is one of the entity's names (a definition of
-    "<Entity> Camera" from a post about it is that product's, not the entity's). A row without a subject (asked
-    before schema 2) is not known to be the entity's."""
+    """A what_it_is row about the entity itself: its `subject` is one of the entity's names (a definition of
+    "<Entity> Camera" is that product's). A row without a subject is not known to be the entity's."""
     subj = _val(t, "subject")
     return bool(subj) and TT.fold(subj) in {TT.fold(n) for n in names if n}
 
 
 def _same(ln: Dict[str, Any]) -> Tuple[frozenset, frozenset]:
-    """0269: what two lines of one meaning share, by a simple sound rule: the same figures and the same key words (the
-    folded words of 4 letters or more). Anything less alike is left to the joins (track_things' keys)."""
+    """What two lines of one meaning share: the same figures and the same key words (folded, 4 letters or more)."""
     import re
     from insight_core.markx import track_brief as TB
     words = " ".join(x for x in (ln["text"], ln.get("note") or "") if x)
@@ -287,7 +268,7 @@ def _same(ln: Dict[str, Any]) -> Tuple[frozenset, frozenset]:
 
 
 def read_posts(cur: Any, root: str, posts: Optional[Sequence[str]] = None) -> int:
-    """0269: the posts the brief has read (a things question of the entity answered); 0274: of `posts` only."""
+    """The posts the brief has read (a things question of the entity answered); of `posts` only."""
     if posts is None:
         cur.execute("SELECT count(DISTINCT a) FROM mx_tasks WHERE kind = %s AND b = %s AND status = 'answered'",
                     (TT.THINGS_KIND, root))
@@ -297,7 +278,7 @@ def read_posts(cur: Any, root: str, posts: Optional[Sequence[str]] = None) -> in
     return cur.fetchone()[0]
 
 
-# ---- 0272: numbers over time ---------------------------------------------------------------------------------
+# ---- numbers over time -----------------------------------------------------------------------------------------
 
 _PERCENT = {"%", "percent", "per cent", "pct", "процент", "процентов", "процента"}
 
@@ -313,12 +294,11 @@ def _day(at: Any) -> Optional[str]:
 
 
 def series(reported: Sequence[Dict[str, Any]], *, min_posts: int = 2) -> List[Dict[str, Any]]:
-    """The numbers over time of an entity from its measure reports ([{post, at, values}]: values as stored, each
-    {value, quote}): one series per measure name (key_text), unit (a money figure's currency and what it is per) and
-    setting (the game, task or variant it is of: a different setting is a different measure), each value with its
-    date (the post's; `as_of` when the post states the period), post, quote and setting; a post's same figure once.
-    Only series with `min_posts` posts or more. Two values of one series, date and setting from different posts that
-    differ are a dispute (0097): both kept, both marked, never averaged. Most reported series first."""
+    """The numbers over time of an entity from its measure reports ([{post, at, values}]): one series per measure
+    name, unit and setting (a different setting is a different measure), each value with its date, post, quote and
+    setting; a post's same figure once. Only series with `min_posts` posts or more. Differing values of one series,
+    date and setting from different posts are a dispute (0097): both kept and marked, never averaged. Most reported
+    first."""
     fields = {f["name"]: f for f in MEASURE_KIND["fields"]}
     groups: Dict[Any, Dict[str, Any]] = {}
     for r in reported:
@@ -388,7 +368,7 @@ def _cite(rs: Sequence[Dict[str, Any]], posts: Dict[str, Dict[str, Any]]) -> Lis
 
 
 def _fields(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """0274: a thing's fields from these reports only (track_things.merged_fields: one rule for both)."""
+    """A thing's fields from these reports only (track_things.merged_fields: one rule for both)."""
     from insight_core.markx import track_things
     return track_things.merged_fields(rs)
 
@@ -396,8 +376,8 @@ def _fields(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 def _sections(things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]], posts: Dict[str, Dict[str, Any]],
               names: Sequence[str], only: Optional[Set[str]] = None
               ) -> Optional[Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]]:
-    """({what, how, results}, {thing: its line}) of these things, or None (no what_it_is line about the entity itself,
-    0269). `only` (0274): a sense's posts: each thing read from those posts' reports alone (its fields too)."""
+    """({what, how, results}, {thing: its line}) of these things, or None (no what_it_is line about the entity
+    itself). `only`: a sense's posts: each thing read from those posts' reports alone."""
     from insight_core.markx import track_brief as TB
     rows = []
     for t in things:
@@ -412,7 +392,7 @@ def _sections(things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     for t, mine in sorted(rows, key=lambda x: (-TB.sources_of(x[1], posts),
                                                -(x[0]["last_at"] or epoch).timestamp(), x[0]["id"])):
-        if t["kind"] == MEASURE:   # 0272: a measure is a value of the numbers over time, never a line
+        if t["kind"] == MEASURE:   # a measure is a value of the numbers over time, never a line
             continue
         text, note = line_parts(t["kind"], t, names)
         text = text.strip()
@@ -424,7 +404,7 @@ def _sections(things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any
         ln = {"thing": t["id"], "text": text, "note": note, "cites": cs,
               "sources": TB.sources_of(mine, posts), "by": _val(t, "by")}
         key = (t["kind"], _same(ln))
-        if key in alike:   # 0269: the same figures and key words: one line, every post it rests on cited
+        if key in alike:   # the same figures and key words: one line, every post it rests on cited
             first = alike[key]
             first["cites"] += [c for c in cs if c["post"] not in {x["post"] for x in first["cites"]}]
             first["also"].append(t["id"])
@@ -447,14 +427,11 @@ def _sections(things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any
 
 
 def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, Any]]:
-    """The brief of an entity (its root; `names`: its members' names), or None (off, nothing found yet, 0269: fewer
-    than SHOW_POSTS posts read, or no what_it_is line about the entity itself): {what, how, results, points, as_of,
-    numbers, posts[, senses]}. Each line {text, note, cites: [{n, post, quote}], sources} (results also `who`: its posts'
-    sources); lines of the same figures and key words are one (`_same`); `posts` numbers the cited posts in order of
-    first cite (the superscripts) with their title, address, source and date. 0274: when the entity's posts hold 2+
-    senses (`senses`), the three lists are empty and `senses` holds one brief a sense ({label, kind, maker,
-    post_count, what, how, results}), each by 0269's rules over its own posts (SHOW_POSTS of them read, a what line
-    about the sense itself by its names and the names its posts wrote); a sense short of them is listed, no lines."""
+    """The brief of an entity (its root; `names`: its members' names), or None (off, nothing found yet, fewer than
+    SHOW_POSTS posts read, or no what_it_is line about the entity itself): {what, how, results, points, as_of,
+    numbers, posts[, senses]}. Each line {text, note, cites: [{n, post, quote}], sources} (results also `who`);
+    `posts` numbers the cited posts in order of first cite. When the posts hold 2+ senses, the three lists are empty
+    and `senses` holds one brief a sense by the same rules over its own posts (a sense short of them: no lines)."""
     from insight_core.markx import track_brief as TB
     if not on():
         return None
@@ -474,7 +451,7 @@ def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, A
             return None
         sections, line_of = got
         parts = [sections]
-    else:   # 0274: one brief a sense, each from its own posts' reports only
+    else:   # one brief a sense, each from its own posts' reports only
         sections, line_of, parts = {"what": [], "how": [], "results": []}, {}, []
         for x in sense:
             got = (_sections(things, rs, posts, list(names) + x["names"], set(x["posts"]))
@@ -494,7 +471,7 @@ def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, A
                 for c in ln["cites"]:
                     c["n"] = numbers.setdefault(c["post"], len(numbers) + 1)
     numbers_shown: List[Dict[str, Any]] = []
-    if numbers_on():   # 0272: each recurring measure's values over time (0274: a sense's from its own posts)
+    if numbers_on():   # each recurring measure's values over time (a sense's from its own posts)
         for part, only in ([(sections, None)] if sense is None else
                            [(p, set(x["posts"])) for p, x in zip(out_senses, sense)]):
             got_series = series([dict(r) for t in things if t["kind"] == MEASURE for r in rs.get(t["id"], [])
@@ -520,17 +497,11 @@ def view(cur: Any, root: str, names: Sequence[str] = ()) -> Optional[Dict[str, A
             "posts": [dict(posts[p], n=n) for p, n in sorted(numbers.items(), key=lambda x: x[1])]}
 
 
-# ---- 0274: the senses of an entity's posts (a brief a sense) ---------------------------------------------------
-#
-# One entity can hold several things of one name (merged by a name rule before any sense was known, or a key whose
-# senses were never split). Where identity already made sense entities (0184 entity_facts: a split's entities, their
-# mentions pinned), each sense is its own entity with its own brief and the page links the others (`senses` of
-# entity_facts.read): nothing here. Else the brief asks identity's own sense question, the collide kind under its
-# guide collide-v2 (0184: one sense one exact thing, what each is, its kind and the maker a post states), over the
-# brief's report posts (one mention a post, the shown sample's format: identity.collide_input), a=b=the root (b set:
-# identity's collision reads, which read b IS NULL, never take it as theirs). Settled when SENSE_RUNS runs group the
-# mentions alike (asked again up to SENSE_ASKS runs); a settled answer with 2+ named senses (generic and unclear
-# mentions are in none) gives the brief one part a sense.
+# ---- the senses of an entity's posts (a brief a sense) ---------------------------------------------------------
+# Where identity already made sense entities, each is its own entity and brief: nothing here. Else the brief asks
+# identity's own sense question (the collide kind, guide collide-v2) over its report posts, a=b=the root (b set, so
+# identity's collision reads never take it as theirs). Settled when SENSE_RUNS runs group the mentions alike (asked
+# up to SENSE_ASKS times); 2+ named senses give the brief one part a sense.
 
 SENSE_SWITCH = ("entities", "brief_senses")
 SENSE_GUIDE = "collide-v2"
@@ -587,10 +558,9 @@ def _partners(ans: Dict[str, Any]) -> Dict[int, Tuple[frozenset, Dict[str, Any]]
 
 
 def settled(calls: Sequence[Tuple[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
-    """The settled senses of the first SENSE_ASKS runs, {senses: [...], unclear: [...]}, else None (under SENSE_RUNS
-    runs). The two-run agreement read per mention: a mention is settled when SENSE_RUNS runs put it with the same
-    mentions; while some are not, the fewest mentions are left out (unclear) for the rest to settle (one run's
-    stray mention never unsettles the others). Each settled group keeps the first run's what, kind and maker."""
+    """The settled senses of the first SENSE_ASKS runs, {senses: [...], unclear: [...]}, else None. A mention is
+    settled when SENSE_RUNS runs put it with the same mentions; while some are not, the fewest are left out (unclear)
+    so one run's stray mention never unsettles the rest. Each settled group keeps the first run's what, kind, maker."""
     runs = [_partners(a) for _c, a in list(calls)[:SENSE_ASKS]]
     if len(runs) < SENSE_RUNS:
         return None
@@ -698,4 +668,4 @@ def stamp(cur: Any, root: str) -> List[Any]:
                              JOIN mx_calls c ON c.task_id = t.id AND c.valid
                             WHERE t.kind = 'collide' AND t.guide = %s AND t.a = %s AND t.b = %s)""",
                 (root, root, root, SENSE_GUIDE, root, root))
-    return list(cur.fetchone()) + [on(), numbers_on(), senses_on()]   # 0274: the sense answers
+    return list(cur.fetchone()) + [on(), numbers_on(), senses_on()]

@@ -1,33 +1,11 @@
-"""Mark X's English layer in search, and the search's entity cards (issue 0139).
+"""Mark X's English layer in search, its entity cards and search by meaning (issue 0139).
 
-`mx_post_search` (migration 0090) holds one row a post that Mark X answered: `to_tsvector('english', …)` of its current
-reading (the newest read guide's, as the post page's panel reads it: the English headline, weight A; the main action,
-object, actors and numbers, B) and its current entity set (`mx_mentions_now`: each mention's name and its entity's
-name, A; the makers and the entities' aliases, B). It is written when a read, entities or cite answer is stored
-(`refresh`, from tasks.record) and by a resumable background fill (`fill_batch` / `pending`, like 0033's): a post with
-an answer and no row, a row of an older VERSION, or a row older than the post's newest reading or entity set.
-`vector_ix` is the same text under the posts' index rule (post_search_vector's: 'russian', NFKC, version parts), so a
-query's words split between the post's own text and Mark X's English (one in each) match the two together.
-
-Search reads it only while Mark X is on (`enabled`); Mark IX's `posts.search_vector` and its rule are unchanged.
-
-`entity_cards(cur, q)`: up to 3 entities whose name or alias (identity's key, names.key) is the query or a run of its
-words, or starts with the query (3+ letters), read through the merges (redirects) to the entity shown; with each its
-type, maker, posts and voices (the current entity sets').
-
-v10.13.1 (the owner's "fable 5.2"): a query that is a name and its version (`query_version`: its key's last word a
-version number, as migration 0095's search_version_number reads it, after a word of letters) names the entities whose
-key or alias is the query or ends with it as words ("claude fable 5.2" for "fable 5.2": the version's entity, not the
-family's); a card shows them first. A card needs 2+ posts or a subject or actor role in a current entity set: a name
-met once in passing gets none. `entity_first_posts(cur, q)`: the posts whose current mentions hold the entity the
-whole query names (that version, with one) as subject or actor; best match ranks them above the posts that only match
-its words (db/repo_search.py).
-
-v10.13.13: a name and its version also name that version of the family however its entities are spelled
-(`_VERSIONS`): the family's versions, variants and checkpoints whose version is the query's less a letter prefix
-("Kimi K3.1", "Kimi K3.1 Pro" and an unmerged "Kimi3.1" for "kimi 3.1"), and a key that is the name, a version
-letter or not, the version, then any words. Entity first holds all their posts; their cards come first, more posts
-first, so an unmerged spelling with one post never stands for the version.
+`mx_post_search` holds one row a post Mark X answered: tsvectors of its current reading and current entity set
+(`vector_ix` under the posts' own index rule, so a query's words may split between the post's text and Mark X's
+English). Written when an answer is stored (`refresh`) and by a resumable fill (`fill_batch`, `pending`). Search reads
+it only while Mark X is on (`enabled`); Mark IX's search is unchanged. `entity_cards` and `entity_first_posts` read
+the entities a query names, through the merges, a name and its version naming that version however it is spelled
+(`query_version`, `_VERSIONS`). `meaning_posts` adds the query's nearest posts by vector when switched on.
 """
 from __future__ import annotations
 
@@ -35,27 +13,26 @@ import os
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
-from insight_core.markx import reading5   # 0212
+from insight_core.markx import reading5
 
 from psycopg import Cursor
 
 from insight_core.utils import voice
 
 # The rule that makes a row: a change to what goes in the vector raises it, and the fill remakes every row.
-VERSION = 2   # 2: vector_ix, the layer under the posts' index rule (the words split across both)
+VERSION = 2
 FILL_BATCH = 500
 ENTITY_CARDS = 3
 PREFIX_MIN = 3          # a prefix matches from 3 letters
 MAX_QUERY_WORDS = 8     # runs of words are read from the first 8
-CARD_MIN_POSTS = 2      # a card needs this many posts, or a subject or actor role (v10.13.1)
+CARD_MIN_POSTS = 2      # a card needs this many posts, or a subject or actor role
 LEAD_ROLES = ("subject", "actor")
 # A version number, as migration 0095's search_version_number reads a query's lexeme (5.2, 3.8, 4o, 70b).
 VERSION_NUMBER = re.compile(r"^\d+((\.\d+)+[a-z]{0,2}|[a-z]{1,2})$")
 LETTERS = re.compile(r"^[^\W\d_]+$")
 
-# The current reading (the newest read guide's, as markx/news.post_panel reads it) and the current entity set of each
-# post of `ids`, as the row's vector, headline and version. Written for every id given, an empty vector when nothing is
-# left to read, so the fill never asks for a post again.
+# each post's current reading and entity set as its row; an empty vector when nothing is left to read, so the fill
+# never asks for a post again
 _WRITE = """
 INSERT INTO mx_post_search (post_id, vector, vector_ix, headline, version, updated_at)
 SELECT ids.id,
@@ -91,7 +68,7 @@ ON CONFLICT (post_id) DO UPDATE
 """
 
 # The posts whose row is missing, of an older rule, or older than their newest reading or entity set.
-_WRITE = _WRITE.replace("{RANK}", reading5.rank_sql("x.guide"))   # 0212: the preferred reading
+_WRITE = _WRITE.replace("{RANK}", reading5.rank_sql("x.guide"))   # the preferred reading
 
 _STALE = """
 SELECT a.post_id FROM (
@@ -169,10 +146,9 @@ def _suffix(key: str) -> str:
 
 
 def _version_params(key: str) -> Dict[str, Optional[str]]:
-    """v10.13.13: for a name and its version ("kimi 3.1"), that version of the family the name names, however its
-    entities are spelled: `vname` the name ("kimi"), `version` ("3.1"), `vprefix` a key starting with the name, `vre`
-    a key that is the name, a version's letter prefix or not ("kimi k 3.1", from "Kimi K3.1"), the version, then
-    any words ("kimi k 3.1 pro"). All None for a query that names no version."""
+    """For a name and its version ("kimi 3.1"), that version of the family however its entities are spelled: `vname`
+    the name, `version`, `vprefix` a key starting with the name, `vre` a key that is the name, a version's letter
+    prefix or not, the version, then any words ("kimi k 3.1 pro"). All None for a query that names no version."""
     version = query_version(key)
     if not version:
         return {"vname": None, "version": None, "vprefix": None, "vre": None}
@@ -181,11 +157,8 @@ def _version_params(key: str) -> Dict[str, Optional[str]]:
             "vre": "^" + re.escape(name) + "( [a-z]{1,2})? " + re.escape(version) + "( |$)"}
 
 
-# v10.13.13: the entities that are the query's version of the family its name names (`versions`, empty for a query
-# with no version): an entity the family (its key or alias the name, read through the merges, and every entity merged
-# into it) holds as a version, a variant or a checkpoint (`parent`, up to three levels down), whose version is the
-# query's once a letter prefix is dropped ("K3.1" = "3.1", as identity's ver_eq reads two versions). "Kimi K3.1",
-# "Kimi K3.1 Pro" and an unmerged "Kimi3.1" are all "kimi 3.1": one spelling never stands for the version alone.
+# the entities that are the query's version of the family its name names: the family's versions, variants and
+# checkpoints (up to three levels down) whose version is the query's once a letter prefix is dropped ("K3.1" = "3.1")
 _VERSIONS = r"""
 WITH RECURSIVE fam AS (
      SELECT e.id FROM mx_entities e WHERE %(vname)s::text IS NOT NULL AND e.key = %(vname)s
@@ -224,9 +197,8 @@ _VERSION_HITS = """
      UNION ALL SELECT v.id{vm} FROM versions v
 """
 
-# The entities a query names, as their current targets (through the redirects; never a not-entity), and every entity
-# merged into them (`members`): `%(key)s` is the query's key; `%(suffix)s` a key ending with it as words (_suffix, on
-# the reversed key), for a name and its version only (else NULL); and that version of the family (_VERSIONS).
+# the entities a query names, as their current targets (through the redirects; never a not-entity), and every entity
+# merged into them (`members`); `%(suffix)s` only for a name and its version (else NULL)
 _NAMED = _VERSIONS + """
 hit AS (
      SELECT e.id FROM mx_entities e WHERE e.key = %(key)s
@@ -261,12 +233,9 @@ def _plain(q: str) -> bool:
 
 
 def entity_first_posts(cur: Cursor, q: str) -> List[str]:
-    """The posts whose current mentions (mx_mentions_now) hold, as subject or actor, the entity the whole query names:
-    its key or alias is the query's key; for a name and its version ("fable 5.2"), also a key or alias ending with it
-    as words (that version's entity, "Claude Fable 5.2"), and that version of the family however spelled ("Kimi K3.1",
-    "Kimi K3.1 Pro", "Kimi3.1" for "kimi 3.1": _VERSIONS, v10.13.13). Read through the merges. A mention identity has
-    not linked yet (a post read since its last run) counts by its own name key, by the same rule. [] when the query
-    names none."""
+    """The posts whose current mentions hold, as subject or actor, the entity the whole query names (its key or
+    alias; for a name and its version also a key ending with it as words and that version of the family however
+    spelled). Read through the merges; a mention not linked yet counts by its own name key. [] when none."""
     from insight_core.markx import names
     key = names.key(q)
     if len(key) < 2 or not _plain(q):
@@ -290,13 +259,10 @@ def entity_first_posts(cur: Cursor, q: str) -> List[str]:
 
 
 def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[str, Any]]:
-    """Up to `limit` entities the query names (its key, a run of its words, or a prefix of 3+ letters of a name or an
-    alias), each shown as the entity it redirects to: {id, name, type, maker, posts, voices, matched}. For a name and
-    its version, an entity whose key or alias is the query or ends with it as words (the version's, "claude fable 5.2"
-    for "fable 5.2") or that version of the family however spelled (_VERSIONS: "Kimi K3.1 Pro" and an unmerged
-    "Kimi3.1" for "kimi 3.1", the one with more posts first, v10.13.13) comes first; then the whole query, a run of
-    its words, a prefix; more posts first. A card needs
-    CARD_MIN_POSTS posts or a subject or actor role in a current entity set (v10.13.1)."""
+    """Up to `limit` entities the query names (its key, a run of its words, or a 3+ letter prefix of a name or alias),
+    each shown as the entity it redirects to: {id, name, type, maker, posts, voices, matched}. For a name and its
+    version, that version's entities come first (more posts first); then the whole query, a run of its words, a
+    prefix; more posts first. A card needs CARD_MIN_POSTS posts or a subject or actor role in a current entity set."""
     from insight_core.markx import names, schemas
     key = names.key(q)
     if len(key) < 2:
@@ -369,8 +335,8 @@ def entity_cards(cur: Cursor, q: str, limit: int = ENTITY_CARDS) -> List[Dict[st
 
 
 def with_senses(cur: Cursor, cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """0184: one card a name: each card's `what`, its maker from the facts when it has none, and the other senses of
-    its name ("Vexa — terminal app (3) · voice mode (1)"); a card that is another card's sense is folded into it."""
+    """One card a name: each card's `what`, its maker from the facts when it has none, and the other senses of its
+    name ("Vexa — terminal app (3) · voice mode (1)"); a card that is another card's sense is folded into it."""
     from insight_core.markx import entity_facts
     facts = entity_facts.read(cur, [c["id"] for c in cards], senses=True)
     if not facts:
@@ -391,18 +357,14 @@ def with_senses(cur: Cursor, cards: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
 
 # ---- search by meaning (issue 0247) ----------------------------------------------------------------------------
-#
-# The query's BGE-M3 vector, from the embedder the worker uses (a llama-server --embedding --pooling cls), reached at
-# INSIGHT_EMBEDDER_URL by the API itself: the server never embeds posts (embed.py), but a query has no task to wait
-# for. No URL, the embedder down or slow (MEANING_TIMEOUT), or the switch off (entity_bands.json `search.meaning`):
-# no vector, and search is the word search alone, as before. The vector is never kept; the nearest posts are read
-# from mx_embeddings by an exact scan in Postgres (the posts' HNSW index was dropped in 0149), so the API holds no
-# vectors: one 1,024-number list a search.
+# The query's vector comes from the embedder at INSIGHT_EMBEDDER_URL (a query has no task to wait for); no URL, the
+# embedder down or slow, or the switch off: the word search alone. The vector is never kept; the nearest posts are an
+# exact scan in Postgres, so the API holds no vectors.
 
 MEANING_SWITCH = ("search", "meaning")
 MEANING_TIMEOUT = 2.0      # seconds the API waits for the query's vector
 MEANING_K = 30             # the nearest posts merged with the word ranking
-MEANING_MIN = 0.55         # a post less near than this cosine is no meaning match (measured, 0247)
+MEANING_MIN = 0.55         # a post less near than this cosine is no meaning match (measured: 0247)
 MEANING_MIN_CHARS = 200    # a post this short is found by its words only (its vector is near everything)
 RRF_K = 60                 # reciprocal rank fusion's constant (Cormack et al. 2009)
 
@@ -412,7 +374,7 @@ def embedder_url() -> str:
 
 
 def meaning_on() -> bool:
-    """entity_bands.json `search.meaning` (0247) and an embedder configured (INSIGHT_EMBEDDER_URL)."""
+    """entity_bands.json `search.meaning` and an embedder configured (INSIGHT_EMBEDDER_URL)."""
     from insight_core.markx import identity
     return bool((identity.bands().get(MEANING_SWITCH[0]) or {}).get(MEANING_SWITCH[1], False)) and bool(embedder_url())
 
@@ -447,9 +409,7 @@ def nearest_posts(cur: Cursor, vector: List[float], *, limit: int = MEANING_K,
                   floor: float = MEANING_MIN) -> List[str]:
     """The posts whose current vector (embed.MODEL) is nearest the query's, nearest first, at cosine `floor` or more."""
     from insight_core.markx import embed, repo
-    # A short text's vector is near every query (measured on the 11-19 copy: placeholder and one-line posts at
-    # 0.56-0.57 for "Boeing artificial intelligence aviation pilots"): a post of fewer than MEANING_MIN_CHARS is found
-    # by its words only.
+    # a short text's vector is near every query: a post of fewer than MEANING_MIN_CHARS is found by its words only
     cur.execute("""SELECT n.post_id::text FROM (
                        SELECT e.post_id, e.v <=> %s::halfvec AS d FROM mx_embeddings e
                          JOIN posts p ON p.id = e.post_id

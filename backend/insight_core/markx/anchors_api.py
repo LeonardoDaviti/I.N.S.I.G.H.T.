@@ -1,11 +1,6 @@
-"""0180 (Stealth v10.16)'s routes: the anchors engine in Shadow (no bearer: the app's own; 404 when Mark X is off, as
-every /api/markx path). Included into markx/api.py's router.
-
-GET  /api/markx/anchors/compare?which=back         the old engine's rows against the anchors engine's
-                                                    (markx/anchors.compare): {which, counts, only_old, only_new, both,
-                                                    shown}
-GET  /api/markx/anchors/shown                       {engine: old | anchors}: whose rows the Back page shows
-POST /api/markx/anchors/shown {engine}              set it (old by default)
+"""The routes of the anchors engine in Shadow (markx/anchors.py), included into markx/api.py's router (no bearer:
+the app's own; 404 when Mark X is off): the old engine's rows against the anchors engine's, and whose rows the Back
+page shows.
 """
 from __future__ import annotations
 

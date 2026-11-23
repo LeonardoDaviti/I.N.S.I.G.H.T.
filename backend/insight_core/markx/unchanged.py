@@ -1,25 +1,11 @@
-"""A pass that would change nothing is not run again while nothing it reads changed (v10.16, issue 0183).
+"""A pass that would change nothing is not run again while nothing it reads changed (issue 0183).
 
-Mark X's background work runs on a clock: the planners every 5 minutes (jobs.PLAN_EVERY), the decision run at least
-hourly. Overnight, with no worker and no upload, the server's planners still read every post, every story and every
-track each time (container peaks of 6.6 GiB every 5 minutes, CPU at 100%), to plan nothing.
-
-**One rule for every such pass** (`run`): a pass is declared by a name, the tables it reads and a key (the values it
-depends on besides those tables: its settings, its code, the window it computes from the clock). Its inputs' stamp is
-the key plus each table's stamp (`table_stamps`: rows, newest row version and a sum of the row versions' hashes, one
-aggregate a table in Postgres; mx_tasks by its change log since v10.22: any insert, update or delete since changes it;
-nothing is held in Python).
-
-  - The stamp is taken before the pass and again after it, in the pass's own transaction. When they are equal the pass
-    wrote nothing it reads and no other transaction changed any of it meanwhile: the pass was a **no-op on those
-    inputs**, and the stamp is kept (mx_inc_state, row `name`).
-  - The next pass whose stamp equals the kept one is that same no-op on the same inputs: it is **skipped** (`run`
-    returns None). Any change (a post, a task, an answer, a label, a setting, a deploy, the window's day) makes the
-    stamp differ and the pass runs in full, exactly as before.
-
-So a skipped pass is, by construction, a pass that would have planned nothing. A pass whose output depends on the clock
-beyond what its key names says so with a key of None: it always runs, and nothing is stamped. The
-declarations (tables and key) are each pass's own (tasks.background_inputs for the planners).
+`run(cur, name, tables, key, work)`: a pass is declared by a name, the tables it reads and a key (its settings, code,
+the window it computes from the clock). Its stamp is the key plus each table's stamp (`table_stamps`, one aggregate a
+table in Postgres; nothing held in Python), taken before and after the pass in its own transaction: equal, the pass
+was a no-op on those inputs and the stamp is kept (mx_inc_state); the next pass with that stamp is skipped (None).
+Any change makes it differ and the pass runs in full. A key of None: the pass depends on more than it names and
+always runs, unstamped.
 """
 from __future__ import annotations
 
@@ -34,10 +20,8 @@ T = TypeVar("T")
 PREFIX = "unchanged:"            # mx_inc_state's rows of the passes (the decision run's own row is 'decide')
 
 
-# v10.22 (0216, migration 0147): mx_tasks is stamped by its change log (mx_table_changes: one row a kind a statement
-# that wrote it, appended by triggers), not by summing its row versions (a full scan of the 3.8 GB table: ~600 ms a call
-# on the server). Its count and sum move with any insert, update or delete of the kinds, a commit landing late too (its
-# row is counted whatever its n). Pruned once a day (`_prune`): a pass after it runs once more.
+# mx_tasks is stamped by its change log (mx_table_changes, appended by triggers), not by scanning the table; pruned
+# once a day (`_prune`): a pass after it runs once more
 LOGGED = ("mx_tasks",)
 PRUNE_AFTER = "1 day"     # the log is pruned when its oldest row is older than this
 PRUNE_KEEP = "1 hour"     # ... of everything older than this
@@ -69,9 +53,8 @@ def _prune(cur: Any) -> None:
 
 
 def of_kinds(table: str) -> Tuple[str, Tuple[str, ...]]:
-    """v10.18 (0199): a declared input `table[kind,kind]` is that table's rows of those kinds only (its `kind` column):
-    a pass that reads only its own kind's tasks is not woken by another kind's lease or answer (the worker answers track
-    tasks all day; check and cite read none). (`mx_tasks[check]` -> ("mx_tasks", ("check",))); a plain name: every row."""
+    """A declared input `table[kind,kind]` is that table's rows of those kinds only (its `kind` column), so a pass
+    is not woken by another kind's work: `mx_tasks[check]` -> ("mx_tasks", ("check",)); a plain name: every row."""
     if not table.endswith("]") or "[" not in table:
         return table, ()
     name, kinds = table[:-1].split("[", 1)

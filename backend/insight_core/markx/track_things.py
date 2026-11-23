@@ -1,58 +1,14 @@
-"""A track's things (issue 0245, the general track briefer; built: 0249, Stealth v10.27).
+"""A track's things: the general track briefer's schema, things, reports and joins (issue 0245).
 
-One briefer for every track: the track's name, description and excludes are its only track-specific input. Nothing
-here names a track, a kind or a field; every rule is about types (text, number, money, link, enum).
-
-This module owns a track's **schema** (its kinds of thing and their fields), its **things** (one row a thing, however
-many posts report it), each post's **report** of a thing (the values with their quotes) and the **joins** of two
-reports or two rows into one thing. markx/track_brief.py reads them for the weekly issue, the quick look and the tables.
-
-**The schema** (`plan_schemas`, kind `track_schema`, guide track-schema-v1, one question a track and description):
-Haiku proposes 1-3 kinds from the description, each with up to 8 typed fields; code always adds the general kind
-PRACTICE ("practice or claim": what, result, evidence). Stored with the track, one row a version (mx_track_schemas);
-a description change (the track's version) proposes again; the owner may replace it (`set_schema`, PUT .../schema),
-a version of its own. A new schema version re-reads every post in the track (its questions name the version).
-
-**The things** (`plan_things`, kind `track_things`, guide track-things-v2; 0261: v1 before): asked only for the posts in the track
-(judged in, joined, or the owner's ✓: track_subtopics.in_track), newest first. A long post is read in windows
-(tasks.text_windows, WINDOW_CHARS each, MAX_WINDOWS at most; its links listed in each), merged per post (the reports
-of one post join by any key, a practice by its exact `what`). The post's own address is never offered: its links
-leave it out and its text shows it as OWN. Haiku answers each value as {value, quote}; numbers and money come typed
-({number, unit, currency, range_to}). Code checks every value (`salvage`, before the answer is stored, the worker too):
-  - the quote is in what the question showed (the window's text or its links);
-  - number / money: the digits of `number` (and `range_to`) are a figure of the quote (thousands groups, a decimal
-    comma or point, a K/M/B-like multiplier after it), the unit (when given) and the currency are shown by the quote;
-  - link: an http(s) URL inside its own quote; enum: one of the field's values; text: at most TEXT_CAP characters;
-    0261: every figure a text value gives is one of its own quote's (`figures_read`: read in its quote, not beside it);
-  - a thing whose first field (its name; a practice's `what`) is not kept is not a thing.
-A value that fails is dropped with its reason, kept on the call (the answer's "dropped"); the rest of the answer stays.
-
-**The maker's linked pages** (0257, `maker_pages`, behind entity_bands.json `tracks.linked_docs`, default on): terse
-release notes link the maker's own page that explains them. A post's questions are then followed by one question a
-page (LINKED_DOCS at most, within MAX_WINDOWS): the post's first LINKED_POST_CHARS with its links, then the page's
-address, title and WINDOW_CHARS of its text (from the words the link's anchor names). The pages are the post's links
-(post_refs) on its own site (`maker_page`: its registrable domain; on a platform or code host its account) that INSIGHT
-stores (a post at that address); nothing is fetched here. A quote may come from the page (the same checks: it is in
-what the question showed); a value quoted only from it names it (`page`, kept in the report's values and the row).
-
-**Joins** (never by vector similarity; v10.41: one row a thing): a report joins a current thing of its kind only on a
-strong identity with one of that thing's own reports (`same_identity`): the same name (its first field, as a key
-text, a plural s folded), or a shared link (a link field, or the address of a post that gave only that thing) and
-names that agree (a word of both that few of the kind's names use, `rare_words`). A shared link alone (a features
-page, a code host's account, the model a setup runs) or another key field (the hardware) never joins, so nothing
-chains through a weak key. A practice joins only within its own post. In the jobs process (`refresh`), two things of
-one kind whose name names the same entity (the posts' current mentions, through identity's redirects and pins) become
-one; two rows of one kind that may be one thing (`same_pairs`: practices naming a shared entity; other kinds naming
-one, sharing a link, or whose names share a rare word; a pair one post gave too) are asked once (`plan_same`, kind
-`track_same`, guide track-same-v2, "same thing?"), and joined on `same`. A join is a status (`merged`, `merged_into`,
-`merged_by`), never a delete; a thing's reports are its own and its merged things'. A row's fields (`merged_fields`):
-each the value most of its posts give (a tie: the earliest post's), value and quote one post's. Its dates, the issue's
-week, the quick look and its "also" read the post's publication (`post_date`), not the day a feed surfaced it.
-`repair` (scripts/repair_track_rows.py, --dry-run) splits a row joined before v10.41 that is not one thing and asks
-a catalog post again under track-things-v3 (a catalog or roundup is one row), whose answer folds its item rows.
-
-Behind entity_bands.json `tracks.briefs` (`on`, default off until measured: 0249): while off nothing is planned or
-built and the tables stay empty. Only mx_* tables are written.
+One briefer for every track: the track's name, description and excludes are its only track-specific input; every rule
+is about types (text, number, money, link, enum), never a named track or field. This module owns a track's schema
+(`plan_schemas`, `set_schema`: Haiku's kinds plus the general PRACTICE, one version a row), its things (one row a
+thing however many posts report it), each post's reports (`plan_things`, `apply_things`: values with their quotes,
+read in windows, plus the maker's own linked pages) and the joins of reports or rows into one thing. Every value is
+checked against what its question showed (`salvage`, run by the worker too); a failed value is dropped with its
+reason. Joins never use vector similarity: a strong identity (`same_identity`), the same named entity (`refresh`), or
+Haiku's `same` (`plan_same`); a join is a status, never a delete (`repair` splits rows wrongly joined).
+markx/track_brief.py reads them. Behind entity_bands.json `tracks.briefs` (`on`). Only mx_* tables are written.
 """
 from __future__ import annotations
 
@@ -66,28 +22,28 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 log = logging.getLogger(__name__)
 
 SCHEMA_KIND, SCHEMA_GUIDE = "track_schema", "track-schema-v1"
-THINGS_KIND, THINGS_GUIDE = "track_things", "track-things-v3"   # v10.41: v3 (a catalog is one row); 0261: v2
-SAME_KIND, SAME_GUIDE = "track_same", "track-same-v2"   # v10.41: every kind (v1: practices)
+THINGS_KIND, THINGS_GUIDE = "track_things", "track-things-v3"   # v3: a catalog is one row
+SAME_KIND, SAME_GUIDE = "track_same", "track-same-v2"
 PRACTICE_KIND = "practice_or_claim"
 PRACTICE = {"kind": PRACTICE_KIND, "about": "a method, habit, finding or opinion a post states",
             "fields": [{"name": "what", "type": "text", "key": True, "about": "the method or claim, in a few words"},
                        {"name": "result", "type": "text", "key": False, "about": "what it gave or what is claimed"},
                        {"name": "evidence", "type": "text", "key": False, "about": "numbers, test or example given"},
                        {"name": "by", "type": "text", "key": False,
-                        "about": "who measured, tested or found it, when the post names them (a company, a lab, a person)"}]}   # 0261
+                        "about": "who measured, tested or found it, when the post names them (a company, a lab, a person)"}]}
 TEXT_CAP = 120          # characters of a text value at most
 WINDOW_CHARS = 3500     # characters of a post one question shows (round 2's window)
 MAX_WINDOWS = 6         # windows a long post is read in at most
 LINKS_MAX = 25          # links a question lists
 THINGS_OPEN = 60        # things questions a track has waiting at most
 SAME_OPEN = 30          # same-claim questions waiting at most, across tracks
-SAME_PAIRS = 200        # v10.41: same-thing pairs one track's plan considers at most (closest names first)
-RARE_MIN, RARE_SHARE = 3, 0.02   # v10.41: a word of at most this many of a kind's names (or this share) is rare
-AGREE = 0.5             # v10.41: two names agree when their shared words are this Dice share of their words at least
+SAME_PAIRS = 200        # same-thing pairs one track's plan considers at most (closest names first)
+RARE_MIN, RARE_SHARE = 3, 0.02   # a word of at most this many of a kind's names (or this share) is rare
+AGREE = 0.5             # two names agree when their shared words are this Dice share of their words at least
 OWN = "[this post's own address]"
 SWITCH = ("tracks", "briefs")
-LINKED_SWITCH = "linked_docs"   # entity_bands.json tracks.linked_docs (0257, default on)
-LINKED_DOCS = 2         # the maker's pages a post's questions show at most (0257), within MAX_WINDOWS
+LINKED_SWITCH = "linked_docs"   # entity_bands.json tracks.linked_docs (default on)
+LINKED_DOCS = 2         # the maker's pages a post's questions show at most, within MAX_WINDOWS
 LINKED_POST_CHARS = 1500  # characters of the post a linked page's question shows with the page (its first)
 LINKED_LEAD = 200       # characters of the page shown before the part a link's anchor names
 PAGE_MARK = "\nLinked page on the post's own site: "
@@ -102,8 +58,8 @@ def on() -> bool:
 
 
 def linked_on() -> bool:
-    """entity_bands.json `tracks.linked_docs` (0257): a post's questions also show the stored pages it links on its
-    own site (default on: the post's own questions are unchanged, these are added)."""
+    """entity_bands.json `tracks.linked_docs`: a post's questions also show the stored pages it links on its own site
+    (default on; the post's own questions are unchanged)."""
     from insight_core.markx import identity
     return bool((identity.bands().get(SWITCH[0]) or {}).get(LINKED_SWITCH, True))
 
@@ -119,9 +75,8 @@ UI_FRAGMENTS = frozenset({"", "m", "top", "main", "content", "comments", "respon
 
 
 def norm_url(u: Any) -> str:
-    """A URL as two are compared: folded, no scheme, no www., no trailing slash or punctuation; its fragment kept when
-    it names an item of the page (v10.29: "releases#2026111800" is one release of a page listing many), dropped when
-    it is the page's own furniture ("#m", "#comments", a text fragment ":~:")."""
+    """A URL as two are compared: folded, no scheme, no www., no trailing slash or punctuation; a fragment kept when
+    it names an item of the page ("releases#2026111800"), dropped when it is page furniture ("#comments", ":~:")."""
     s = fold(u).rstrip(").,;'\"")
     s = re.sub(r"^https?://(www\.)?", "", s)
     page, _, frag = s.partition("#")
@@ -143,10 +98,9 @@ _MULTS = {"k": 1e3, "к": 1e3, "thousand": 1e3, "тыс": 1e3, "m": 1e6, "м": 1
 
 
 def figures(quote: str, *, strict: bool = False) -> Set[float]:
-    """Every value a figure of `quote` can be read as: its parts, its thousands grouping ("1,500", "1 500"), its
-    decimal ("24,5", "4.5"), each times a multiplier written right after it ("16K", "1.2M", "27B"). 0272 `strict` (a
-    typed number's check): a figure with a word multiplier after it ("115,8 млрд", "3 billion") or a letter glued to
-    it ("16K") is read only multiplied: 115.8 is not "115,8 млрд" (a letter after a space may be a unit: "5 m")."""
+    """Every value a figure of `quote` can be read as: its parts, its thousands grouping, its decimal, each times a
+    multiplier written right after it ("16K", "1.2M"). `strict` (a typed number's check): a figure with a word
+    multiplier after it or a letter glued to it is read only multiplied (a letter after a space may be a unit)."""
     out: Set[float] = set()
     for m in _FIG.finditer(quote or ""):
         tok = m.group(0)
@@ -189,8 +143,8 @@ def currency_shown(code: str, quote: str) -> bool:
 
 
 def unit_shown(unit: str, quote: str) -> bool:
-    """The unit as the quote writes it: whole, or each of its words by its first three letters ("tokens/s" in
-    "tok/s"; 0272: every word, so "per month" is not shown by "per million tokens")."""
+    """The unit as the quote writes it: whole, or every one of its words by its first three letters ("tokens/s" in
+    "tok/s")."""
     u, q = fold(unit), fold(quote)
     if not u or u in q:
         return True
@@ -217,7 +171,7 @@ def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optio
             return None, f"{t} not typed"
         figs = figures(quote, strict=True)
         num = float(value["number"])
-        if not _same_number(abs(num), figs):   # 0272: a fall given as a negative number shows its digits
+        if not _same_number(abs(num), figs):   # a fall given as a negative number shows its digits
             return None, "number not in its quote"
         to = value.get("range_to")
         if to is not None:
@@ -231,7 +185,7 @@ def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optio
             if not currency_shown(cur_, quote):
                 return None, "currency not in its quote"
             out["currency"] = cur_
-        unit = value.get("unit")   # 0272: money may say what it is per ("per million input tokens"), shown by its quote
+        unit = value.get("unit")   # money may say what it is per ("per million input tokens"), shown by its quote
         unit = unit.strip() if isinstance(unit, str) and unit.strip() else None
         if unit and not unit_shown(unit, quote):
             return None, "unit not in its quote"
@@ -260,9 +214,8 @@ def check_value(field: Dict[str, Any], raw: Any, shown: str) -> Tuple[Any, Optio
 
 
 def figures_read(value: str, quote: str) -> bool:
-    """0261: every figure a text value gives is a figure of its own quote (the value is read in its quote, not taken
-    from the post around it: "32 users on a 12 GB phone" quoted from "max users 32"). Language-free: figures only;
-    the words are the guide's to keep (track-things-v2: a value says only what its quote says)."""
+    """Every figure a text value gives is a figure of its own quote (read in its quote, not taken from the post around
+    it). Language-free: figures only."""
     have = figures(quote)
     return all(_same_number(float(x), have) for x in re.findall(r"\d+(?:\.\d+)?", value or ""))
 
@@ -272,9 +225,8 @@ _GITHUB = re.compile(r"^(https?://(?:www\.)?github\.com/[^/\s]+/[^/\s#?]+?)(?:\.
 
 
 def reader_link(u: str) -> str:
-    """A link as a reader opens it (v10.29): a raw file on GitHub as its page in the repo (raw.githubusercontent.com
-    /o/r/<ref>/<path> and github.com/o/r/raw/<ref>/<path> -> github.com/o/r/blob/<ref>/<path>), a clone address
-    (.git) as the repo. The stored value is kept as the post gave it."""
+    """A link as a reader opens it: a raw GitHub file as its page in the repo (blob), a clone address (.git) as the
+    repo. The stored value is kept as the post gave it."""
     m = _RAW_GITHUB.match(u or "")
     if m:
         o, r, ref, path = m.groups()
@@ -326,7 +278,7 @@ def parse_input(input: str) -> Tuple[Optional[str], Optional[int], Dict[str, Dic
 
 
 def linked_page(shown: str) -> Tuple[Optional[str], str]:
-    """(the linked page a question shows, 0257, or None; what it showed of the post itself)."""
+    """(the linked page a question shows, or None; what it showed of the post itself)."""
     if PAGE_MARK not in shown:
         return None, shown
     of_post, _, rest = shown.partition(PAGE_MARK)
@@ -336,8 +288,7 @@ def linked_page(shown: str) -> Tuple[Optional[str], str]:
 def salvage(answer: Dict[str, Any], input: str) -> Dict[str, Any]:
     """The things answer checked value by value: each kept value typed, each dropped one (and each thing whose name
     did not stand, of an unknown kind, or past THINGS_PER_ANSWER) under "dropped" with why; a value quoted only from
-    the linked page a question shows (0257) names it (`page`). Idempotent (a kept value
-    passes again: the worker salvages before it posts, the server again)."""
+    the linked page names it (`page`). Idempotent: the worker salvages before it posts, the server again."""
     from insight_core.markx import schemas, validate
     things = answer.get("things")
     if not isinstance(things, list):
@@ -365,7 +316,7 @@ def salvage(answer: Dict[str, Any], input: str) -> Dict[str, Any]:
                                 "why": f"things[{n}].{name}: {why}"})
             else:
                 good[name] = {"value": typed, "quote": raw["quote"]}
-                if page and fold(raw["quote"]) not in fold(of_post):   # 0257: quoted from the linked page only
+                if page and fold(raw["quote"]) not in fold(of_post):   # quoted from the linked page only
                     good[name]["page"] = page
         first = kind["fields"][0]["name"]
         if first not in good:
@@ -434,7 +385,7 @@ def schema_at(cur: Any, folder_id: Any, version: int) -> Optional[Dict[str, Any]
 
 def _put_schema(cur: Any, folder_id: str, schema: Dict[str, Any], *, by: str, track_version: int,
                 task_id: Any = None, subject: str = "track") -> int:
-    """A schema version stored; `subject` 'entity' (0261, by 'code'): the "track" is an entity's root (entity_brief)."""
+    """A schema version stored; `subject` 'entity' (by 'code'): the "track" is an entity's root (entity_brief)."""
     cur.execute("""INSERT INTO mx_track_schemas (track_id, version, schema, by, track_version, task_id, subject)
                    SELECT %s, COALESCE(max(version), 0) + 1, %s::jsonb, %s, %s, %s, %s FROM mx_track_schemas
                     WHERE track_id = %s RETURNING version""",
@@ -476,8 +427,8 @@ def _valid_answer(cur: Any, task_id: Any) -> Optional[Dict[str, Any]]:
 
 def apply_schema(cur: Any, task: Dict[str, Any], answer: Dict[str, Any]) -> Optional[int]:
     """A schema answer stored as the track's new version, when its description is still the one asked and the track
-    has no schema for that version yet: the version, or None. v10.41: only track-schema-v1's (the kind's second guide,
-    track_fields' track-fields-v1, suggests fields; it is never applied)."""
+    has no schema for that version yet: the version, or None. Only track-schema-v1's (track-fields-v1 only suggests
+    fields; never applied)."""
     from insight_core.markx import tracks
     if task.get("guide", SCHEMA_GUIDE) != SCHEMA_GUIDE:
         return None
@@ -492,9 +443,8 @@ def apply_schema(cur: Any, task: Dict[str, Any], answer: Dict[str, Any]) -> Opti
 
 
 def set_schema(cur: Any, folder_id: Any, kinds: Any) -> Dict[str, Any]:
-    """The owner's schema (PUT .../schema {kinds}: PRACTICE is added by code) stored as a new version: the schema view.
-    v10.41: a kind may have up to schemas.OWNER_FIELDS fields (the owner adds suggested fields to a full kind).
-    ValueError: not a valid schema; KeyError: not a topic track."""
+    """The owner's schema (PUT .../schema {kinds}: PRACTICE is added by code, up to schemas.OWNER_FIELDS fields a
+    kind) stored as a new version: the schema view. ValueError: not a valid schema; KeyError: not a topic track."""
     from insight_core.markx import schemas, tracks, validate
     t = tracks.get(cur, folder_id)
     if not tracks.is_topic(t):
@@ -549,9 +499,8 @@ def _without_own(text: str, own: Sequence[str]) -> str:
 
 
 def maker_page(own: str, link: str) -> bool:
-    """0257: `link` is a page of the post's maker: on the registrable site of the post's own address (addresses.site_of),
-    and, on a site of accounts (a platform's, addresses.PLATFORM_SITES; a code host, rename.CODE_HOSTS), under the
-    same account (addresses.account_key): a release on a code host linking its own repo's docs, not another's."""
+    """`link` is a page of the post's maker: on the post's own registrable site, and on a site of accounts (a
+    platform, a code host) under the same account (a release linking its own repo's docs, not another's)."""
     from insight_core.markx.rename import CODE_HOSTS
     from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, site_of
     a, b = site_of(host_of(own)), site_of(host_of(link))
@@ -563,10 +512,9 @@ def maker_page(own: str, link: str) -> bool:
 
 
 def maker_pages(cur: Any, posts: Dict[str, Any], own: Dict[str, List[str]]) -> Dict[str, List[Tuple[str, Any]]]:
-    """0257: {post id: [(the link as the post gives it, the stored page)]}, LINKED_DOCS at most a post, in the post's
-    order: the pages a post links (post_refs: every link of its text, its own site's too, which post_links leaves out)
-    that are its maker's (`maker_page`) and stored (a post at that address: posts.normalized_url, as Connected's
-    Earlier reads them), never the post itself. Read only; nothing is fetched here."""
+    """{post id: [(the link as the post gives it, the stored page)]}, LINKED_DOCS at most a post, in the post's
+    order: the links (post_refs) that are its maker's (`maker_page`) and stored as a post, never the post itself.
+    Read only; nothing is fetched here."""
     from insight_core.markx import tasks
     ids = [i for i in posts if own.get(i)]
     if not ids:
@@ -609,10 +557,9 @@ def page_window(text: str, link: str) -> Tuple[int, int]:
 def things_inputs(track: Dict[str, Any], schema: Dict[str, Any], version: int, p: Any, own: Sequence[str],
                   pages: Sequence[Tuple[str, Any]] = ()) -> List[str]:
     """A post's things questions, one a window: the schema's version line, the track, its kinds (JSON, one line), the
-    post (title, which window, text) and its links. 0257: then one question a page of `pages` (maker_pages), while the
-    windows stay within MAX_WINDOWS: the post's first LINKED_POST_CHARS and links, then the page (its address, title
-    and its window, page_window), so a value may be quoted from the maker's page. The post's own questions are the
-    same with or without pages."""
+    post (title, which window, text) and its links; then one question a maker's page of `pages` within MAX_WINDOWS
+    (the post's first LINKED_POST_CHARS and links, then the page's window). The post's own questions are the same
+    with or without pages."""
     from insight_core.markx import tasks
     text = _without_own(p.text or "", own)
     windows = tasks.text_windows(text, WINDOW_CHARS, MAX_WINDOWS)
@@ -645,8 +592,8 @@ def things_inputs(track: Dict[str, Any], schema: Dict[str, Any], version: int, p
 
 
 def _asked(cur: Any, track_id: str, version: int, ids: Sequence[str]) -> Set[str]:
-    """The posts already asked under this schema version (their questions' first line names it), under any guide of
-    the kind (0261: a new guide asks new posts only, never the history again)."""
+    """The posts already asked under this schema version, under any guide of the kind (a new guide asks new posts
+    only)."""
     from insight_core.markx import schemas
     cur.execute("""SELECT DISTINCT a::text FROM mx_tasks WHERE kind = %s AND guide = ANY(%s) AND a = ANY(%s::uuid[])
                       AND b = %s AND input LIKE %s""",
@@ -681,9 +628,8 @@ def plan_things(cur: Any, **_kw: Any) -> int:
 def ask_posts(cur: Any, track: Dict[str, Any], s: Dict[str, Any], ids: Sequence[str], *, room: int,
               again: bool = False) -> int:
     """The things questions of `ids` (in their order) not yet asked under schema `s`'s version, `room` posts at most,
-    every window of each (and its maker's linked pages): how many were added. A question already answered is applied
-    again (its reports, once). A track's posts (plan_things) and an entity's (entity_brief: the entity as the track)
-    are asked by this one path."""
+        every window of each (and its maker's linked pages): how many were added. A question already answered is applied
+        again (its reports, once). A track's posts and an entity's (entity_brief) are asked by this one path."""
     from insight_core.markx import repo, tasks
     done = _asked(cur, track["folder_id"], s["version"], ids) if ids and not again else set()   # again: repair
     todo = [i for i in ids if i not in done][:max(0, room)]
@@ -714,8 +660,7 @@ def key_fields(kind: Dict[str, Any]) -> List[str]:
 
 def sigs(kind: Dict[str, Any], values: Dict[str, Any], own: Optional[str] = None) -> Set[str]:
     """A report's (or a thing's) key values, normalised: {"field=value"}; a link as "link:<address>" whatever its
-    field (v10.29: an explainer's reference link meets the release's own link), and `own` (the address of the post
-    the thing is the one thing of) as a link too."""
+    field, and `own` (the address of the post the thing is the one thing of) as a link too."""
     types = {f["name"]: f.get("type") for f in kind["fields"]}
     out = set()
     for name in key_fields(kind):
@@ -738,9 +683,8 @@ def sigs(kind: Dict[str, Any], values: Dict[str, Any], own: Optional[str] = None
 
 def own_address(cur: Any, post: str, things: Sequence[Dict[str, Any]], kinds: Dict[str, Dict[str, Any]]
                 ) -> Optional[str]:
-    """v10.29: a post's own address when the post gives one thing of the track's kinds (not counting practices): the
-    post is that thing's page (a release's notes, a project's page), so a link to it elsewhere is a link to the
-    thing. None when it gives several or none (its address names no one of them)."""
+    """A post's own address when the post gives one thing of the track's kinds (practices aside): the post is that
+    thing's page. None when it gives several or none."""
     mine = [t for t in things if t.get("kind") in kinds and t.get("kind") != PRACTICE_KIND and t.get("fields")]
     if len(mine) != 1:
         return None
@@ -749,9 +693,8 @@ def own_address(cur: Any, post: str, things: Sequence[Dict[str, Any]], kinds: Di
 
 
 def post_date(alias: str = "p") -> str:
-    """v10.41: a thing's post date as SQL: the post's publication (pairing.published_date: published, else surfaced,
-    else fetched), never the day a feed surfaced an old post: a thing's first and last dates, the weekly issue's
-    week, the quick look and its "also" read it."""
+    """A thing's post date as SQL: the post's publication (pairing.published_date), never the day a feed surfaced
+    an old post."""
     from insight_core.markx import pairing
     return pairing.published_date(alias)
 
@@ -828,9 +771,8 @@ def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
 
 
 def fold_catalog(cur: Any, track_id: str, post: str, call_id: Any, kinds: Dict[str, Dict[str, Any]]) -> int:
-    """v10.41: a post asked again under track-things-v3 (`repair`: a catalog read one row an item under v2) gave one
-    row of a kind: the rows of that kind only this post's answers under an earlier guide gave join it (merged_by
-    haiku: its answer said they are one). How many joins."""
+    """A post asked again under track-things-v3 (`repair`) gave one row of a kind: the rows of that kind only this
+    post's earlier answers gave join it (merged_by haiku). How many joins."""
     cur.execute("""SELECT t.kind, array_agg(DISTINCT r.thing_id::text) FROM mx_track_thing_reports r
                      JOIN mx_track_things t ON t.id = r.thing_id
                     WHERE r.call_id = %s AND t.track_id = %s GROUP BY 1""", (call_id, track_id))
@@ -853,8 +795,8 @@ def fold_catalog(cur: Any, track_id: str, post: str, call_id: Any, kinds: Dict[s
 
 
 def name_of(kind: Dict[str, Any], values: Dict[str, Any]) -> str:
-    """v10.41: a report's (or a thing's) name as two are compared: its kind's first field (a practice's `what`), as a
-    key text, a word's plural `s` folded ("Private spaces" is "Private Space")."""
+    """A report's (or a thing's) name as two are compared: its kind's first field, as a key text, a plural `s`
+    folded."""
     first = kind["fields"][0]["name"]
     v = values.get(first)
     v = v.get("value") if isinstance(v, dict) and "value" in v else v
@@ -877,9 +819,8 @@ def name_words(name: str) -> Set[str]:
 
 
 def rare_words(names: Iterable[str]) -> Set[str]:
-    """v10.41: the words of a kind's names that few of its rows use (RARE_SHARE of them at most, RARE_MIN rows at
-    least): a word most rows share ("model", "setup", "app") names no one of them. Read from the track's own names,
-    in any language."""
+    """The words of a kind's names that few of its rows use (RARE_SHARE at most, RARE_MIN rows at least): a word most
+    rows share ("model", "app") names no one of them. Any language."""
     df: Dict[str, int] = defaultdict(int)
     n = 0
     for name in names:
@@ -891,12 +832,10 @@ def rare_words(names: Iterable[str]) -> Set[str]:
 
 
 def same_identity(a_name: str, a_links: Set[str], b_name: str, b_links: Set[str], rare: Set[str]) -> bool:
-    """v10.41: two reports are one thing only on a strong identity: the same name, or a shared link and names that
-    agree: a rare word of the kind's names in both, and their shared words half of their words at least (AGREE, the
-    Dice share: "Tiel-Coder" and "Tiel-Coder 35B-A3B" agree, "Test PC" and "Palit RTX 5060 Ti 16GB test stand" do
-    not); a link to the other's own page (the post that gave only that thing) needs the rare word only. A shared link
-    alone (a site's features page, a code host's account, the model a setup runs), or any other key (the hardware),
-    is not the thing's identity."""
+    """Two reports are one thing only on a strong identity: the same name, or a shared link and names that agree (a
+    rare word in both and AGREE of their words shared: "Tiel-Coder" and "Tiel-Coder 35B-A3B" agree, "Test PC" and
+    "Palit RTX 5060 Ti test stand" do not); a link to the other's own page needs the rare word only. A shared link
+    alone, or any other key (the hardware), is not the thing's identity."""
     if not a_name or not b_name:
         return False
     if a_name == b_name:
@@ -915,8 +854,7 @@ def same_identity(a_name: str, a_links: Set[str], b_name: str, b_links: Set[str]
 def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any], post: str,
            own: Optional[str] = None) -> Optional[str]:
     """The current thing a report joins (its root): same kind and a strong identity with one of that thing's own
-    reports (`same_identity`; v10.41: never by a shared link or another key alone, so no chain through weak keys); a
-    practice only among the things its own post already reported (its exact `what`)."""
+    reports (`same_identity`, so no chain through weak keys); a practice only among its own post's things."""
     mine = name_of(kind, values)
     if not mine:
         return None
@@ -981,10 +919,9 @@ def value_key(v: Any) -> str:
 
 
 def merged_fields(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """v10.41: a thing's fields from its own reports (oldest post first): each field the value most of its posts give
-    (a tie: the earliest post's; within one post its latest answer's: a post asked again answers for it), with that
-    report's quote; a value and its quote always one post's. Before, the newest post's value replaced each field, so a
-    row read one field from one post and the next from another."""
+    """A thing's fields from its own reports (oldest post first): each field the value most of its posts give (a tie:
+    the earliest post's; within one post its latest answer's), with that report's quote: value and quote always one
+    post's."""
     order: Dict[str, int] = {}
     for r in rs:
         order.setdefault(r["post"], len(order))
@@ -1070,7 +1007,7 @@ def _mentions(cur: Any, post_ids: Sequence[str]) -> Dict[str, List[Tuple[str, st
 def named_entities(kind: Dict[str, Any], rs: Sequence[Dict[str, Any]], ments: Dict[str, List[Tuple[str, str, str]]]
                    ) -> Set[str]:
     """The entities a thing names: a mention of a reporting post whose name (or span) is the thing's own name (its
-    first field; v10.41: not another key field); a practice: every mention whose span is inside one of its quotes."""
+    first field); a practice: every mention whose span is inside one of its quotes."""
     out: Set[str] = set()
     for r in rs:
         vals = r["values"] or {}
@@ -1078,7 +1015,7 @@ def named_entities(kind: Dict[str, Any], rs: Sequence[Dict[str, Any]], ments: Di
             quotes = [f" {key_text(v.get('quote'))} " for v in vals.values() if isinstance(v, dict)]
             out |= {root for root, _nk, span in ments.get(r["post"], []) if span and any(f" {span} " in q for q in quotes)}
             continue
-        first = kind["fields"][0]["name"]   # v10.41: its name only (a shared hardware or maker is not the thing)
+        first = kind["fields"][0]["name"]   # its name only (a shared hardware or maker is not the thing)
         keys = {key_text(vals[first].get("value"))} if isinstance((vals.get(first) or {}).get("value"), str) else set()
         keys.discard("")
         out |= {root for root, nk, span in ments.get(r["post"], []) if nk in keys or key_text(span) in keys}
@@ -1115,8 +1052,8 @@ def entity_join(cur: Any, track: Dict[str, Any]) -> int:
 
 
 def refresh(cur: Any) -> Dict[str, Any]:
-    """The jobs process's pass (jobs.Jobs.tracks, before the briefs are kept): the entity joins of each topic track.
-    {track: joins}; nothing while off."""
+    """The jobs process's pass (before the briefs are kept): the entity joins of each topic track. {track: joins};
+    nothing while off."""
     from insight_core.markx import tracks
     if not on():
         return {}
@@ -1140,10 +1077,9 @@ def same_input(track: Dict[str, Any], a: Dict[str, Any], b: Dict[str, Any],
 
 def same_pairs(kind: Dict[str, Any], things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]],
                ments: Dict[str, List[Tuple[str, str, str]]]) -> List[Tuple[str, str, bool]]:
-    """v10.41: the pairs of one kind's current rows worth a same-thing question, closest names first, SAME_PAIRS at
-    most: [(a, b, one post gave both)]. Practices: their quotes name a shared entity. Other kinds: they name a shared
-    entity, share a link, or their names share a rare word of the kind (`rare_words`). A pair from one post is asked
-    too (a post read in windows gives its thing twice)."""
+    """The pairs of one kind's current rows worth a same-thing question, closest names first, SAME_PAIRS at most:
+    [(a, b, one post gave both)]. Practices: their quotes name a shared entity. Other kinds: a shared entity, a shared
+    link, or a shared rare word. A pair from one post is asked too (a post read in windows gives its thing twice)."""
     named = {t["id"]: named_entities(kind, rs.get(t["id"], []), ments) for t in things}
     posts = {t["id"]: {r["post"] for r in rs.get(t["id"], [])} for t in things}
     names = {t["id"]: name_of(kind, t["fields"] or {}) for t in things}
@@ -1168,9 +1104,8 @@ def same_pairs(kind: Dict[str, Any], things: Sequence[Dict[str, Any]], rs: Dict[
 
 
 def plan_same(cur: Any, **_kw: Any) -> int:
-    """A `track_same` question for each pair of current rows of one kind of a track that `same_pairs` finds and that
-    was never asked (by the pair, under any guide of the kind), SAME_OPEN waiting at most: how many were added.
-    v10.41: every kind, not only practices, and a pair one post gave too."""
+    """A `track_same` question for each pair `same_pairs` finds that was never asked (under any guide of the kind),
+    SAME_OPEN waiting at most: how many were added."""
     from insight_core.markx import repo, schemas, tracks
     if not on():
         return 0
@@ -1222,9 +1157,9 @@ def apply_same(cur: Any, task: Dict[str, Any], answer: Dict[str, Any]) -> bool:
     return merge(cur, rows[0][1], rows[0][0], rows[1][0], "haiku")
 
 
-# ---- repair (v10.41): rows joined by a weak key split, catalogs asked again ---------------------------------------
+# ---- repair: rows joined by a weak key split, catalogs asked again -----------------------------------------------
 
-CATALOG_ROWS = 5   # rows of one kind that one post alone gave: the post is a catalog read one row an item (v2)
+CATALOG_ROWS = 5   # rows of one kind that one post alone gave: the post is a catalog read one row an item
 
 
 def _member_reports(cur: Any, track_id: str, things: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
@@ -1308,12 +1243,11 @@ def repair_plan(cur: Any, track_id: str) -> Dict[str, Any]:
 
 
 def repair(cur: Any, track_id: str, *, dry_run: bool = True, ask: bool = True) -> Dict[str, Any]:
-    """v10.41: a track's rows made one a thing again, never deleting (keep everything). Each row whose reports are
-    not one thing (`repair_plan`) is split: a member thing wholly in another group is current again (split_from the
-    row), the group's other reports move to that thing or a new one (moved_from: the thing they were joined to); a
-    split-off thing then joins an older current thing of its identity (merged_by key), and every touched row's fields
-    are merged again. A catalog post (CATALOG_ROWS rows of one kind only it gave) is asked again under the current
-    guide (`ask`; its answer folds the rows: fold_catalog). `dry_run`: the plan only. The plan, with what was done."""
+    """A track's rows made one a thing again, never deleting. Each row whose reports are not one thing
+    (`repair_plan`) is split: a member thing wholly in another group is current again (split_from), the group's other
+    reports move to it or a new thing (moved_from); a split-off thing then joins an older current thing of its
+    identity, and every touched row's fields are merged again. A catalog post (CATALOG_ROWS rows only it gave) is asked
+    again under the current guide (`ask`; fold_catalog). `dry_run`: the plan only. The plan, with what was done."""
     plan = repair_plan(cur, track_id)
     if dry_run:
         return dict(plan, done=False)
