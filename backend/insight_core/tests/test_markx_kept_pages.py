@@ -489,6 +489,23 @@ class TheEntityListAndQueueKept(_World):
         with mock.patch.object(EV, "_entity_page", side_effect=AssertionError("built, not sent as kept")):
             EV.kept_entity_page(self.cur, self.widget)
 
+    def test_a_most_opened_page_is_built_once_a_run_not_at_every_list_build(self):
+        # v10.38: a mark between runs (an automatic merge anywhere) makes the list and every page stale; the list is
+        # built again, the opened page only when opened (it has its row of this run)
+        EV.kept_entity_page(self.cur, self.widget)
+        self.keep()
+        self.merge(self.ent("Widget Five", "model"), self.widget)
+        self.assertTrue(EV.kept_missing(self.cur))                  # the list is due
+        with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            out = self.keep()
+        self.assertEqual(built.call_count, 0)                       # the hot page is not built between runs
+        self.assertEqual(out["built"], ["entities", "entity_queue"])
+        self.assertEqual((out["hot"]["pages"], out["hot"]["failed"]), (0, 0))
+        self.assertFalse(EV.kept_missing(self.cur))
+        with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            EV.kept_entity_page(self.cur, self.widget)              # opened: built for its inputs now, as before
+        self.assertEqual(built.call_count, 1)
+
 
 class TheFirstLookAfterADeploy(_World):
     """0232 (#24): at the runner's start (a deploy), its first look builds News and the entity pages before any job."""
