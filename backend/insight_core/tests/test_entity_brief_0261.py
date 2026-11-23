@@ -179,9 +179,11 @@ class Checks(unittest.TestCase):
 
     def test_guide_v2_asks_new_posts_only(self):
         from insight_core.markx import schemas
-        self.assertEqual((schemas.KINDS["track_things"].guide, TT.THINGS_GUIDE), ("track-things-v2", "track-things-v2"))
-        self.assertEqual(schemas.answer_guides("track_things"), ("track-things-v2", "track-things-v1"))
-        body = schemas.guide_body("track-things-v2")
+        # v10.41: v3 (a catalog one row) after v2; v3 keeps v2's rules
+        self.assertEqual((schemas.KINDS["track_things"].guide, TT.THINGS_GUIDE), ("track-things-v3", "track-things-v3"))
+        self.assertEqual(schemas.answer_guides("track_things"), ("track-things-v3", "track-things-v1",
+                                                                 "track-things-v2"))
+        body = schemas.guide_body("track-things-v3")
         self.assertIn("A value says only what its own quote says", body)
         self.assertIn("a result said of those is not the track's", body)
         self.assertIn("by", [f["name"] for f in TT.PRACTICE["fields"]])

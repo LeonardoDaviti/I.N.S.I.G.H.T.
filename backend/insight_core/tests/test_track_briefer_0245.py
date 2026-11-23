@@ -80,8 +80,8 @@ class Switch:
 
 class Pure(Switch, unittest.TestCase):
     def test_the_kinds_guides_planners_and_the_switch(self):
-        for kind, guide in (("track_schema", "track-schema-v1"), ("track_things", "track-things-v2"),
-                            ("track_same", "track-same-v1")):
+        for kind, guide in (("track_schema", "track-schema-v1"), ("track_things", "track-things-v3"),
+                            ("track_same", "track-same-v2")):   # v10.41: v3 (a catalog one row), v2 (every kind)
             self.assertEqual(schemas.KINDS[kind].guide, guide)
             self.assertTrue(schemas.guide_body(guide).startswith("#"))
             self.assertIn(kind, tasks.PLANNERS)
@@ -440,14 +440,16 @@ class Flow(_Briefer):
         claim = {"kind": TT.PRACTICE_KIND, "fields": {"what": v("print cable clips in PETG", "printed in PETG")}}
         self.things(f, a, {"kind": "print", "fields": {"what": v("desk clip for cables", "A desk clip for cables"),
                                                       "files": v(link, link), "material": v("pla", "Printed in PLA")}})
-        self.things(f, b, {"kind": "print", "fields": {"what": v("clip remix", "My remix of the clip"),
+        self.things(f, b, {"kind": "print", "fields": {"what": v("desk clip remix", "My remix of the clip"),
                                                       "files": v(link, link), "material": v("petg", "printed in PETG")}},
                     claim)
         prints = TT.current(self.cur, f, "print")
         self.assertEqual(len(prints), 1, "one link, one thing")
         rs = TT.reports(self.cur, f, [prints[0]["id"]])[prints[0]["id"]]
         self.assertEqual({r["post"] for r in rs}, {a, b})
-        self.assertEqual(prints[0]["fields"]["material"]["value"], "petg", "the newest post's value")
+        # v10.41: one link and names that agree ("desk clip"); each field the value most posts give, a tie the earliest's
+        self.assertEqual(prints[0]["fields"]["material"]["value"], "pla", "a tie: the earliest post's value")
+        self.assertEqual(prints[0]["fields"]["material"]["post"], a)
         self.assertEqual(len(TT.current(self.cur, f, TT.PRACTICE_KIND)), 1)
 
     def test_an_explainer_that_links_a_release_joins_its_row(self):

@@ -773,7 +773,7 @@ def _track_fields(a: Dict[str, Any], input: str) -> Optional[str]:
 
 
 def _track_same(a: Dict[str, Any], _input: str) -> Optional[str]:
-    """0245 (track-same-v1): the reason is one line."""
+    """0245 (track-same-v1, v2): the reason is one line."""
     return "why: one line" if "\n" in a["why"].strip() else None
 
 

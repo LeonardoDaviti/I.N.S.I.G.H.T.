@@ -395,12 +395,9 @@ def _cite(rs: Sequence[Dict[str, Any]], posts: Dict[str, Dict[str, Any]]) -> Lis
 
 
 def _fields(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """0274: a thing's fields from these reports only (track_things.remerge's rule: a newer post's value replaces)."""
-    fields: Dict[str, Any] = {}
-    for r in rs:   # oldest first
-        for name, v in (r["values"] or {}).items():
-            fields[name] = {"value": v.get("value"), "quote": v.get("quote"), "post": r["post"]}
-    return fields
+    """0274: a thing's fields from these reports only (track_things.merged_fields: one rule for both)."""
+    from insight_core.markx import track_things
+    return track_things.merged_fields(rs)
 
 
 def _sections(things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]], posts: Dict[str, Dict[str, Any]],
