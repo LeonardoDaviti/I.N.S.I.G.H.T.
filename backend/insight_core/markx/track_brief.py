@@ -77,13 +77,22 @@ def _order(kinds: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
     return order
 
 
-def rows_between(cur: Any, track_id: str, start: Optional[datetime], end: Optional[datetime]
-                 ) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
-    """(the current things with a report from a post dated in [start, end), each with `new` (its first report's post
-    in the period) — kinds in schema order, new first, newest post first — and every thing's reports)."""
+def track_rows(cur: Any, track_id: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]],
+                                                Dict[str, List[Dict[str, Any]]]]:
+    """(the track's kinds, its current things of those kinds, every thing's reports): what `rows_between` cuts a
+    period from."""
     kinds = TT._kinds(cur, track_id)
     things = [t for t in TT.current(cur, track_id) if t["kind"] in kinds]
-    rs = TT.reports(cur, track_id, [t["id"] for t in things])
+    return kinds, things, TT.reports(cur, track_id, [t["id"] for t in things])
+
+
+def rows_between(cur: Any, track_id: str, start: Optional[datetime], end: Optional[datetime], *,
+                 loaded: Optional[Tuple[Any, Any, Any]] = None
+                 ) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+    """(the current things with a report from a post dated in [start, end), each with `new` (its first report's post
+    in the period) — kinds in schema order, new first, newest post first — and every thing's reports). `loaded`: the
+    track's `track_rows`, read once by a caller that cuts many periods (v10.42: `plan`)."""
+    kinds, things, rs = loaded or track_rows(cur, track_id)
 
     def inside(at: Optional[datetime]) -> bool:
         return at is not None and (start is None or at >= start) and (end is None or at < end)
@@ -158,11 +167,15 @@ def plan(cur: Any, *, now: Optional[datetime] = None, **_kw: Any) -> int:
                         WHERE a.track_id = %s ORDER BY a.week, a.created_at DESC""", (tid,))
         last = {w: (ids, at, st) for w, ids, at, st in cur.fetchall()}
         this = monday(now)
+        # v10.42: the track's rows and reports read once, each week cut from them (was: all of them read again for
+        # each of its ISSUE_WEEKS + 1 weeks, on every digest lease); asking adds no row or report
+        loaded = None
         for w in _weeks(cur, tid, now):
             was = last.get(w)
             if was is not None and was[2] in ("open", "leased"):
                 continue
-            rows, rs = rows_between(cur, tid, *bounds(w))
+            loaded = loaded or track_rows(cur, tid)
+            rows, rs = rows_between(cur, tid, *bounds(w), loaded=loaded)
             # the week in progress at most every BRIEF_EVERY, unless most rows its brief cites left it (0269)
             if was is not None and w == this and now - was[1] < BRIEF_EVERY and not _cites_left(cur, tid, w, rows):
                 continue

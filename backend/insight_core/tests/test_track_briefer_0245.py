@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
@@ -671,8 +672,12 @@ class Flow(_Briefer):
         def asks():
             self.cur.execute("SELECT count(*) FROM mx_track_brief_asks WHERE track_id = %s AND week = %s", (f, week))
             return self.cur.fetchone()[0]
-        with self.conn.transaction():
+        self.cur.execute("UPDATE mx_track_things SET first_at = first_at - interval '20 days' WHERE track_id = %s", (f,))
+        weeks = TB._weeks(self.cur, f, now)
+        with self.conn.transaction(), mock.patch.object(TB, "track_rows", wraps=TB.track_rows) as read:
             TB.plan(self.cur, now=now + timedelta(minutes=5))
+        self.assertGreater(len(weeks), 1)
+        self.assertEqual(read.call_count, 1, f"v10.42: the track's rows read once for its {len(weeks)} weeks")
         self.assertEqual(asks(), 2, "2 of the 3 rows its brief cites left the week in progress: asked again within "
                                     "BRIEF_EVERY")
         with self.conn.transaction():
