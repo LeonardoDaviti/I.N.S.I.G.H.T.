@@ -38,6 +38,3 @@ def read_only() -> None:
     database.close_all()   # a pool built before this call would keep writable connections
 
 
-def is_read_only(cur) -> bool:
-    cur.execute("SHOW transaction_read_only")
-    return cur.fetchone()[0] == "on"

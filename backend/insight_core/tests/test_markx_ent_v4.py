@@ -311,7 +311,7 @@ class StoredAndRead(_Db):
         for n in range(3):
             self.answer(self.post(n, T0 + (n + 8) * H, title="Post c", text=DOCS), [ent("Orbit Filing", "Orbit Filing", "document", "subject")])
         self.assertEqual(self.stage(full=True)["surges"]["surges"], 1)
-        for role in schemas.NOT_SURGING:
+        for role in ("source", "recommended"):   # never a surge's credit
             self.assertEqual(S.credits(I.load_book(self.cur), role, "x", None, None), {})
 
 

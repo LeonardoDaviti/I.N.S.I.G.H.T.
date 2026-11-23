@@ -585,26 +585,6 @@ def pick(cur: Any, now: datetime, *, within: int = WITHIN_DAYS, min_voices: int 
     return picked, checked
 
 
-def picked_stamp(cur: Any, got: Picked) -> str:
-    """v10.17 (0186): what the list is made from, as a digest: the picked stories (their members, sources, dates,
-    types and origins), the count checked, and the readings and entity answers of the picked stories' members. An
-    answer elsewhere (a read-v3 of a post in no announced story, the worker's steady stream) leaves it unchanged."""
-    import hashlib
-    picked, checked = got
-    ids = sorted({p for s, _et, _v in picked.values() for p in s["posts"]})
-    cur.execute("""SELECT (SELECT count(*) FROM mx_readings WHERE post_id = ANY(%(ids)s::uuid[])
-                                                             AND guide = ANY(%(g)s)),
-                          (SELECT max(at)::text FROM mx_mention_sets WHERE post_id = ANY(%(ids)s::uuid[]))""",
-                {"ids": ids, "g": reading5.guides(cur, "read-v2", "read-v3")})   # 0212
-    reads, sets = cur.fetchone()
-    h = hashlib.sha256(repr((checked, reads, sets)).encode())
-    for sid in sorted(picked):
-        s, et, voices = picked[sid]
-        h.update(repr((sid, s["headline"], str(s["first_at"]), et, voices,
-                       sorted((p.id, p.source, str(p.at), p.event_type, p.origin) for p in s["posts"].values()))).encode())
-    return h.hexdigest()
-
-
 PRODUCT_TYPES = ("model", "product", "software", "dataset", "project")
 
 

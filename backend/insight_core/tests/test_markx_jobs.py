@@ -423,7 +423,6 @@ class TheRunner(_Api):
         svc = StoriesService(db_url())
         self.decide_row(started=20, wanted=5)                          # wanted, not for ten minutes: the rebuild goes on
         self.assertFalse(svc._decision_waiting())
-        self.assertIsNone(jobs.held_by_mark_ix(self.cur))
         self.decide_row(started=45 * 60 + 44, wanted=45 * 60 + 43, finished=45 * 60 + 47)
         self.assertTrue(svc._decision_waiting())                       # its turn
         self.assertTrue(jobs.decision_waits(self.cur, datetime.now(timezone.utc), DECISION_WAIT_S))

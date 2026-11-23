@@ -56,7 +56,7 @@ from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_M
                                               REFERENCE_KINDS, channel_names, discover_address, discover_open, discover_place,
                                               federation, follow_url, not_channel, one_card_per_domain, order, origins,
                                               other_channel, owner_domain, place_kind, reader_fit, score, site_unit)
-from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
+from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, threads)
 from insight_core.utils.discover_rules import GROWTH_DAYS, growth, page_key_of, pages as pages_of
 from insight_core.utils.entity_originals import supplier_reason
@@ -66,7 +66,6 @@ from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
 
-STORY_WINDOW = SAME_TEXT_WITHIN   # News keeps the stories begun in it (NewsService.NEWS_KEEP)
 SETTINGS_KEY = "stories"
 LOCK_KEY = "insight.stories"
 # v10.13.7: one incremental run works STEP_BUDGET_S at most, then yields (its queue waits for the next run, after the
@@ -1718,7 +1717,6 @@ def _words(s: Dict[str, Any]) -> str:
     parts = [s["key"], *s["voice_names"], *(f"{a['title'] or ''} {a['url']}" for a in s["articles"]),
              *(f"{o['title'] or ''} {o['url']}" for o in s.get("origin_stories", ()))]
     return " ".join(parts).casefold()
-
 
 
 if __name__ == "__main__":   # a hand-run full rebuild: python -m insight_core.services.stories_service full

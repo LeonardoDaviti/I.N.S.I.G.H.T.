@@ -60,7 +60,6 @@ logger = logging.getLogger("insight.originals")
 
 SCHEDULER_KEY = "scheduler_config"   # OperationsService.SETTINGS_KEY_SCHEDULER: the row the dialog writes (0126: 0123 read "scheduler")
 READS_KEY = "discover_reads"
-COLLECT_SETTING = "collect_originals"   # read by originals_rules.collect_setting
 BUDGET_KEY = "originals_budget"   # the shared credit (originals_rules.credit_after): {credit, counted_at}
 CITED_KEY = "longread_citations"   # 0138 F3: {key: {n, posts}}: the sites the long-reads you opened cite
 SUPPLIERS_KEY = "originals_suppliers"   # 0138 D2: {at, current: {key: {n, urls, since}}, suggested: {key: first at}}

@@ -457,14 +457,6 @@ def answers(cur: Any, members: Iterable[str]) -> Dict[Tuple[str, str], Dict[str,
             for p, h, a, d, f, l, at in cur.fetchall()}
 
 
-def confirmed_elsewhere(cur: Any, book: Any, platform: str, handle: str) -> Set[str]:
-    """The roots the owner said have this handle."""
-    cur.execute("""SELECT DISTINCT ON (entity_id) entity_id::text, answer FROM mx_entity_handles
-                    WHERE platform = %s AND handle = %s ORDER BY entity_id, created_at DESC, id DESC""",
-                (platform, handle))
-    return {book.root(e) for e, a in cur.fetchall() if a == "yes" and book.root(e) in book.ents}
-
-
 def entity_handles(cur: Any, book: Any, root: str, members: Iterable[str], by_sources: Sequence[Dict[str, Any]] = ()
                    ) -> List[Dict[str, Any]]:
     """The entity's known handles: the owner's yes (with the display name and time range the pairs gave) and the

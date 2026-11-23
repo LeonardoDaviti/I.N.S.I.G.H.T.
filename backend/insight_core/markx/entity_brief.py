@@ -269,12 +269,6 @@ def line_parts(kind: str, t: Dict[str, Any], names: Sequence[str] = ()) -> Tuple
     return text, evidence if adds else None
 
 
-def line_text(kind: str, t: Dict[str, Any], names: Sequence[str] = ()) -> str:
-    """The line's text and its note as one string (the tests' and the logs' reading of a line)."""
-    text, note = line_parts(kind, t, names)
-    return text + (f" ({note})" if note else "")
-
-
 def own_what(t: Dict[str, Any], names: Sequence[str]) -> bool:
     """0269: a what_it_is row about the entity itself: its `subject` is one of the entity's names (a definition of
     "<Entity> Camera" from a post about it is that product's, not the entity's). A row without a subject (asked
@@ -377,7 +371,6 @@ def series(reported: Sequence[Dict[str, Any]], *, min_posts: int = 2) -> List[Di
                     "points": pts, "posts": len({p["post"] for p in pts}), "disputes": disputes})
     out.sort(key=lambda s: (-s["posts"], -len(s["points"]), s["measure"]))
     return out
-
 
 
 def _cite(rs: Sequence[Dict[str, Any]], posts: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -691,7 +684,6 @@ def plan_senses(cur: Any, book: Any, worth: Sequence[Tuple[str, List[str]]]) -> 
                             WHERE id = %s AND status = 'answered'""", (tid,))
             n += cur.rowcount
     return n
-
 
 
 def stamp(cur: Any, root: str) -> List[Any]:

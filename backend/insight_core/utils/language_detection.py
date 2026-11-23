@@ -49,8 +49,6 @@ STOPWORDS = {
     },
 }
 
-GEORGIAN_STOPWORDS = {"და", "არის", "რომ", "ეს", "არ", "თუ", "ან", "მე", "შენ", "ის"}
-
 
 def detect_language(text: str | None) -> Dict[str, object]:
     """Detect a language code and confidence using simple script/stopword heuristics."""

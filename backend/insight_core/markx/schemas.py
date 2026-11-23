@@ -37,7 +37,6 @@ ENTITY_ROLES = ["subject", "actor", "compared", "predecessor", "venue", "mention
 ENTITY_TYPES_V4 = ["org", "person", "model", "product", "software", "document", "dataset", "event", "place", "law", "other"]
 ENTITY_ROLES_V4 = ENTITY_ROLES + ["source", "recommended"]
 TYPE_READS = {"paper": "document"}       # a stored ent-v3 type as every reader reads it (no row rewritten)
-NOT_SURGING = ("source", "recommended")  # never a surge's credit (surges count subject and actor only)
 
 
 def entity_type(t: Optional[str]) -> Optional[str]:
@@ -737,7 +736,6 @@ class Kind:
     guide: Optional[str]          # the guide id (markx/guides/<id>.md); None: a kind with no prompt
     subject: str                  # mx_tasks.subject_kind
     schema: Optional[Dict[str, Any]]
-
 
 
 KINDS: Dict[str, Kind] = {k.name: k for k in (

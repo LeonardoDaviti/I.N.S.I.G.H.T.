@@ -26,8 +26,6 @@ from insight_core.markx.back import _date
 # 0180: the gates are Pairing's `develops` row (back.DEVELOPS); named here as before.
 ALWAYS_TYPES = back.DEVELOPS.always_types       # specific by their type (method: once 0151's types add it)
 RELEASE_TYPES = back.DEVELOPS.release_types     # specific only as one release (see `specific`)
-LONG_TYPES = ALWAYS_TYPES + RELEASE_TYPES
-RELEASE_LEVELS = back.DEVELOPS.release_levels   # an entity level that is one release
 MAIN_SHARE = back.DEVELOPS.main_share   # provisional: the main subject is the subject of at least this share of members
 AGAIN = back.DEVELOPS.again       # a long-lived story's back trigger may fire again this long after its last window
 
@@ -98,17 +96,6 @@ def specific(e: Optional[_Ent], mention_type: Optional[str] = None) -> bool:
         return False
     return pairing.specific(back.DEVELOPS, e.type or mention_type, level=e.level, version=e.version,
                             variant=e.variant, build=e.build, status=e.status)   # 0180: the develops row's gate
-
-
-def _same_version(a: Optional[_Ent], b: Optional[_Ent]) -> bool:
-    """Two entities of one name key at the same version (a duplicate not merged yet): their version, variant and build
-    agree (none named on both counts as agreeing)."""
-    if a is None or b is None or a.status == "not_entity":
-        return False
-
-    def f(v: Optional[str]) -> str:
-        return (v or "").strip().casefold()
-    return (f(a.version), f(a.variant), f(a.build)) == (f(b.version), f(b.variant), f(b.build))
 
 
 # ---- the stories that keep listening ------------------------------------------------------------------------

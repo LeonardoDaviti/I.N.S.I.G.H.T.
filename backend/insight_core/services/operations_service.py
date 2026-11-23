@@ -80,7 +80,6 @@ HEALTH_SUMMARY_KEYS: Dict[HealthStatus, str] = {
     HealthStatus.ERROR: "errors",
 }
 # "Failing" in the spec glossary: retrying now (error) or waiting to retry (backoff).
-FAILING_STATUSES = (HealthStatus.ERROR, HealthStatus.BACKOFF)
 OVERVIEW_HEALTH_ROWS = 8
 # The recent jobs the overview and the top bar's running sign list (the scheduler writes ~4-6 rows per cycle).
 OVERVIEW_JOBS = 50
@@ -121,7 +120,6 @@ def stalled_fields(source: Dict[str, Any], state: Optional[FetchStateRow], inter
             "reason": state.last_error if state is not None and last_attempt_failed(state) else None}
 
 
-EMPTY_SOURCE_HEALTH: Dict[str, Any] = {"summary": empty_health_summary(), "rows": []}
 CADENCE_OVERRIDE_MIN_HOURS = 1.0
 CADENCE_OVERRIDE_MAX_HOURS = 2160.0   # 90 days
 

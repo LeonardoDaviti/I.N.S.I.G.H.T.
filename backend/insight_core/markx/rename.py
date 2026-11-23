@@ -34,7 +34,6 @@ from insight_core.markx import pairing
 
 KIND = "rename"
 NAMED_POSTS = 3              # the newer one's first posts about it read for the older one's name
-SHOWN_POSTS = 2              # the question shows each side's first and last post
 CODE_HOSTS = ("github.com", "gitlab.com", "codeberg.org", "huggingface.co", "bitbucket.org")
 ADDRESS_KINDS = ("code", "release", "demo")
 CUE = re.compile(r"\b(formerly|renamed|now called|now named|previously (?:known as|called|named)|rebrand(?:ed|ing)?|"

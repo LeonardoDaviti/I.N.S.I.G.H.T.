@@ -44,7 +44,6 @@ EVERY = timedelta(minutes=30)         # at most one question in this time
 PRIORITY = -1                         # first among its kind's open tasks (repo.lease_tasks: a caller's urgency)
 ENTITIES_SHOWN = 3
 HEADLINE_CHARS = 160
-NEW_SINCE = "New since"
 PLACE_KIND, PLACE_GUIDE = "news_place", "news-place-v1"
 PLACE_EVERY = timedelta(minutes=10)   # 0197: at most one placement question in this time
 EXAMPLES = 3                          # 0197: a section's most important current headlines shown with its title

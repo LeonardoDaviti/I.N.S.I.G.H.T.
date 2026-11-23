@@ -72,8 +72,6 @@ NAME_MIN_NEW_VOICES = 2             # ... by 2+ voices that didn't say it then (
 # A later burst of 3+ voices new to the name is judged as a first (issue 0070). Measured, the rule: 16 more
 # surges on the lab, 12 real; 3 not compared.
 NAME_WAVE_VOICES = 3
-NAME_TITLES = NAME_BASELINE + NAME_WINDOW   # the titles a windowed job reads (a full run: every one): a burst
-                                    # of the last 48 hours and its 30 days before; an older one's baseline is shorter (0051)
 NAME_MAX_WORDS = 3                  # not measured
 NAME_SKIP_KINDS = frozenset({"arxiv"})
 

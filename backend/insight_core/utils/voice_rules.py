@@ -53,7 +53,6 @@ AGGREGATOR_MIN_POSTS = 10
 AGGREGATOR_OWN_SHARE = 0.3
 AGGREGATOR_MIN_KEYS = 10
 RELATED_REPOSTS = 10
-SAME_MAKER_SHARE = 0.3
 CLOSE_MAKER_SHARE = 0.6       # both this much about one maker and linking each other: one voice
 HOME_HOST_SHARE = 0.5         # a host holding half a source's posts is its own address
 ALSO_WITHIN_HOURS = 72        # "Also on": one post on two channels of a voice within 72 hours

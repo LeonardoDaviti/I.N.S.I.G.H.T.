@@ -379,11 +379,6 @@ def decision_hold(ix: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     return None, f"{what}: the decision run goes ahead on the stories as stored"
 
 
-def held_by_mark_ix(cur: Any) -> Optional[str]:
-    """0209: why Mark IX holds a decision run now (`decision_hold`), or None; /api/status's health names it."""
-    return decision_hold(mark_ix(cur))[0]
-
-
 def decision_waits(cur: Any, now: datetime, wait: float) -> bool:
     """v10.13.8, 0209: whether Mark IX's story job steps aside now for a decision run: Mark X is on, the run is wanted,
     not running, not waiting out a failed run's backoff, and has waited `wait` seconds or more (since it was wanted or
