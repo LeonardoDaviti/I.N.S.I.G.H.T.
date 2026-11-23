@@ -1,6 +1,7 @@
-"""Discover (issues 0050, 0065, 0067): the sites and accounts your sources keep linking, and where
-your stories start. Pure functions over plain data; db/repo_discover.py counts the links in SQL by
-these rules (`suggestions` is its reference) and services/stories_service.py ranks what it finds.
+"""Discover: the sites and accounts your sources keep linking, and where your stories start.
+
+Pure functions over plain data; db/repo_discover.py counts the links in SQL by these rules (`suggestions` is its
+reference) and services/stories_service.py ranks what it finds.
 """
 from __future__ import annotations
 
@@ -17,50 +18,37 @@ from insight_core.utils.post_links import LANGUAGE, NUMBERISH, is_article, is_ho
 from insight_core.utils.stamps import ADDRESSES, fingerprint
 from insight_core.utils.url_normalization import TWEET_PATH
 
-DISCOVER_MIN_VOICES = 3        # the prototype's, not measured (the prototype: plan/research/dedup-prototype)
+DISCOVER_MIN_VOICES = 3        # the prototype's, not measured
 DISCOVER_MIN_ARTICLES = 2      # the prototype's, not measured
 DISCOVER_ARTICLE_SHARE = 0.4   # the prototype's, not measured
-# The sites where INSIGHT follows one account, not the whole site: its source kinds (Reddit, X,
-# Telegram, YouTube) and the feed finder's platform feeds (GitHub, Medium). Measured on the
-# server's data, 2026-10-30: a test by "8+ first path segments" called 249 hosts platforms, split
-# publishers by year or section (nytimes.com/2026) and hid blogs whose posts sit at the root.
+# The sites where INSIGHT follows one account, not the whole site (measured: plan/issues/0080).
 DISCOVER_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube", "bluesky")))
                                | {"github.com", "medium.com"})
-# Of those, the ones a source kind reads an account of (services/discover_reads.kind_source), issue 0172.
+# Of those, the ones a source kind reads an account of (services/discover_reads.kind_source).
 KIND_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube", "bluesky"))))
 # First path segments of a platform that name a kind of page, not an account.
 NOT_ACCOUNT = frozenset({"status", "watch", "pull", "issues", "i", "p", "s", "search", "hashtag", "intent",
                          "share", "home", "explore", "wiki", "posts", "in"})
-# A post of a platform account is one of its articles (issue 0065). A tweet by its shape, on any host
-# (x.com, a Nitter, xcancel.com, fxtwitter.com: the forms 0066 gives one address), is the account's;
-# elsewhere on a platform, /<account>/<number> (a Telegram post, t.me/<channel>/<id>).
+# A platform account's post is one of its articles: a tweet on any host, elsewhere /<account>/<number>.
 TWEET = TWEET_PATH
 PLATFORM_POST = re.compile(r"^/[^/?#]+/\d+(?:[?#]|$)")
-BSKY_POST = re.compile(r"^/profile/[^/?#]+/post/[a-z0-9]+(?:[/?#]|$)", re.I)   # 0235: a Bluesky post is its account's
-ORIGIN_MIN_VOICES = 2      # the stories whose origins Discover counts: 2+ voices, the ones 0064 counted; not measured
+BSKY_POST = re.compile(r"^/profile/[^/?#]+/post/[a-z0-9]+(?:[/?#]|$)", re.I)
+ORIGIN_MIN_VOICES = 2      # the stories whose origins Discover counts; not measured
 
-# ---- platforms from the data (issue 0080, measured on a copy of the lab: plan/research/0080-measure) ----
-# A host is a platform when the pages your sources link there sit under many owners: OWNERS_MANY+
-# owner segments, or OWNERS_MIN+ with none holding over OWNER_TOP_SHARE of the pages, and
-# OWNER_VOICES+ owners each linked by 2+ voices. It found 10 of the lab's 1,313 hosts with 3+ voices
-# (the 6 listed ones, a model hub, two social servers, a contributors' magazine); looser, it took
-# publications by section. An owner is a path segment with pages beneath it, not a number, a date, a
-# language, an id or a file; when one segment holds PREFIX_SHARE+ of the pages (/r/, /profile/), the
-# owner is the next one, past a language too (/ru/companies/<owner>), down to the third segment
-# (OWNER_DEPTH); never past two shared segments (a government site's /government/publications/<doc>).
+# ---- platforms from the data (measured: plan/issues/0080) ----
+# A host is a platform when the pages your sources link there sit under many owners (OWNERS_*). An owner is a path
+# segment with pages beneath it (owner_segment); past a segment holding PREFIX_SHARE+ of the pages (/r/, /profile/)
+# the owner is the next one, down to OWNER_DEPTH, never past two shared segments.
 OWNERS_MANY, OWNERS_MIN, OWNER_TOP_SHARE, OWNER_VOICES = 50, 15, 0.2, 2
 PREFIX_SHARE = 0.7
 OWNER_DEPTH = 3
-# Issue 0109 W4: a host whose pages mark their owner (/@<owner>/..., /~<owner>/..., /<owner>/posts/...) is a
-# platform of those owners when PLACE_SHARE of its pages are so marked under 2+ owners, however few: a
-# creators' platform (server and lab: 1 host, 3 owners). A section is never marked so.
+# A host whose pages mark their owner (/@<owner>, /~<owner>, /<owner>/posts/) is a platform of those owners when
+# PLACE_SHARE of its pages are so marked under 2+ owners (0109).
 OWNER_MARKS = ("@", "~")
 MARKED_OWNERS = ("@",)   # the prefix of such a platform: only a page that marks its owner names one
 OWNER_POSTS = frozenset({"posts", "post", "p"})
 NOT_OWNER = re.compile(r"^(v?\d[\d.\-_v]*|[a-z]{2}|\d{4}-\d\d(-\d\d)?.*|[0-9a-f]{8,}|.*\.(html?|php|aspx?|pdf))$", re.I)
-# Two letters name no owner (a store's /dp/ and /gp/ pages: 283 of the lab's links). A language segment (issue 0109
-# W11: an organisation's handle, ai-sage, was read as one): the whole first path part, a language of ISO 639-1,
-# and a region (ru-RU), a UN area (es-419) or a script (zh-Hant) after it.
+# Two letters name no owner (a store's /dp/); a language segment does neither (language_segment).
 ISO_639_1 = frozenset("""aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy da de
 dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ii ik io is it
 iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd
@@ -78,42 +66,36 @@ Platforms = Mapping[str, Tuple[str, ...]]   # a data platform's host -> the path
 
 
 def path_segments(url: str) -> Tuple[str, ...]:
-    """An address's path segments, lower case, its query and fragment aside."""
     _, _, rest = bare(url).partition("/")
     return tuple(seg for seg in re.split(r"[?#]", rest, maxsplit=1)[0].lower().split("/") if seg)
 
 
 def _id_like(seg: str) -> bool:
-    """An opaque id: 8+ letters and digits mixed, no word break (a forum's /posts/he3styo9vpk7m8zi4)."""
     return len(seg) >= 8 and bool(re.fullmatch(r"[a-z0-9]+", seg, re.I) and re.search(r"\d", seg)
                                    and re.search(r"[a-z]", seg, re.I))
 
 
 def language_segment(seg: str) -> bool:
-    """A language tag (ISO_639_1, with a region, a UN area or a script after it): en, ru-RU, es-419, zh-Hant."""
+    """en, ru-RU, es-419, zh-Hant: an ISO 639-1 language, with a region, a UN area or a script after it."""
     primary, _, sub = seg.lower().replace("_", "-").partition("-")
     return primary in ISO_639_1 and (not sub or (len(sub) == 2 and sub.isalpha()) or (len(sub) == 3 and sub.isdigit())
                                      or sub in SCRIPTS)
 
 
 def owner_segment(seg: str, *, first: bool = False) -> bool:
-    """A path segment that can name an owner: not a number, a date, an id or a file, and, as the whole first
-    path part (`first`), not a language (issue 0109)."""
+    """Not a number, a date, an id or a file, and, as the whole first path part (`first`), not a language."""
     return not NOT_OWNER.match(seg) and not _id_like(seg) and not (first and language_segment(seg))
 
 
 def is_self_link(url: str, selves: Iterable[str]) -> bool:
-    """A link from a source to its own page on a platform (issue 0080: a creator linking their page
-    on a creators' platform): one of the first OWNER_DEPTH path segments is one of its names."""
+    """One of the first OWNER_DEPTH path segments is one of the source's names."""
     names = set(selves)
     return bool(names) and any(seg.lstrip("@~") in names for seg in path_segments(url)[:OWNER_DEPTH])
 
 
 def platform_rows(links: Iterable[Tuple[str, str]]) -> List[Tuple[str, Tuple[str, ...], int, FrozenSet[str]]]:
-    """(voice, address) links as the platform rule reads them, grouped as DiscoverRepository.platforms
-    groups them in SQL: (host, its first OWNER_DEPTH segments and "*" when deeper ones follow, the
-    addresses, their voices), for the hosts that aren't a listed platform, tweets aside. `links`: every
-    kept link but Saved's and a self-link."""
+    """(voice, address) links grouped as DiscoverRepository.platforms groups them in SQL: (host, its first
+    OWNER_DEPTH segments and "*" when deeper ones follow, the addresses, their voices)."""
     found: Dict[Tuple[str, Tuple[str, ...]], Tuple[Set[str], Set[str]]] = defaultdict(lambda: (set(), set()))
     for voice, url in links:
         host, _, rest = bare(url).partition("/")
@@ -129,8 +111,7 @@ def platform_rows(links: Iterable[Tuple[str, str]]) -> List[Tuple[str, Tuple[str
 
 def find_platforms(rows: Iterable[Tuple[str, Tuple[str, ...], int, Iterable[str]]], *,
                    min_voices: int = DISCOVER_MIN_VOICES) -> Dict[str, Tuple[str, ...]]:
-    """The hosts that are platforms by the data (the rule above), each with the path its owners sit
-    under. `rows`: platform_rows'."""
+    """The hosts that are platforms by the data, each with the path its owners sit under."""
     by_host: Dict[str, List[Tuple[Tuple[str, ...], int, Set[str]]]] = defaultdict(list)
     for host, segs, urls, voices in rows:
         by_host[host].append((tuple(segs), int(urls), set(voices)))
@@ -178,7 +159,6 @@ def find_platforms(rows: Iterable[Tuple[str, Tuple[str, ...], int, Iterable[str]
 
 
 def _marked_owner(segs: Tuple[str, ...]) -> Optional[str]:
-    """The owner a page marks as its own (/@<owner>, /~<owner>, /<owner>/posts/<x>), else None."""
     if not segs:
         return None
     owner = segs[0].lstrip("".join(OWNER_MARKS))
@@ -190,7 +170,6 @@ def _marked_owner(segs: Tuple[str, ...]) -> Optional[str]:
 
 
 def _marked_owners(paths: List[Tuple[Tuple[str, ...], int, Set[str]]]) -> Optional[Set[str]]:
-    """The owners of a host whose pages mark them (PLACE_SHARE of its pages, 2+ owners), else None."""
     total = sum(urls for _, urls, _ in paths)
     owners: Set[str] = set()
     marked = 0
@@ -203,11 +182,10 @@ def _marked_owners(paths: List[Tuple[Tuple[str, ...], int, Set[str]]]) -> Option
 
 
 def platform_key(url: str, prefix: Tuple[str, ...]) -> Optional[str]:
-    """The owner an address on a data platform is under: host/<prefix>/<owner>; None for a page
-    outside the prefix or one whose segment there names no owner (a kind of page, a number, an id)."""
+    """host/<prefix>/<owner> of an address on a data platform; None outside the prefix or for no owner."""
     host = publication_of(bare(url).partition("/")[0])
     segs = path_segments(url)
-    if tuple(prefix) == MARKED_OWNERS:   # issue 0109: owners only where a page marks them (/@x, /~x, /x/posts/)
+    if tuple(prefix) == MARKED_OWNERS:   # owners only where a page marks them (/@x, /~x, /x/posts/)
         return f"{host}/{segs[0]}" if _marked_owner(segs) else None
     level = len(prefix)
     if segs[:level] != prefix or len(segs) <= level:
@@ -218,35 +196,23 @@ def platform_key(url: str, prefix: Tuple[str, ...]) -> Optional[str]:
     return "/".join((host, *prefix, owner))
 
 
-# ---- what a place is (issue 0080): references and paper sources are not sources to follow ----------
-# Measured: a reference is told by its address's shape, not by its links (undated, re-linked pages are
-# mostly ordinary blogs: 44 hits, none a reference; help and docs pages are linked in bursts like news).
-# Government sites are no references: they publish dated press releases (they stay suggestions).
+# ---- what a place is: references and paper sources are not sources to follow (0080) ----------
+# A reference is told by its address's shape, not by its links.
 REFERENCE_HOST = re.compile(r"^(?:www\.)?(?:help|support|docs|developer)\.", re.I)
 REFERENCE_PATH = frozenset({"docs", "help", "support"})
-# A paper id (a preprint's yymm.nnnnn, a DOI's 10.nnnn prefix): a host whose pages hold them, and no
-# owner, is a paper source; its papers stay in Classics and stories, and it is never a suggestion.
+# A host of paper ids and no owner is a paper source: never a suggestion (its papers stay in stories and Classics).
 PAPER_ID = re.compile(r"^(?:\d{4}\.\d{4,5}(?:v\d+)?(?:\.pdf)?|10\.\d{4,9})$")
-PLACE_SHARE = 0.6   # of a suggestion's shown pages (the measured share of reference paths)
+PLACE_SHARE = 0.6   # of a suggestion's shown pages (measured: plan/issues/0080)
 
 
 def reference_address(url: str) -> bool:
-    """A help, docs, support or developer page: a host so named, or a /docs, /help, /support path."""
     host = bare(url).partition("/")[0]
     segs = [s for s in path_segments(url)[:3] if not LANGUAGE.match(s)][:2]
     return bool(REFERENCE_HOST.match(host)) or any(s in REFERENCE_PATH for s in segs)
 
 
-# Issue 0109 W4, shapes of what isn't a source, each measured on the server's 1,275 suggestions and the lab's
-# 1,082 (their shown pages) before it was adopted (counts in 0109's Built):
-# - an archive: a page holding another full address (/web/<date>/https:/<site>/...), or a file (an image, a
-#   sound, a script): another site's page, or no article (server 3: two web archives, a CDN);
-# - an app's shared pages: an opaque id (a uuid, 16+ hex) right after a share-like segment (/share/<id>,
-#   /c/<id>, /chat/<id>, /notebook/<id>): a conversation, not a publication (server 4: three chat apps and a
-#   notebook app). An id alone is no sign: a newspaper's articles are /content/<uuid>;
-# - documents and data: a first segment (a language aside) that names a kind of record (DOCUMENT_PATH: a
-#   register's /documents/, a court's /docket/, /statistics/, a leaderboard's /sota/): server 11, all right;
-# - a paper: 0106's paper id (addresses.paper_id) or a /paper/ path (a proceedings' /paper/<year>/hash/<hex>).
+# Shapes of what isn't a source (measured: plan/issues/0109): an archive's copy or a file, an app's shared page (an
+# opaque id after a share-like segment; an id alone is no sign), a record or data page, a paper.
 _EMBEDDED = re.compile(r"/https?(?::|%3a)(?:/|%2f)", re.I)
 _FILE = re.compile(r"\.(?:png|jpe?g|gif|webp|svg|avif|ico|bmp|tiff?|mp4|mp3|m4a|wav|ogg|webm|mov|woff2?|css|js)$", re.I)
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
@@ -264,19 +230,16 @@ def _path(url: str) -> str:
 
 
 def archive_address(url: str) -> bool:
-    """Another site's page kept here (its full address in the path), or a file, not an article."""
     path = _path(url)
     return bool(_EMBEDDED.search(path) or re.search(r"https?%3a%2f%2f", url, re.I) or _FILE.search(path))
 
 
 def app_address(url: str) -> bool:
-    """An app's shared page: an opaque id right after a share-like segment."""
     segs = [s.lower() for s in _path(url).split("/") if s]
     return any(a in SHARE_PATH and bool(_UUID.search(b) or _HEX.search(b)) for a, b in zip(segs, segs[1:]))
 
 
 def document_address(url: str) -> bool:
-    """A record, a filing or a data page: its first segment (a language aside) names a kind of record."""
     segs = [s for s in path_segments(url)[:2] if not LANGUAGE.match(s)][:1]
     return any(s in DOCUMENT_PATH for s in segs)
 
@@ -287,24 +250,17 @@ def paper_address(url: str) -> bool:
             or (len(segs) >= 2 and segs[0] in PAPER_PATH))
 
 
-# Issue 0172 b3, what isn't a channel by its pages' shape (classes, never hosts):
-# - an interactive page told by its query, not its path: a path of at most one segment whose query carries the
-#   page (/forum?id=<x>, /?q=<x>, /compare?model=a): a forum's paper, a tool's state, never a publication's article;
-# - a listing of models or packages: pages under a first segment naming a catalogue (LISTING_PATH: /models/<x>,
-#   /library/<x>): a catalogue's entry, not an article.
+# What isn't a channel by its pages' shape (0172): an interactive page told by its query, a catalogue's entry.
 LISTING_PATH = frozenset({"models", "model", "library", "leaderboard", "leaderboards", "providers", "rankings",
                           "compare", "playground", "spaces", "datasets"})
 
 
-# A publication's own section, whose article a query may name (a blog drawn by its script, /blog?id=<post>): its
-# site is a channel that can't be read as pages, never an interactive page (its account may be followed, b5).
+# A publication's own section, whose article a query may name (/blog?id=<post>).
 PUBLICATION_PATH = frozenset({"blog", "blogs", "news", "posts", "post", "articles", "article", "research", "stories",
                               "story", "updates", "press", "newsroom", "insights", "journal", "notes"})
 
 
 def query_address(url: str) -> bool:
-    """An interactive page told by its query (above): one path segment at most (not a publication's section), a
-    query that names the page."""
     rest = bare(url).partition("/")[2]
     path, _, query = rest.partition("?")
     segs = [s.lower() for s in path.split("#", 1)[0].split("/") if s]
@@ -313,7 +269,6 @@ def query_address(url: str) -> bool:
 
 
 def listing_address(url: str) -> bool:
-    """A catalogue's entry (above): its first segment (a language aside) names a listing, an entry under it."""
     segs = [s for s in path_segments(url) if not LANGUAGE.match(s)]
     return len(segs) >= 2 and segs[0] in LISTING_PATH
 
@@ -321,16 +276,13 @@ def listing_address(url: str) -> bool:
 PLACE_TESTS = (("reference", reference_address), ("archive", archive_address), ("app", app_address),
                ("document", document_address), ("paper", paper_address), ("app", query_address),
                ("listing", listing_address))
-# What Discover does with each (issue 0109): references and documents are a quiet line of references; an
-# archive, an app's pages and a paper source are no suggestion at all (papers stay in stories and Classics).
+# References and documents are a quiet line of references; the other kinds are no suggestion at all.
 REFERENCE_KINDS = ("reference", "document")
 
 
 def place_kind(key: str, urls: Iterable[str]) -> Optional[str]:
-    """What a suggestion is when it is no source: "reference" (its host so named, or PLACE_SHARE of its
-    shown pages reference_address), "archive", "app" (a share link or a page told by its query), "document",
-    "paper" or "listing" (PLACE_SHARE of them of that shape, in that order), else None. A platform's owner (a
-    key with a path) is only a reference, a paper source or a listing: the other shapes are read of a whole host."""
+    """What a suggestion is when it is no source (PLACE_TESTS, PLACE_SHARE of its shown pages of that shape), else
+    None. A platform's owner is only a reference, document, paper source or listing."""
     urls = list(urls)
     if REFERENCE_HOST.match(key):
         return "reference"
@@ -342,43 +294,32 @@ def place_kind(key: str, urls: Iterable[str]) -> Optional[str]:
     return None
 
 
-# ---- the order (issue 0080, measured on the lab and the server's answer) ------------------------------
+# ---- the order (measured: plan/issues/0080) ------------------------------
 RECENT_DAYS, LATELY_DAYS = 14, 60
 FIRST_PAGE = 30   # Discover's first page; the rest behind "More"
 CHECK_DAYS = 30   # a follow test, or a page's title, is read at most once in this many days
 
 
-GROWTH_DAYS = 30    # 0235: a source that first linked a key this recently is a new one
-GROWTH_WEIGHT = 1.5  # 0235: NOT MEASURED YET (no real data allowed when it was written); 0235 says how to measure it
+GROWTH_DAYS = 30    # a source that first linked a key this recently is a new one
+GROWTH_WEIGHT = 1.5  # NOT MEASURED YET; plan/issues/0235 says how to measure it
 
 
 def growth(*, new: float, old: float) -> float:
-    """0235: how much a key is growing among your sources: the share of its linking sources that first linked it in
-    the last GROWTH_DAYS, times ln(1+those new sources). A voice most of whose linkers are new (six sources this month,
-    none before) scores high; an outlet linked by 50 sources for years and 2 new ones scores near 0. Pure."""
+    """The share of a key's linking sources new in GROWTH_DAYS, times ln(1+those new sources)."""
     total = new + old
     return 0.0 if new <= 0 or total <= 0 else (new / total) * math.log1p(new)
 
 
 def score(*, origins: int, classics: int, opened: int, voices: float, days: Optional[float],
           grown: float = 0.0) -> float:
-    """3*ln(1+stories started) + 2*ln(1+classics) + 1.5*ln(1+posts you opened that link it) +
-    ln(1+sources linking it) + 1 when one linked it in the last RECENT_DAYS days, 0.5 in LATELY_DAYS,
-    + GROWTH_WEIGHT*`grown` (0235: `growth`'s; its weight is not measured yet).
-    Stories and classics carry it (recency is nearly flat and opens are sparse on the lab)."""
     recency = 0.0 if days is None else 1.0 if days <= RECENT_DAYS else 0.5 if days <= LATELY_DAYS else 0.0
     return (3 * math.log1p(origins) + 2 * math.log1p(classics) + 1.5 * math.log1p(opened)
             + math.log1p(voices) + recency + GROWTH_WEIGHT * grown)
 
 
-# ---- a followed source's other channels (issue 0109 W3 A, measured on the server's saved answer) -----
-# A suggestion a followed source itself links, under one of that source's names, is that source's other
-# channel (its X account, a moved blog's old site, a lab's org page): 25 found on the server, 22 right by the
-# review's judgement (2 wrong: a cloud company matched by a word of another source's name, a forge's blog by
-# a third party's feed named after the forge). A name: its account's, its site's word (a writer's own label
-# on a host of many writers), the words of its display name and those words run together; words of NAME_MIN+
-# letters only (an id or a number names no one), none of NOT_NAME. A key holds a name when one of its words (an account's name and its parts, a
-# site's registrable word) is it, starts with it or ends with it. Matching names without the link is Mark X.
+# ---- a followed source's other channels (0109) -----
+# A suggestion a followed source itself links, under one of that source's names, is that source's other channel.
+# Matching names without the link is Mark X.
 NAME_MIN = 4
 NOT_NAME = NOT_SELF | {"https", "http"}
 _NAME_WORDS = re.compile(r"[^a-z0-9]+")
@@ -389,17 +330,14 @@ def _site_word(site: str) -> str:
     return site.split(".", 1)[0]
 
 
-# Top-level domains anyone registers under: never an owner's brand (v10.15.2).
+# Top-level domains anyone registers under: never an owner's brand.
 GENERIC_SUFFIXES = frozenset({"info", "name", "site", "online", "blog", "news", "tech", "club", "shop", "store", "live",
                               "life", "world", "today", "page", "work", "space", "website", "media", "press", "cloud",
                               "email", "link", "codes", "tools", "agency", "studio", "design", "network", "digital"})
 
 
 def _brand_suffix(publication: str) -> Set[str]:
-    """A brand's own top-level domain as a name of its site (v10.15.2: a company's blog at blog.<brand>, whose
-    registrable word is "blog", named nothing of its owner, so its cloud.<brand>.com was no longer its other channel):
-    when the site's word names no one (NOT_NAME), its top-level label if it is a word of NAME_MIN+ letters that isn't a
-    generic suffix."""
+    """A brand's top-level label as its site's name (blog.<brand>, whose word "blog" names no one)."""
     if not publication:
         return set()
     site = site_of(publication)
@@ -412,8 +350,7 @@ def _brand_suffix(publication: str) -> Set[str]:
 
 def own_names(name: str, *, account: str = "", publication: str = "",
               shared_sites: Iterable[str] = frozenset()) -> Set[str]:
-    """A source's names as a key may hold them (above). `account`: its platform account (x.com/<name>);
-    `publication`: a website's host; `shared_sites`: the sites of many writers (SourceFacts.shared_sites)."""
+    """A source's names as a key may hold them. `shared_sites`: the sites of many writers."""
     names: Set[str] = set()
     if "/" in account:
         names.add(account.rsplit("/", 1)[1].lstrip("@~").lower())
@@ -430,11 +367,8 @@ def own_names(name: str, *, account: str = "", publication: str = "",
 
 def channel_names(name: str, *, account: str = "", publication: str = "",
                   shared_sites: Iterable[str] = frozenset()) -> Tuple[Set[str], Set[str], Set[str]]:
-    """A followed source's names for crediting it a suggestion as its other channel (issue 0172 b2: a word
-    shared by name credited a newspaper's science section to a source named "<x> Science Digest", a
-    country's portal to a newsletter named "<country> Talk", a cloud company's blog to a source named "<x> Cloud
-    <y>"): (its places' names: its account's and its site's word, its own addresses; its whole name: the display
-    name's words run together; the words of its display name, own_names', which name only an account)."""
+    """(its places' names, its whole name run together, its display name's words): a display-name word alone
+    credits only an account (it credited unrelated sites, 0172)."""
     places = own_names("", account=account, publication=publication, shared_sites=shared_sites)
     places |= _brand_suffix(publication)
     whole: Set[str] = set()
@@ -447,11 +381,8 @@ def channel_names(name: str, *, account: str = "", publication: str = "",
 
 
 def other_channel(key: str, places: Iterable[str], whole: Iterable[str], words: Iterable[str] = ()) -> bool:
-    """Whether a suggestion is a followed source's other channel (channel_names): a word of its key is one of the
-    source's places' names, starts or ends with one (its own address on another host or platform), or is its
-    whole name; an account on a platform a source kind reads (KIND_PLATFORMS: an account's handle is chosen
-    by its owner) also by a word of its display name. A site's or a section's word shared with a word of the
-    name is no relation: a site names its publisher, not the source's."""
+    """A key word is, starts or ends with one of the source's places' names, or is its whole name; an account on a
+    KIND_PLATFORMS platform also by a display-name word. A site's word names its publisher, not the source."""
     held = owner_words(key)
     places = [n for n in places if n]
     if (any(w == n or w.startswith(n) or w.endswith(n) for w in held for n in places)
@@ -463,31 +394,25 @@ def other_channel(key: str, places: Iterable[str], whole: Iterable[str], words: 
 
 
 def owner_words(key: str) -> Set[str]:
-    """The words a suggestion's key names its owner by: an account's (or owner's) name and its parts, else
-    the site's registrable word (news.example.com: example)."""
+    """An account's (or owner's) name and its parts, else the site's registrable word."""
     host, _, rest = key.partition("/")
     whole = rest.rsplit("/", 1)[-1].lstrip("@~").lower() if rest else _site_word(site_of(publication_of(host)))
     return {whole} | {part for part in re.split(r"[-_.]", whole) if part}
 
 
 def same_owner(key: str, names: Iterable[str]) -> bool:
-    """Whether a key holds one of a source's names (own_names): a word of it is the name, starts or ends with it."""
     names = [n for n in names if n]
     return any(w == n or w.startswith(n) or w.endswith(n) for w in owner_words(key) for n in names)
 
 
-# ---- one owner's channels among the followed sources (issue 0111: News counts a voice by owner) ----------
-# 0109's rule between two followed sources: a name of one in the other's own place (its account, or its site's
-# word: a writer's own label on a host of many writers), either way, and a link from one to the other's posts or
-# place; or one place followed twice. A platform's word (github, medium, youtube...) names no owner: a trending
-# feed of a code host is no one's channel. Measured on the server's copy (2026-11-05): 21 of 23 linked pairs right,
-# both wrong ones a code host's trending feed by its platform's word, which this leaves out.
+# ---- one owner's channels among the followed sources (News counts a voice by owner, 0111) ----------
+# Two followed sources may be one owner: a name of one in the other's place and a link between them, or one place
+# followed twice. A platform's word (code hosts, blog hosts) names no owner.
 PLATFORM_WORDS = frozenset(_site_word(site) for site in DISCOVER_PLATFORMS)
 Channel = Tuple[str, str, str, Optional[str], str]   # (source id, kind, name, account, publication)
 
 
 def _place_words(kind: str, account: Optional[str], publication: str, shared_sites: Iterable[str]) -> Set[str]:
-    """The words a followed source's own place names its owner by (owner_words, for a source)."""
     if kind != "site":
         whole = account.rsplit("/", 1)[1].lstrip("@~").lower() if account and "/" in account else ""
     else:
@@ -499,9 +424,7 @@ def _place_words(kind: str, account: Optional[str], publication: str, shared_sit
 
 def owner_pairs(channels: Iterable[Channel], *, shared_sites: Iterable[str] = frozenset(),
                 platforms: Iterable[str] = DISCOVER_PLATFORMS) -> Dict[Tuple[str, str], str]:
-    """The pairs of followed sources that may be one owner: (a, b) with a < b -> "place" (one place followed
-    twice) or "name" (a name of one in the other's place, either way; a link decides). A source at a
-    platform's own host (a code host's trending feed) has no place of its own."""
+    """(a, b) with a < b -> "place" (one place followed twice) or "name" (a link decides)."""
     shared, platforms = frozenset(shared_sites), frozenset(platforms)
     info = {}
     for source_id, kind, name, account, publication in channels:
@@ -520,8 +443,7 @@ def owner_pairs(channels: Iterable[Channel], *, shared_sites: Iterable[str] = fr
         for i, a in enumerate(sorted(members)):
             for b in sorted(members)[i + 1:]:
                 out[(a, b)] = "place"
-    # A word that is a name, starts with it or ends with it (same_owner), found by the words' sorted order and
-    # their reversed letters' (256 sources: 62k pair tests otherwise).
+    # found by bisecting the sorted words and their reversed letters' (avoids testing every pair)
     words = sorted((w, i) for i, (place, _, ws) in info.items() if place for w in ws)
     backwards = sorted((w[::-1], i) for w, i in words)
 
@@ -542,8 +464,8 @@ def owner_pairs(channels: Iterable[Channel], *, shared_sites: Iterable[str] = fr
 
 def channel_owners(channels: Iterable[Channel], pairs: Mapping[Tuple[str, str], str],
                    linked: Iterable[Tuple[str, str]]) -> Dict[str, str]:
-    """Each followed source of an owner of 2+ channels -> that owner (its first source by id): the pairs of one
-    place, and the named pairs one of which links the other (`linked`: (linking source, linked source))."""
+    """Each followed source of an owner of 2+ channels -> its first source by id: the one-place pairs, and the
+    named pairs one of which links the other (`linked`)."""
     linked = set(linked)
     parent = {source_id: source_id for source_id, *_ in channels}
 
@@ -562,34 +484,23 @@ def channel_owners(channels: Iterable[Channel], pairs: Mapping[Tuple[str, str], 
     return {source_id: min(members) for members in groups.values() if len(members) > 1 for source_id in members}
 
 
-# ---- one card per owner domain (issue 0109 W5: 23 owners in 54 cards on the server) ------------------------
-# The hosts of one registrable domain (site_of) are one owner's, one card led by its best (the most score),
-# its other hosts listed as its places; outside a domain of many owners: a hosting platform's (site_of
-# already parts those listed as such), one your followed sources publish on at 2+ hosts
-# (SourceFacts.shared_sites), and a federation by the data: FEDERATION_HOSTS+ hosts your sources link, at
-# under FEDERATION_POSTS linking posts a host (measured on the lab's kept links: a blog host 51 hosts at 2.0,
-# a newsletter host 556 at 2.3, three universities 31-47 at 1.6-3.6, the EU's 28 at 2.5, a tumblr-like host
-# 20 at 2.9; one owner's: a search company 49 at 15.5, a software company 27 at 5.2, a phone maker 15 at 16,
-# a portal 13 at 7.3, a browser maker 12 at 5.5). Linking voices shared between hosts were tried and told
-# nothing apart (a blog host 17%, a news site 17%, a lab 0%).
+# ---- one card per owner domain (0109) ------------------------
+# The hosts of one registrable domain are one owner's card, except a domain of many owners: a hosting platform's, one
+# your followed sources publish on at 2+ hosts, or a federation by the data (measured: plan/issues/0109).
 FEDERATION_HOSTS = 10
 FEDERATION_POSTS = 4.0
 
 
 def federation(*, hosts: int, posts: int) -> bool:
-    """A domain of many owners by its links: FEDERATION_HOSTS+ hosts at under FEDERATION_POSTS posts a host."""
     return hosts >= FEDERATION_HOSTS and posts < FEDERATION_POSTS * hosts
 
 
-# A company's directory of many owners' shows, songs, apps or books (podcasts.<company>, apps.<company>) is no
-# place of the company's own (issue 0111): measured on the server's copy, it takes podcasts. and itunes. out of
-# one company's card of 4 hosts, and no host of the other 18 cards; the lab's podcasts. host of the same card.
+# A company's directory of many owners' items (podcasts.<company>) is no place of the company's own.
 CATALOG_LABELS = frozenset({"podcasts", "podcast", "music", "itunes", "apps", "play", "books", "store", "marketplace"})
 
 
 def owner_domain(key: str, federations: Iterable[str] = frozenset()) -> Optional[str]:
-    """The domain a site suggestion's card is one of: its registrable domain, None for a platform's owner (a
-    key with a path), a host of a domain of many owners, or a directory of many owners' items (CATALOG_LABELS)."""
+    """A site suggestion's card domain: None for a platform's owner, a federation's host or a directory."""
     if "/" in key:
         return None
     site = site_of(key)
@@ -600,23 +511,16 @@ def owner_domain(key: str, federations: Iterable[str] = frozenset()) -> Optional
 
 
 def announcing_place(s: Mapping) -> bool:
-    """0239 (0237 #2): a card's place that is the company's announcing section: a host label below its site (newsroom.,
-    news., blog., press.) or the path its follow test found its own pages under (`url`, b7: amd.com's /newsroom/), that
-    official channels' one rule for an announcing section reads as one (0241: discover_main_source.announcing, a
-    newsroom's rank; an investor-relations section never leads). Pure."""
-    # one rule for "the company's news section" (0237 #2, #4); imported here: that module imports this one
+    """A card's place that is the company's announcing section, as discover_main_source.announcing reads it."""
+    # imported here: that module imports this one
     from insight_core.services.discover_main_source import NEWSROOM, announcing
     url = s.get("url") or ""
     return announcing("https://" + s["key"]) == NEWSROOM or bool(url and announcing(url) == NEWSROOM)
 
 
 def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] = frozenset()) -> List[Dict]:
-    """The suggestions with one owner domain's hosts as one card (owner_domain): led by its announcing section
-    (announcing_place, 0239: an investor-relations host with the most links had led a company's card, and the judge read
-    it, not its newsroom) when one of its places is one and the best is not the site's own host (0248), else by the
-    best; the best by score, then voices, then key.
-    `places` its hosts (the lead first, then by score), its voices, articles, classics, stories and opens together, its
-    score at least its best place's (its stories and sources added up). The judge (markx/source_judge) reads the lead's key."""
+    """One card per owner domain (owner_domain), led by its announcing section when the best is not the site's own
+    host, else by its best; counts summed, its score at least its best place's."""
     federations = set(federations)
     groups: Dict[str, List[Dict]] = defaultdict(list)
     out: List[Dict] = []
@@ -628,9 +532,7 @@ def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] 
             groups[domain].append(dict(s))
     for domain, members in groups.items():
         members.sort(key=lambda s: (-s["score"], -s["voices"], s["key"]))
-        # 0248: the announcing section leads over a best that is another section (an investor-relations host), never
-        # over the site itself (its own host the best: a publisher's reuters.com had given way to its old blogs. host,
-        # the real-data check of v10.26: the suggestion the reader knows gone, the judge reading a dead blog)
+        # the announcing section never leads over the site's own host (0248)
         if len(members) > 1 and members[0]["key"].removeprefix("www.") != domain:
             lead_at = next((i for i, s in enumerate(members) if announcing_place(s)), 0)
             members.insert(0, members.pop(lead_at))
@@ -660,9 +562,9 @@ def one_card_per_domain(found: Iterable[Mapping], *, federations: Iterable[str] 
     return out
 
 
-# The follow test's labels (services/discover_reads.py): what can be followed, and what can't (issue 0080).
+# The follow test's labels (services/discover_reads.py): what can be followed, and what can't.
 FOLLOWABLE = ("feed", "page")
-UNFOLLOWABLE = ("headlines", "blocked", "other_feed")   # other_feed: a feed, but not of these pages (issue 0109)
+UNFOLLOWABLE = ("headlines", "blocked", "other_feed")   # other_feed: a feed, but not of these pages
 
 
 def _label(s: Mapping) -> Optional[str]:
@@ -670,17 +572,14 @@ def _label(s: Mapping) -> Optional[str]:
 
 
 def section(s: Mapping) -> int:
-    """Where a suggestion is listed (issue 0109): 0 tested followable, 1 tested and can't be followed as a
-    feed (its own section), 2 untested."""
+    """0 tested followable, 1 tested and unfollowable as a feed, 2 untested."""
     label = _label(s)
     return 0 if label in FOLLOWABLE else 1 if label in UNFOLLOWABLE else 2
 
 
 def not_channel(key: str, label: Optional[str]) -> bool:
-    """Issue 0172 b3: an owner on a platform (a key with a path) that is no channel to follow: a model hub's owner
-    (its pages are models, never posts), or one on a platform no source kind reads (KIND_PLATFORMS: X, Telegram,
-    Reddit, YouTube) whose follow test found nothing to follow (a code host's organization without a feed, a
-    network without a reader). A site, and an account a kind reads, are left to the follow test's sections."""
+    """A platform owner that is no channel: a model hub's, or one on a platform no source kind reads whose follow
+    test found nothing."""
     from insight_core.utils.entity_originals import MODEL_HUBS   # entity_originals reads this module
     if "/" not in key:
         return False
@@ -691,9 +590,7 @@ def not_channel(key: str, label: Optional[str]) -> bool:
 
 
 def follow_url(url: str, platforms: Platforms = {}) -> Optional[str]:
-    """What a page's "Follow" follows (issue 0172 c3: Pages followed the bare domain, a platform's home page for a
-    tweet): on a platform its account (a tweet's author), None for a page naming none; elsewhere its section (its
-    first path segment, discover_place's), the site's home when the page sits at its root or under a date."""
+    """What a page's "Follow" follows: on a platform its account; elsewhere its section, or the site's home."""
     key, _, platform = discover_address(url, platforms)
     if platform:
         return "https://" + key if key else None
@@ -705,26 +602,21 @@ def follow_url(url: str, platforms: Platforms = {}) -> Optional[str]:
     return f"https://{host}/{first + '/' if first else ''}"
 
 
-# 0196: the worker's judgement of a suggestion (source_judge: follow and fits first, then maybe, the unjudged, a skip,
-# then one that does not fit the reader), ahead of link volume within a section.
+# The worker's judgement of a suggestion (source_judge), ahead of link volume within a section.
 FIT_ORDER = {"follow": 0, "maybe": 1, None: 1, "skip": 2, "not_fit": 3}
 
 
 def judged_follow(s: Mapping) -> bool:
-    """0235: the worker judged it worth following (its test read found something to follow and the reader would care),
-    and no follow test says it can't be followed as a feed: it goes before every section."""
     return s.get("fit") == "follow" and section(s) != 1
 
 
-# 0239 (0237 #5): a cheap fit with the reader for the rows the worker has not judged (15 a day of ~4,300): the share of
-# a row's linking sources you read (`reader_fit`), weighing its score. A judgement, so behind a switch, off
-# (INSIGHT_DISCOVER_READER_FIT=1 turns it on); READER_FIT_WEIGHT is NOT MEASURED (0239 says how to measure both).
+# The share of a row's linking sources you read (`reader_fit`), for rows the worker has not judged. Off by default
+# (INSIGHT_DISCOVER_READER_FIT=1); READER_FIT_WEIGHT is NOT MEASURED (plan/issues/0239 says how).
 READER_FIT_WEIGHT = 1.0
 
 
 def reader_fit(linkers: Iterable[str], read: Iterable[str]) -> float:
-    """0239: of the sources linking a suggestion (`linkers`), the share you read (`read`: a post of theirs opened or read
-    lately, DiscoverRepository.read_sources); 0 when none links it. Pure."""
+    """Of `linkers`, the share you read (DiscoverRepository.read_sources); 0 when none. Pure."""
     linkers = set(linkers)
     return round(len(linkers & set(read)) / len(linkers), 3) if linkers else 0.0
 
@@ -735,20 +627,15 @@ def reader_fit_on() -> bool:
 
 
 def fit_score(s: Mapping, *, on: bool) -> float:
-    """What a suggestion is ranked by within its section and judgement: its score; switched on (0239), an unjudged
-    one's score times 1 + READER_FIT_WEIGHT * its reader_fit (a judged one keeps its score: the judge's fit stands)."""
+    """Its score; switched on, an unjudged one's score times 1 + READER_FIT_WEIGHT * its reader_fit."""
     if not on or s.get("fit") is not None:
         return s["score"]
     return s["score"] * (1 + READER_FIT_WEIGHT * float(s.get("reader_fit") or 0.0))
 
 
 def order(found: Iterable[Mapping], *, reader: Optional[bool] = None) -> List[Mapping]:
-    """Discover's order (issue 0109 W2: the server's top score had sunk to #1254 of 1,275, below every
-    untested suggestion): those the worker judged "follow" first (0235: an untested one sat deep in a list of 4,349
-    for ever, the follow test reading only the first page), then those tested followable, then the section of those
-    that can't be followed as a feed, then the untested; each by score (0239: by fit_score, with `reader`, default the
-    switch INSIGHT_DISCOVER_READER_FIT, off), ties by key, but one none of your sources links (Mark X's originals rows,
-    issue 0172 b4) after every linked one of its section. Each of the section says so (`section: "unfollowable"`)."""
+    """Judged "follow" first, then by section, judgement, linked before unlinked, fit_score, key; the unfollowable
+    section is marked `section: "unfollowable"`."""
     on = reader_fit_on() if reader is None else reader
     out = sorted(found, key=lambda s: (not judged_follow(s), section(s), FIT_ORDER.get(s.get("fit"), 1),
                                        not s.get("voices"), -fit_score(s, on=on), s["key"]))
@@ -766,26 +653,19 @@ class Suggestion:
     voices: List[str]                # the voices that link it
     articles: List[str]              # its article-like addresses linked
     links: int                       # every address of it linked
-    addresses: Set[str] = field(default_factory=set)   # those addresses (0051 counts its classics)
-    roundups: Set[str] = field(default_factory=set)    # the voices that link it only in roundups (0067)
+    addresses: Set[str] = field(default_factory=set)   # those addresses (its classics are counted by them)
+    roundups: Set[str] = field(default_factory=set)    # the voices that link it only in roundups
 
     @property
     def weight(self) -> float:
-        """Its voices as Discover orders them (issue 0067): one linking it only in roundups counts half."""
         return len(self.voices) - len(self.roundups) / 2
 
 
 def discover_address(url: str, platforms: Platforms = {},
                      channels: Mapping[str, str] = {}) -> Tuple[Optional[str], str, bool]:
-    """What Discover reads of one address: (its key, its site, whether the site is a platform).
-    On a platform the key is the account (account_key), none when the first path segment names a
-    kind of page (NOT_ACCOUNT); a tweet, on any host, is its author's (x.com/<user>, TWEET); on a
-    platform the data finds (`platforms`: find_platforms, issue 0080) its owner (platform_key);
-    elsewhere it is the host. A function of the address and the platforms, so the database keeps it
-    once per address (repo_discover, issue 0062).
-    0239 (0237 #5): a video (youtube.com/watch?v=<id>, as the normaliser writes every form of one) is its channel's
-    when Discover read which (`channels`: video address -> channel key, services/discover_reads.read_videos; a read
-    that never changes, so the addresses' rules need not name it), else it names no account."""
+    """(its key, its site, whether the site is a platform). On a platform the key is the account, none for a kind of
+    page; a tweet is its author's; a video its read channel's (`channels`); on a data platform its owner; elsewhere
+    the host. A function of the address and the platforms, so the database keeps it once per address."""
     if url in channels:
         return channels[url], "youtube.com", True
     host, _, rest = bare(url).partition("/")
@@ -802,8 +682,7 @@ def discover_address(url: str, platforms: Platforms = {},
 
 
 def discover_article(url: str) -> bool:
-    """What Discover counts as an article: an article-like address (post_links.is_article), or a
-    post of a platform account (issue 0065: a tweet in any form, a Telegram post)."""
+    """An article-like address, or a platform account's post."""
     host, _, rest = bare(url).partition("/")
     path = "/" + rest
     return is_article(url) or bool(TWEET.match(path)) or (
@@ -811,9 +690,7 @@ def discover_article(url: str) -> bool:
 
 
 def site_unit(host: str, publication_sites: Iterable[str] = frozenset()) -> str:
-    """0239 (0237 #5): what following a host follows: its site (site_of), but on a site of publications (a publishing
-    platform's: SourceFacts.shared_sites, or a federation by the data, `federation`) its publication, so one newsletter
-    followed on a platform hides none of the platform's others. `host` may be a key (its host is read)."""
+    """Its site, but on a site of publications its publication: following one newsletter hides no other."""
     host = publication_of(host.split("/", 1)[0])
     site = site_of(host)
     return host if site in set(publication_sites) else site
@@ -821,8 +698,7 @@ def site_unit(host: str, publication_sites: Iterable[str] = frozenset()) -> str:
 
 def discover_open(key: str, site: str, platform: bool, *, followed: Set[str], hidden: Set[str],
                   followed_accounts: Set[str], publication_sites: Iterable[str] = frozenset()) -> bool:
-    """A key you neither follow nor hid: on a platform as that account, elsewhere as its site (site_unit: on a site of
-    publications, `publication_sites`, its publication; `followed` then holds those, SourceFacts.followed)."""
+    """A key you neither follow nor hid: on a platform as that account, elsewhere as its site_unit."""
     if platform:
         return not (key in followed_accounts or key in hidden)
     return not (site_unit(key, publication_sites) in followed or key in hidden or site in hidden)
@@ -831,17 +707,9 @@ def discover_open(key: str, site: str, platform: bool, *, followed: Set[str], hi
 def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], hidden: Set[str],
                 followed_accounts: Set[str] = frozenset(), mirrors: Set[str] = frozenset(),
                 platforms: Platforms = {}, mentioned: Set[str] = frozenset()) -> List[Suggestion]:
-    """Sites and accounts 3+ of your voices link, in 2+ article-like pages that make 40%+ of their
-    links, that you don't follow and did not hide. On a platform the unit is the account: it is
-    followed, or hidden, only as that account (`followed_accounts`, addresses.account_key), so
-    following one channel hides no other. Elsewhere it is the site (`followed`: sites; `hidden`:
-    keys or sites); a tweet mirror's other pages (`mirrors`: hosts where tweets are found, issue
-    0067) are X's kinds of page, never a site. `links`: (voice, address, whether the linking post is
-    a roundup) for every kept outside link, the voice None for a self-link (is_self_link) and Saved's;
-    `platforms`: find_platforms'. Most voices first, a voice linking a key only in roundups counting
-    half (Suggestion.weight), then all voices.
-    0235: `mentioned`, the addresses posts @mention (post_links kind 'mention': an account's own address, so no
-    article): a key one of them is under needs no article-like pages, only its 3+ voices (mentions' and links')."""
+    """Sites and accounts 3+ of your voices link, in 2+ article-like pages that make 40%+ of their links, that you
+    don't follow and did not hide; on a platform the unit is the account. A key a post @mentions (`mentioned`) needs
+    only its voices. `links`: (voice or None for a self-link or Saved's, address, roundup?). Ordered by weight."""
     links = list(links)
     found: Dict[str, Tuple[Set[str], Set[str], Set[str], Set[str]]] = defaultdict(lambda: (set(), set(), set(), set()))
     for voice, url, roundup in links:
@@ -867,12 +735,11 @@ def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], h
     return sorted(out, key=lambda s: (-s.weight, -len(s.voices), -len(s.articles), -s.links, s.key))
 
 
-# ---- Discover: where your stories start (issue 0065) --------------------------------------------
+# ---- Discover: where your stories start --------------------------------------------
 
 
 @dataclass
 class Origin:
-    """A story's root (0064) as Discover reads it."""
     story_id: str
     url: str                         # the outside page (stories.origin_url), else the origin post's address
     title: Optional[str]             # its link words, or the post's title; None: show the address
@@ -880,13 +747,11 @@ class Origin:
     first_at: datetime
     voices: Dict[str, str] = field(default_factory=dict)   # the story's voices -> the source naming each
     own: bool = False                # an origin post on the site its source publishes on: held
-    reddit_sources: Tuple[str, ...] = ()   # the Reddit sources of its voices that are a post's author (issue 0080)
-    at_post: bool = False            # a post is at its outside page's address: a page you saved (issue 0113)
+    reddit_sources: Tuple[str, ...] = ()   # the Reddit sources of its voices that are a post's author
+    at_post: bool = False            # a post is at its outside page's address: a page you saved
 
     @property
     def stored(self) -> bool:
-        """Its origin is in INSIGHT: an origin post, or a post at the outside page's address (0113's measure:
-        a story whose origin you saved has origin_url and no origin post, and was counted as not stored)."""
         return self.source_id is not None or self.at_post
 
 
@@ -899,8 +764,7 @@ class Origins:
 
 
 def discover_place(url: str, platforms: Platforms = {}, channels: Mapping[str, str] = {}) -> Optional[str]:
-    """Where an address is, as a source holds it: on a platform its account (None for a page that
-    names none), elsewhere its host and section (anthropic.com/news; the host alone at the root)."""
+    """An account on a platform (None for none), elsewhere its host and section (anthropic.com/news)."""
     key, _, platform = discover_address(url, platforms, channels)
     section = "" if platform else section_of(url)
     return f"{key}/{section}" if key and section else key
@@ -909,18 +773,9 @@ def discover_place(url: str, platforms: Platforms = {}, channels: Mapping[str, s
 def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str],
             mirrors: Set[str] = frozenset(), platforms: Platforms = {},
             publication_sites: Iterable[str] = frozenset(), channels: Mapping[str, str] = {}) -> Origins:
-    """Where your stories start, each story once:
-    - at its own source's site (Origin.own), or at a place one of your sources holds (`held`:
-      discover_place -> that source): nothing to suggest; a story the
-      source misses when its page is not stored (its archive may hold it, 0015);
-    - at a help, docs or support page (reference_address, issue 0080): a reference, only listed;
-    - on a site you don't follow, or an account no source holds: that site or account;
-    - on a site you follow, elsewhere than the places your sources hold: never suggested (issue 0080),
-      a story the site's source misses (the source holding the site's first place in `held`);
-    - on a platform's page that names no account (youtube.com/watch?v=...), or a tweet mirror's page
-      that is not a tweet (`mirrors`, issue 0067: nitter.net/i/article/...): only listed.
-    A site you follow is followed as site_unit reads it (0239: on a site of publications, `publication_sites`, the
-    publication); a video whose channel Discover read (`channels`, discover_address) is its channel's."""
+    """Where your stories start, each story once: at a held place nothing to suggest (a story the source misses when
+    not stored); at a reference page a reference; at a site or account you don't follow a suggestion; elsewhere on a
+    followed site never suggested (a missed story); on a page naming no account only listed."""
     out = Origins()
     pubs = frozenset(publication_sites)
     followers: Dict[str, str] = {}   # a followed site -> a source holding a place of it
@@ -948,21 +803,17 @@ def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str]
     return out
 
 
-PAGES_WITHIN_DAYS = 30   # Discover's Pages (issue 0113): the stories of the last 30 days, as its measure counted
+PAGES_WITHIN_DAYS = 30   # Discover's Pages: the stories of the last 30 days
 
 
 def page_key_of(url: str) -> str:
-    """A Pages row's hide key (issue 0113): one page, never its site."""
     return "page:" + (bare(url) or url).lower()
 
 
 def pages(started: Origins, *, since: datetime, hidden: Set[str]) -> List[Tuple[str, List[Origin], bool]]:
-    """Discover's Pages (issue 0113): each story's root you can save as one post, (its address, its
-    stories, whether it is a page naming no account: a video's watch page, only listed), the stories'
-    voices first, then how many stories, then the newest. A root is a page when its story (2+ voices,
-    started since `since`) starts at a site or account you don't follow (`suggest`) or at a platform's
-    page that names none (`unnamed`), and no post is at its address (Origin.stored). Not an archive, an
-    app's share link, a document host's or a reference page, or a site's front page."""
+    """Discover's Pages: each unstored story root at a site or account you don't follow, or at a page naming none,
+    as (address, its stories, names-no-account), by voices, stories, newest. Never an archive, an app's share link,
+    a document, a reference page or a front page."""
     found: Dict[str, List[Origin]] = defaultdict(list)
     unnamed: Set[str] = set()
     for group, named in ((started.suggest, True), (started.unnamed, False)):
@@ -986,15 +837,11 @@ def pages(started: Origins, *, since: datetime, hidden: Set[str]) -> List[Tuple[
 
 
 def address_rules() -> str:
-    """Which rules wrote a discover_addresses row (issue 0071): what they make of the sample's addresses
-    (utils/stamps.py), so a change to discover_address, site_of, account_key or discover_article that
-    shows there refills the rows, and a refactor that changes nothing keeps them."""
+    """The stamp of the rules behind discover_addresses rows: a rule change refills them, a refactor doesn't."""
     return fingerprint([(url, discover_address(url), discover_article(url)) for url in ADDRESSES] + platform_sample())
 
 
 def platform_sample() -> List[Tuple[str, Tuple[Optional[str], str, bool]]]:
-    """What the rules make of a data platform's addresses (issue 0109: an owner's segment, a language before
-    it), so a change to owner_segment or platform_key refills the rows as a change to discover_address does."""
     platforms = {"hub.example": (), "forum.example": ("ru", "companies"), "social.example": MARKED_OWNERS}
     return [(url, discover_address(url, platforms)) for url in (
         "https://hub.example/ai-sage/a-model", "https://hub.example/en/a-model", "https://hub.example/an-owner/models",
@@ -1006,8 +853,7 @@ ADDRESS_RULES = address_rules()
 
 
 def address_stamp(platforms: Platforms) -> str:
-    """The rules a discover_addresses row is written by: ADDRESS_RULES, and the platforms the data
-    finds (issue 0080), so a host that becomes one, or stops being one, refills the rows."""
+    """ADDRESS_RULES with the platforms the data finds: a host that becomes or stops being one refills the rows."""
     return ADDRESS_RULES if not platforms else fingerprint([ADDRESS_RULES, sorted((h, list(p)) for h, p in platforms.items())])
 
 __all__ = ["Suggestion", "suggestions", "discover_address", "discover_article", "discover_open", "discover_place",

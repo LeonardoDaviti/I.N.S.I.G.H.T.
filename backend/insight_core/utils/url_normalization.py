@@ -7,9 +7,8 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-# A query key that marks who sent a reader or how, not which page (issue 0109 B1: the mail and analytics
-# families). On the server's data a newsletter's HubSpot ?_hsenc= made one essay 3 Discover lines and split
-# its story's key. A key of a page's own query (id, p, t, v, q, tag, cid, share) is never one.
+# A query key that marks who sent a reader or how, not which page (mail and analytics families; they split one
+# page's Discover lines and story keys). A key of a page's own query (id, p, t, v, q, tag, cid, share) is never one.
 TRACKING_QUERY_PREFIXES = ("utm_", "hsa_")   # Google's campaign tags; HubSpot's ad tags
 BEFORE_0109 = frozenset({"fbclid", "gclid", "igshid", "mc_cid", "mc_eid", "mkt_tok", "ref", "ref_src", "spm", "si",
                          "source", "ved"})
@@ -29,15 +28,12 @@ def is_tracking_key(key: str) -> bool:
     return key in TRACKING_QUERY_KEYS or key.startswith(TRACKING_QUERY_PREFIXES)
 
 
-# Issue 0126 (1), the owner 2026-11-07: a gift link's token and a share mark are kept for clicking (posts.url, the
-# post's HTML, post_links.shared_url) and ignored for matching: every compared address drops them.
+# A gift link's token and a share mark are kept for clicking (posts.url, the post's HTML, post_links.shared_url) and
+# ignored for matching: every compared address drops them (0126).
 # - An access token: a key naming a token, a gift, an unlock or access, or any key whose value is a signed token (a
-#   JWT). A vocabulary, not a list of sites (0123's): on the server's copy (2026-11-05) unlocked_article_code,
-#   accessToken, view_token, gift, giftId, access_token, casa_token, pwapi_token, sharing_token ... 25 keys.
-#   A page known only by one is walled (originals_rules.tokened): it is never fetched with it.
-# - A share mark: who shared the page or from where, never which page (measured on the copy: 59 smid, 49 syn-<hex>,
-#   26 reflink, 25 taid, 16 leadSource, 13 srnd, 11 dib_tag, 9 mrfcid). Short names that are a page's own query
-#   elsewhere (r, rc, st, sh, share: a route, a view, a region) are not marks.
+#   JWT). A vocabulary, not a list of sites. A page known only by one is walled (originals_rules.tokened).
+# - A share mark: who shared the page or from where, never which page. Short names that are a page's own query
+#   elsewhere (r, rc, st, sh, share) are not marks.
 ACCESS_KEY_RE = re.compile(r"token|gift|unlock|access", re.I)
 SIGNED_VALUE_RE = re.compile(r"^eyJ[\w-]+\.[\w-]+\.[\w-]+$")
 SHARE_MARK_KEYS = frozenset({"smid", "taid", "mrfcid", "srnd", "leadsource", "reflink", "dib_tag"})
@@ -50,7 +46,7 @@ def is_access_key(key: str, value: str = "") -> bool:
 
 
 def is_query_mark(key: str, value: str = "") -> bool:
-    """Whether a query pair is an access token or a share mark (0126): kept for clicking, dropped for matching."""
+    """Whether a query pair is an access token or a share mark: kept for clicking, dropped for matching."""
     return is_access_key(key, value) or key.lower() in SHARE_MARK_KEYS or bool(SHARE_MARK_RE.match(key))
 
 
@@ -82,10 +78,9 @@ HOST_ALIASES = {
 
 DEFAULT_PORTS = {"http": 80, "https": 443}
 
-# A tweet has one address, whatever the host serving it (issue 0066): x.com, twitter.com, a Nitter
-# and the mirrors (xcancel.com, fxtwitter.com, ...) all write /<user>/status/<id>, the id 15+
-# digits. A rule on the address's shape, not a list of hosts; the account is lower case (X's
-# accounts are), and a tail (/photo/1, /history) or a query is the same tweet.
+# A tweet has one address, whatever the host serving it: x.com, twitter.com, a Nitter and the mirrors all write
+# /<user>/status/<id>, the id 15+ digits. A rule on the address's shape, not a list of hosts; the account is lower
+# case, and a tail (/photo/1) or a query is the same tweet.
 TWEET_SHAPE = r"/([A-Za-z0-9_]+)/status/(\d{15,})"   # also SQL's (repo_discover.TWEET_HREF)
 TWEET_PATH = re.compile("^" + TWEET_SHAPE + r"(?:[/?#]|$)")
 
@@ -206,7 +201,7 @@ def _normalize_query(host: str, query: str, path: str) -> str:
         lowered = key.lower()
         if is_tracking_key(lowered) or is_query_mark(key, value):
             continue
-        # A trailing slash in a value is the same value (issue 0070: ?p=112711/ and ?p=112711).
+        # A trailing slash in a value is the same value (?p=112711/ and ?p=112711).
         items.append((key, value.rstrip("/") if value.strip("/") else value))
 
     if host == "youtube.com":

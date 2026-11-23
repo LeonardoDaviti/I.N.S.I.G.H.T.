@@ -1,35 +1,17 @@
-"""Journeys (issue 0250 #5; owner rule 2026-11-20): scripted walks over a copy's pages, a reader's clicks, each step
-checked against the others. Where invariants count one rule over every row, a journey follows one reader from a story
-to its things, to a thing's page, its links, its timeline and its family, and asks whether each page agrees with the
-one before it:
+"""Journeys: scripted walks over a copy's pages, a reader's clicks, each step checked against the others (0250). Where
+invariants count one rule over every row, a journey follows one reader from a story to its things, a thing's page, its
+links, its timeline and its family, and asks whether each page agrees with the one before it. Steps: `story_things`,
+`story_makers`, `entity_links`, `entity_timeline`, `family_makers`, `family_versions` (hard set only).
 
-  - `story_things`: story -> its things: each thing its members' readings make their subject is on the story page
-    (one click to its entity page);
-  - `story_makers`: story -> each thing: the maker the thing's page gives agrees with the maker the story's mentions of
-    it state;
-  - `entity_links`: entity -> its links: each post a shown link stands on names this thing (a mention linked here, its
-    stated maker this thing's), not a namesake;
-  - `entity_timeline`: entity -> timeline: each event's post is about this thing (subject, actor or compared) and of
-    its maker;
-  - `family_makers`: entity -> family -> versions: one maker across the family, unless the family is a split parent;
-  - `family_versions` (v10.30, 0259; hard set only, entries `{from: family_versions, family_name_like, why}`): a
-    family page's versions are versions of one thing: each by the family's maker as its mentions state it, each a
-    version string that is a version (not a ratio "5:1", not a model id's first number), and no setting of a version
-    ("5.2 (max)", "5 low") listed as a version of its own.
-
-Two sets, measured apart: the **hard set** (a file, private: plan/research/lab/journeys.json; each entry a rule, the
-names it selects read from the copy, never a name in code: `shared_names` = the bare names whose mentions state
-`makers_at_least` distinct makers, each by `mentions_each` mentions, the owner's walks first) and a **random set**
-(stories and things in a seeded order of their stable keys). Every step is reported in the breakage format: right /
-wrong / missed, each wrong or missed one an exact row (the post, what the page returned, the label), its cause and the
-feature that fixes it.
+Two sets, measured apart: the hard set (a private file, plan/research/lab/journeys.json; each entry a rule, the names
+it selects read from the copy, never a name in code) and a random set (a seeded order of stable keys). Every step is
+reported in the breakage format: right / wrong / missed, each wrong or missed one an exact row.
 
     python -m insight_core.checks.journeys --db <dsn> --json journeys.json [--hard journeys-set.json] [--now ISO]
 
-Read-only. The rules here are the check's own (a maker agrees with another by its key, its words, or the entity its
-name aliases), written apart from identity's, so a change to identity can't also change what measures it. The pages
-are the app's own services (`perspective_views.story_view`, `entity_views.entity_page`, `graph.entity_relations`),
-imported defensively: an older version without a page's field is measured as it is (its step misses).
+Read-only. The rules here are the check's own, written apart from identity's, so a change to identity can't also
+change what measures it. The pages are the app's own services, imported defensively: an older version without a
+page's field is measured as it is (its step misses).
 """
 from __future__ import annotations
 
@@ -46,7 +28,7 @@ ROWS_KEPT = 40                 # rows kept a step and set (the report shows fewe
 RANDOM_STORIES = 30
 RANDOM_THINGS = 30
 STORIES_A_NAME = 3             # the hard set's stories a name walks (the newest it is the subject of)
-TOP_NAMES = None               # v10.28: the hard set is every shared bare name (step 0: 452 on the server copy)
+TOP_NAMES = None               # the hard set is every shared bare name
 PRODUCT_TYPES = ("model", "product", "software", "project", "dataset")
 ABOUT_ROLES = ("subject", "actor", "compared")
 POST_EVENTS = ("birth", "release", "first_outside", "outside")
@@ -67,7 +49,7 @@ FIX = {
     "family_makers": "0230 family maker rule (identity.other_maker, families.maker) / 0250 #1",
     "family_versions": "0259 version parsing (names.clean, names.setting, entity_views.family_versions) / 0250 #1 split",
 }
-# v10.30 (0259): the check's own reading of a version string and a variant (apart from names', which it measures)
+# the check's own reading of a version string and a variant (apart from names', which it measures)
 _RATIO = re.compile(r"^\s*\d+\s*:\s*\d+\s*$")
 _MODEL_ID = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*[-_](\d+)[-_](\d{1,2})$")
 _SETTING = frozenset(("max", "maximum", "medium", "mid", "min", "low", "high", "xhigh", "minimal", "ultra", "ultracode",
@@ -243,8 +225,8 @@ def shared_names(cur: Any, copy: Copy, *, makers_at_least: int = 2, mentions_eac
 
 
 def families_like(cur: Any, copy: Copy, like: str) -> List[str]:
-    """v10.30 (0259): the family roots (a `family`, or a thing some version names as its parent) whose name or key
-    matches `like` (an ILIKE pattern, from the private hard-set file: never a name in code), in a stable order."""
+    """The family roots (a `family`, or a thing some version names as its parent) whose name or key matches `like` (an
+    ILIKE pattern, from the private hard-set file: never a name in code), in a stable order."""
     cur.execute("""SELECT e.id::text FROM mx_entities e
                     WHERE e.status <> 'not_entity' AND (e.name ILIKE %(l)s OR e.key ILIKE %(l)s)
                       AND (e.level = 'family' OR EXISTS (SELECT 1 FROM mx_entities v WHERE v.parent = e.id
@@ -295,7 +277,7 @@ class Walks:
         self.rows: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
         self.errors: List[str] = []
         self._pages: Dict[str, Optional[Dict[str, Any]]] = {}
-        self._split: Set[str] = copy.split_parents()   # 0250: a split parent's family holds several makers by design
+        self._split: Set[str] = copy.split_parents()   # a split parent's family holds several makers by design
 
     def mark(self, step: str, kset: str, label: str, **row: Any) -> None:
         self.counts[(step, kset)][label] += 1
@@ -440,7 +422,7 @@ class Walks:
 
 
 def _family_versions(walks: "Walks", fam: str, start: str) -> None:
-    """v10.30 (0259): one family page's versions, each checked: its stated makers agree with the family's (the
+    """One family page's versions, each checked: its stated makers agree with the family's (the
     family's own maker, else the most stated across its versions), its version string is a version, and it is no
     setting of a version listed as a row of its own."""
     copy = walks.copy
@@ -489,8 +471,8 @@ def _family_versions(walks: "Walks", fam: str, start: str) -> None:
 def load_hard(path: Optional[str]) -> List[Dict[str, Any]]:
     """The hard set's entries (a file: {walks: [{id, from: shared_names, makers_at_least, mentions_each, top, why}
     or {id, from: family_versions, family_name_like, why}]};
-    `top` left out: every name the rule selects); none given: the rule's default (v10.28: every bare name of 2+
-    makers, each by 2+ mentions; no name is ever written here)."""
+    `top` left out: every name the rule selects); none given: the rule's default (every bare name of 2+ makers, each by
+    2+ mentions; no name is ever written here)."""
     if path:
         try:
             with open(path, encoding="utf-8") as f:

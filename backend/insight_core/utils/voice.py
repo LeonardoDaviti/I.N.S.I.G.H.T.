@@ -1,36 +1,19 @@
-"""Voice (issue 0189): who a post counts as, and how many voices a set of posts is. The one place that says so.
+"""Voice: who a post counts as, and how many voices a set of posts is. The one place that says so.
 
-A voice is an independent source of a post (GLOSSARY.md). Two engines count them, by rules that still differ, so
-the module names each rule as a policy and every caller says which one it counts by:
-
-  - `Policy.MARKX` (Mark X; Pairing's rule): a post's voice is its source, or, for a repost a source of yours carries
-    of an account another source of yours follows, that source (`counts_as`: Byline says who wrote it,
-    `counted_source` which source that is). A saved post is no voice. Posts of one voice are one; nothing else
-    merges them.
-  - `Policy.STORIES_IX` (Mark IX's stories): a post's voice is its publication for a website (two website sources
-    of one publication are one voice), its poster on Reddit (a person, not the subreddit), else its source; a
-    confirmed voice's channels (0132 A) are one voice. A post's copies of one text (120+ characters) are one voice
-    whatever their sources, and the sources that reposted a tweet, or wrote the tweet another source holds, are
-    voices besides the post's own (0068). A saved post is no voice.
-  - `Policy.NEWS_IX` (Mark IX's News, 0111): STORIES_IX with every owner's channels one voice, not only the
-    confirmed ones.
-
-The interface:
-  - `voice_of(post, policy)`: the key a post counts as (a string; equal keys are one voice);
-  - `count(posts, policy)`: how many voices the posts are;
-  - `others_of(post, policy)`: Mark IX's other voices of a post (its tweet's author's source, its reposters);
-  - `groups(items)`: Mark IX's voices among (key, text key, voice) items (copies of one text one voice), for the
-    names a count reads as (story_rules.named_voices);
-  - `is_voice(kind)`, `independent(...)`, `counted_source(...)`, `followed_accounts(cur)`: Mark X's basics.
+A voice is an independent source of a post (GLOSSARY.md). Two engines count them by rules that still differ, so each
+rule is a policy and every caller says which one it counts by:
+  - `Policy.MARKX`: a post's voice is its source, or, for a repost of an account another source of yours follows,
+    that source (`counted_source`). Posts of one voice are one; nothing else merges them.
+  - `Policy.STORIES_IX`: its publication for a website, its poster on Reddit, else its source; a confirmed voice's
+    channels are one voice. Copies of one text are one voice, and the sources that reposted a tweet, or wrote the
+    tweet another source holds, are voices besides the post's own.
+  - `Policy.NEWS_IX`: STORIES_IX with every owner's channels one voice, not only the confirmed ones.
+A saved post is no voice under any policy. Entry points: `voice_of`, `count`, `others_of`, `groups`.
 
 The keys are this module's: no caller builds or reads one by hand. Mark IX's are stored (story_posts.voice,
-news_posts.voice, the News owners in system settings, Discover's addresses), so their forms never change; the
-constructors (`key`, `source_key`, `site_key`, `poster_key`, `confirmed_key`, `channel_key`) and readers (`poster`,
-`source_of`, `is_site`, `is_confirmed`, `owner_of`, `channel_of`) are the only way in or out, and `key_sql` /
-`source_key_sql` / `site_key_sql` / `POSTER_LIKE` say the same in a query.
-
-Who wrote a post (a repost's author, a forward's channel) is Byline's (utils/byline.py); this module only says
-which voice that makes.
+news_posts.voice, the News owners, Discover's addresses), so their forms never change; the constructors and readers
+here (and `key_sql`, `source_key_sql`, `site_key_sql`, `POSTER_LIKE` for SQL) are the only way in or out. Who wrote a
+post is utils/byline.py's; this module only says which voice that makes.
 """
 from __future__ import annotations
 
@@ -65,7 +48,7 @@ def key(kind: Optional[str], source_id: str, site: str = "", author: Optional[st
 
 def source_key(source_id: str, kind: Optional[str] = None, site: str = "") -> str:
     """A source's own voice (no poster): its publication for a website, else the source. A reposting source's
-    voice, as StoryPost tells an X account's (0068), is `source_key(id)`."""
+    voice, as StoryPost tells an X account's, is `source_key(id)`."""
     return _SITE + site if kind == "site" else _SOURCE + source_id
 
 
@@ -80,7 +63,7 @@ def poster_key(name: str) -> str:
 
 
 def confirmed_key(voice_id: str) -> str:
-    """A voice the owner confirmed (0132 A: its channels are one voice in stories and News)."""
+    """A voice the owner confirmed (its channels are one voice in stories and News)."""
     return _CONFIRMED + voice_id
 
 
@@ -118,7 +101,7 @@ def owner_of(owners: Mapping[str, str], k: str) -> Optional[str]:
 
 
 def channel_key(source_id: str, voice_id: Optional[str] = None) -> str:
-    """source_stats' voice of a channel: its confirmed voice's (0132 A), else its own."""
+    """source_stats' voice of a channel: its confirmed voice's, else its own."""
     return f"{_CHANNEL_VOICE}{voice_id}" if voice_id else f"{_CHANNEL}{source_id}"
 
 
@@ -182,7 +165,7 @@ def independent(source_a: Any, kind_a: Optional[str], source_b: Any, kind_b: Opt
 
 
 def counted_source(source_id: str, author_account: Optional[str], of_account: Mapping[str, str]) -> str:
-    """The source a post counts as under MARKX (Mark IX's rule, StoryPost.author_source, issue 0068): a post its feed
+    """The source a post counts as under MARKX (Mark IX's rule, StoryPost.author_source): a post its feed
     carries but another account wrote (an X repost; a Telegram forward naming its channel) counts as that account's
     source when one of the sources follows that account (`of_account`: account -> the first source by id following
     it, `followed_accounts`); a stranger's post stays the feed's own voice. A quote or a reply is the feed's own post:
@@ -192,7 +175,7 @@ def counted_source(source_id: str, author_account: Optional[str], of_account: Ma
 
 def followed_accounts(cur: Any) -> Dict[str, str]:
     """Every source's account -> the source following it, as Mark IX reads it (SourceFacts.of_account: its own rule
-    over every source's platform and handle, the first by id; issue 0068)."""
+    over every source's platform and handle, the first by id)."""
     from insight_core.db.repo_stories import SourceFacts
     cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), "
                 "handle_or_url) FROM sources")
@@ -231,7 +214,7 @@ def count(posts: Iterable[Any], policy: Policy) -> int:
 
 def groups(items: Iterable[Tuple[Any, Optional[str], str]]) -> List[List[Any]]:
     """Mark IX's voices among `items` ((node, text key, voice key) each: a post, or a source that wrote or reposted
-    the tweet a post holds, issue 0068): items of one voice, and copies of one text, are one voice. Each voice is its
+    the tweet a post holds): items of one voice, and copies of one text, are one voice. Each voice is its
     items' nodes in the order given, the voices in the order of their first."""
     from insight_core.utils.story_rules import _UnionFind   # story_rules imports this module
     uf = _UnionFind()

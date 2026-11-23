@@ -1,24 +1,13 @@
-"""Voices (issue 0132 A, 0078): which sources look like one voice, each suggestion with its evidence. Pure functions
-over plain data; services/voices_service.py loads the data (db/repo_voices.py) and keeps what the owner decides.
+"""Voices: which sources look like one voice, each suggestion with its evidence (`judge`, `groups`, `not_followed`).
+Pure functions over plain data; services/voices_service.py loads the data (db/repo_voices.py) and keeps what the
+owner decides. A suggestion is never applied without the owner.
 
-A suggestion is never applied without the owner. Two sources are suggested as one voice ("join") only by:
-1. **the same address**: the same channel added twice (it also says "the same channel twice: disable one?");
-2. **a standing link**: a links section or footer that links the other's profile in STANDING_SHARE of its posts, or
-   STANDING_SHARE of its own posts linking the other when that is no hub (linked by over HUB_SHARE of sources), with
-   some link back; a links section or footer link alone is enough in SECTION_SHARE of SECTION_MIN_POSTS+ posts (v10.6.1:
-   fewer are citations), and so is any link (SOME_LINK) with a shared name;
-3. **near-identical own posts** (5-word shingles, Jaccard COPY_JACCARD+, neither a repost) with a shared name;
-4. **both official for the same maker** (the role rule's step 3, utils/source_roles.py; a hook another role rule
-   can fill).
-A shared name and nothing else is "possible", never a suggestion. **Platforms are never joined** (Reddit, Hacker
-News, Saved, sites of MULTI_AUTHORS+ authors, aggregators): there the voice is the post's author.
-
-Related voices (a company's staff, decision 1) are suggested from: one official and the other FOCUSED_SHARE+ about
-the same maker; heavy reposting (RELATED_REPOSTS+ reposts of one's handle by the other). Each says "needs a bio"
-until profiles exist (Part C).
-
-Measured on the server copy of 2026-11-05 (the lab's sources_v1): 16 voices from 40 sources, all 16 right.
-No list of known sites: platform address shapes only (utils/addresses.py's platforms).
+Two sources are suggested as one voice ("join") only by the same address (one channel added twice), a standing link
+(a links section or footer linking the other, or STANDING_SHARE of its own posts linking a non-hub, with some link
+back), near-identical own posts with a shared name, or both official for the same maker (utils/source_roles.py). A
+shared name alone is "possible", never a suggestion. Platforms (Reddit, Hacker News, Saved, many-author sites,
+aggregators) are never joined: there the voice is the post's author. Related voices (a company's staff) come from
+focus on the same maker or heavy reposting. No list of known sites: platform address shapes only.
 """
 from __future__ import annotations
 
@@ -36,8 +25,8 @@ from insight_core.utils.source_roles import FOCUSED_SHARE, Focus, Official, name
 STANDING_SHARE = 0.3      # measured (sources_v1)
 STANDING_MIN_POSTS = 2
 STANDING_OWN_MIN = 3
-SECTION_SHARE = 0.6        # v10.6.1: a profile or footer link alone joins only in most posts (a links section) ...
-SECTION_MIN_POSTS = 5      # ... of at least 5 posts; 2 of 6 posts linking a site cite it (the owner, 2026-11-08)
+SECTION_SHARE = 0.6        # a profile or footer link alone joins only in most posts (a links section) ...
+SECTION_MIN_POSTS = 5      # ... of at least 5 posts: in fewer, a link is usually a citation
 SOME_LINK_SHARE = 0.05    # "some link": 2+ posts and 5%
 SOME_LINK_MIN = 2
 HUB_SHARE = 0.10          # a source linked by over 10% of sources (5 at least) is a hub
@@ -378,9 +367,9 @@ def groups(verdicts: Iterable[Verdict], *, joined: Mapping[str, Optional[str]] =
     return sorted(out)
 
 
-# ---- channel profiles (issue 0132 C2) ---------------------------------------------------------------------
-# A profile (ingestion/profiles.py, kept by migration 0086) says who a channel is: its website field and the
-# accounts it links. Not measured yet (the server has fetched none): the thresholds are the spec's words.
+# ---- channel profiles ---------------------------------------------------------------------
+# A profile (ingestion/profiles.py) says who a channel is: its website field and the accounts it links. Not measured
+# yet: the thresholds are the spec's words (plan/issues/0132).
 PROFILE_MAX_LINKED = 5          # a profile linking more followed sources is a directory: its links say no "who"
 VERDICT_ORDER = {"possible": 0, "related": 1, "join": 2, "same_channel": 3}
 _FORMER = re.compile(r"(?:\bex[-\s]?|\bformer(?:ly)?\s+(?:at\s+)?|\bprev(?:iously)?\.?\s+(?:at\s+)?"
@@ -582,8 +571,8 @@ def platform_label(key: str) -> str:
 def not_followed(channels: Mapping[str, Channel], profiles: Mapping[str, Mapping[str, Any]],
                  own_links: Mapping[Tuple[str, str], Tuple[int, List[str]]], discover: Sequence[Mapping[str, Any]],
                  held_by: Mapping[str, int]) -> Dict[str, List[Dict[str, Any]]]:
-    """A source's other channels you don't follow (issue 0132 C2, the owner 2026-11-08), each with why; never added
-    without the owner (the page's Add opens the feed finder):
+    """A source's other channels you don't follow, each with why; never added without the owner (the page's Add
+    opens the feed finder):
     - **profile**: its profile's website field or linked accounts (a profile linking over PROFILE_MAX_LINKED
       addresses nobody follows is a directory: none);
     - **own_links**: its own posts link the channel's bare profile address with a shared name, or, an account, in a
@@ -627,8 +616,7 @@ def not_followed(channels: Mapping[str, Channel], profiles: Mapping[str, Mapping
             continue
         own = max(1, c.own)
         # An account in a links section (STANDING_SHARE of 2+ own posts); a site's home only with a shared name: a
-        # post linking a site's home cites it, and a video description's repeated sites are its sponsors (measured
-        # on the server copy, 2026-11-08: a tool's site, a newspaper's, a channel's 18 sponsors in 18 of 18 videos).
+        # post linking a site's home cites it, and a video description's repeated sites are its sponsors.
         section = _is_account(key) and n >= STANDING_MIN_POSTS and n / own >= STANDING_SHARE
         if section or shared_names(c, other, held_by):
             add(sid, key, "own_links", f"its own posts link it ({n}/{own})", posts)
@@ -657,8 +645,8 @@ def not_followed(channels: Mapping[str, Channel], profiles: Mapping[str, Mapping
 
 
 def one_per_site(entries: Mapping[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """One row per site (measured on the server copy, 2026-11-08: one voice's 12 tool subdomains were 12 rows): its
-    root host's when listed, else its first host's, with the other hosts' reasons and how many there are."""
+    """One row per site (subdomains of one site are one row): its root host's when listed, else its first host's,
+    with the other hosts' reasons and how many there are."""
     by_site: Dict[str, List[str]] = defaultdict(list)
     out: List[Dict[str, Any]] = []
     for k in sorted(entries):
