@@ -228,6 +228,12 @@ class Server:
         q = urllib.parse.urlencode(q)
         return self._req("GET", f"/api/markx/work?{q}")
 
+    def ready(self, kinds, days=None):
+        q = {"kinds": ",".join(kinds)}
+        if days is not None:
+            q["days"] = days
+        return self._req("GET", f"/api/markx/ready?{urllib.parse.urlencode(q)}")
+
     def answers(self, payload):
         return self._req("POST", "/api/markx/answers", payload)
 
@@ -1195,10 +1201,22 @@ class Worker:
             if not self.stop.is_set():
                 self.run_batch(b)
 
+    def with_work(self, kinds):
+        """v10.42: the kinds a lease would give work now (GET /ready: a leasable task, or a planner the lease runs);
+        every kind when the server cannot say (an older server: 404) or the answer fails, as before."""
+        try:
+            got = self.server.ready(kinds, self.a.days) or {}
+            out = set(got["ready"]) | set(got.get("planned") or [])
+        except (ServerAuth, ServerError, ServerSlow, ServerUnreachable, KeyError, TypeError) as e:   # the lease says
+            self.log("ready-unknown", error=str(e)[:200])
+            return set(kinds)
+        self.log("ready", kinds=len(out), of=len(kinds))
+        return out & set(kinds)
+
     def lease_all(self, kinds, ready, callers):
         """The leaser: --batches leases, kinds taking turns (--drain: each until dry), each lease's batches put on
         `ready`; a None for each caller at the end."""
-        done, leased, turn, slow = set(), 0, 0, 0
+        done, leased, turn, slow = set(kinds) - self.with_work(kinds), 0, 0, 0
         try:
             while leased < self.a.batches and not self.stop.is_set():
                 if self.a.drain:

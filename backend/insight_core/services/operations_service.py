@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from insight_core.db import database as db
 
@@ -1019,11 +1020,23 @@ class OperationsService:
     STATEMENTS_SHOWN = 20
     STATEMENT_CHARS = 2000
 
-    def top_statements(self, limit: int = STATEMENTS_SHOWN) -> Dict[str, Any]:
-        """What insight-db spends its time on (`top_statements`), plus `indexes` and `memory`. Read only."""
+    def top_statements(self, limit: int = STATEMENTS_SHOWN, *, since: Optional[str] = None,
+                       snapshot: bool = False) -> Dict[str, Any]:
+        """What insight-db spends its time on (`top_statements`), plus `indexes` and `memory`. Read only. `since`
+        "start" or "snapshot": since this process's start or its last `snapshot` (kept in the process, no reset)."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             seen = self._indexes_and_memory(cur)
-            return {**top_statements(cur, limit, chars=self.STATEMENT_CHARS), **seen}
+            if snapshot:
+                statement_base(cur, "snapshot")
+            base = None
+            if since is not None:
+                base = _STATEMENT_BASES.get(since)
+                if base is None:
+                    return {"enabled": False, "statements": [], **seen,
+                            "reason": f"no {since!r} snapshot in this API process (pid {os.getpid()}): "
+                                      "take one with ?snapshot=1"}
+            out = top_statements(cur, limit, chars=self.STATEMENT_CHARS, base=base)
+            return {**out, **seen, "process": os.getpid(), "snapshots": {k: v[0] for k, v in _STATEMENT_BASES.items()}}
 
     INDEX_MB_SHOWN = 1
 
@@ -1247,9 +1260,11 @@ class OperationsService:
         return value
 
 
-def top_statements(cur: Any, limit: int, *, chars: int = OperationsService.STATEMENT_CHARS) -> Dict[str, Any]:
+def top_statements(cur: Any, limit: int, *, chars: int = OperationsService.STATEMENT_CHARS,
+                   base: Optional[Tuple[str, Dict[str, Tuple[float, ...]]]] = None) -> Dict[str, Any]:
     """pg_stat_statements' statements of this database by total time since `since`, normalized ($n: no values shown),
-    cut at `chars`, with `share` of all time. Read only; {"enabled": False, "reason"} without the extension."""
+    cut at `chars`, with `share` of all time. Read only; {"enabled": False, "reason"} without the extension. `base`
+    (at, `statement_counts`): the counts since then, the top by that time."""
     cur.execute("""SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'),
                           'pg_stat_statements' = ANY(string_to_array(
                               replace(current_setting('shared_preload_libraries'), ' ', ''), ','))""")
@@ -1258,6 +1273,8 @@ def top_statements(cur: Any, limit: int, *, chars: int = OperationsService.STATE
         why = ("its library is not loaded at the server's start (shared_preload_libraries)" if not loaded
                else "its view is not created in this database (migration 0146)")
         return {"enabled": False, "reason": f"pg_stat_statements is off: {why}", "statements": []}
+    if base is not None:
+        return _statements_since(cur, limit, chars, base)
     cur.execute("""SELECT sum(total_exec_time), sum(calls) FROM pg_stat_statements
                     WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())""")
     total_ms, calls = cur.fetchone()
@@ -1276,3 +1293,51 @@ def top_statements(cur: Any, limit: int, *, chars: int = OperationsService.STATE
                             "blocks_hit": int(hit), "blocks_read": int(read), "temp_blocks_written": int(temp),
                             "share": round(float(t) / total_ms, 4) if total_ms else None}
                            for qid, text, n, t, m, r, hit, read, temp in rows]}
+
+
+# v10.42: {name: (at, statement_counts)}: "start" (the API process's start, main.py's lifespan) and "snapshot" (a
+# GET's ?snapshot=1). In this process only (the API runs two: each its own); one entry a statement Postgres keeps
+# (pg_stat_statements.max, 5,000 by default): 1.7 MB a snapshot at 5,000 (measured, tracemalloc), two a process.
+_STATEMENT_BASES: Dict[str, Tuple[str, Dict[str, Tuple[float, ...]]]] = {}
+_THIS_DB = "dbid = (SELECT oid FROM pg_database WHERE datname = current_database())"
+
+
+def statement_counts(cur: Any) -> Dict[str, Tuple[float, ...]]:
+    """{queryid: (calls, total ms, rows, blocks hit, blocks read, temp blocks written)} of this database, now."""
+    cur.execute(f"""SELECT queryid, sum(calls), sum(total_exec_time), sum(rows), sum(shared_blks_hit),
+                           sum(shared_blks_read), sum(temp_blks_written)
+                      FROM pg_stat_statements WHERE {_THIS_DB} GROUP BY queryid""")
+    return {str(q): tuple(float(x or 0) for x in rest) for q, *rest in cur.fetchall()}
+
+
+def statement_base(cur: Any, name: str) -> Optional[str]:
+    """Keep the counts now as `name` (when pg_stat_statements is on): its time, or None."""
+    cur.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')")
+    if not cur.fetchone()[0]:
+        return None
+    at = datetime.now(timezone.utc).isoformat()
+    _STATEMENT_BASES[name] = (at, statement_counts(cur))
+    return at
+
+
+def _statements_since(cur: Any, limit: int, chars: int, base: Tuple[str, Dict[str, Tuple[float, ...]]]
+                      ) -> Dict[str, Any]:
+    """top_statements' answer for the counts since `base`."""
+    at, before = base
+    zero = (0.0,) * 6
+    deltas = {q: tuple(a - b for a, b in zip(now, before.get(q, zero))) for q, now in statement_counts(cur).items()}
+    deltas = {q: d for q, d in deltas.items() if d[0] > 0}
+    total_ms = sum(d[1] for d in deltas.values())
+    top = sorted(deltas.items(), key=lambda kv: (-kv[1][1], kv[0]))[:limit]
+    texts: Dict[str, str] = {}
+    if top:
+        cur.execute(f"""SELECT DISTINCT ON (queryid) queryid, left(query, %s) FROM pg_stat_statements
+                         WHERE {_THIS_DB} AND queryid = ANY(%s::bigint[])""", (chars, [int(q) for q, _ in top]))
+        texts = {str(q): t for q, t in cur.fetchall()}
+    return {"enabled": True, "since": at, "total_ms": round(total_ms, 1),
+            "calls": int(sum(d[0] for d in deltas.values())),
+            "statements": [{"id": q, "statement": " ".join((texts.get(q) or "").split()), "calls": int(n),
+                            "total_ms": round(t, 1), "mean_ms": round(t / n, 2), "rows": int(r),
+                            "blocks_hit": int(hit), "blocks_read": int(read), "temp_blocks_written": int(temp),
+                            "share": round(t / total_ms, 4) if total_ms else None}
+                           for q, (n, t, r, hit, read, temp) in top]}

@@ -744,7 +744,8 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
 # kinds the decision job plans, never a lease: their planners are too slow for a lease's wait (0216)
 BACKGROUND_PLANNED = ("check", "cite", "track", "relate", "stop",
                       "chain",
-                      "derive")
+                      "derive",
+                      "digest", "track_things", "track_same")   # v10.42: each pass read every track row (11-13 s a lease)
 
 
 def planned_in_background(cur: Cursor, kind: str, now: Optional[datetime] = None) -> bool:

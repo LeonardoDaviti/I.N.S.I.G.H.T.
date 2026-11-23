@@ -130,12 +130,22 @@ def start_once() -> None:
     threading.Thread(target=start_stories, name="stories", daemon=True).start()
 
 
+def _statements_at_start() -> None:
+    from insight_core.services import operations_service
+    try:
+        with database.connection(services().db_url) as conn, conn.cursor() as cur:
+            operations_service.statement_base(cur, "start")
+    except Exception:  # noqa: BLE001 - the page says no snapshot; the start goes on
+        logger.exception("db-statements: no start snapshot")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     services()  # build the services at boot, so a bad configuration fails here
     freeze_start()  # the start's objects out of the GC's reach, so the idle collection is cheap
     if os.getenv("INSIGHT_API_SUPERVISED") != "1":
         start_once()
+    await asyncio.to_thread(_statements_at_start)   # db-statements?since=start
     # Mark X's jobs never run here: insight-ingestion runs them (markx/jobs.py).
     yield
     database.close_all()
@@ -174,6 +184,9 @@ app.add_middleware(
 # The polled answers (running jobs, unread counts, the overview, source health) as conditional GETs.
 from insight_core.routers.conditional import ConditionalGet  # noqa: E402
 app.add_middleware(ConditionalGet)
+# each route's count and time in this process (db-statements' api_routes)
+from insight_core.utils.route_timings import RouteTimings  # noqa: E402
+app.add_middleware(RouteTimings)
 # The outermost; when the process is idle, the memory its requests freed goes back to the OS.
 from insight_core.utils.idle_trim import IdleTrim, freeze_start  # noqa: E402
 app.add_middleware(IdleTrim)
@@ -1903,10 +1916,15 @@ async def get_background_work():
 
 @app.get("/api/operations/db-statements")
 @error_detail("load the database's top statements")
-async def get_db_statements():
+async def get_db_statements(since: Optional[str] = Query(default=None, pattern="^(start|snapshot)$"),
+                            snapshot: bool = False):
     """Issue 0215: the database's top 20 statements by total time (pg_stat_statements, normalized: no values). Read
-    only; {"enabled": false, "reason"} while Postgres runs without the library (DEPLOYMENT.md)."""
-    return await asyncio.to_thread(services().operations.top_statements)
+    only; {"enabled": false, "reason"} while Postgres runs without the library (DEPLOYMENT.md).
+    v10.42: ?since=start|snapshot: since this API process's start or its last ?snapshot=1 (kept in the process, no
+    reset); `api_routes`: this process's routes by total time since its start (utils/route_timings.py)."""
+    from insight_core.utils import route_timings
+    out = await asyncio.to_thread(services().operations.top_statements, since=since, snapshot=snapshot)
+    return {**out, "api_routes": route_timings.snapshot()}
 
 
 def _metrics_page() -> str:

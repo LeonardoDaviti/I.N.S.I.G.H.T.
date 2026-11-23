@@ -16,7 +16,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 log = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ WINDOW_CHARS = 3500     # characters of a post one question shows (round 2's win
 MAX_WINDOWS = 6         # windows a long post is read in at most
 LINKS_MAX = 25
 THINGS_OPEN = 60
-SAME_OPEN = 30
+SAME_OPEN = 240         # one 5-minute plan pass and some: the server answered ~40 a minute
 SAME_PAIRS = 200        # same-thing pairs one track's plan considers at most (closest names first)
 RARE_MIN, RARE_SHARE = 3, 0.02   # a word of at most this many of a kind's names (or this share) is rare
 AGREE = 0.5             # two names agree when their shared words are this Dice share of their words at least
@@ -1076,10 +1076,12 @@ def same_input(track: Dict[str, Any], a: Dict[str, Any], b: Dict[str, Any],
 
 
 def same_pairs(kind: Dict[str, Any], things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]],
-               ments: Dict[str, List[Tuple[str, str, str]]]) -> List[Tuple[str, str, bool]]:
+               ments: Dict[str, List[Tuple[str, str, str]]], *, only: Optional[Set[str]] = None,
+               skip: Optional[Set[Tuple[str, str]]] = None) -> List[Tuple[str, str, bool]]:
     """The pairs of one kind's current rows worth a same-thing question, closest names first, SAME_PAIRS at most:
     [(a, b, one post gave both)]. Practices: their quotes name a shared entity. Other kinds: a shared entity, a shared
-    link, or a shared rare word. A pair from one post is asked too (a post read in windows gives its thing twice)."""
+    link, or a shared rare word. A pair from one post is asked too (a post read in windows gives its thing twice).
+    `only`: the pairs with one of these rows (against every row); `skip`: pairs (a < b) left out before the cap."""
     named = {t["id"]: named_entities(kind, rs.get(t["id"], []), ments) for t in things}
     posts = {t["id"]: {r["post"] for r in rs.get(t["id"], [])} for t in things}
     names = {t["id"]: name_of(kind, t["fields"] or {}) for t in things}
@@ -1089,8 +1091,14 @@ def same_pairs(kind: Dict[str, Any], things: Sequence[Dict[str, Any]], rs: Dict[
     words = {t: name_words(n) & rare for t, n in names.items()}
     out = []
     ids = sorted(names)
-    for i, x in enumerate(ids):
-        for y in ids[i + 1:]:
+    lead = ids if only is None else sorted(set(ids) & set(only))
+    for x0 in lead:
+        for y0 in ids:
+            if y0 == x0 or (y0 < x0 and (only is None or y0 in only)):
+                continue   # each pair once: (a, b) with a < b, a pair of two `only` rows from its smaller one
+            x, y = min(x0, y0), max(x0, y0)
+            if skip and (x, y) in skip:
+                continue
             if kind["kind"] == PRACTICE_KIND:
                 close = 1.0 if named[x] & named[y] else 0.0
             else:
@@ -1103,45 +1111,63 @@ def same_pairs(kind: Dict[str, Any], things: Sequence[Dict[str, Any]], rs: Dict[
     return [(x, y, one) for _c, x, y, one in out[:SAME_PAIRS]]
 
 
+SAME_PASS = "markx:track_same_pass:"   # v10.42: system_settings key (+ track id): {"at"} of its last complete pass
+SAME_OVERLAP = timedelta(minutes=10)   # a row changed by a transaction still open at a pass is paired at the next
+
+
 def plan_same(cur: Any, **_kw: Any) -> int:
     """A `track_same` question for each pair `same_pairs` finds that was never asked (under any guide of the kind),
-    SAME_OPEN waiting at most: how many were added."""
+    SAME_OPEN waiting at most: how many were added. Incremental: only the rows new or changed (updated_at) since the
+    track's last complete pass are paired, against every row; a track with none is not read."""
+    from insight_core.db.repo_operations import SystemSettingsRepository as Settings
     from insight_core.markx import repo, schemas, tracks
     if not on():
         return 0
     schemas.ensure_guides(cur)
-    cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = %s AND status IN ('open', 'leased')", (SAME_KIND,))
-    room = SAME_OPEN - cur.fetchone()[0]
+    cur.execute("SELECT count(*), now() FROM mx_tasks WHERE kind = %s AND status IN ('open', 'leased')", (SAME_KIND,))
+    waiting, now = cur.fetchone()
+    room = SAME_OPEN - waiting
     added = 0
     for t in tracks.described(cur):
         if room <= 0:
             break
+        tid = str(t["folder_id"])
+        got = Settings.get(cur, SAME_PASS + tid)
+        since = (got[0] or {}).get("at") if got else None
+        cur.execute("""SELECT id::text FROM mx_track_things WHERE track_id = %s AND status = 'current'
+                          AND (%s::timestamptz IS NULL OR updated_at >= %s::timestamptz)""", (tid, since, since))
+        changed = {r[0] for r in cur.fetchall()}
+        if not changed:
+            continue
         kinds = _kinds(cur, t["folder_id"])
         rows = [x for x in current(cur, t["folder_id"]) if x["kind"] in kinds]
-        if len(rows) < 2:
-            continue
-        rs = reports(cur, t["folder_id"], [x["id"] for x in rows])
-        ments = _mentions(cur, sorted({r["post"] for v in rs.values() for r in v}))
-        ids = [x["id"] for x in rows]
-        cur.execute("""SELECT a::text, b::text FROM mx_tasks WHERE kind = %s AND guide = ANY(%s)
-                          AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""",
-                    (SAME_KIND, list(schemas.answer_guides(SAME_KIND)), ids, ids))
-        asked = {tuple(sorted(r)) for r in cur.fetchall()}
-        by = {x["id"]: x for x in rows}
-        for kname, kind in kinds.items():
-            mine = [x for x in rows if x["kind"] == kname]
-            if len(mine) < 2:
-                continue
-            for x, y, one in same_pairs(kind, mine, rs, ments):
-                if room <= 0:
-                    break
-                if (x, y) in asked:
+        complete = True
+        if len(rows) >= 2:
+            rs = reports(cur, t["folder_id"], [x["id"] for x in rows])
+            ments = _mentions(cur, sorted({r["post"] for v in rs.values() for r in v}))
+            ids = [x["id"] for x in rows]
+            cur.execute("""SELECT a::text, b::text FROM mx_tasks WHERE kind = %s AND guide = ANY(%s)
+                              AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""",
+                        (SAME_KIND, list(schemas.answer_guides(SAME_KIND)), ids, ids))
+            asked = {tuple(sorted(r)) for r in cur.fetchall()}
+            by = {x["id"]: x for x in rows}
+            for kname, kind in kinds.items():
+                mine = [x for x in rows if x["kind"] == kname]
+                if len(mine) < 2 or not changed & {x["id"] for x in mine}:
                     continue
-                _tid, new = repo.add_task(cur, kind=SAME_KIND, guide=SAME_GUIDE, subject_kind="thing_thing",
-                                          input=same_input(t, by[x], by[y], kind, same_post=one), a=x, b=y)
-                asked.add((x, y))
-                added += new
-                room -= new
+                pairs = same_pairs(kind, mine, rs, ments, only=changed, skip=asked)
+                complete = complete and len(pairs) < SAME_PAIRS
+                for x, y, one in pairs:
+                    if room <= 0:
+                        complete = False
+                        break
+                    _tid, new = repo.add_task(cur, kind=SAME_KIND, guide=SAME_GUIDE, subject_kind="thing_thing",
+                                              input=same_input(t, by[x], by[y], kind, same_post=one), a=x, b=y)
+                    asked.add((x, y))
+                    added += new
+                    room -= new
+        if complete:
+            Settings.upsert(cur, SAME_PASS + tid, {"at": (now - SAME_OVERLAP).isoformat()})
     return added
 
 
