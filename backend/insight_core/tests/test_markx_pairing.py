@@ -88,7 +88,7 @@ def _world(rng: random.Random, n: int = 40):
     stories, used = {}, 0
     while used < n * 0.6:
         size = rng.choice([2, 2, 3, 4])
-        ms = ids[used:used + size]
+        ms = sorted(ids[used:used + size], key=lambda m: (posts[m].at, m))   # v10.39: the root (why None) is the earliest, where the old origin rule and the root rule agree (the root rule: test_markx_decide)
         used += size
         stories[f"S{len(stories)}"] = [D.Member(m, rng.choice(["report", "report", "share"]),
                                                 None if i == 0 else rng.choice(["time", "citation", "thread", "quote"]))

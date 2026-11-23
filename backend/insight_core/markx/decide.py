@@ -1500,9 +1500,10 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
         ps = world.earliest(p for p in out.about[key] if p in world.text)
         if not ps:
             continue
-        shown = [p.id for p in tasks.headline_members([world.text[p] for p in ps])]   # all headline_input shows
-        text = incremental.rendered(world.memo, "headline", shown,
-                                    lambda: tasks.headline_input([world.text[p] for p in shown]),
+        # v10.39: kept by every member's stamp (the core is chosen from all of them), so a run where no member
+        # changed reads no text: the core is chosen inside the render, which runs only on a miss
+        text = incremental.rendered(world.memo, "headline", ps,
+                                    lambda: tasks.headline_input([world.text[p] for p in ps]),
                                     texts=world.text if world.memo is not None else None)
         got = ask.answer("headline", text, a=ps[0])
         if got is None:
