@@ -744,13 +744,14 @@ def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
     kinds = {k["kind"]: k for k in schema["kinds"]}
     at = _post_at(cur, post)
     own = own_address(cur, post, answer.get("things") or [], kinds)
+    seen = _Seen(cur, tid, post)
     n_added = 0
     for n, th in enumerate(answer.get("things") or []):
         kind = kinds.get(th.get("kind"))
         if kind is None or not th.get("fields"):
             continue
         mine_own = own if kind["kind"] != PRACTICE_KIND else None
-        thing = _match(cur, tid, kind, th["fields"], post, own=mine_own)
+        thing = _match(cur, tid, kind, th["fields"], post, own=mine_own, seen=seen)
         if thing is None:
             key = sorted(sigs(kind, th["fields"], mine_own))
             first = kind["fields"][0]["name"]
@@ -759,12 +760,15 @@ def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
                         (tid, kind["kind"], key[0] if key else f"{first}={key_text(th['fields'][first]['value'])}",
                          version, at, at))
             thing = cur.fetchone()[0]
+            seen.root[thing] = thing
         cur.execute("""INSERT INTO mx_track_thing_reports (call_id, n, thing_id, post_id, task_id, schema_version, win,
                                                            field_values)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb) ON CONFLICT DO NOTHING""",
                     (call_id, n, thing, post, task["id"], version, win, json.dumps(th["fields"], ensure_ascii=False)))
+        if cur.rowcount:
+            seen.reported(thing, kind, th["fields"])
         n_added += cur.rowcount
-        remerge(cur, tid, thing)
+        remerge(cur, tid, thing, root=seen.root)
     if n_added and task.get("guide") == THINGS_GUIDE:
         fold_catalog(cur, tid, post, call_id, kinds)
     return n_added
@@ -851,49 +855,133 @@ def same_identity(a_name: str, a_links: Set[str], b_name: str, b_links: Set[str]
     return page or 2 * len(shared) >= AGREE * (len(a) + len(b))
 
 
+class _Seen:
+    """One answer's view of its track (`apply_things`), read once instead of once a thing of the answer (0279: the
+    answer route's top statements): every thing's root, and per kind asked its reports as `_match` compares them
+    (each report's name and links, with the post's own address where that post gave one thing of the track's kinds,
+    practices aside; the names' word counts for `rare_words`), kept as the database has them while the answer adds
+    things and reports, all of `post`. Holds what one kind's read held, plus each report's name and links."""
+
+    def __init__(self, cur: Any, track_id: str, post: str):
+        self.cur, self.track_id, self.post = cur, track_id, post
+        self.root = roots(cur, track_id)
+        self._kinds: Dict[str, List[Tuple[str, str, Any, str, Set[str], Set[str]]]] = {}
+        self._df: Dict[str, Dict[str, int]] = {}          # kind -> word -> its reports' names with it (rare_words)
+        self._things: Dict[str, Set[str]] = {}             # post -> its things of the track's kinds (practices aside)
+
+    def _load(self, kind: Dict[str, Any]) -> None:
+        k = kind["kind"]
+        if k in self._kinds:
+            return
+        if k == PRACTICE_KIND:
+            self.cur.execute("""SELECT DISTINCT r.thing_id::text, r.field_values FROM mx_track_thing_reports r
+                                  JOIN mx_track_things t ON t.id = r.thing_id
+                                 WHERE t.track_id = %s AND t.kind = %s AND r.post_id = %s""",
+                             (self.track_id, k, self.post))
+            got = [(t, self.post, v, None) for t, v in self.cur.fetchall()]
+        else:
+            self.cur.execute("""SELECT r.thing_id::text, r.post_id::text, r.field_values, p.url
+                                  FROM mx_track_thing_reports r JOIN mx_track_things t ON t.id = r.thing_id
+                                  JOIN posts p ON p.id = r.post_id
+                                 WHERE t.track_id = %s AND t.kind = %s""", (self.track_id, k))
+            got = self.cur.fetchall()
+            self._count(sorted(({r[1] for r in got} | {self.post}) - set(self._things)))
+        self._kinds[k], self._df[k] = [], defaultdict(int)
+        for t, p, v, u in got:
+            self._add(kind, t, p, v, u)
+
+    def _add(self, kind: Dict[str, Any], thing: str, post: str, values: Any, url: Optional[str]) -> None:
+        k = kind["kind"]
+        name = name_of(kind, values or {})
+        bare = set() if k == PRACTICE_KIND else links_of(kind, values or {}, None)
+        # a post's own address counts while it gave one thing; only `post`'s count moves during the answer
+        single = post == self.post or len(self._things.get(post, ())) == 1
+        own = bare if k == PRACTICE_KIND or not url or not single else links_of(kind, values or {}, url)
+        self._kinds[k].append((thing, post, values, name, bare, own))
+        for w in name_words(name):
+            self._df[k][w] += 1
+
+    def named(self, kind: Dict[str, Any]) -> List[Tuple[str, str, Any, Set[str]]]:
+        """[(thing, name, values, links)] of the kind's reports (a practice: of `post` only, each (thing, values)
+        once), in the order read, then added."""
+        self._load(kind)
+        if kind["kind"] == PRACTICE_KIND:
+            out, keep = [], set()
+            for t, _p, v, name, _b, _o in self._kinds[kind["kind"]]:
+                key = (t, json.dumps(v, sort_keys=True))
+                if key not in keep:
+                    keep.add(key)
+                    out.append((t, name, v, set()))
+            return out
+        return [(t, name, v, own if len(self._things.get(p, ())) == 1 else bare)
+                for t, p, v, name, bare, own in self._kinds[kind["kind"]]]
+
+    def rare(self, kind: Dict[str, Any], mine: str) -> Set[str]:
+        """`rare_words` over the kind's report names and `mine`, of `mine`'s words (the only ones `same_identity`
+        asks about: a shared word is one of them)."""
+        df = self._df[kind["kind"]]
+        n = len(self._kinds[kind["kind"]]) + 1
+        cap = max(RARE_MIN, RARE_SHARE * n)
+        return {w for w in name_words(mine) if df.get(w, 0) + 1 <= cap}
+
+    def _count(self, posts: Sequence[str]) -> None:
+        if not posts:
+            return
+        self.cur.execute("""SELECT r.post_id::text, array_agg(DISTINCT r.thing_id::text) FROM mx_track_thing_reports r
+                              JOIN mx_track_things t ON t.id = r.thing_id
+                             WHERE r.post_id = ANY(%s::uuid[]) AND t.track_id = %s AND t.kind <> %s
+                             GROUP BY 1""", (list(posts), self.track_id, PRACTICE_KIND))
+        got = {p: set(ts) for p, ts in self.cur.fetchall()}
+        for p in posts:
+            self._things[p] = got.get(p, set())
+
+    def reported(self, thing: str, kind: Dict[str, Any], values: Any) -> None:
+        """A report of `post` stored for `thing`."""
+        self._count([self.post] if self.post not in self._things else [])
+        if kind["kind"] != PRACTICE_KIND:
+            self._things[self.post].add(thing)
+        if kind["kind"] in self._kinds:
+            self._add(kind, thing, self.post, values, None if kind["kind"] == PRACTICE_KIND else self._url())
+
+    def _url(self) -> Optional[str]:
+        if not hasattr(self, "_post_url"):
+            self.cur.execute("SELECT url FROM posts WHERE id = %s", (self.post,))
+            r = self.cur.fetchone()
+            self._post_url = r[0] if r else None
+        return self._post_url
+
+
 def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any], post: str,
-           own: Optional[str] = None) -> Optional[str]:
+           own: Optional[str] = None, seen: Optional[_Seen] = None) -> Optional[str]:
     """The current thing a report joins (its root): same kind and a strong identity with one of that thing's own
-    reports (`same_identity`, so no chain through weak keys); a practice only among its own post's things."""
+    reports (`same_identity`, so no chain through weak keys); a practice only among its own post's things. `seen`:
+    the answer's view of the track (read here when not given)."""
     mine = name_of(kind, values)
     if not mine:
         return None
-    if kind["kind"] == PRACTICE_KIND:
-        cur.execute("""SELECT DISTINCT r.thing_id::text, r.field_values FROM mx_track_thing_reports r
-                         JOIN mx_track_things t ON t.id = r.thing_id
-                        WHERE t.track_id = %s AND t.kind = %s AND r.post_id = %s""", (track_id, kind["kind"], post))
-        rows = cur.fetchall()
-    else:   # each report with its post's own address when that post gave this one thing only (of the track's kinds)
-        cur.execute("""SELECT r.thing_id::text, r.field_values,
-                              CASE WHEN (SELECT count(DISTINCT r2.thing_id) FROM mx_track_thing_reports r2
-                                           JOIN mx_track_things t2 ON t2.id = r2.thing_id
-                                          WHERE r2.post_id = r.post_id AND t2.track_id = t.track_id
-                                            AND t2.kind <> %s) = 1 THEN p.url END
-                         FROM mx_track_thing_reports r JOIN mx_track_things t ON t.id = r.thing_id
-                         JOIN posts p ON p.id = r.post_id
-                        WHERE t.track_id = %s AND t.kind = %s""", (PRACTICE_KIND, track_id, kind["kind"]))
-        rows = cur.fetchall()
-    if not rows:
+    seen = seen if seen is not None and seen.post == post else _Seen(cur, track_id, post)
+    named = seen.named(kind)
+    if not named:
         return None
-    root = roots(cur, track_id)
+    root = seen.root
     if kind["kind"] == PRACTICE_KIND:
-        for row in rows:
-            if name_of(kind, row[1]) == mine:
-                return root.get(row[0], row[0])
+        for thing, name, _v, _l in named:
+            if name == mine:
+                return root.get(thing, thing)
         return None
-    named = [(row[0], name_of(kind, row[1]), links_of(kind, row[1], row[2] if len(row) > 2 else None)) for row in rows]
-    rare = rare_words([n for _t, n, _l in named] + [mine])
+    rare = seen.rare(kind, mine)
     links = links_of(kind, values, own)
-    for thing, name, theirs in named:
+    for thing, name, _v, theirs in named:
         if same_identity(mine, links, name, theirs, rare):
             return root.get(thing, thing)
     return None
 
 
-def reports(cur: Any, track_id: str, thing_ids: Optional[Sequence[str]] = None) -> Dict[str, List[Dict[str, Any]]]:
+def reports(cur: Any, track_id: str, thing_ids: Optional[Sequence[str]] = None, *,
+            root: Optional[Dict[str, str]] = None) -> Dict[str, List[Dict[str, Any]]]:
     """{root thing: its reports and its merged things' [{post, at, call, values, version, found_at}]}, oldest post
-    first; `thing_ids`: only these roots'."""
-    root = roots(cur, track_id)
+    first; `thing_ids`: only these roots'. `root`: the track's `roots` as the caller holds them (else read)."""
+    root = roots(cur, track_id) if root is None else root
     wanted = None if thing_ids is None else set(thing_ids)
     members = [t for t, r in root.items() if wanted is None or r in wanted]
     if not members:
@@ -945,9 +1033,10 @@ def merged_fields(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     return fields
 
 
-def remerge(cur: Any, track_id: str, thing: str) -> None:
-    """A thing's fields again from its reports (`merged_fields`), its first and last post dates (publication)."""
-    rs = reports(cur, track_id, [thing]).get(thing, [])
+def remerge(cur: Any, track_id: str, thing: str, *, root: Optional[Dict[str, str]] = None) -> None:
+    """A thing's fields again from its reports (`merged_fields`), its first and last post dates (publication).
+    `root`: as in `reports`."""
+    rs = reports(cur, track_id, [thing], root=root).get(thing, [])
     if not rs:
         return
     fields = merged_fields(rs)
