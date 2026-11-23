@@ -5,7 +5,8 @@ import { cn } from '../../lib/utils';
 import { buttonVariants } from '../ui';
 
 /**
- * The post's actions, icon-only, in the top-right corner of the title block:
+ * The post's actions, icon-only, in the post page's sticky band left of Aa (v10.42), so
+ * they stay at hand down the whole post:
  * open the original, open its discussion (when the feed names one, e.g. the
  * Hacker News thread), read later (the clock) and keep (the star), both offered
  * here whatever the read state (issue 0022), copy the text. Each has a tooltip and an
@@ -19,6 +20,8 @@ const ICON_ACTION = [
   buttonVariants({ variant: 'ghost', size: 'icon' }),
   '[&:focus-visible:active]:scale-100 motion-reduce:[&:active]:scale-100',
   '[&_svg]:!h-[1.125rem] [&_svg]:!w-[1.125rem]',
+  // The band's height (2rem, as Back and Aa), and narrower under 360px so the row never overflows.
+  '!h-8 !w-8 max-[359px]:!w-7',
 ].join(' ');
 
 const TIP = cn(
@@ -54,7 +57,7 @@ export interface PostActionsProps {
 export default function PostActions({ url, discussionUrl, starred, starring, onStar, later, onLater, copied, onCopy }: PostActionsProps) {
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={400}>
-      <div role="group" aria-label="Post actions" className="-mr-2 -mt-1.5 flex shrink-0 items-center">
+      <div role="group" aria-label="Post actions" className="flex shrink-0 items-center">
         {url ? (
           <Action tip="Open original">
             <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open original" className={ICON_ACTION}>

@@ -22,7 +22,8 @@ describe('PostDetailPage header', () => {
     expect(within(header).getByText('simonwillison.net')).toBeInTheDocument();
     expect(within(header).queryByText('rss')).toBeNull();
     expect(header.querySelector('time')).toHaveAttribute('dateTime', '2026-09-27T23:54:15+00:00');
-    const original = within(header).getByRole('link', { name: /open original/i });
+    // The original link is the band's, left of Aa (v10.42).
+    const original = within(navBand()).getByRole('link', { name: /open original/i });
     expect(original).toHaveAttribute('href', 'https://simonwillison.net/2026/Sep/27/2026-in-llms-so-far/');
     expect(original).toHaveAttribute('target', '_blank');
   });
@@ -181,11 +182,14 @@ describe('PostDetailPage header', () => {
 });
 
 describe('PostDetailPage reading view', () => {
-  it('puts open original, read later, keep and copy as icon-only buttons in the title block, and no Inspect', async () => {
+  it('puts open original, read later, keep and copy as icon-only buttons in the sticky band, left of Aa, and no Inspect (v10.42)', async () => {
     render(baseApi(rssPost()));
     const heading = await screen.findByRole('heading', { level: 1 });
     const header = heading.closest('header')!;
-    const actions = within(header).getByRole('group', { name: 'Post actions' });
+    // One set of actions: in the band, not repeated in the title block.
+    expect(within(header).queryByRole('group', { name: 'Post actions' })).toBeNull();
+    expect(screen.getAllByRole('group', { name: 'Post actions' })).toHaveLength(1);
+    const actions = within(navBand()).getByRole('group', { name: 'Post actions' });
     const controls = Array.from(actions.querySelectorAll('a, button'));
     expect(controls.map((control) => control.getAttribute('aria-label'))).toEqual(['Open original', 'Read later', 'Keep', 'Copy text']);
     for (const control of controls) {
@@ -193,10 +197,33 @@ describe('PostDetailPage reading view', () => {
       expect(control.textContent).toBe('');
       expect(control.querySelector('svg')).not.toBeNull();
     }
-    // The actions sit on the line above the title, so they come before it in the header.
-    expect(actions.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Left of Aa: the actions come before the reading settings in the band.
+    const aa = within(navBand()).getByRole('button', { name: 'Reading settings' });
+    expect(actions.compareDocumentPosition(aa) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Inspect' })).toBeNull();
     expect(screen.queryByText('Open original')).toBeNull();
+  });
+
+  it('the band\'s keep and read later toggle the post, and s and l update the same buttons (v10.42)', async () => {
+    const user = userEvent.setup();
+    const togglePostFavorite = vi.fn()
+      .mockResolvedValueOnce({ success: true, favorited: true })
+      .mockResolvedValueOnce({ success: true, favorited: false });
+    const setPostsLater = vi.fn().mockResolvedValue({ success: true, updated: 1, ids: [POST_ID] });
+    render(baseApi(rssPost(), { togglePostFavorite, setPostsLater, getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }) }));
+    await screen.findByRole('heading', { level: 1 });
+    const band = navBand();
+    await user.click(within(band).getByRole('button', { name: 'Keep' }));
+    await waitFor(() => expect(within(band).getByRole('button', { name: 'Keep' })).toHaveAttribute('aria-pressed', 'true'));
+    await user.keyboard('s');
+    expect(togglePostFavorite).toHaveBeenLastCalledWith(POST_ID, false);
+    await waitFor(() => expect(within(band).getByRole('button', { name: 'Keep' })).toHaveAttribute('aria-pressed', 'false'));
+    await user.keyboard('l');
+    expect(setPostsLater).toHaveBeenLastCalledWith([POST_ID], true);
+    await waitFor(() => expect(within(band).getByRole('button', { name: 'Read later' })).toHaveAttribute('aria-pressed', 'true'));
+    await user.click(within(band).getByRole('button', { name: 'Read later' }));
+    expect(setPostsLater).toHaveBeenLastCalledWith([POST_ID], false);
+    await waitFor(() => expect(within(band).getByRole('button', { name: 'Read later' })).toHaveAttribute('aria-pressed', 'false'));
   });
 
   it('links the discussion when the feed names one (Hacker News)', async () => {
@@ -637,6 +664,11 @@ class StubObserver {
   takeRecords() { return []; }
 }
 
+/** The sticky band under the top bar: Back, Previous / Next, the post's actions and Aa. */
+function navBand(): HTMLElement {
+  return document.querySelector<HTMLElement>('[data-nav-band]')!;
+}
+
 function see(target: Element | null) {
   if (!target) throw new Error('nothing to see');
   act(() => {
@@ -754,7 +786,35 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     expect(within(next).queryByRole('link', { name: 'settings' })).toBeNull();
     expect(within(next).getByRole('link', { name: 'simonwillison.net' })).toHaveAttribute('href', '/read/source/src-1');
     expect(next.querySelector('time')).toHaveAttribute('dateTime', '2026-09-26T10:00:00+00:00');
-    expect(within(next).getByRole('group', { name: 'Post actions' })).toBeInTheDocument();
+    // One set of actions, the current post's, in the band; no header repeats them (v10.42).
+    expect(within(next).queryByRole('group', { name: 'Post actions' })).toBeNull();
+    expect(screen.getAllByRole('group', { name: 'Post actions' })).toHaveLength(1);
+  });
+
+  it('the band\'s actions act on the current post of the stream (v10.42)', async () => {
+    const user = userEvent.setup();
+    const posts: Record<string, Post> = {
+      [POST_ID]: rssPost(),
+      [NEXT_ID]: rssPost({ id: NEXT_ID, title: 'The older post', url: 'https://example.com/older', published_at: '2026-09-26T10:00:00+00:00' }),
+    };
+    const togglePostFavorite = vi.fn().mockResolvedValue({ success: true, favorited: true });
+    renderStream(contextApi({ getPostDetail: vi.fn((id: string) => Promise.resolve(detailFor(posts[id]))), togglePostFavorite }));
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    see(streamEnd());
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+    const band = navBand();
+    expect(within(band).getByRole('link', { name: 'Open original' })).toHaveAttribute('href', posts[POST_ID].url);
+
+    await user.keyboard('j');
+    await waitFor(() => expect(within(band).getByRole('link', { name: 'Open original' })).toHaveAttribute('href', 'https://example.com/older'));
+    await user.click(within(band).getByRole('button', { name: 'Keep' }));
+    expect(togglePostFavorite).toHaveBeenCalledWith(NEXT_ID, true);
+    await waitFor(() => expect(within(band).getByRole('button', { name: 'Keep' })).toHaveAttribute('aria-pressed', 'true'));
+    // Back on the first post, its own state shows: not kept.
+    await user.keyboard('k');
+    await waitFor(() => expect(within(band).getByRole('link', { name: 'Open original' })).toHaveAttribute('href', posts[POST_ID].url));
+    expect(within(band).getByRole('button', { name: 'Keep' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('j and k move between the posts in the stream', async () => {

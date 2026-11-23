@@ -1,4 +1,5 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueries, useQueryClient, type QueryClient } from '@tanstack/react-query';
@@ -65,8 +66,9 @@ const MarkXTranslation = lazy(() => import('../components/markx/MarkXTranslation
 
 /**
  * The post reading view (/posts/:id): one centred column — source and date, the
- * title with its icon actions in its top-right corner (open original, read later, keep,
- * copy), the images, the text — and nothing beside it. Read continuously, the
+ * title, the images, the text — and nothing beside it. The current post's icon
+ * actions (open original, read later, keep, copy) sit in the sticky band, left of
+ * Aa, so they stay at hand down the whole post (v10.42). Read continuously, the
  * next posts of the feed follow below (issue 0014).
  */
 
@@ -471,9 +473,8 @@ function PostSkeleton() {
             <span className="sr-only">Loading post</span>
             <div aria-hidden="true">
               <div className="mb-8">
-                <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
+                <div className="flex min-h-[2.25rem] items-start">
                   <Skeleton className="mt-1 h-3 w-48" />
-                  <Skeleton className="h-6 w-24" />
                 </div>
                 <Skeleton className="mt-2 h-7 w-11/12" />
                 <Skeleton className="mt-2 h-7 w-2/3" />
@@ -681,13 +682,19 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
   const backLabel = hasHistory || returnTo ? 'Back' : 'Back to feed';
   const step = ctx ? { onPrevious: goPrevious, onNext: goNext } : undefined;
   const endNav = <PostNav label="After the post" size="lg" backLabel={backLabel} onBack={goBack} step={step} />;
+  // The current post renders its own actions into this slot of the sticky band (a portal):
+  // one PostActions, its state the post's, whichever post of the stream is current.
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
 
   return (
     <>
       <NavBand>
         <div className="flex min-w-0 items-center justify-between gap-2">
           <PostNav label="Post navigation" size="sm" backLabel={backLabel} onBack={goBack} step={step} />
-          <ReadingSettingsButton />
+          <div className="flex shrink-0 items-center">
+            <div ref={setActionsSlot} data-bar-actions className="flex items-center" />
+            <ReadingSettingsButton />
+          </div>
         </div>
       </NavBand>
       <div className={PAGE_CLASS}>
@@ -718,6 +725,7 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
                       divider={index > 0}
                       offerResume={index === 0}
                       keysEnabled={entry === currentEntry && !helpOpen}
+                      actionsSlot={actionsSlot}
                     />
                   ) : query.isError ? (
                     <p className="mt-16 text-[0.875rem] text-fg-3">{errorMessage(query.error)}</p>
@@ -776,6 +784,8 @@ interface PostArticleProps {
   /** The post opened (the stream's first) offers to continue where you stopped; one joining below does not. */
   offerResume: boolean;
   keysEnabled: boolean;
+  /** The sticky band's slot: the current post's actions render there. */
+  actionsSlot: HTMLElement | null;
 }
 
 /**
@@ -792,7 +802,7 @@ function readOnLabel(link: { url: string; title: string | null; kind?: string },
   return link.title && link.title !== shown ? `Read “${link.title}” on ${site}` : `Read on ${site}`;
 }
 
-function PostArticle({ postId, detail, api, fixture, current, readOn, divider, offerResume, keysEnabled }: PostArticleProps) {
+function PostArticle({ postId, detail, api, fixture, current, readOn, divider, offerResume, keysEnabled, actionsSlot }: PostArticleProps) {
   const queryClient = useQueryClient();
   const initial = useMemo(() => initialComments(detail.post as Post), [detail.post]);
   const post = detail.post as Post;
@@ -1088,12 +1098,26 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
 
   return (
     <>
+      {current && actionsSlot ? createPortal(
+        <PostActions
+          url={post.url}
+          discussionUrl={typeof post.metadata?.comments_url === 'string' ? post.metadata.comments_url : null}
+          starred={isFavorited}
+          starring={togglingFavorite}
+          onStar={() => void handleToggleFavorite()}
+          later={isLater}
+          onLater={() => void setLater(!isLater)}
+          copied={copyState === 'copied'}
+          onCopy={() => void handleCopy()}
+        />,
+        actionsSlot,
+      ) : null}
       {/* A plain rule: the header below already names the post's source and title. */}
       {divider ? <hr className="mb-10 mt-16 border-0 border-t border-line-strong" /> : null}
 
-      {/* ---- Header: source / date and the actions on one line, then the title ---- */}
+      {/* ---- Header: source / date on one line, then the title; the actions are in the sticky band ---- */}
       <header className="mb-8">
-        <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
+        <div className="flex min-h-[2.25rem] items-start">
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
             {/* The source name reads the source. No settings link: a post is for reading, and a
                 source is managed in Sources (owner, 2026-10-31, reversing issue 0010's `/ settings`). */}
@@ -1144,17 +1168,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
               </span>
             ) : null}
           </p>
-          <PostActions
-            url={post.url}
-            discussionUrl={typeof post.metadata?.comments_url === 'string' ? post.metadata.comments_url : null}
-            starred={isFavorited}
-            starring={togglingFavorite}
-            onStar={() => void handleToggleFavorite()}
-            later={isLater}
-            onLater={() => void setLater(!isLater)}
-            copied={copyState === 'copied'}
-            onCopy={() => void handleCopy()}
-          />
         </div>
         <h1 dir="auto" className="mt-2 break-words text-pretty [font-family:var(--reading-font)] text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
           {displayTitle}
