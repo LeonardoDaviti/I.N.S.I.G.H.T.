@@ -69,13 +69,8 @@ class _Sources:
 
 
 class ArchiveBacklogEstimateTests(unittest.TestCase):
-    """Backlog and time-to-archive are derived on every live fetch, not remembered.
-
-    They used to be written only by plan_archive/run_archive, so a source that had never
-    been planned carried no backlog figure at all, and a partly-archived one kept whatever
-    its last plan produced - the number never fell as posts came in.
-    (B3: the writer moved to ingestion/archive_metadata.py and takes the kind explicitly.)
-    """
+    """Backlog and time-to-archive are derived on every live fetch, not remembered from the last plan (B3: written by
+    ingestion/archive_metadata.py, which takes the kind explicitly)."""
 
     def setUp(self):
         self.posts = _Posts()
@@ -200,7 +195,7 @@ class _SupportSources(_Sources):
         self.current = ({} if available is None else {"available_posts": available}) | archive
 
     def get_source_by_id(self, source_id):
-        # The raw row: a setting the user never set is absent (issue 0027: it was read as 50).
+        # the raw row: a setting the user never set is absent (0027)
         return {"id": source_id, "platform": "rss", "handle_or_url": "https://example.com/feed", "settings": {}}
 
     def get_source_with_settings(self, source_id):
@@ -251,8 +246,8 @@ class ArchiveSupportTests(unittest.TestCase):
                          "This feed only lists its latest 20 posts, and every fetch already reads up to 50.")
 
     def test_a_feed_whose_sitemap_lists_older_posts_can_archive_them(self):
-        # Issue 0108 Left open: a blog's sitemap holding 16 posts the feed doesn't (inspect's raw.sitemap_posts) is
-        # archived from the sitemap, though the two together (20) are no more than one fetch reads.
+        # a blog's sitemap holding posts the feed doesn't is archived from the sitemap, though the two together are no
+        # more than one fetch reads (0108)
         support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=20, available=20, sitemap_posts=16))
         self.assertTrue(support["archivable"])
         self.assertIsNone(support["reason"])
@@ -265,8 +260,8 @@ class ArchiveSupportTests(unittest.TestCase):
         self.assertIsNone(support["reason"])
 
     def test_the_limit_is_what_a_fetch_reads_not_a_made_up_50(self):
-        # Issue 0027: an RSS feed fetches 20 (its merged default); a feed listing 30 has 10 older
-        # posts to archive, so it must not be refused as "every fetch already reads up to 50".
+        # an RSS feed fetches 20 (its merged default); a feed listing 30 has 10 older posts to archive, so it is not
+        # refused (0027)
         support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=20, available=30))
         self.assertTrue(support["archivable"])
         self.assertEqual(support["live_fetch_limit"], 20)
@@ -280,7 +275,7 @@ class ArchiveSupportTests(unittest.TestCase):
         self.assertEqual(support["live_fetch_limit"], 15)
 
     def test_a_kind_whose_host_refuses_archives_cannot_archive_and_says_why(self):
-        # Issue 0027: Reddit answers every archive listing with 403, so it offers no Plan.
+        # Reddit answers every archive listing with 403, so it offers no Plan (0027)
         kind = self.history_kind()
         kind.archive_refused = "Reddit refuses archive requests for now."
         support = self.support(kind, _SupportSources())
@@ -289,7 +284,7 @@ class ArchiveSupportTests(unittest.TestCase):
         self.assertEqual(support["reason"], "Reddit refuses archive requests for now.")
 
     def test_the_reddit_kind_refuses_archives_only_without_credentials(self):
-        # Issue 0242: through its OAuth API with the owner's app, Reddit archives (top, by `after`).
+        # through its OAuth API with the owner's app, Reddit archives (top, by `after`) (0242)
         from insight_core.ingestion.credentials import MappingCredentials
         from insight_core.ingestion.kinds.reddit import NO_CREDENTIALS, RedditKind
         from insight_core.tests._kind_fakes import FakeHttp
@@ -358,8 +353,8 @@ class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ArchiveStopTests(unittest.IsolatedAsyncioTestCase):
-    """v10.13.9: POST /api/archive/{id}/stop: the running archive stops after its current page, keeps what it stored,
-    and its checkpoint says why (never resumed by itself); the flag is cleared."""
+    """POST /api/archive/{id}/stop: the running archive stops after its current page, keeps what it stored, and its
+    checkpoint says why (never resumed by itself); the flag is cleared."""
 
     async def test_a_stop_requested_ends_the_archive_after_the_current_page(self):
         pages = [ArchivePage([{"url": f"u{n}"}], {"mode": "fake", "pages_fetched": n, "collected_posts": n})
@@ -414,7 +409,7 @@ class _ScriptedPagesKind(FakeKind):
 
 
 class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
-    """Issue 0016: an archive takes the gate slot per page, retries a limit once, then pauses."""
+    """An archive takes the gate slot per page, retries a limit once, then pauses (0016)."""
 
     def service(self, kind, host_floors=None):
         self.clock = SleepClock()
@@ -454,7 +449,7 @@ class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
                          [("tg.i-c-a.su: too many requests, slowing to 5 s", "warning")], "a warning, as in a run")
 
     async def test_failing_twice_waits_with_the_checkpoint_and_resume_starts_there(self):
-        """Issue 0107: the second limit in a row no longer pauses: the archive waits 5 minutes."""
+        """The second limit in a row no longer pauses: the archive waits 5 minutes (0107)."""
         kind = _ScriptedPagesKind([_page(1), LIMITED], [LIMITED], [_page(2)])
         service = self.service(kind)
         events = []
@@ -542,7 +537,7 @@ class _LiveRun:
 
 
 class ArchiveWaitsOutTheLimitTests(unittest.IsolatedAsyncioTestCase):
-    """Issue 0107: an archive waits a host's window out, continues by itself, and learns the budget."""
+    """An archive waits a host's window out, continues by itself, and learns the budget (0107)."""
 
     N, WINDOW_S = 10, 900
 
@@ -587,8 +582,8 @@ class ArchiveWaitsOutTheLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["message"], "Archive completed with 30 posts")
         self.assertEqual((result["posts_fetched"], result["posts_inserted"], result["pages_fetched"]), (30, 30, 30),
                          "the counts carry across the waits")
-        # 5 min, then doubling while no page comes; once a window is measured (0107's follow-up), the refill of
-        # the window the next limit hit: 5 min past the latest refusal measured, then 5 more.
+        # 5 min, then doubling while no page comes; once a window is measured, 5 min past the latest refusal measured
+        # in the window the next limit hit, then 5 more
         self.assertEqual(self.waits, [5, 10, 9, 4])
         self.assertEqual([e["posts_collected"] for e in events if e["stage"] == "page_fetched"][-1], 30,
                          "a continuation does not count its earlier legs twice")
@@ -613,9 +608,8 @@ class ArchiveWaitsOutTheLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.budgets.learned("tg.i-c-a.su").requests, self.N)
 
     async def test_once_a_window_is_measured_the_wait_aims_at_its_refill(self):
-        # Issue 0107's follow-up: the ladder only until one window is measured; then the wait aims at the
-        # refill of the window the limit hit, so the second measure is within 5 min of the host's 15 min,
-        # not the ladder's overshoot.
+        # the ladder only until one window is measured; then the wait aims at the refill of the window the limit hit,
+        # so the second measure is within 5 min of the host's 15 min
         host = FakeWindowHost(self.clock, self.N, self.WINDOW_S)
         service = self.service(_WindowedKind(host, 6 * self.N))
         events = []
@@ -714,7 +708,7 @@ class _JumpingKind(_ScriptedPagesKind):
 
 @requires_test_db
 class ArchivePlanDbTests(unittest.IsolatedAsyncioTestCase):
-    """Issue 0015: the plan continues below the stored posts, over the real stores."""
+    """The plan continues below the stored posts, over the real stores (0015)."""
 
     def setUp(self):
         self.url = db_url()

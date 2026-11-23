@@ -1,13 +1,8 @@
 /**
- * Bench mode's address (verdict C): what is compared lives in the URL, so a
- * comparison can be linked, reloaded and screenshotted (D9).
- *
- *   ?mode=bench&subject=<prototype id | page>   what is on the bench
- *   &state=<s>              a prototype's state, shared by both panes
- *   &left=<s>&right=<s>     a page's two states, state against state
- *   &width=1400|390|320     &theme=dark|light   shared by both panes
- *   &data=live              both panes on the real API, read-only (fixtures by default)
- *   &doc=hide               the drawer folded away
+ * Bench mode's address: what is compared lives in the URL, so a comparison can be linked, reloaded and
+ * screenshotted. `?mode=bench&subject=<prototype id | page>`, `&state=` (a prototype's, both panes) or
+ * `&left=&right=` (a page's two states), `&width=1400|390|320`, `&theme=dark|light`, `&data=live` (real API,
+ * read-only), `&doc=hide`.
  */
 import { SPECIMEN_THEMES, SPECIMEN_WIDTHS, type SpecimenTheme } from './specimen';
 import { isOpen, type Prototype } from './prototypes';

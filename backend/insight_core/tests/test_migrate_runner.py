@@ -354,7 +354,7 @@ class MediaUrlEntitiesMigrationTests(unittest.TestCase):
 
 @unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
 class StalePostLimitMigrationTests(unittest.TestCase):
-    """0029 drops the stored max_posts_per_fetch nothing shows or edits any more (issue 0029)."""
+    """0029 drops the stored max_posts_per_fetch nothing shows or edits any more."""
 
     @requires_test_db
     def test_0029_drops_stored_post_limits(self):
@@ -377,7 +377,7 @@ class StalePostLimitMigrationTests(unittest.TestCase):
 
 @unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
 class GwernNoiseMigrationTests(unittest.TestCase):
-    """0036 deletes the Gwern posts stored from /doc/ and /newsletter/ before 0043 (issue 0048)."""
+    """0036 deletes the Gwern posts stored from /doc/ and /newsletter/."""
 
     @requires_test_db
     def test_0036_deletes_gwern_directories_and_newsletters(self):
@@ -457,7 +457,7 @@ class GwernNoiseMigrationTests(unittest.TestCase):
 
 @unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
 class OnePostOneAddressMigrationTests(unittest.TestCase):
-    """0038 merges the posts stored twice under one normalized_url and title (issue 0049)."""
+    """0038 merges the posts stored twice under one normalized_url and title."""
 
     @requires_test_db
     def test_0038_merges_copies_and_keeps_the_owners_state(self):
@@ -484,7 +484,7 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
                 # The same title under post_title_key: merged.
                 ("ent_old", f"http://{tag}.test/atomic/", f"http://{tag}.test/atomic", 2, "Atomic design in&nbsp;1998"),
                 ("ent_new", f"https://{tag}.test/atomic/", f"https://{tag}.test/atomic", 1, " Atomic  Design in 1998"),
-                # Daring Fireball's shapes on the server: one address, other posts, other titles.
+                # one address, other posts, other titles
                 ("df_post", f"{base}/dma", f"{base}/dma", 2, "★ What Is the Point of the DMA?"),
                 ("df_fn", f"{base}/dma#fn1-2026-08-24", f"{base}/dma", 1, "Footnote Regarding the GDPR"),
                 ("df_iphone", f"{base}/iphones", f"{base}/iphones", 2, "★ The iPhones 18 Pro"),
@@ -536,16 +536,15 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
             cur.execute("SELECT notes_markdown FROM post_notes WHERE post_id = %s", (posts["both_old"],))
             self.assertEqual(cur.fetchone(), ("my note",))
 
-            # Every table pointing at posts is one the migration merges; a new one needs a look.
-            # 0039's and 0040's tables (issues 0050, 0051) come after 0038 and are derived: the
-            # story job rebuilds them.
+            # Every table pointing at posts is one the migration merges; a new one needs a look. 0039's and 0040's
+            # tables come after 0038 and are derived: the story job rebuilds them.
             cur.execute("SELECT conrelid::regclass::text FROM pg_constraint "
                         "WHERE contype = 'f' AND confrelid = 'posts'::regclass")
-            # posts.album_of (0051, issue 0069) is derived too: the saver folds a channel's albums again.
+            # posts.album_of is derived too: the saver folds a channel's albums again.
             derived = {"post_links", "stories", "story_posts", "story_mentions", "news_stories", "news_posts", "classics",
                        "posts", "post_edges", "story_keys", "post_parts",
-                       "post_refs",   # 0076 (issue 0125): read again from the post's text by the saver and the backfill
-                       "series_posts"}   # 0083 (issue 0134): made again by the story job's series pass
+                       "post_refs",   # read again from the post's text by the saver and the backfill
+                       "series_posts"}   # made again by the story job's series pass
             self.assertEqual({r[0] for r in cur.fetchall()} - derived,
                              {"post_reader_state", "post_notes", "post_interactions", "post_watch"})
             for table in ("post_reader_state", "post_interactions", "post_notes", "post_watch"):
@@ -581,8 +580,7 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
                 return sorted(cur.fetchall())
 
             self.assertEqual(indexes(), [("posts_normalized_url_idx", False)])
-            # A database that ran the first 0038 (insight_preview, insight_lab): no function, and
-            # the unique index in place of the plain one.
+            # A database that ran the first 0038: no function, and the unique index in place of the plain one.
             cur.execute("DROP INDEX posts_normalized_url_idx")
             cur.execute("DROP FUNCTION post_title_key(text)")
             cur.execute("CREATE UNIQUE INDEX posts_normalized_url_unique ON posts (normalized_url)")
@@ -617,7 +615,7 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
                 ("&lt;b&gt; &quot;q&quot; &apos;a&apos; &#39;b&#x27;", "<b> \"q\" 'a' 'b'"),
                 ("It&#8217;s &rsquo;", "it's '"), ("&amp;lt;", "&lt;"), ("&#38;#65;", "&#65;"),
                 ("&#0; &#xD800; ok", "ok"), ("★ The iPhones 18 Pro", "★ the iphones 18 pro"),
-                ("Introducing 𝙻𝙵𝙼𝟹 “today”", 'introducing lfm3 "today"'),   # issue 0071: as utils/titles.py
+                ("Introducing 𝙻𝙵𝙼𝟹 “today”", 'introducing lfm3 "today"'),   # as utils/titles.py
             ]:
                 cur.execute("SELECT post_title_key(%s)", (title,))
                 self.assertEqual(cur.fetchone()[0], key, title)
@@ -630,7 +628,7 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
 
 
 class MigrationFileTests(unittest.TestCase):
-    """v10.17 (0188): the runner's reading of a file, no database."""
+    """The runner's reading of a file, no database (0188)."""
 
     def test_split_statements_keeps_quotes_comments_and_dollar_bodies(self):
         sql = """-- no transaction
@@ -672,8 +670,8 @@ CREATE TRIGGER t_x AFTER INSERT OR UPDATE ON mx_new FOR EACH ROW EXECUTE FUNCTIO
 
 @unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
 class PerMigrationTransactionTests(unittest.TestCase):
-    """v10.17 (0188): a transaction per migration, a lock timeout with retries, `-- no transaction` files, the
-    runner's session lock and --pending's tables. Scratch tables named for this process, dropped after."""
+    """A transaction per migration, a lock timeout with retries, `-- no transaction` files, the runner's session lock
+    and --pending's tables (0188). Scratch tables named for this process, dropped after."""
 
     def setUp(self):
         self.tag = f"zz_mig_{os.getpid()}"

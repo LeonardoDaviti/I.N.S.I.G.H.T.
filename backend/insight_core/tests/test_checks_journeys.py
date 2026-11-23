@@ -1,6 +1,5 @@
-"""The journeys step of the real-data check (issue 0250 #5), with invented names: the hard set is chosen by its rule
-(a bare name three invented companies state), the walks check each page against the one before, a namesake's post is
-a wrong row in the breakage format before the split and none after it, and the report shows both versions."""
+"""The real-data check's journeys step (0250), with invented names: the hard set chosen by its rule, the walks checking
+each page against the one before, a namesake's post a wrong row before the split and none after it."""
 from __future__ import annotations
 
 import unittest
@@ -54,7 +53,7 @@ class Journeys(tl._Db):
         self.assertIn("story_makers, hard", report)
         self.assertIn(posts["Lumora"][0], report)
         with mock.patch.object(I, "families_on", lambda: dict(sn.ON)):
-            self.stage()                                     # v10.28: each maker pair asked, never split alone
+            self.stage()                                     # each maker pair asked, never split alone
             self.assertEqual(sn.Split.answer_pairs(self, lambda a, b: "different"), 3)
             self.stage()
         after = self.walk()
@@ -76,11 +75,11 @@ class Journeys(tl._Db):
     def test_the_hard_set_file_is_read_and_a_missing_one_is_the_rules_default(self):
         default, = J.load_hard("/nonexistent/journeys.json")
         self.assertEqual(default["from"], "shared_names")
-        self.assertIsNone(default.get("top"))                # v10.28: every shared bare name, not a top few
+        self.assertIsNone(default.get("top"))                # every shared bare name, not a top few
 
 
 class VersionStrings(unittest.TestCase):
-    """v10.30 (0259): what a stated version can be that is not one, and the settings a variant can be (invented names)."""
+    """What a stated version can be that is not one, and the settings a variant can be (0259)."""
 
     def test_a_ratio_is_no_version(self):
         self.assertTrue(N.not_a_version("5:1"))
@@ -120,13 +119,13 @@ class VersionStrings(unittest.TestCase):
         got = EV.family_versions(book, rows)
         self.assertEqual([v["id"] for v in got], ["a", "e", "g"])                  # the ratio left out
         self.assertEqual(got[0]["settings"], [{"id": "b", "name": "Nimbus 5.2 (max)", "variant": "max"}])
-        # the id's numbers: one version, 5.2, and v10.35: so the id is listed under Nimbus 5.2, not a row of its own
+        # the id's numbers: one version, 5.2, so the id is listed under Nimbus 5.2, not a row of its own
         self.assertEqual(got[0]["same"], [{"id": "d", "name": "kestrel-nimbus-5-2"}])
         self.assertNotIn("settings", got[1])                                        # 6 not listed: its setting a row
 
     def test_one_version_written_two_ways_is_one_row(self):
-        """v10.35: "Lumo 5.0" and "Lumo 5" are one version: the row of more posts lists the other (`same`); two
-        names stating one version as written stay two rows (identity says whether they are one), as do two makers'."""
+        """"Lumo 5.0" and "Lumo 5" are one version: the row of more posts lists the other (`same`); two names stating
+        one version as written stay two rows, as do two makers'."""
         def ent(eid, name, version, maker=None, variant=None):
             return I.Ent(eid, "model", name, N.key(name), "variant" if variant else "version", "f", maker, "lumo",
                          version, N.vt(version), variant)
@@ -166,9 +165,8 @@ class VersionStrings(unittest.TestCase):
 
 @base.requires_test_db
 class FamilyVersions(tl._Db):
-    """v10.30 (0259): the `family_versions` walk over a family page: another maker's thing among the versions and a
-    setting listed as a version are wrong rows in the breakage format; the ratio is no longer listed, the bracketed
-    setting is listed under its version."""
+    """The `family_versions` walk: another maker's thing among the versions and a setting listed as a version are
+    wrong rows; the bracketed setting is listed under its version (0259)."""
 
     def test_each_kind_is_a_wrong_row_and_a_clean_version_is_right(self):
         V = lambda v, var=None: {"family": "Nimbus", "version": v, "variant": var}   # noqa: E731

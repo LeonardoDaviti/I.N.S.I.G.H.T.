@@ -30,10 +30,8 @@ const LOG_LABELS: Record<string, string> = {
 
 const logLabel = (name: string) => LOG_LABELS[name] ?? name;
 
-/**
- * Sources → ingestion → logs: the tail of one backend log file, newest at the
- * bottom. It refreshes every 30 seconds while the page is visible, or on Refresh.
- */
+/** Sources → ingestion → logs: the tail of one backend log, newest at the bottom; refreshes every 30 seconds while
+ *  the page is visible, or on Refresh. */
 export default function IngestionLogs() {
   const api = useApi();
   const [name, setName] = useState('application');

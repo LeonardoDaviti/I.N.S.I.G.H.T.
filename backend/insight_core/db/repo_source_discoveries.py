@@ -1,15 +1,9 @@
-"""What one source discovered (issue 0143, section 5): read from what Discover and Mark X already store, no write.
+"""What one source discovered, read from what Discover and Mark X already store; no write.
 
-- **Sites and accounts it linked that Discover lists** (followed or not): Discover's kept counts (system_settings
-  `discover_counts`, issue 0067) name the sources linking each key; this source's links to it (post_links ->
-  discover_addresses) give how many addresses and since when. Each is open, followed or hidden as Discover says
-  (discover_open).
-- **Sources you followed after it linked them** (inferred: nothing records where a follow came from): a key whose
-  link INSIGHT stored from it (the post's fetch) before the source that follows that site or account was added.
-- **Pages and originals collected because of it** (0123's collect, 0114's linked fetch, 0138's originals:
-  story_originals): an original whose address one of its posts links, or whose story holds one of its posts.
-- **Entities it named first** (Mark X, `mx_mentions_now`): the entities its posts mention whose earliest mention in
-  any post is one of its own (merges and the owner's splits not resolved: the identity a mention was linked to).
+- Sites and accounts it linked that Discover lists (Discover's kept counts), each open, followed or hidden.
+- Sources you followed after it linked them (inferred: its link was stored before that source was added).
+- Pages and originals collected because of it (story_originals): linked by its posts, or in its posts' story.
+- Entities it named first (Mark X `mx_mentions_now`): whose earliest mention is one of its posts.
 
 Sorted as the source page shows them: what you followed first, then the most voices.
 """
@@ -122,8 +116,7 @@ def source_discoveries(cur: Cursor, source_id: str, *, limit: int = LIMIT) -> Di
         if state == "followed" and (other := follower(key, site, platform)) is not None:
             created, name = added[other]
             entry["followed_source"] = {"id": other, "name": name, "added_at": _iso(created)}
-            # Followed after INSIGHT first stored this source's link to it (its fetch, not the post's date: an
-            # archive stores old posts late).
+            # followed after INSIGHT first stored this source's link to it (its fetch, not the post's date)
             first_seen = row[6] if row else None
             if first_seen is not None and created is not None and created > first_seen:
                 followed_here.append({**entry["followed_source"], "key": key})
@@ -152,6 +145,6 @@ def source_discoveries(cur: Cursor, source_id: str, *, limit: int = LIMIT) -> Di
         "counts": {"sites": len(sites), "followed": sum(1 for s in sites if s["state"] == "followed"),
                    "open": sum(1 for s in sites if s["state"] == "open"), "originals": len(originals),
                    "entities": len(entities), "followed_from_here": len(followed_here)},
-        # Discover has counted (its story job keeps the counts): before that, no site can be listed.
+        # Discover has counted (its story job keeps the counts): before that, no site can be listed
         "discover_counted": bool(kept),
     }

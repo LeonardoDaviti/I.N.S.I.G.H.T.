@@ -4,7 +4,7 @@ import { screen } from '@testing-library/react';
 import { baseApi, renderPost, rssPost } from './PostDetailPage.testkit';
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
 
-// Background (issue 0051): a post that links a classic says so, in one quiet line under it.
+// Background (0051): a post that links a classic says so, in one quiet line under it.
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -34,7 +34,7 @@ describe('PostDetailPage Background', () => {
     expect(screen.queryByText(/Builds on/)).not.toBeInTheDocument();
   });
 
-  // In News (issue 0083): a post in a News row says which, linking that News.
+  // In News (0083): a post in a News row says which, linking that News.
   it('names the News row the post is in, linking the News of its scope', async () => {
     const news = { id: '00000000-0000-4000-8000-0000000000bb', title: 'A model ships', voices: 4, lead_id: '00000000-0000-4000-8000-0000000000bb' };
     renderPost(baseApi(rssPost({ news: { ...news, scope: 'all' } })));

@@ -4,32 +4,22 @@
     python insight_core/db/migrate.py             # apply the pending migrations
     python insight_core/db/migrate.py --pending   # list them, the tables each touches and their rows; change nothing
 
-- **One transaction per migration** (v10.17, 0188): each file and its schema_migrations row commit together, so a
-  run that fails at the fifth file keeps the four before it, and a big early migration never waits on a later one.
-  (Until v10.16 every pending file ran in one transaction committed at the end.)
+- **One transaction per migration:** each file and its schema_migrations row commit together, so a failed run
+  keeps the ones before it.
 - **One runner at a time:** the API and insight-ingestion both migrate at their start. The runner holds a
-  session-level advisory lock (`hold_migration_lock`) on its own connection for the whole run, not a transaction's:
-  with a commit per migration a transaction lock would end at the first commit and let a second runner in mid-run.
-  Postgres ends a session lock with its connection, so a crashed runner never leaves it held. The second runner
-  waits, then sees every version applied. (`acquire_migration_lock`, the transaction lock on the same key, stays for
-  the archive restore, db/import_export.py; the two conflict, as they should.)
-- **A lock timeout per migration:** `SET LOCAL lock_timeout` (INSIGHT_MIGRATION_LOCK_TIMEOUT, seconds, default 10),
-  so a migration that needs a table a long query or a running job holds fails fast instead of queueing every
-  request behind its lock; it is tried again INSIGHT_MIGRATION_LOCK_RETRIES times (default 5), RETRY_WAIT seconds
-  apart and more each time, then the start fails (and Docker starts the container again).
-- **`-- no transaction`** in a file's first lines (its header comment): the file runs outside a transaction, one
-  statement at a time (split at top-level `;`), and its row is written after the last statement succeeds. For
-  `CREATE INDEX CONCURRENTLY` on a big table (which a transaction refuses). Every statement must be safe to run again
-  (IF NOT EXISTS), since a failure part-way is retried from the top; a CONCURRENTLY build that failed leaves an
-  INVALID index, so such a file drops it first (`DROP INDEX CONCURRENTLY IF EXISTS ...`). The archive restore runs
-  files in one transaction and can't take such a file.
+  session-level advisory lock (`hold_migration_lock`) for the whole run (a transaction lock would end at the
+  first commit); Postgres ends it with the connection, so a crashed runner never leaves it held. The archive
+  restore takes the transaction lock on the same key (`acquire_migration_lock`); the two conflict, as they should.
+- **A lock timeout per migration** (INSIGHT_MIGRATION_LOCK_TIMEOUT, default 10 s), so a migration blocked by a
+  long query fails fast instead of queueing every request behind its lock; retried
+  INSIGHT_MIGRATION_LOCK_RETRIES times (default 5) with growing waits, then the start fails (Docker restarts).
+- **`-- no transaction`** in a file's header: it runs one statement at a time (split at top-level `;`), its row
+  written after the last, for `CREATE INDEX CONCURRENTLY`. Every statement must be safe to run again (IF NOT
+  EXISTS; drop a possibly INVALID index first). The archive restore can't take such a file.
 
 **What belongs in a migration:** the schema, and data changes that are quick on the server's tables. A rewrite of
-many rows (a backfill, a re-derivation) is a resumable job (a batch at a time, recording where it stopped, as the
-Mark X backfills and repair scripts do), never one UPDATE in a migration: that one statement holds its locks and its
-start for as long as it runs. A big index is built CONCURRENTLY in a `-- no transaction` migration. `--pending` (which
-./update runs before the start that migrates) lists the tables each pending file touches with their row estimates,
-so a heavy one is seen before it runs.
+many rows is a resumable job, never one UPDATE in a migration. `--pending` (which ./update runs first) lists the
+tables each pending file touches with their row estimates, so a heavy one is seen before it runs.
 """
 import os
 import re
@@ -89,15 +79,14 @@ MIGRATION_LOCK_KEY = "insight.migrate"
 
 
 def acquire_migration_lock(cur: psycopg.Cursor) -> None:
-    """The migration lock for one transaction (the archive restore, db/import_export.py, which loads every file in
-    one): must be its first statement; Postgres releases it at commit or rollback."""
+    """The migration lock for one transaction (the archive restore): must be its first statement; Postgres releases
+    it at commit or rollback."""
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (MIGRATION_LOCK_KEY,))
 
 
 def hold_migration_lock(conn: psycopg.Connection) -> None:
-    """The runner's lock, held by `conn`'s session until `release_migration_lock` or the connection closes (a crashed
-    runner's ends with it). Two runners at once (the API and ingestion start together): the second waits here, then
-    finds every version applied. Same key as `acquire_migration_lock`, so a restore and a runner exclude each other."""
+    """The runner's lock, held by `conn`'s session until `release_migration_lock` or the connection closes. A second
+    runner waits here, then finds every version applied. Same key as `acquire_migration_lock`."""
     conn.execute("SELECT pg_advisory_lock(hashtext(%s))", (MIGRATION_LOCK_KEY,))
 
 
@@ -115,9 +104,7 @@ def discover_migrations(mig_dir: Path) -> List[Path]:
 
 
 def apply_one(cur: psycopg.Cursor, path: Path, version: str) -> bool:
-    """Apply a single SQL migration and record it in schema_migrations, on the caller's transaction.
-
-    Returns True when this process recorded the migration version itself and
+    """Apply a single SQL migration and record it in schema_migrations, on the caller's transaction. Returns
     False when the version was already present.
     """
     cur.execute(path.read_text(encoding="utf-8"))
@@ -143,8 +130,8 @@ def no_transaction(sql: str) -> bool:
 
 
 def split_statements(sql: str) -> List[str]:
-    """The file's statements, split at the `;` outside quotes, comments and dollar quotes (a `-- no transaction`
-    file runs them one by one: Postgres runs a multi-statement string as one implicit transaction)."""
+    """The file's statements, split at the `;` outside quotes, comments and dollar quotes (Postgres runs a
+    multi-statement string as one implicit transaction)."""
     out: List[str] = []
     buf: List[str] = []
     i, n = 0, len(sql)
@@ -203,9 +190,8 @@ def _has_code(statement: str) -> bool:
 def run_one(conn: psycopg.Connection, path: Path, version: str, *, lock_timeout: Optional[float] = None,
             retries: Optional[int] = None, wait: float = RETRY_WAIT, sleep: Callable[[float], None] = time.sleep) -> bool:
     """One migration on `conn` (autocommit): in a transaction of its own with its row, or, marked `-- no
-    transaction`, a statement at a time and its row after. Each waits at most `lock_timeout` seconds for a lock; one
-    that times out is tried again `retries` times (waiting `wait`, then 2x, ...), then raises. True when this run
-    recorded the version."""
+    transaction`, a statement at a time and its row after. A lock wait past `lock_timeout` is retried `retries`
+    times (waiting `wait`, then 2x, ...), then raises. True when this run recorded the version."""
     if lock_timeout is None:
         lock_timeout = _env_float("INSIGHT_MIGRATION_LOCK_TIMEOUT", LOCK_TIMEOUT_SECONDS)
     if retries is None:
@@ -292,8 +278,8 @@ def pending_migrations(cur: psycopg.Cursor, mig_dir: Path) -> List[Path]:
 
 
 def pending_report(cur: psycopg.Cursor, mig_dir: Path) -> List[str]:
-    """--pending's lines: each pending migration with its header's first line, then (v10.17) the tables it touches
-    with their row estimates, so a migration that rewrites a big table is seen before it runs; the count last."""
+    """--pending's lines: each pending migration with its header's first line and the tables it touches with
+    their row estimates; the count last."""
     lines: List[str] = []
     pending = pending_migrations(cur, mig_dir)
     for path in pending:
@@ -309,7 +295,7 @@ def pending_report(cur: psycopg.Cursor, mig_dir: Path) -> List[str]:
 
 
 def print_pending(mig_dir: Path) -> None:
-    """--pending (`update` runs it before the start that migrates, issue 0071), on stdout. Changes nothing."""
+    """--pending, on stdout. Changes nothing."""
     with get_conn() as conn, conn.cursor() as cur:
         lines = pending_report(cur, mig_dir)
     print("\n".join(lines))
@@ -362,7 +348,6 @@ def main():
     logger.info("Starting migration runner")
     logger.debug("Migrations Directory: %s", mig_dir)
 
-    # 2) Bootsrap DB / Database url
     try:
         db_url = ensure_database()
         os.environ["DATABASE_URL"] = db_url
@@ -379,7 +364,7 @@ def main():
         with get_conn(autocommit=True) as conn:
             migrate(conn, mig_dir)
     except Exception:
-        # A failed migration's own transaction rolled back; the ones before it are committed.
+        # the failed migration's transaction rolled back; the ones before it are committed
         logger.exception("Migration failed with an exception")
         sys.exit(1)
 

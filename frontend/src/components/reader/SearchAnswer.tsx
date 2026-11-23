@@ -5,11 +5,8 @@ import { questionsApi, type QuestionView } from '../../services/questions';
 
 const POLL_MS = 4000;
 
-/**
- * Ask your posts (issue 0275): the search's words asked as a question, answered only from the reader's own posts by
- * the worker, above the results. Every sentence carries superscripts to the posts it rests on; "Not in your sources"
- * when they don't say. The page polls while the worker has not answered.
- */
+/** Ask your posts: the search's words as a question, answered by the worker only from the reader's own posts, every
+ *  sentence with superscripts to the posts it rests on ("Not in your sources" otherwise). Polls until answered. */
 export default function SearchAnswer({ q }: { q: string }) {
   const [on, setOn] = useState(false);
   const [view, setView] = useState<QuestionView | null>(null);

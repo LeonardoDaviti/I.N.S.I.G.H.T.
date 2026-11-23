@@ -1,37 +1,13 @@
-"""Why a post is, or is not, in a track (issue 0185 3). Read only, over stored rows: no model call, no task, no
-vector computed. The track page shows only its top items; this says where any one post stands and why.
+"""Why a post is, or is not, in a track. Read only over stored rows: no model call, no task, no vector computed.
 
 `why(cur, track, post)` -> {state, ...}:
-
-  - **judged** (a verdict stored, the newest version's, as the page reads it: tracks.placed):
-      `in`       in the track (an owner ✓, or Haiku's in from an active source); `shown` False when its section
-                 shows only its newest tracks.SECTION_ITEMS;
-      `joined`   Haiku's in from a passive source, at or above the join band (shown in the track, marked);
-      `discover` Haiku's in from a passive source below the join band: in Discover at `position` of `of`, cut off
-                 the page after tracks.DISCOVER_ITEMS (`shown`);
-      `checking` (v10.41) Haiku's in from a passive source past its week's review lane (tracks.review_lane): the
-                 blind check decides it;
-      `checked_out` (v10.41) Haiku's in the blind check said out: not shown;
-      `off`      Haiku's in from a passive source the owner switched off: never suggested (issue 0200);
-      `out`      Haiku's out (its why and confidence), or the owner's ✗;
-    each with Haiku's `why`, `confidence`, `subtopic`, `origin`, `found_by`, the description `version` it was asked
-    under (`current` False: an older description's verdict; `waiting_again` when the current one is asked and open,
-    or (0252) when a guide change asked it again and the new answer is not stored yet), the `guide` it was answered
-    under.
-  - `waiting`: asked, Haiku has not answered yet.
-  - `invalid` (0252): asked, but its answers were no verdict (validate.track_verdict_error) and the task failed:
-    nothing is stored as its verdict (`error`: the last one).
-  - `not_asked`, with `reason`:
-      `not_a_topic`      the track has no description: nothing is judged;
-      `labelled`         the owner's label places it, nothing is asked;
-      `outside_window`   its source is in the track, but the post is older than the reading window (`days`);
-      `not_planned`      its source is in the track and the post in the window: the next plan asks it;
-      `not_planned`      also (0252) a passive post an ALWAYS finder puts up (`found_by`: from a tied source, or linked
-                         by finders.LINK_MIN+ of the track's sources): the next plan asks it;
-      `not_embedded`     a passive source's post with no vector yet: no other finder can read it;
-      `no_profile`       the track's finders are not ready (no example posts embedded yet);
-      `history_pending`  older than the description, and the history pass has not reached it yet;
-      `below_bar`        a passive source's post the finders did not put up (the last plan's bar, `bar`).
+  - judged (the newest stored verdict, as tracks.placed reads it): `in`, `joined` (passive, at or above the join
+    band), `discover` (passive, below it: `position` of `of`, `shown`), `checking` / `checked_out` (the blind check),
+    `off` (a passive source the owner switched off), `out`; each with Haiku's why, confidence, subtopic, origin,
+    found_by, `version` (`current`, `waiting_again`) and `guide`;
+  - `waiting` (asked, no answer), `invalid` (the task failed with no verdict: `error`);
+  - `not_asked` with `reason`: not_a_topic, labelled, outside_window, not_planned (also a passive post an ALWAYS
+    finder puts up: `found_by`), not_embedded, no_profile, history_pending, below_bar (`bar`).
 """
 from __future__ import annotations
 
@@ -53,8 +29,8 @@ def _post(cur: Any, post_id: str, folder: str) -> Optional[Dict[str, Any]]:
 
 
 def _rows(cur: Any, folder: str, post_id: str):
-    """The post's rows for the track, newest version first, each with its task's status and last error, and the guide
-    its verdict was answered under (0252: a re-asked row's verdict may be an earlier task's)."""
+    """The post's rows for the track, newest version first, with its task's status and last error, and the guide its
+    verdict was answered under (a re-asked row's verdict may be an earlier task's)."""
     cur.execute("""SELECT i.version, i.verdict, i.confidence, i.subtopic, i.why, i.origin, i.found_by, i.answered_at,
                           k.status, k.last_error, vt.guide, vt.id IS DISTINCT FROM i.task_id AND i.verdict IS NOT NULL
                      FROM mx_track_items i JOIN mx_tasks k ON k.id = i.task_id
@@ -84,7 +60,7 @@ def _judged(cur: Any, t: Dict[str, Any], post: Dict[str, Any], row: Dict[str, An
         "guide": row.get("guide"), "answered_at": _iso(row["answered_at"]), "shown": True,
         "join_edge": cal.get("join_edge"), "calibrated": cal["labels"] >= tracks.RANK_MIN_LABELS}
     if place == "discover" and me:
-        key = tracks.discover_order(cal)   # 0252: the lane's own order
+        key = tracks.discover_order(cal)   # the lane's own order
         mine = key(me)
         ahead = [it for it in items if it["place"] == "discover" and it is not me and key(it) < mine]
         of = sum(1 for it in items if it["place"] == "discover")
@@ -137,7 +113,7 @@ def why(cur: Any, folder_id: Any, post_id: Any, *, now: Optional[datetime] = Non
     if label is not None:
         return {**base, "state": "in" if label == "in" else "out", "label": label, "reason": "labelled"}
     if rows:
-        if rows[0]["status"] == "failed":   # 0252: no verdict stored, never "out"
+        if rows[0]["status"] == "failed":   # no verdict stored, never "out"
             return {**base, "state": "invalid", "version": rows[0]["version"], "error": rows[0]["error"]}
         return {**base, "state": "waiting", "version": rows[0]["version"]}
     out = {**base, "state": "not_asked", "at": _iso(post["at"])}
@@ -147,7 +123,7 @@ def why(cur: Any, folder_id: Any, post_id: Any, *, now: Optional[datetime] = Non
             return {**out, "reason": "outside_window", "days": days}
         return {**out, "reason": "not_planned"}
     from insight_core.markx import finders
-    tie = finders.tie(cur, t, now=now)   # 0252: the ALWAYS finders ask it whatever its vector and probe score
+    tie = finders.tie(cur, t, now=now)   # the ALWAYS finders ask it whatever its vector and probe score
     always = (["source"] if post["source_id"] in tie["tied"] else []) + \
         (["linked"] if finders.linked_by(cur, pid, tie["linkers"]) >= finders.LINK_MIN else [])
     if always:

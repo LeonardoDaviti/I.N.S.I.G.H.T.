@@ -1,7 +1,5 @@
-"""The source doctor (issue 0036): a broken source finds its replacement.
-
-The doctor runs over FakeHttp (no network) with a recording store; the switch, the finding's
-storage, sources.json and the routes run on the scratch test database.
+"""The source doctor (0036): a broken source finds its replacement. Runs over FakeHttp with a recording store; the
+switch, the finding's storage, sources.json and the routes on the scratch test database.
 """
 from __future__ import annotations
 
@@ -242,7 +240,7 @@ class ActTests(unittest.TestCase):
         self.assertIn("Anthropic files S-1", replacement["latest"])
 
     def test_a_root_source_is_offered_the_sites_blog_with_the_most_articles_not_its_home_page(self):
-        # Issue 0041: the whole site is a root source's section; its home page mixes everything.
+        # the whole site is a root source's section; its home page mixes everything (0041)
         old, home = "https://shop.example/rss", "https://shop.example/"
         responses = {old: GONE, home: page(body='<a href="/press">Press</a><a href="/blog">Blog</a>'
                                                 + "".join(f'<a href="/customers/{n}/x">Customer</a>' for n in range(9))),
@@ -254,7 +252,7 @@ class ActTests(unittest.TestCase):
                           "found": 5, "prefix": "/blog/"})
 
     def test_a_root_source_is_offered_a_blog_its_home_page_names_otherwise(self):
-        # Issue 0047: no page named blog or news; the menu link that reads as an article list.
+        # no page named blog or news: the menu link that reads as an article list (0047)
         old, home = "https://shop.example/rss", "https://shop.example/"
         responses = {old: GONE, home: page(body='<nav><a href="/pricing">Pricing</a><a href="/now">Now</a></nav>'),
                      "https://shop.example/pricing": page(),
@@ -265,7 +263,7 @@ class ActTests(unittest.TestCase):
                          {"kind": "page_watch", "url": "https://shop.example/now", "found": 6, "prefix": "/now/"})
 
     def test_a_section_source_keeps_its_section_not_the_sites_blog(self):
-        # The same-section rule: /news/rss gone is followed as /news/, never the site's /blog.
+        # the same-section rule: /news/rss gone is followed as /news/, never the site's /blog
         old = "https://shop.example/news/rss"
         responses = {old: GONE, "https://shop.example/": page(body='<a href="/blog">Blog</a>'),
                      "https://shop.example/news/": dated_section("/news", 3)["https://shop.example/news"],
@@ -279,8 +277,7 @@ class ActTests(unittest.TestCase):
         self.assertEqual(store.records[0][2], {"replacement": None, "dismissed": False})
 
     def test_an_old_address_that_reads_as_a_feed_again_is_working_again(self):
-        # Answering again (flaky): the old address is checked first; that is no move, and
-        # nothing else is looked at.
+        # answering again (flaky): the old address is checked first; that is no move, and nothing else is looked at
         store, http, _ = look({OLD: rss("Arena"), BLOG: page(), "https://arena.ai/": page()}, failures=3, error=NETWORK)
         self.assertEqual(store.switches, [])
         self.assertEqual(store.records, [("s1", NOW, WORKING_AGAIN)])
@@ -303,8 +300,8 @@ class ActTests(unittest.TestCase):
 
 
 class NeverOfferedTests(unittest.TestCase):
-    """The v9.13 review: an aggregator's feed failing by HTTP 502 was offered the feed tool's
-    own changelog (another site, none of the source's items), with a Switch button."""
+    """An aggregator's feed failing by HTTP 502 is never offered the feed tool's own changelog (another site, none of
+    the source's items)."""
 
     HN = "https://feeds.example/newest?points=100&count=100"
     CHANGELOG = "https://feeds-tool.example.io/updates.xml"
@@ -324,7 +321,7 @@ class NeverOfferedTests(unittest.TestCase):
             self.assertEqual(store.records, [("s1", NOW, {**SERVER_ERROR, "status": error.status})])
 
     def test_the_same_case_once_it_is_gone_still_offers_nothing(self):
-        # Even gone, the changelog holds none of the source's items.
+        # even gone, the changelog holds none of the source's items
         store, _, _ = self._hn(HttpError(f"HTTP 404 while fetching {self.HN}: Not Found", status=404))
         self.assertEqual(store.switches, [])
         self.assertEqual(store.records[0][2], {"replacement": None, "dismissed": False})
@@ -339,8 +336,8 @@ class NeverOfferedTests(unittest.TestCase):
 
     @requires_test_db
     def test_0058_rewrites_what_was_stored_before_the_check(self):
-        # Issue 0072 D3: a stored proxy page becomes its status line; a pre-C1 offer is removed, a
-        # server error's becoming C1's finding.
+        # a stored proxy page becomes its status line; a pre-C1 offer is removed, a server error's becoming C1's
+        # finding (0072 D3)
         sql = (Path(__file__).resolve().parents[1] / "db/migrations/0058_doctor_findings_before_0072.sql").read_text()
         before = {"dismissed": False, "replacement": {"kind": "feed", "url": self.CHANGELOG, "title": "Feed tool updates",
                                                       "found": None, "prefix": None}}
@@ -364,7 +361,7 @@ class NeverOfferedTests(unittest.TestCase):
         self.assertEqual(rows[2], ("HTTP 500 while fetching x: oops", NOW, None), "anything else as it was")
 
     def test_an_offer_stored_before_the_check_is_not_offered(self):
-        # The stored finding as the old code wrote it: {replacement: {url: the changelog, ...}}, no `shared`.
+        # the stored finding as the old code wrote it: {replacement: {url: the changelog, ...}}, no `shared`
         before = {"dismissed": False, "replacement": {"kind": "feed", "url": self.CHANGELOG, "title": "Feed tool updates",
                                                       "found": None, "prefix": None}}
         row = health_row({"id": "s1", "platform": "rss", "handle_or_url": self.HN, "enabled": True, "settings": {},
@@ -415,7 +412,7 @@ class NeverOfferedTests(unittest.TestCase):
 
 
 class DryRunCaseTests(unittest.TestCase):
-    """The three real cases of the dry run on the server's failing sources (2026-10-28)."""
+    """Three real cases from a dry run on failing sources."""
 
     OLD_NEW_THING = "https://devblogs.microsoft.com/oldnewthing/feed"
     DEVBLOGS = "https://devblogs.microsoft.com/"
@@ -613,7 +610,7 @@ class SwitchDbTests(unittest.TestCase):
                          (False, "Arena"))
 
     def test_when_sources_json_cannot_be_written_the_switch_stands(self):
-        """The database is the truth (issue 0071): the export failing is logged, nothing undone."""
+        """The database is the truth (0071): the export failing is logged, nothing undone."""
         with mock.patch.object(self.sync, "export_db_to_json", side_effect=OSError("read-only")):
             self.sync.switch_source(self.source_id, self.new)
         self.assertEqual(self._fetch("SELECT handle_or_url FROM sources WHERE id = %s")[0], self.new)

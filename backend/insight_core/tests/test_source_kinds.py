@@ -1,9 +1,5 @@
-"""Source kinds behind one seam (Mark IX B3, spec §D and §5.5). No network: FakeHttp.
-
-The resolution table was written first against Mark VIII SourceFetchService.classify_source
-and its outputs copied here; every row except the labelled telegram divergence must stay
-identical. The estimate fixtures were likewise copied from the Mark VIII _estimate_seconds.
-"""
+"""Source kinds behind one seam (Mark IX B3). No network: FakeHttp. The resolution table and the estimate fixtures
+were copied from Mark VIII's outputs; every row but the labelled telegram divergence must stay identical."""
 from __future__ import annotations
 
 import ast
@@ -78,7 +74,7 @@ PARITY_ROWS = [
     ("rss", "https://nitter.net/nn_teacher/rss", "nitter_rss"),
     ("reddit", "r/LocalLLaMA", "reddit_subreddit"),
     ("reddit", "https://www.reddit.com/r/LocalLLaMA/.rss", "reddit_subreddit"),
-    # Reddit ended its subreddit feeds (issue 0242): a subreddit's old .rss address is read as the subreddit.
+    # a subreddit's old .rss address is read as the subreddit (its feeds ended, 0242)
     ("rss", "https://www.reddit.com/r/smartglasses/.rss", "reddit_subreddit"),
     ("rss", "https://old.reddit.com/r/smartglasses/", "reddit_subreddit"),
     ("rss", "https://www.reddit.com/r/smartglasses/new.xml", "reddit_subreddit"),
@@ -276,7 +272,7 @@ class FullTextTests(unittest.TestCase):
         self.assertEqual(posts["Empty full text"]["content"], "The real body is in the description.")
 
     def test_an_items_discussion_link_is_kept(self):
-        # RSS 2.0 <comments>: Hacker News (hnrss.org) puts the HN thread there, the article in <link>.
+        # RSS 2.0 <comments>: hnrss puts the HN thread there, the article in <link>
         feed = ('<rss version="2.0"><channel><item><title>Story</title><link>https://a.example.com/story</link>'
                 "<comments>https://news.ycombinator.com/item?id=1</comments></item>"
                 "<item><title>Plain</title><link>https://a.example.com/plain</link></item></channel></rss>")
@@ -288,7 +284,7 @@ class FullTextTests(unittest.TestCase):
 
 class RedditKindTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_fetch_reads_new_on_the_oauth_api_not_the_ended_rss(self):
-        # Issue 0242: the full OAuth behaviour is in test_ingestion_health_0242.
+        # the full OAuth behaviour is in test_ingestion_health_0242
         import json
 
         from insight_core.ingestion.credentials import MappingCredentials
@@ -405,7 +401,7 @@ STORED = {"post_count": 120, "oldest_published_at": datetime(2025, 3, 3, 23, 30,
 
 
 class StartCheckpointTests(unittest.IsolatedAsyncioTestCase):
-    """Issue 0015: where each kind's archive continues below the stored posts."""
+    """Where each kind's archive continues below the stored posts (0015)."""
 
     async def test_substack_starts_one_page_before_the_stored_count(self):
         from insight_core.ingestion.kinds.substack import SubstackKind
@@ -594,7 +590,7 @@ class TelegramKindTests(unittest.TestCase):
         self.assertFalse(decision.fetch)
 
     def test_fetch_without_an_open_session_is_unavailable(self):
-        # The B8 behaviour tests (session lifecycle, flood wait, archive) are in test_telegram_kind.py.
+        # the session lifecycle, flood wait and archive tests are in test_telegram_kind.py
         with self.assertRaises(KindUnavailable):
             asyncio.run(TelegramKind().fetch_latest(_src("telegram", "ai_dispatch"), 5))
 
@@ -617,7 +613,7 @@ class TelegramKindTests(unittest.TestCase):
 
 
 class ConnectorRemovalTests(unittest.TestCase):
-    """B5 deleted the dead connectors; B8 deleted the Telegram one and the package with it."""
+    """The dead connectors and the Telegram package are gone."""
 
     def test_importing_ingestion_does_not_import_connectors_or_telethon(self):
         script = (
@@ -682,7 +678,7 @@ class ParsingTests(unittest.TestCase):
 
 class KindHttpTests(unittest.TestCase):
     def test_tls_verification_is_skipped_only_for_a_bridge_on_the_lan(self):
-        # issue 0187: no longer every *.local host; a bridge that resolves to a public address is verified
+        # not every *.local host: a bridge that resolves to a public address is verified (0187)
         guard = KindHttp(guard=AddressGuard(insecure_tls_hosts=set())).guard
         self.assertTrue(guard.insecure_tls("telegram.local", private=True))
         self.assertTrue(guard.insecure_tls("nitter.local", private=True))
@@ -715,7 +711,7 @@ class KindHttpTests(unittest.TestCase):
         self.assertTrue(str(error).startswith("HTTP 429 "))
 
     def test_a_web_page_answer_is_its_status_line_not_its_html(self):
-        # Issue 0072: a source sheet showed a proxy's 502 page as the error.
+        # a proxy's 502 page is not shown as the error (0072)
         page = b"<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body><center>nginx</center></body></html>"
         error = self._failing(urllib.error.HTTPError("u", 502, "Bad Gateway", email.message.Message(), io.BytesIO(page)))
         self.assertEqual(str(error), "HTTP 502 while fetching https://reddit.com/r/x/.rss: Bad Gateway")
@@ -740,8 +736,8 @@ class AvailableBasisTests(unittest.TestCase):
     """What each kind's inspected available_posts means, so the archive UI can say it honestly."""
 
     EXPECTED = {
-        "saved": "unknown",                    # pages saved by hand; nothing to count (issue 0031)
-        "bluesky": "exact",                    # the profile's postsCount (issue 0137 B10)
+        "saved": "unknown",                    # pages saved by hand; nothing to count
+        "bluesky": "exact",                    # the profile's postsCount
         "page_watch": "estimate",              # listing links and sitemap URLs; some are no post
         "lesswrong_graphql": "exact",          # counted through the GraphQL API
         "gwern_site": "estimate",              # candidate pages discovered on the index

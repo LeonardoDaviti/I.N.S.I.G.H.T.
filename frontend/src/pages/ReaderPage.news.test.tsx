@@ -14,7 +14,7 @@ import { healthResponse } from '../components/ops/fixtures';
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
 import type { Api, Classic, FeedItem, NewsScore, StoryPost } from '../services/api';
 
-// News and Classics (issue 0051): two views next to the Main feed, of the Main feed or a track.
+// News and Classics (0051): two views next to the Main feed, of the Main feed or a track.
 
 const ID = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
 const FOLDER = '00000000-0000-4000-8000-0000000000f1';
@@ -82,7 +82,7 @@ describe('News (issue 0051)', () => {
     expect(screen.getByText('Last 48 hours')).toBeInTheDocument();
     expect(screen.getByText('This week')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /4 sources \(1 share\) · in 1 roundup · Road to VR, UploadVR, \+2/ })).toBeInTheDocument();
-    // News is not the unread feed: its own Show (All / Unread, issue 0238), no Posts, no unread count.
+    // News is not the unread feed: its own Show (All / Unread), no Posts, no unread count.
     expect(within(screen.getByRole('radiogroup', { name: 'Show' })).getAllByRole('radio').map((radio) => radio.textContent))
       .toEqual(['All', 'Unread', 'Since you looked']);
     expect(screen.queryByRole('radiogroup', { name: 'Posts' })).not.toBeInTheDocument();
@@ -322,7 +322,7 @@ describe('News and Classics on a source page (issue 0077)', () => {
     ] });
     render(base({ getClassics }), `/read/source/${SOURCE}?view=classics`);
     const list = await screen.findByRole('list', { name: 'Classics' });
-    // Issue 0105: a source cites a classic, it doesn't cover it.
+    // A source cites a classic, it doesn't cover it.
     expect(within(list).getByRole('listitem')).toHaveTextContent('Cited it · Source A, Aug 2025');
     expect(getClassics).toHaveBeenCalledWith(expect.objectContaining({ scope: `source:${SOURCE}` }));
   });

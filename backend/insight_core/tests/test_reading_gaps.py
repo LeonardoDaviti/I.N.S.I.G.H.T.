@@ -1,9 +1,6 @@
-"""What reading v9.9 would show (issue 0068): a thread's replies read as posts, the roundups that
-mention a story, a repost by one of your sources as its voice, an outside origin's title by
-evidence, and the stored bodies' link labels taken out once.
-
-The rules are tested as pure functions; the job, the reader, the post page and the repair on the
-database in one transaction per test, rolled back.
+"""Reading gaps (0068): a thread's replies read as posts, the roundups that mention a story, a repost by one of your
+sources as its voice, an outside origin's title by evidence, the stored bodies' link labels taken out once. Pure rules,
+then the job, reader, post page and repair on the database, rolled back.
 """
 from __future__ import annotations
 
@@ -205,7 +202,7 @@ class ReadingGapsJobTests(unittest.TestCase):
         self.assertNotIn(member, {r["id"] for r in story["roundups"]})
 
     def test_a_sources_name_opens_its_roundup_most_about_the_story(self):
-        # Issue 0069: the one that links the story's page earliest in it, then the first.
+        # the one that links the story's page earliest in it, then the first (0069)
         self._story_and_roundups()
         page = f"https://openai-{self.mark}.test/index/introducing-terra"
         lw = self.cur.execute("SELECT source_id FROM posts WHERE id = %s", (self.lw[0],)).fetchone()[0]
@@ -271,7 +268,7 @@ class ReadingGapsJobTests(unittest.TestCase):
         self.assertIsNone(self.cur.fetchone(), "toolsmith_pete's own repost is its post's voice, no second one")
 
     def test_a_repost_of_an_author_you_follow_is_the_authors_report_and_the_reposters_share(self):
-        """x-repost-followed-author on the lab: one row, held by toolsmith_pete's source (it saved it first)."""
+        """One row, held by the source that saved it first."""
         author, by = f"badlogic{self.mark}", f"toolsmith_pete{self.mark}"
         toolsmith_pete, own = self._x(by), self._x(author)
         t = self._tweet(toolsmith_pete, author, ID, f"RT by @{by}: how i work with agents in 2026")
@@ -300,8 +297,8 @@ class ReadingGapsJobTests(unittest.TestCase):
 
 
 class HostingPlatformTests(unittest.TestCase):
-    """Item 8: a hosting platform's subdomain is its own site, as the Public Suffix List's private
-    section says; an ordinary subdomain is its site's."""
+    """A hosting platform's subdomain is its own site (the Public Suffix List's private section); an ordinary
+    subdomain is its site's."""
 
     def test_a_platform_subdomain_is_its_own_site_an_ordinary_one_is_not(self):
         self.assertEqual([site_of(h) for h in ("nnteacher.github.io", "www.lilianweng.github.io", "herman.bearblog.dev",
@@ -355,7 +352,7 @@ class StoredBodiesTests(unittest.TestCase):
         self.assertEqual(PostsRepository.drop_hidden_link_labels(self.cur), 0, "twice over: nothing more")
 
     def test_the_bodies_are_read_a_batch_at_a_time_and_every_one_is_repaired(self):
-        """Issue 0072: read in batches, not all at once (214 MB of HTML on the lab), and none is missed."""
+        """Read in batches, not all at once, and none is missed (0072)."""
         source = insert_scratch_source(self.cur)
         ids = []
         for i in range(3):

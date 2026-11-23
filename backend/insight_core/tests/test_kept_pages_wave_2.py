@@ -1,15 +1,7 @@
-"""Issue 0206: the requests that still rebuilt per request, kept (markx/kept_pages.py), or paged in SQL.
-
-  - the kept inputs (migration 0139): each committed writing transaction of an input moves its count; what a page
-    does not read leaves it; folding the log into the base leaves every count;
-  - the unread counts: kept bytes equal to the counted ones, sent kept (the counting patched to fail), counted again
-    after a read, a post, a story; built by the jobs process too (the view "unread", also with Mark X off);
-  - a topic track's page and the suggestions: built by the jobs process and sent kept; an owner's label (strict)
-    builds it again, a worker's verdict (loose) is sent within its bound and makes the jobs process build it;
-  - the sources' anatomy: kept KEPT_FOR, made again when a source is added;
-  - the entity queue: paged in SQL, the same items and counts as reading every row;
-  - the runner with Mark X off: only the reader's views.
-Invented names only; a _test database."""
+"""The requests that still rebuilt per request, kept (markx/kept_pages.py) or paged in SQL (0206): the kept inputs'
+counts (migration 0139); the unread counts, kept and counted again after a read, a post, a story; a topic track's page
+and suggestions (an owner's label rebuilds at once, a worker's verdict within its bound); the sources' anatomy; the
+entity queue paged in SQL; the runner with Mark X off. Invented names; a _test database."""
 from __future__ import annotations
 
 import json
@@ -215,8 +207,8 @@ class EntityQueue(_Api):
 
 class DiscoverWindow(_Registry):
     def restore_served(self):
-        """The served answer an earlier module left is put back as it was (one cleanup: an upsert, never a second
-        insert of the key; the two cleanups before ran in reverse and inserted it over this test's own row)."""
+        """The served answer an earlier module left is put back as it was, by one upsert, never a second insert of the
+        key."""
         from insight_core.db.repo_operations import SystemSettingsRepository
         self.cur.execute("SELECT value FROM system_settings WHERE key = 'discover_served'")
         kept = self.cur.fetchone()
@@ -262,7 +254,7 @@ class DiscoverWindow(_Registry):
         self.assertEqual(self.cur.fetchone()[0], 1)
 
     def test_a_page_read_as_its_window_equals_the_whole_answer_paged(self):
-        """0206: an open reads its page's suggestions sliced in Postgres; the same page as paging the whole answer."""
+        """An open reads its page's suggestions sliced in Postgres; the same page as paging the whole answer."""
         from insight_core.db.repo_discover import DiscoverRepository
         from insight_core.services.stories_service import StoriesService, code_stamp
         self.restore_served()

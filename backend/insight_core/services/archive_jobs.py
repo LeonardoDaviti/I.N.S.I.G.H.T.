@@ -1,24 +1,11 @@
-"""Archive jobs (the archive_source rows in job_runs): run one, and continue the ones that wait.
+"""Archive jobs (archive_source rows in job_runs): run one (`run`), continue the waiting ones (`continue_due`,
+`continue_job`) and run the queue (`ArchiveQueue`, `start_queued`).
 
-An archive that a host limits twice in a row ends its leg waiting (issue 0107): its job's status
-becomes `waiting`, with `waiting_until` in the payload, and nothing is finished. The scheduler
-process continues each waiting job once its time has come (continue_due, every few seconds), on
-the same job row, so the job view tells the whole archive. A Resume by hand continues it at once
-(continue_job). A job is claimed atomically (waiting -> running), so only one process continues it;
-the claim also makes it that process's job (`trigger`), so a restart of the other process does not
-call it interrupted.
-
-`archives` is the SourceFetchService (archive_source / continue_archive); `ops` the
+A host-limited archive ends its leg `waiting` (waiting_until in the payload) and is continued on the same job row.
+Claims are atomic (waiting/queued -> running) and make the job the claiming process's (`trigger`), so a restart of
+the other process does not call it interrupted. A lane is "telegram", "nitter" or the source's host: one archive per
+lane at a time, at most QUEUE_PARALLEL from the queue together. `archives` is the SourceFetchService, `ops` the
 OperationsService.
-
-The queue (issue 0130 B5, C): an archive job can be `queued`, its request (resume, until, pacing) in its payload
-with `queued_at` and its `lane`. A lane is "telegram" (every Telegram kind), "nitter" (X through Nitter), else the
-source's host: one archive per lane runs at a time (never two Telegram or two Nitter archives at once), at most
-QUEUE_PARALLEL from the queue together. The scheduler process starts the queued ones whose lane is free
-(start_queued, with continue_due); the API queues an archive whose Telegram or Nitter lane is busy instead of
-starting it, and "Resume interrupted archives" queues every source whose last archive a restart interrupted. A
-queued archive the scheduler was running when it stopped is queued again at its start, and resumes from its
-checkpoint.
 """
 from __future__ import annotations
 
@@ -32,7 +19,7 @@ logger = logging.getLogger("insight.archive_jobs")
 
 JOB_TYPE = "archive_source"
 QUEUED = "queued"
-QUEUE_PARALLEL = 3          # archives from the queue running at once (the owner's runs of 2026-11-07: 3)
+QUEUE_PARALLEL = 3          # archives from the queue running at once
 TELEGRAM_KINDS = frozenset({"telegram_mtproto", "telegram_rss"})
 NITTER_KINDS = frozenset({"nitter_rss"})
 # The jobs of a lane that hold it: running, or waiting out a limit (it goes on by itself).
@@ -190,13 +177,9 @@ class ArchiveJobs:
     async def run(self, source_id: str, *, resume: bool = True,
                   rate_limit_overrides: Optional[Dict[str, Any]] = None, job_id: Optional[str] = None,
                   linked: bool = False, until: Optional[str] = None) -> Dict[str, Any]:
-        """One archive from its plan. With job_id (the route already started the job) progress lands
-        on that job; otherwise the run starts its own. An unavailable kind answers
-        {success: false, unavailable: true}; any other failure fails the job and raises.
-
-        `linked` (issue 0084 B): instead of the archive, read the source's own pages its stored posts
-        link and no post is (SourceFetchService.fetch_linked). It is an archive job of the source, so
-        one runs at a time, and a host's limit waits and is continued as any archive's."""
+        """One archive leg, on `job_id` or a job of its own. An unavailable kind answers {success: false,
+        unavailable: true}; any other failure fails the job and raises. `linked`: read the source's own pages its
+        posts link instead (SourceFetchService.fetch_linked), as an archive job of the source."""
         from insight_core.ingestion.kinds.base import KindUnavailable
 
         job_id = job_id or self.ops.try_start_job(
@@ -246,9 +229,8 @@ class ArchiveJobs:
         return latest["id"] if latest and latest.get("status") == "waiting" else None
 
     async def continue_due(self) -> List[str]:
-        """Start continuing every waiting job whose time has come (the scheduler calls this every
-        few seconds); returns the job ids started. Each runs as its own task: an archive leg can
-        take hours and must not hold the ingestion tick."""
+        """Start continuing every due waiting job; returns the job ids started. Each runs as its own task: a leg
+        can take hours and must not hold the ingestion tick."""
         started = []
         for job in self.ops.due_waiting_jobs(JOB_TYPE, self.clock()):
             source_id = job["source_id"]
@@ -262,7 +244,7 @@ class ArchiveJobs:
             await asyncio.sleep(0)   # let them claim their jobs
         return started
 
-    # ------------------------------------------------------------------ the queue (issue 0130)
+    # ------------------------------------------------------------------ the queue
 
     def lane(self, source_id: str) -> str:
         """The source's archive lane (lane_of its kind and host); "source:<id>" when the archives can't say."""
@@ -300,8 +282,7 @@ class ArchiveJobs:
         return queued
 
     async def start_queued(self) -> List[str]:
-        """Start the queued archives whose lane is free (the scheduler calls this with continue_due); each runs as
-        its own task, as a continuation does. Returns the job ids started."""
+        """Start the queued archives whose lane is free, each as its own task; returns the job ids started."""
         claimed = await asyncio.to_thread(self.queue.claim, trigger=self.trigger)
         started = []
         for job in claimed:
@@ -342,9 +323,8 @@ class ArchiveJobs:
             except Exception:  # noqa: BLE001
                 logger.exception("Could not mark archive job %s waiting", job_id)
             return
-        # An archive run is not a live fetch: it does not touch source_fetch_state, so paging old
-        # posts can neither delay the next live fetch nor reset its backoff. A paused archive
-        # (issue 0016) is a success whose message says why it paused.
+        # an archive never touches source_fetch_state, so it can't delay a live fetch or reset its backoff;
+        # a paused archive is a success whose message says why
         self.ops.try_finish_job(
             job_id,
             status="success" if result.get("success") else "failed",

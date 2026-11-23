@@ -1,9 +1,6 @@
 /**
- * The sample sites the studio's frames render (Design Studio D4): a realistic
- * one for the normal states, and the break-ui worst case. Both are built from
- * the fixture files the tests use (`components/reader/fixtures.ts`,
- * `components/ops/fixtures.ts`, `components/connections/fixtures.ts`), so the
- * studio shows what the tests assert. Dates are relative to `now`.
+ * The sample sites the studio's frames render: a realistic one and the break-ui worst case, both built from the
+ * tests' fixture files, so the studio shows what the tests assert. Dates are relative to `now`.
  */
 import type { BackgroundWorkResponse, FeedItem, Folder, JobRun, SchedulerConfig, SourceHealthRow } from '../../services/api';
 import { feedFixture, feedItem, worstFeedItems } from '../../components/reader/fixtures';
@@ -16,12 +13,8 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-/**
- * A fixture id the app accepts as a real one: the reader only scopes to UUIDs
- * (`isValidScope`), so `/read/source/s-simon` would bounce to the feed. The
- * slug's bytes in hex, padded to a UUID's 32 digits, so it stays readable in a
- * URL (`732d73696d6f6e…` is `s-simon`). Slugs are at most 16 characters.
- */
+/** A fixture id the app accepts as real (the reader only scopes to UUIDs): the slug's bytes in hex, padded to 32
+ *  digits, so it stays readable in a URL. Slugs are at most 16 characters. */
 export function fixtureId(slug: string): string {
   const hex = [...slug].map((char) => char.charCodeAt(0).toString(16).padStart(2, '0')).join('').padEnd(32, '0').slice(0, 32);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
@@ -177,7 +170,7 @@ export function scheduler(now: Date, overrides: Partial<SchedulerConfig> = {}): 
   };
 }
 
-/** Background work (issue 0062): all done by default; `afterUpdate` is the minutes after an update. */
+/** Background work: all done by default; `afterUpdate` is the minutes after an update. */
 export function backgroundWork(now: Date, { afterUpdate = false }: { afterUpdate?: boolean } = {}): BackgroundWorkResponse {
   const lastRun = {
     computed_at: at(now, -12 * MINUTE), seconds: 4.77, full: false, posts: 5018, stories: 86, news: 90, classics: 175, links_filled: 0,

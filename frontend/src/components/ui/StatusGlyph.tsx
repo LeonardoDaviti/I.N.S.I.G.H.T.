@@ -2,11 +2,8 @@ import type { ReactNode } from 'react';
 import { cn } from '../../lib/utils';
 import { STATUS_LABEL, type Status } from './styles';
 
-/**
- * Status without colour (design docs system/status.md). Every state is a shape plus a word; the
- * worst state (`failing`) is an inverted block so it is the loudest thing on the
- * screen without red. Glyphs are inline SVG so they never depend on a font.
- */
+/** Status without colour: every state is a shape plus a word; `failing` is an inverted block, the loudest thing on
+ *  the screen without red. Inline SVG, so glyphs never depend on a font. */
 const R = 4.25; // ring radius in a 10×10 box, inside a 1.5 stroke
 
 function Glyph({ status }: { status: Status }): ReactNode {
@@ -62,10 +59,7 @@ const TONE: Record<Status, string> = {
   starred: 'text-fg',
 };
 
-/**
- * Without a visible word the chips shrink to the glyph, but `failing` keeps its
- * inverted square: it stays the loudest thing in a dense row, not a twin of `ok`.
- */
+/** Without a visible word the chips shrink to the glyph, but `failing` keeps its inverted square. */
 const GLYPH_ONLY_TONE: Record<Status, string> = {
   ...TONE,
   backoff: 'text-fg',
@@ -88,11 +82,7 @@ export function StatusIcon({ status, className }: { status: Status; className?: 
   );
 }
 
-/**
- * Glyph + label. `hideLabel` keeps the word for screen readers only (for dense
- * rows where the column header already names it). `label` overrides the word
- * ("overdue 3d", "backoff · retry 14:20").
- */
+/** Glyph + label. `hideLabel` keeps the word for screen readers only; `label` overrides the word ("overdue 3d"). */
 export default function StatusGlyph({
   status,
   label,

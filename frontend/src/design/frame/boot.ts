@@ -1,11 +1,8 @@
 /**
- * Setting a frame up before anything renders in it (Design Studio D4):
- * - its own `fetch` becomes the fixture transport for the scenario;
- * - its `localStorage` and `sessionStorage` become in-memory stores, so the
- *   frame's theme (seeded from `?theme=`), reader choices and dev flags never leak
- *   into the studio or other frames, which share the origin;
- * - a report collects the unmocked requests and the faked writes for the bar.
- * Only the frame's window is touched: the studio's `fetch` stays the real one.
+ * Sets a frame up before anything renders in it: its own `fetch` becomes the fixture transport; its `localStorage`
+ * and `sessionStorage` become in-memory stores (theme seeded from `?theme=`), so nothing leaks into the studio or
+ * other frames on the origin; a report collects unmocked requests and faked writes. Only the frame's window is
+ * touched.
  */
 import { THEME_STORAGE_KEY } from '../../components/ThemeProvider';
 import { frameScenario, type FrameScenario } from '../fixtures/scenarios';
@@ -87,7 +84,7 @@ export function bootFrame(
   const theme = location.theme === 'light' ? 'theme-light' : 'theme-dark';
   Object.defineProperty(win, 'localStorage', { configurable: true, value: memoryStorage({ [THEME_STORAGE_KEY]: theme }) });
   Object.defineProperty(win, 'sessionStorage', { configurable: true, value: memoryStorage() });
-  // The ThemeProvider sets the same classes from the seeded storage; setting them now avoids a first paint in the wrong theme.
+  // the ThemeProvider sets the same classes from storage; setting them now avoids a first paint in the wrong theme
   win.document.documentElement.classList.remove('theme-light', 'theme-dark', 'dark');
   win.document.documentElement.classList.add(theme, ...(theme === 'theme-dark' ? ['dark'] : []));
 

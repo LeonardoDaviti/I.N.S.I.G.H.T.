@@ -1,9 +1,7 @@
-"""saved: the built-in Saved source, the pages the owner saves from any site (issue 0031).
+"""saved: the built-in Saved source (platform "saved"), the pages the owner saves from any site.
 
-One source, platform "saved", handle "Saved" (its name), created by the first save
-(services/saved_service.py). Its posts come by hand, one page at a time, so the kind never
-fetches: its profile says so and decide_fetch never finds it due, not even forced, so it is
-never due and never failing. It has no archive.
+Created by the first save (services/saved_service.py). Its posts come by hand, so it never fetches (never due, even
+forced; never failing) and has no archive.
 """
 from __future__ import annotations
 

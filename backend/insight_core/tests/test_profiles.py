@@ -1,8 +1,6 @@
-"""Channel profiles (issue 0132 C2): each kind's parser on invented pages, where a source's profile is, the voices'
-profile rules (profile_link, the bio's staff line, the beat writer's note), the channels nobody follows, the fetch
-run on the database (kept with valid_to, failures, a limiting host, the switch) and the scheduler's hook.
-
-No request leaves this machine: every page is a fixture answered by FakeHttp. Every name and address is invented."""
+"""Channel profiles (0132 C2): each kind's parser on invented pages, where a source's profile is, the voices' profile
+rules, the channels nobody follows, the fetch run on the database (kept with valid_to, failures, a limiting host, the
+switch) and the scheduler's hook. No request leaves this machine (FakeHttp); everything is invented."""
 from __future__ import annotations
 
 import asyncio

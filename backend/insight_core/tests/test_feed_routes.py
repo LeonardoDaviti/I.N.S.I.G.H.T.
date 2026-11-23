@@ -1,6 +1,5 @@
-"""Reader routes: /api/feed*, over ASGI with a fake reader service: parsing, 400s, redaction.
-
-What the listing and read-state routes return from a real database: test_feed_listing_routes."""
+"""Reader routes /api/feed* over ASGI with a fake reader service: parsing, 400s, redaction (the real database's
+answers: test_feed_listing_routes)."""
 from __future__ import annotations
 
 import sys

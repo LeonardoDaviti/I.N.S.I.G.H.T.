@@ -18,12 +18,9 @@ import {
 } from './sourceList';
 
 /**
- * The one toolbar above the list (sticky, translucent): search, status chips
- * and group-by. The primary chips (all, enabled, disabled, failing) always
- * show; the secondary ones (unavailable, due, scheduled) only
- * with sources or while selected. Below md, where columns hide, "Sort: Added ↓"
- * opens the column headers' sort buttons as a row. Its height is published as
- * `--sources-toolbar-h` so group headers stick right under it.
+ * The one toolbar above the list (sticky, translucent): search, status chips and group-by; the secondary chips only
+ * with sources or while selected. Below md, "Sort: Added ↓" opens the column headers' sort buttons as a row. Its
+ * height is published as `--sources-toolbar-h` so group headers stick right under it.
  */
 const SourcesToolbar = forwardRef<HTMLInputElement, {
   view: SourcesView;
@@ -37,7 +34,7 @@ const SourcesToolbar = forwardRef<HTMLInputElement, {
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return undefined;
-    // On phones the toolbar scrolls away (it is three lines there), so headers stick to the top bar.
+    // on phones the toolbar scrolls away (it is three lines there), so headers stick to the top bar
     const publish = () => {
       const sticky = getComputedStyle(el).position === 'sticky';
       el.parentElement?.style.setProperty('--sources-toolbar-h', `${sticky ? el.offsetHeight : 0}px`);
@@ -91,7 +88,7 @@ const SourcesToolbar = forwardRef<HTMLInputElement, {
         </FilterChip>
         {chips.map((chip, index) => (
           <Fragment key={chip.value}>
-            {/* A hairline before the first secondary chip: the primary set reads as one group. */}
+            {/* a hairline before the first secondary chip: the primary set reads as one group */}
             {chip.secondary && !chips[index - 1]?.secondary ? <span aria-hidden="true" className="my-1.5 w-px shrink-0 self-stretch bg-line" /> : null}
             <FilterChip
               selected={view.status === chip.value}

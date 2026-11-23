@@ -1,7 +1,7 @@
-"""Pure parsing helpers shared by the source kinds (moved off SourceFetchService in B3).
+"""Pure parsing helpers shared by the source kinds and site adapters: no I/O, no state.
 
-No I/O and no state: every function here is a plain transformation of text, XML or
-datetimes, so kinds and site adapters can share them without holding a service.
+Plain transformations of text, XML and datetimes, plus the article reader (`extract_article_html`,
+`read_article_page`).
 """
 from __future__ import annotations
 
@@ -42,9 +42,8 @@ REFRESH_URL_RE = re.compile(r"""(?is)^\s*\d*(?:\.\d*)?\s*[;,]?\s*url\s*=\s*['"]?
 
 
 def moved_to(page: Optional[str], url: str) -> Optional[str]:
-    """Where a page says it now is (issue 0108), absolute: its meta refresh's address, else its
-    <link rel="canonical"> when that is another address (by normalize_url). None when it names none,
-    names itself, or only a script moves the reader (a `location=` script is never followed)."""
+    """Where a page says it now is, absolute: its meta refresh, else a canonical link to another address.
+    None when it names none or itself; a `location=` script is never followed."""
     refresh = canonical = None
     for tag, attributes in MOVED_TAG_RE.findall((page or "")[:200_000]):
         values: Dict[str, str] = {}
@@ -69,7 +68,7 @@ def moved_to(page: Optional[str], url: str) -> Optional[str]:
 
 
 def page_addresses(page: Optional[str], url: str) -> set:
-    """The addresses a page says it is (issue 0140), normalized: its <link rel="canonical"> and its og:url."""
+    """The addresses a page says it is, normalized: its canonical link and its og:url."""
     found = set()
     for tag, attributes in MOVED_TAG_RE.findall((page or "")[:200_000]):
         values: Dict[str, str] = {}
@@ -111,23 +110,20 @@ _TIME_OF_DAY_RE = re.compile(r"\d{1,2}:\d{2}")
 
 
 def date_precision(value: Optional[str]) -> Optional[str]:
-    """What a source's date says (issue 0076, posts.published_precision): "none" when it says no date,
-    "date" when it has no time of day ("2026-11-03"); else None: the saver tells it by its time (a date
-    alone is stored as 00:00:00 UTC)."""
+    """posts.published_precision for a source's date: "none" without a date, "date" without a time of day,
+    else None."""
     if parse_datetime_value(value) is None:
         return "none"
     return None if _TIME_OF_DAY_RE.search(value or "") else "date"
 
 
-# Where a page says when it was last changed, in the order read (issue 0039).
 MODIFIED_METAS = ("dcterms.modified", "article:modified_time", "og:updated_time", "last-modified")
 JSON_LD_MODIFIED_RE = re.compile(r'"dateModified"\s*:\s*"([^"]+)"')
 
 
 def page_modified(page: Optional[str]) -> Optional[str]:
-    """When the page says it last changed (meta dcterms.modified, article:modified_time,
-    og:updated_time, last-modified, then JSON-LD dateModified), as an ISO string so two reads
-    compare equal; None when it says nothing readable. Only a page's head is needed."""
+    """When the page says it last changed (MODIFIED_METAS, then JSON-LD dateModified), as an ISO string so
+    two reads compare equal; None when it says nothing readable."""
     json_ld = JSON_LD_MODIFIED_RE.search(page or "")
     for value in (*(meta_content(page, name) for name in MODIFIED_METAS), json_ld and json_ld.group(1)):
         if value and (date := parse_datetime_value(value.strip())) is not None:
@@ -147,8 +143,7 @@ def child_text(node: ET.Element, child_name: str) -> Optional[str]:
 
 
 def rss_source(item: ET.Element) -> Optional[Dict[str, str]]:
-    """An RSS item's <source url="...">title</source> (RSS 2.0: the channel the item came from), as {url, title};
-    None without one or without its url."""
+    """An RSS item's <source url="...">title</source> as {url, title}; None without one or its url."""
     for child in item:
         if local_name(child.tag) == "source":
             url = (child.attrib.get("url") or "").strip()
@@ -212,67 +207,28 @@ def extract_html_image_urls(html_text: str) -> List[str]:
 
 # ---------------------------------------------------------------- the article reader
 #
-# extract_article_html / read_article_page: a page's article, as its text blocks and images
-# in page order. Shared by full text, page watch, saved pages and five site adapters, and
-# checked against a corpus of real pages (tests/fixtures/pages, issue 0032): every change
-# here runs against every page there.
-#
-# 1. <script>, <style>, <noscript>, <iframe>, <svg>, <audio> and <video> go, with their
-#    fallback text ("Your browser does not support the audio element"). Text outside any
-#    block is made readable (_LooseText, issue 0053): runs of loose text an element breaks
-#    with double <br>s become paragraphs (paulgraham.com's table cell, incompleteideas.net's
-#    <body>), and a <code> standing alone (several lines, or in a <figure>) a code block
-#    (fasterthanli.me).
-#    A link's label for screen readers goes (_without_hidden_link_labels, issue 0063): an
-#    element a link hides from the eye ("(opens in a new window)" after its words), read from
-#    how it is hidden (_visually_hidden: a screen-reader class, an inline clip to nothing),
-#    when the link shows words of its own. Hidden text anywhere else stays: it stands for
-#    something the reader drops (a chart's "66 %", a comparison table's "No TrueDepth camera
-#    system" under an icon), and an icon-only link keeps its hidden name.
-# 2. Chrome goes, with everything inside it (_ChromeStripper): the CHROME_TAGS, and any
-#    element (but <html> and <body>) with a class or id token that starts with one of the
-#    prefixes, is one of the tokens, holds one of the parts (a table of contents, a badge),
-#    names an author's box ("author-bio", "author-mini-bio"), or ends in "-tags",
-#    "-categories", "-newsletter" or "-nav" after a theme prefix ("nvidia-tags",
-#    "uni-article-newsletter", "bottom-nav"). Only those endings are matched inside a token: a plugin wraps
-#    whole articles in "has-highlight-and-share", WordPress gives <article> itself
-#    "category-ai tag-agents", Substack's article is "newsletter-post". A component part
-#    ("block__element") is judged on its own. A picture's dark-mode copy goes too; an
-#    article's own <header> goes but keeps its images (the cover).
-#    No rule drops an element holding more than half of the page's paragraph text (the Old
-#    New Thing's posts are in "entry-content sharepostcontent"), nor one around a candidate
-#    article holding a fifth of it (lesswrong.com's "MultiToCLayout-tableOfContents").
-# 3. The article is the first candidate long enough (<article>, <main>, a content class),
-#    each read whole; with none, the smallest element holding most of the paragraph text
-#    (ai.meta.com). Its text blocks (TEXT_BLOCKS and list items) and images are kept in page
-#    order; an image keeps only its address and alt (_article_image), and pixels, icons,
-#    badges and avatars go. The notes it links to that follow it outside it are read after
-#    it (_notes_after: blog.google's footnotes).
-# 4. Its structure is kept, not only its words (_Structure, issue 0042): a data table as a
-#    table (header cells, rows and columns, no attributes but colspan and rowspan), a figure
-#    with its images and caption together. A table that lays out the page is unwrapped, its
-#    blocks read like any others: one holding a heading or another table, marked
-#    role="presentation", or with a single cell. Inside a table or a figure no tag keeps a
-#    style or an event attribute. A heading with nothing under it goes: no text or image
-#    before the next heading of a higher level, or the end (section titles whose content a
-#    script fills in, a closing "Related" title). Not the next of the same level: a title
-#    over a same-level subtitle or a note's title is no empty section (gov.uk, the
-#    PostgreSQL docs; the before/after on 50 pages, issue 0042). A table with no word in it
-#    goes; a text block inside a link (a card) is marked so step 5 reads it as a link.
-# 5. The chrome at its edges goes (_without_edge_chrome, issue 0053), judged by links and
-#    length the way Readability judges unnamed blocks: labels, in-site links and the title
-#    again before the first paragraph; a tail of links with its labels, card pictures and
-#    excerpts after the last one.
+# extract_article_html / read_article_page: a page's article as its text blocks and images in page order.
+# Every change here runs against the real-page corpus (tests/fixtures/pages, 0032). Steps:
+# 1. Scripts, styles, media and their fallback text go; loose text becomes paragraphs (_LooseText); a link's
+#    screen-reader-only label goes when the link shows words of its own (_without_hidden_link_labels).
+# 2. Chrome goes with its contents (_ChromeStripper): CHROME_TAGS and class/id tokens matching the CHROME_*
+#    lists. Endings are matched only inside a token, since whole articles carry classes such as
+#    "category-ai" or "newsletter-post". No rule drops an element holding MAIN_TEXT_SHARE of the paragraph
+#    text, nor one around a candidate article holding CANDIDATE_TEXT_SHARE of it.
+# 3. The article is the first long enough candidate (<article>, <main>, a content class), else the smallest
+#    element holding FALLBACK_TEXT_SHARE of the paragraph text; notes after it are read too (_notes_after).
+# 4. Structure is kept (_Structure, 0042): data tables, figures with captions; layout tables are unwrapped;
+#    a heading with nothing before the next higher-level heading goes.
+# 5. Edge chrome goes (_without_edge_chrome, 0053), judged by links and length as Readability does.
 CHROME_TAGS = frozenset({"nav", "header", "footer", "aside", "form"})
 CHROME_PREFIXES = ("nav", "menu", "footer", "related", "share", "subscribe", "sidebar",
                    "comments", "comment-", "ad-", "advert")
 CHROME_ENDINGS = ("-tags", "_tags", "-categories", "_categories", "-newsletter", "_newsletter", "-nav", "_nav")
-# A table of contents is a menu too (anthropic.com's "StickyTableOfContents-module__Trigger").
 CHROME_PARTS = ("tableofcontents", "table-of-contents", "table_of_contents", "badge")
 CHROME_TOKENS = frozenset({"toc", "newsletter", "ad", "ads"})
 # The ending of a component part that is a share bar or a list of tags or topics.
 PART_ENDINGS = ("-share", "_share", "-guides", "-topics") + CHROME_ENDINGS
-DARK_COPY_PREFIX = "dark-mode"     # deepmind.google's <picture class="dark-mode-alternative">
+DARK_COPY_PREFIX = "dark-mode"     # a picture's dark-mode copy
 VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                        "param", "source", "track", "wbr"})
 TEXT_BLOCKS = "h1|h2|h3|p|blockquote|pre"
@@ -283,22 +239,17 @@ TABLE_WIDTHS = frozenset({"colgroup", "col"})      # column widths only: they go
 CELL_ATTRS = ("colspan", "rowspan")
 LAYOUT_ROLES = frozenset({"presentation", "none"})
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
-# A tag's attributes, quoted values and all: huggingface.co's class="max-md:[&>a]:hidden".
+# A tag's attributes, quoted values and all (a class may hold ">").
 ATTRS = r"""(?:[^>"']|"[^"]*"|'[^']*')*"""
-# The reader's values were measured together on the page corpus (0032: 93 -> 113 of 123 checks;
-# 0053: 367 -> 404 of 420), never one value against another: "not measured" below means that.
+# measured together on the page corpus (0032, 0053), never one value against another
 MAIN_TEXT_SHARE = 0.5      # no chrome rule drops an element holding more of the paragraph text
 FALLBACK_TEXT_SHARE = 0.8  # with no candidate, the smallest element holding this much of it
 CANDIDATE_TEXT_SHARE = 0.2 # nor one around a candidate article holding this much of it
 ARTICLE_MIN_CHARS = 500    # not measured
 
 
-# How a page hides text from the eye but not from a screen reader (issue 0063), never a
-# responsive or script toggle ("hidden", "md:sr-only", "not-sr-only": that text shows). A class token,
-# lower-cased, its "-" and "_" removed, that holds one of SCREEN_READER_PARTS (Bootstrap's and
-# Drupal's visually-hidden, WordPress's screen-reader-text, h5bp's visuallyhidden, GOV.UK's
-# govuk-visually-hidden), or ends in "sronly" (Tailwind's and Bootstrap 4's sr-only, a plugin's
-# "wt-cli-sr-only"). A token with a ":" is a breakpoint or state variant, shown somewhere.
+# Screen-reader-only text (0063): a class token, lower-cased without "-" and "_", holding a
+# SCREEN_READER_PART or ending in "sronly". Never a responsive toggle: a token with ":" shows somewhere.
 SCREEN_READER_PARTS = ("visuallyhidden", "hiddenvisually", "screenreader")
 SCREEN_READER_ENDING = "sronly"
 # An inline clip to nothing: clip: rect(0 0 0 0) or rect(1px, 1px, 1px, 1px), clip-path: inset(50%).
@@ -307,8 +258,7 @@ CLIPPED_RE = re.compile(r"(?i)(?<![-\w])clip\s*:\s*rect\(\s*(?:[01](?:px)?[\s,]*
 
 
 def _visually_hidden(attrs: List[Tuple[str, Optional[str]]]) -> bool:
-    """Whether the element hides its text from the eye for screen readers: a screen-reader
-    class (none undone by a "not-sr-only" at some breakpoint) or an inline clip to nothing."""
+    """Whether the element is screen-reader-only: such a class (not undone by "not-sr-only") or an inline clip."""
     for name, value in attrs:
         if name == "class":
             tokens = [token.replace("-", "").replace("_", "") for token in (value or "").lower().split()]
@@ -374,8 +324,7 @@ class _HiddenParts(HTMLParser):
 
 
 def _without_hidden_link_labels(html_text: str) -> str:
-    """The page with the visually hidden elements of each link that shows words of its own
-    taken out (see step 1)."""
+    """The page without the visually hidden elements of each link that shows words of its own (step 1)."""
     def mend(match: "re.Match[str]") -> str:
         inner = match.group("text")
         if not HIDDEN_HINT_RE.search(inner):
@@ -406,21 +355,18 @@ def _chrome_token(token: str) -> bool:
     if (token.startswith(CHROME_PREFIXES) or token.endswith(CHROME_ENDINGS) or token in CHROME_TOKENS
             or any(part in token for part in CHROME_PARTS)):
         return True
-    # An author's box under the post: "author-bio" (9to5google, GitHub), "author-mini-bio" (Ars).
+    # an author's box under the post ("author-bio", "author-mini-bio")
     if token.startswith("author") and token.endswith(("bio", "box")):
         return True
-    # A component part ("block__element"): each part is judged on its own, so blog.google's
-    # "article-share__title" and 9to5google's "article__meta-guides" go, while a whole-article
-    # wrapper like "has-highlight-and-share" (no "__") stays. A bare "meta" part is no list:
-    # blog.google keeps the standfirst in "uni-article-hero__meta-wrapper".
+    # each part of a "block__element" token is judged on its own ("article-share__title" goes, a
+    # whole-article "has-highlight-and-share" stays); a bare "meta" part is no list (a standfirst)
     parts = token.split("__")
     return len(parts) > 1 and any(part.startswith(CHROME_PREFIXES) or part.endswith(PART_ENDINGS) for part in parts)
 
 
 class _ParagraphText(HTMLParser):
-    """The page's elements and how much paragraph (<p>) text each holds. For the i-th non-void
-    start tag, elements[i] is (tag, id, class), sizes[i] its paragraph characters and spans[i]
-    its content's offsets in the page, nesting respected; total is the page's."""
+    """The page's elements and their paragraph (<p>) text. For the i-th non-void start tag: elements[i] is
+    (tag, id, class), sizes[i] its paragraph characters, spans[i] its content's offsets; total is the page's."""
 
     def __init__(self, html_text: str) -> None:
         super().__init__(convert_charrefs=True)
@@ -469,10 +415,9 @@ class _ParagraphText(HTMLParser):
 
 
 class _ChromeStripper(HTMLParser):
-    """Re-emits the page without its chrome. Regex can't find where a nested element ends:
-    `dropping` is the stack of elements open inside the dropped one. `protected` are the
-    start tags (by order) of the elements holding most of the paragraph text. An article's
-    own <header> goes but keeps its images: the cover of anthropic.com's and NVIDIA's posts."""
+    """Re-emits the page without its chrome. `dropping` is the stack of elements open inside the dropped
+    one; `protected` are the start tags (by order) never dropped. An article's own <header> goes but keeps
+    its images (the cover)."""
 
     def __init__(self, protected: frozenset) -> None:
         super().__init__(convert_charrefs=False)
@@ -535,8 +480,7 @@ class _ChromeStripper(HTMLParser):
 INLINE_TAGS = frozenset({"a", "abbr", "b", "bdi", "bdo", "big", "cite", "code", "data", "del", "dfn", "em",
                          "font", "i", "ins", "kbd", "mark", "q", "s", "samp", "small", "span", "strike",
                          "strong", "sub", "sup", "time", "tt", "u", "var", "wbr", "br", "img"})
-# Inside these loose text is already read (a text block, a caption, a form's controls) or
-# never is (the head): no run in them is made into a paragraph (step 1).
+# Loose text inside these is already read or never is: no run in them becomes a paragraph (step 1).
 TEXT_HOLDERS = frozenset({"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "figcaption",
                           "caption", "dt", "dd", "button", "label", "select", "option", "textarea", "title",
                           "head", "map"})
@@ -545,18 +489,14 @@ TEXTLESS = frozenset({"ul", "ol", "dl", "table", "thead", "tbody", "tfoot", "tr"
 
 
 class _LooseText(HTMLParser):
-    """Re-emits the page with the text it holds outside any block made readable (step 1).
+    """Re-emits the page with the text outside any block made readable (step 1).
 
-    - Loose text: a page laid out with <br>s and no <p> (paulgraham.com in a table cell,
-      incompleteideas.net in <body>) keeps its words in an element's own runs of text. In an
-      element that breaks them with a double <br>, each run (its text and inline tags, up to a
-      double <br> or a block) becomes a <p>; an inline tag the run does not both open and close
-      (a <font> around the whole page) is left out of it. An element with no double <br> is left
-      as it is: a byline or a date in a <div> is no paragraph.
-    - A code block with no <pre>: a <code> outside any text block that runs over several lines,
-      or stands in a <figure> (fasterthanli.me's <figure><code>), becomes <pre><code>.
-    A first pass (measure=True) finds `breaks`, the elements (by start order) whose own runs
-    hold a double <br>, and `code_blocks`, the <code>s to read as blocks; the second re-emits."""
+    - In an element that breaks its own text with a double <br>, each run (text and inline tags up to a
+      double <br> or a block) becomes a <p>; an inline tag the run does not both open and close is left out.
+      An element with no double <br> is left as it is (a byline in a <div> is no paragraph).
+    - A <code> outside any text block that runs over several lines, or stands in a <figure>, becomes
+      <pre><code>.
+    A first pass (measure=True) finds `breaks` and `code_blocks`; the second re-emits."""
 
     def __init__(self, measure: bool, breaks: frozenset = frozenset(), code_blocks: frozenset = frozenset()) -> None:
         super().__init__(convert_charrefs=False)
@@ -708,8 +648,7 @@ class _LooseText(HTMLParser):
 
 
 def _with_loose_text(html_text: str) -> str:
-    """The page with its loose text as paragraphs and its lone <code>s as code blocks
-    (_LooseText); the page itself when it has neither."""
+    """The page with its loose text as paragraphs and lone <code>s as code blocks (_LooseText)."""
     measure = _LooseText(measure=True)
     measure.feed(html_text)
     measure.close()
@@ -723,10 +662,9 @@ def _with_loose_text(html_text: str) -> str:
 
 
 def _without_chrome(html_text: str) -> str:
-    """The page without its chrome (_ChromeStripper). Protected: an element holding most of
-    the paragraph text, and every element around a candidate article (CANDIDATES) holding at
-    least CANDIDATE_TEXT_SHARE of it: lesswrong.com lays its post out inside a grid named
-    "MultiToCLayout-tableOfContents", and its comments hold three quarters of the page's text."""
+    """The page without its chrome (_ChromeStripper). Protected: an element holding most of the paragraph
+    text, and every element around a candidate article holding at least CANDIDATE_TEXT_SHARE of it (a post
+    may sit inside a chrome-named layout grid)."""
     text = _ParagraphText(html_text)
     protected = {index for index, size in enumerate(text.sizes) if size > text.total * MAIN_TEXT_SHARE}
     for index, (element, size) in enumerate(zip(text.elements, text.sizes)):
@@ -748,9 +686,8 @@ def _tag(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> str:
 
 
 class _Structure(HTMLParser):
-    """Re-emits the article with its tables and figures as the reader keeps them (step 4).
-    A table is judged when it closes: `tables` are the open ones, each with the positions in
-    `kept` of its own parts (kept without attributes but CELL_ATTRS), emptied then when it
+    """Re-emits the article with its tables and figures as the reader keeps them (step 4). A table is judged
+    when it closes: each open one in `tables` holds the positions in `kept` of its parts, emptied when it
     lays out the page."""
 
     def __init__(self) -> None:
@@ -765,8 +702,8 @@ class _Structure(HTMLParser):
         self.kept.append(text)
 
     def _card_mark(self, text: str, tag: str) -> str:
-        """A text block that starts inside a link (a card: <a><img><h2>Title</h2></a>) carries
-        the link's address in CARD_MARK, so the edge rule reads it as a link (step 5)."""
+        """A text block inside a link (a card) carries the link's address in CARD_MARK, so step 5 reads it as
+        a link."""
         if not self.links or tag not in CARD_BLOCKS or not text.endswith(">"):
             return text
         end = -2 if text.endswith("/>") else -1
@@ -837,8 +774,7 @@ class _Structure(HTMLParser):
 
     def _close_table(self) -> None:
         table = self.tables.pop()
-        # A table with no word in it (fabiensanglard.net's palette, its colours in styles that
-        # go) is no table either.
+        # a table with no word in it (colours in styles) is no table either
         layout = table["layout"] or table["cells"] < 2 or not table["text"]
         for index in table["parts"] if layout else ():
             self.kept[index] = ""
@@ -881,7 +817,7 @@ def _with_structure(html_text: str) -> str:
     return "".join(structure.kept)
 
 
-# "instapaper_body" marks an article body for read-later tools (lesswrong.com).
+# "instapaper_body" marks an article body for read-later tools.
 CONTENT_CLASSES = ("entry-content", "post-content", "article-content", "content-body", "prose", "single-post-content",
                    "instapaper_body")
 CANDIDATES = (
@@ -893,10 +829,8 @@ CANDIDATES = (
 
 
 def _candidates(page: "_ParagraphText", html_text: str) -> List[Tuple[int, int]]:
-    """Where the article may be (spans of html_text), in this order: the page's first
-    <article>, its first <main>, #markdownBody, the first <div> with a CONTENT_CLASSES class,
-    each whole (a card nested in the post no longer ends it). With none, the smallest element
-    holding FALLBACK_TEXT_SHARE of the paragraph text (the whole page when it has none)."""
+    """Where the article may be (spans of html_text), in CANDIDATES order, each whole. With none, the smallest
+    element holding FALLBACK_TEXT_SHARE of the paragraph text (the whole page when it has none)."""
     found = [next((i for i, element in enumerate(page.elements) if test(*element)), None) for test in CANDIDATES]
     if any(index is not None for index in found):
         return [page.spans[index] for index in found if index is not None]
@@ -911,9 +845,8 @@ NOTE_REF_RE = re.compile(rf"""(?is)<a\b{ATTRS}?\bhref\s*=\s*["']#([^"']+)["']{AT
 
 
 def _notes_after(page: "_ParagraphText", html_text: str, span: Tuple[int, int]) -> List[str]:
-    """The notes the article points to that sit after it, outside it (blog.google's footnotes
-    follow its <article>): the blocks of each element, after the article's end, whose id a
-    note mark in the article links to ("#footnote-1"), in page order."""
+    """The notes after the article, outside it: the blocks of each later element whose id a note mark in
+    the article links to ("#footnote-1"), in page order."""
     wanted = set(NOTE_REF_RE.findall(html_text[span[0]:span[1]]))
     blocks: List[str] = []
     after = span[1]
@@ -927,8 +860,7 @@ def _notes_after(page: "_ParagraphText", html_text: str, span: Tuple[int, int]) 
 IMG_TAG_RE = re.compile(rf"(?is)<img\b{ATTRS}>")
 IMG_ATTR_RE = re.compile(r"""(?is)\b(src|data-src|data-lazy-src|data-original|srcset|data-srcset|alt|width|height|class|style)"""
                          r"""\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
-# Where an <img> keeps its address, in this order: a lazy image's real one first; a srcset's
-# first candidate last (an image known only by its srcset).
+# Where an <img> keeps its address, in this order: a lazy image's real one first, a srcset's last.
 IMAGE_ADDRESSES = ("data-src", "data-lazy-src", "data-original", "src", "srcset", "data-srcset")
 ICON_MAX_PX = 64           # an image this wide or high is an icon, an avatar or a badge; not measured
 STYLE_PX_RE = re.compile(r"(?i)(?<![-\w])(?:max-)?(?:width|height)\s*:\s*(\d+)px")
@@ -946,7 +878,7 @@ def _image_attrs(tag: str) -> Dict[str, str]:
 def _is_article_image(attrs: Dict[str, str]) -> bool:
     """Not a tracking pixel, an icon, a badge or an avatar."""
     sizes = [px for px in (_px(attrs.get("width")), _px(attrs.get("height"))) if px is not None]
-    # A size in its style counts too: about.fb.com's share icons are style="max-width:24px".
+    # a size in its style counts too (share icons with style="max-width:24px")
     sizes += [int(px) for px in STYLE_PX_RE.findall(attrs.get("style", ""))]
     if any(px <= ICON_MAX_PX for px in sizes):
         return False
@@ -966,9 +898,8 @@ def _image_address(attrs: Dict[str, str]) -> str:
 
 
 def _article_image(tag: str, base_url: str) -> str:
-    """An <img> as an article keeps it: its real address (_image_address; Next.js's
-    /_next/image?url= unwrapped; made absolute against base_url) and its alt. '' for an image
-    that is no article image (_is_article_image) or whose address can't be fetched."""
+    """An <img> as an article keeps it: its real address (Next.js's /_next/image?url= unwrapped, absolute
+    against base_url) and its alt; '' for no article image or an address that can't be fetched."""
     attrs = _image_attrs(tag)
     if not _is_article_image(attrs):
         return ""
@@ -983,8 +914,7 @@ def _article_image(tag: str, base_url: str) -> str:
     return f'<img src="{html_lib.escape(src)}" alt="{html_lib.escape(attrs.get("alt", ""))}">'
 
 
-# \b: "<li" must not match "<link", nor "<p" "<path". A structure block (a table, a figure,
-# a caption) first, read up to its own end tag.
+# \b: "<li" must not match "<link", nor "<p" "<path". A structure block first, read up to its own end tag.
 BLOCK_RE = re.compile(rf"(?is)<(?P<block>{STRUCTURE_BLOCKS})\b{ATTRS}>.*?</(?P=block)>"
                       rf"|<(?:{TEXT_BLOCKS}|li)\b{ATTRS}>.*?</(?:{TEXT_BLOCKS}|li)>|<img\b{ATTRS}>")
 PAGE_BLOCK_RE = re.compile(rf"(?is)<(?:{TEXT_BLOCKS}|figcaption)\b{ATTRS}>.*?</(?:{TEXT_BLOCKS}|figcaption)>")
@@ -997,8 +927,7 @@ SHORT_OPENING_CHARS = 25   # a first block shorter than this is a hint of chrome
 
 
 def _escaped_attributes(html: str) -> str:
-    """A "<" or ">" inside an attribute value as an entity, so no later reader takes it for
-    the tag's end (strip_html, the post's text)."""
+    """A "<" or ">" inside an attribute value as an entity, so no later reader takes it for the tag's end."""
     return TAG_RE.sub(lambda tag: QUOTED_RE.sub(
         lambda value: value.group(0).replace("<", "&lt;").replace(">", "&gt;"), tag.group(0)), html)
 
@@ -1019,9 +948,9 @@ def _blocks(html_text: str) -> List[str]:
 
 
 def _with_headings_over_content(blocks: List[str]) -> List[str]:
-    """The blocks without a heading that has nothing under it: no block with text or an image
-    before the next heading of a higher level, or the end (step 4). Read from the end,
-    `content[level]` says whether such a block comes before the next heading above that level."""
+    """The blocks without a heading that has no text or image before the next higher-level heading or the end
+    (step 4). Read from the end: `content[level]` says whether such a block comes before the next heading
+    above that level."""
     content = [False] * 7
     kept: List[str] = []
     for block in reversed(blocks):
@@ -1043,9 +972,7 @@ HREF_RE = re.compile(r"""(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""
 TITLE_TAG_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
 LABEL_MAX_CHARS = 50       # a block shorter than this, with no sentence end, is a label ("Share:", "5 min read")
 EXCERPT_MAX_CHARS = 200    # a paragraph this short may be a card's excerpt in a related list (neither measured)
-# A block with this share of its text in links is a link: a card's title or a related
-# list's item is all link (measured, 0053: 0.97-1.0 on the corpus), a reference ("[3] Rosenfeld et al. “A
-# Constructive Prediction …” ICLR 2020.") about three quarters.
+# A block with this share of its text in links is a link; a reference is about three quarters (measured: 0053).
 LINK_SHARE = 0.8
 SENTENCE_END = (".", "!", "?", "…", ".”", ".\"", "?”", "!”", ".)", ".’")
 LABEL_COLON_WORDS = 3      # not measured
@@ -1054,18 +981,14 @@ TITLE_SEPARATORS = ("|", "-", "–", "—", ":", "·", "•", "/")
 
 
 def _same_site(href: str, host: str) -> bool:
-    """A link within the page's own site (relative, or on its site: addresses.same_site): menus,
-    breadcrumbs, authors and related posts are; a link post's subject is not."""
+    """A link within the page's own site (relative, or addresses.same_site)."""
     target = urllib.parse.urlparse(href).hostname
     return not target or same_site(target, host)
 
 
 def _block_kind(block: str, host: str) -> Tuple[str, bool]:
-    """(what an edge block is, whether its links stay on the site): "link" (most of its text
-    in links, or a short block of several links, a row of icons), "label" (short, no sentence
-    end: "Share:", "5 min read", "Related posts"), "empty" (no letter: "0%", "+23"), "image"
-    (a figure, or images with no text), "short" (a paragraph under EXCERPT_MAX_CHARS) or
-    "text". A table, a code block or a quote is always text."""
+    """(what an edge block is, whether its links stay on the site): "link", "label" (short, no sentence end),
+    "empty" (no letter), "image", "short" (under EXCERPT_MAX_CHARS) or "text"; a table, code or quote is text."""
     tag = (re.match(r"<([a-zA-Z0-9]+)", block) or [None, ""])[1].lower()
     text = " ".join(strip_html(block).split())
     if tag in CONTENT_TAGS or re.search(r"(?i)<(?:table|pre|blockquote)\b", block):
@@ -1084,16 +1007,14 @@ def _block_kind(block: str, host: str) -> Tuple[str, bool]:
             links.append((href, " ".join(strip_html(match.group("text")).split())))
     linked = sum(len(link_text) for _, link_text in links)
     same_site = all(_same_site(href, host) for href, _ in links)
-    # A whole sentence linking to another site ("Learn more about how LogistiVIEW is driving
-    # … smart glasses.") is the article's own; a card's title links within the site.
+    # a whole sentence linking to another site is the article's own; a card's title links within the site
     sentence = not same_site and len(text) >= LABEL_MAX_CHARS and text.endswith((".", ".”", ".)", ".’"))
     if links and not sentence and (
             (text and linked >= len(text) * LINK_SHARE) or (len(links) >= 2 and len(text) < LABEL_MAX_CHARS)):
         return "link", same_site
     if not any(char.isalpha() for char in text):
         return "empty", False
-    # A colon ends a sentence that introduces what follows ("The simplest file could look like
-    # this:"), not a label of a word or two ("Share:", "Tags:", "News Summary:").
+    # a colon ends an introducing sentence ("could look like this:"), not a label of a word or two ("Tags:")
     ends = SENTENCE_END + ((":",) if len(text.split()) > LABEL_COLON_WORDS else ())
     if len(text) < LABEL_MAX_CHARS and not text.rstrip("*").endswith(ends):
         return "label", False
@@ -1106,8 +1027,7 @@ def _title_key(text: str) -> str:
 
 
 def _repeats_title(block: str, titles: List[str]) -> bool:
-    """A heading that is the page's title again (its <title> or og:title, perhaps with a
-    " | Site" after it)."""
+    """A heading that is the page's title again (its <title> or og:title, perhaps with " | Site")."""
     if not HEADING_RE.match(block):
         return False
     heading = _title_key(block)
@@ -1125,8 +1045,7 @@ H1_RE = re.compile(r"(?is)<h1\b[^>]*>(.*?)</h1>")
 
 
 def page_title_keys(page: Optional[str]) -> List[str]:
-    """The titles a page gives itself (issue 0140), as compared (title_key): its og:title, its <title> and
-    its <h1>s (scripts and styles aside)."""
+    """The titles a page gives itself, as title_keys: its og:title, its <title> and its <h1>s."""
     cleaned = re.sub(r"(?is)<(script|style|noscript)\b.*?</\1>", "", page or "")
     return [key for key in _page_titles(cleaned) + [_title_key(h1) for h1 in H1_RE.findall(cleaned)[:3]] if key]
 
@@ -1147,15 +1066,14 @@ def same_title(title: Optional[str], page_titles: Sequence[str]) -> bool:
     return False
 
 
-PICTURE_RUN = 3            # list items in a row, each only a linked picture (a blog's 6-22 upvoters); not measured
+PICTURE_RUN = 3            # list items in a row, each only a linked picture; not measured
 PICTURE_ITEM_RE = re.compile(rf"(?is)<li\b{ATTRS}>\s*<a\b(?P<attrs>{ATTRS})>\s*(?P<img><img\b{ATTRS}>)\s*</a>\s*</li>")
 IMAGE_FILE_RE = re.compile(r"(?i)\.(?:jpe?g|png|gif|webp|avif|svg)$")
 
 
 def _linked_picture(block: str) -> bool:
-    """A list item that is only a picture linking to a page (a person's profile: an upvoter,
-    an author), by shape. Never a picture declared larger than an icon, nor one linking to an
-    image file (a gallery's thumbnail opening its picture)."""
+    """A list item that is only a picture linking to a page (a profile), by shape. Never a picture declared
+    larger than an icon, nor one linking to an image file (a gallery)."""
     match = PICTURE_ITEM_RE.fullmatch(block.strip())
     if not match:
         return False
@@ -1169,21 +1087,13 @@ def _linked_picture(block: str) -> bool:
 
 
 def _without_edge_chrome(blocks: List[str], titles: List[str], base_url: str) -> List[str]:
-    """The blocks without the chrome at the article's edges (step 5), the way Readability
-    judges unnamed blocks by their links and their length, but only where chrome sits:
-    - Before the first paragraph: labels (an eyebrow, "Back to Blog", a date, "5 min read",
-      "Share:"), links within the site (breadcrumbs, the author's page) and blocks with no
-      letter go; images (the cover) and headings stay, but for a heading that is the page's
-      title again (the reader shows the title). A link to another site (a link post's subject)
-      ends the opening.
-    - After the last paragraph, a tail of links (related posts, a "More on …" list, share and
-      social rows, a product grid) goes with its labels ("Related posts", "Tags:") and what lies
-      between its links (the cards' images and short excerpts): it begins at its first link,
-      or the labels just before it, and must hold two links or end on a link or a label, so an
-      article's own closing link ("Watch the keynote") stays. Blocks with no letter at the very
-      end ("0%") go.
-    - Anywhere: a run of PICTURE_RUN list items that are each only a picture linking to a page
-      (_linked_picture: an upvoters or authors list) goes."""
+    """The blocks without the chrome at the article's edges (step 5), judged by links and length:
+    - Before the first paragraph: labels, in-site links and letterless blocks go; images and headings stay,
+      but the page's title again goes. A link to another site ends the opening.
+    - After the last paragraph: a tail of links goes with its labels and what lies between its links; it
+      must hold two links or end on a link or a label, so an article's own closing link stays. Letterless
+      blocks at the very end go.
+    - Anywhere: a run of PICTURE_RUN linked-picture list items (_linked_picture) goes."""
     pictures = [_linked_picture(block) for block in blocks]
     run = [False] * len(blocks)
     start = 0
@@ -1244,18 +1154,15 @@ def read_article_page(html_text: str, base_url: str = "") -> Tuple[str, Dict[str
     titles = _page_titles(cleaned)
     cleaned = _without_hidden_link_labels(cleaned)
     cleaned = _without_chrome(_with_loose_text(cleaned))
-    # The first candidate long enough to be the article: a page's first <article> can be a
-    # 4-word "related" card while the post is in <main> (deepmind.google, 2026-10-27). The
-    # main block only when no candidate matched: a short <article> is no article, not a reason
-    # to read the page's other lists as one (issue 0029).
+    # the first candidate long enough (a first <article> can be a short "related" card); the main block only
+    # when no candidate matched, so a short <article> never makes the page's lists the article (0029)
     page = _ParagraphText(cleaned)
     for span in _candidates(page, cleaned):
         blocks = _blocks(_with_structure(cleaned[span[0]:span[1]]))
         if not blocks:  # list items count only inside the chosen candidate
             blocks = PAGE_BLOCK_RE.findall(cleaned)
         blocks += _notes_after(page, cleaned, span)
-        # Long enough to be the article is judged before its edges go: a short post (a
-        # summary under a shop's product grid) is still the post.
+        # long enough is judged before its edges go, so a short post is still the post
         long_enough = len(strip_html(" ".join(_with_headings_over_content(blocks)))) >= ARTICLE_MIN_CHARS
         blocks = _with_headings_over_content(_without_edge_chrome(blocks, titles, base_url))
         if long_enough and strip_html(" ".join(blocks)).strip():
@@ -1274,14 +1181,10 @@ def extract_article_html(html_text: str, base_url: str = "") -> str:
 
 def read_fidelity(blocks: List[str], html: str) -> Dict[str, Any]:
     """How well a page was read, kept in a post's metadata (repo_posts.PAGE_READ_KEY):
-      page_images    the article images in the chosen article block (no pixel, icon or
-                     avatar): an estimate of what the site shows, from the block the reader
-                     chose, so related cards and sidebars it dropped never count
+      page_images    the article images in the chosen block (an estimate of what the site shows)
       kept_images    the images kept: the others had no address the reader could fetch
-                     (a lazy image's placeholder, an image known only by its srcset)
       text_chars     the kept text's length
-      short_opening  the first block after the title is under SHORT_OPENING_CHARS: a hint of
-                     chrome left in ("Share:", "Category")."""
+      short_opening  the first block after the title is under SHORT_OPENING_CHARS (chrome left in)."""
     page_images = sum(1 for tag in IMG_TAG_RE.findall("\n".join(blocks))
                       if _is_article_image(attrs := _image_attrs(tag)) and _image_address(attrs))
     texts = [text for block in blocks if block[:4].lower() != "<img" and not re.match(r"(?is)<h1\b", block)
@@ -1306,8 +1209,7 @@ def lost_most_images(fidelity: Any) -> bool:
 
 
 def web_address(value: Any, needed: str) -> str:
-    """An address as the owner typed it ("a.com/blog"), stripped, with https:// when it has no
-    scheme. ValueError(needed) when it is empty."""
+    """A typed address ("a.com/blog"), stripped, with https:// when it has no scheme. ValueError(needed) if empty."""
     address = str(value or "").strip()
     if not address:
         raise ValueError(needed)
@@ -1336,8 +1238,7 @@ TELEGRAM_MEDIA_TAG_RE = re.compile(r"^\[[A-Z][A-Za-z ]{1,20}\]\s+(?=\S)")
 def readable_title(title: str, url: Optional[str]) -> str:
     """A title that is only the URL's slug ("levers-in-the-brain") as words ("Levers in the brain").
 
-    Some sites (Quartz/Obsidian gardens) put the file name in <title>. Only a hyphenated,
-    lowercase title of two or more words, equal to the URL's last path segment, is touched.
+    Only a hyphenated lowercase title of two or more words, equal to the URL's last path segment, is touched.
     """
     candidate = (title or "").strip()
     if not SLUG_RE.match(candidate):
@@ -1357,9 +1258,8 @@ def strip_telegram_media_tag(title: str) -> str:
     return TELEGRAM_MEDIA_TAG_RE.sub("", title or "", count=1)
 
 
-# Where each feed shape keeps its items (issue 0135): RSS 2.0 under its channel, Atom's entries,
-# RSS 1.0 (RDF) items beside its channel. The feed finder reads a candidate by the same paths, so a
-# feed it accepts is one this parser reads.
+# Where each feed shape keeps its items (RSS 2.0, Atom, RSS 1.0). The feed finder reads candidates by the same
+# paths, so a feed it accepts is one this parser reads.
 ITEM_PATHS = {"rss": ("rss", "channel", "item"), "feed": ("feed", "entry"), "rdf": ("rdf", "item")}
 
 
@@ -1369,24 +1269,21 @@ def item_path(names: Sequence[str]) -> bool:
     return bool(names) and ITEM_PATHS.get(names[0]) == tuple(names)
 
 
-# What a feed's XML may hold that a strict parser refuses (issue 0137 B4): an ampersand that starts no
-# entity ("R&D"), and control characters XML 1.0 forbids. Both are repaired before giving up.
+# What a strict parser refuses but is repaired before giving up: a bare "&" and control characters XML 1.0 forbids.
 BARE_AMPERSAND_RE = re.compile(r"&(?!(?:#\d+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);)")
 CONTROL_CHARS_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 def repaired_xml(text: str) -> str:
-    """text with its bare ampersands escaped and its forbidden control characters gone (issue 0137 B4)."""
+    """text with its bare ampersands escaped and its forbidden control characters gone."""
     return CONTROL_CHARS_RE.sub("", BARE_AMPERSAND_RE.sub("&amp;", text))
 
 
-# One broken item never fails the whole feed (issue 0254: one item's unclosed CDATA stopped a feed for 12 days). A
-# document the parser refuses, repaired or not, is cut into its items (each from one item's start to the next's);
-# each is parsed alone with the root's namespaces. One that fails is joined to the next ones that fail too (an item
-# whose text holds "<item", MAX_JOINED pieces at most); what still fails is skipped and reported. The rest is read
-# when the error was in an item, at most BROKEN_ITEMS_SHARE of the items are broken and every other item is read
-# back; otherwise the parser's first error. A document that parses but holds more item starts than items read (a
-# CDATA left open runs into the next item and hides it) is cut the same way, and read so when an item was broken.
+# One broken item never fails the whole feed (0254). A document the parser refuses is cut into its items, each
+# parsed alone with the root's namespaces; a failing piece is joined to the next failing ones (MAX_JOINED at most),
+# what still fails is skipped and reported. The rest is read when the error was in an item, at most
+# BROKEN_ITEMS_SHARE are broken and every other item reads back; otherwise the parser's first error. A document
+# that parses but holds more item starts than items read (an open CDATA hides the next item) is cut the same way.
 BROKEN_ITEMS_SHARE = 0.5
 MAX_JOINED = 4
 _ITEM_START_RE = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?(?:item|entry)(?=[\s>/])")
@@ -1474,9 +1371,8 @@ def _without_broken_items(text: str) -> Optional[FeedRead]:
 
 
 def read_feed(feed_text: str) -> FeedRead:
-    """The feed's root and its broken items (the rule above). A document a strict parser refuses is read again
-    repaired (repaired_xml), then without its broken items; when that fails too, the first error is raised (the
-    parser's own message)."""
+    """The feed's root and its broken items: a refused document is read repaired (repaired_xml), then without
+    its broken items; when that fails too, the parser's first error is raised."""
     try:
         root = ET.fromstring(feed_text)
     except ET.ParseError as first:
@@ -1510,13 +1406,11 @@ def feed_items(feed_text: str) -> int:
     return sum(1 for node in root.iter() if local_name(node.tag).lower() in ("item", "entry"))
 
 
-# An item's identity (issue 0137 B1): its link, else its guid, else its enclosure's address, else its
-# title and date. Never the feed's own address, nor a link items with other guids share (a podcast
-# whose every episode links the show's page). A guid, or a title and date, that is no address is kept
-# on the feed's address as ITEM_PARAM: each item a post of its own, the same post at every fetch.
+# An item's identity: its link, else its guid, else its enclosure's address, else its title and date. Never the
+# feed's own address, nor a link items with other guids share (a show's page). An identity that is no address is
+# kept on the feed's address as ITEM_PARAM: each item its own post, the same post at every fetch.
 ITEM_PARAM = "insight_item"
-# A link this many items with other identities share is the show's or the site's, not an item's; two
-# items sharing one (the same article posted twice) stay one post, as before.
+# A link this many items with other identities share is the site's, not an item's (two stay one post).
 SHARED_LINK_ITEMS = 3
 
 
@@ -1532,8 +1426,7 @@ def item_address(source_url: str, token: str) -> str:
 def item_identity(link: Optional[str], guid: Optional[str], enclosure: Optional[str], title_date: Optional[str],
                   source_url: str, shared: bool = False, guid_shared: bool = False) -> str:
     """The item's address by its identity (see ITEM_PARAM); shared: other items with other identities have this
-    link; guid_shared: they have this guid's address too (issue 0242: "/changelog#v2", "/changelog#v3" are one
-    page once the fragment goes), so the guid is the item's token on the feed's address."""
+    link; guid_shared: they have this guid's address too (fragments dropped), so the guid becomes the token."""
     own = normalize_url(source_url) or source_url
     if _is_address(link) and not shared and (normalize_url(link) or link) != own:
         return link  # type: ignore[return-value]
@@ -1559,13 +1452,10 @@ def _guid(draft: Dict[str, Any]) -> Optional[str]:
 
 
 def _identities(drafts: List[Dict[str, Any]], source_url: str) -> None:
-    """Each draft's url and title, in place, from its identity (item_identity); the candidates go. An address is
-    shared when SHARED_LINK_ITEMS items with other identities have it as posts are matched (issue 0242: links that
-    differ only by a fragment are one address), whether as their link or as their guid. When most items link one
-    page (a changelog, a news page), each still has an address of its own: the feed's with its guid, else its title
-    and date, as its token (item_address), the same at every fetch."""
-    # A guid other items have too, with another title or date, names no item (issue 0254: a news feed whose every
-    # item's guid is its home page): such an item is known by its enclosure, else its title and date.
+    """Each draft's url and title, in place, from its identity (item_identity); the candidates go. An address
+    SHARED_LINK_ITEMS items with other identities have (as matched, link or guid) is shared: each item then
+    gets its own address (item_address), the same at every fetch."""
+    # a guid other items have too, with another title or date, names no item: use the enclosure, else title and date
     titles: Dict[str, set] = {}
     for draft in drafts:
         if draft.get("guid"):
@@ -1609,7 +1499,7 @@ def _title_date(title: Optional[str], when: Optional[str]) -> Optional[str]:
     return f"{title}|{(when or '').strip()}" if title else None
 
 
-# Authors (issue 0137 B7): one per name element; an affiliation or an identifier is no author.
+# Authors: one per name element; an affiliation or an identifier is no author.
 AFFILIATION_TAGS = frozenset({"aff", "affiliation", "affiliations", "institution", "orgname", "orgdiv", "department",
                               "address", "addr-line", "ror", "orcid", "identifier", "email", "xref", "sup", "label",
                               "country", "city"})
@@ -1626,10 +1516,9 @@ AUTHOR_MAX_CHARS = 80
 
 
 def author_names(text: str) -> List[str]:
-    """The author names in one author line, affiliations and identifiers dropped (issue 0137 B7):
+    """The author names in one author line, affiliations and identifiers dropped:
     "Jo Ann Lee, Sam B. KimDepartment of Psychology, University of X" -> ["Jo Ann Lee", "Sam B. Kim"].
-    Names glued together ("Ann LeeSam Kim") are split only when every part reads as a name of two words
-    or more ("Ian VanderWaal" stays one)."""
+    Glued names ("Ann LeeSam Kim") are split only when every part is a name of two words or more."""
     text = html_lib.unescape(text or "")
     if "<" in text and ">" in text:
         text = _tagged_names(text)
@@ -1684,8 +1573,8 @@ def _tagged_names(markup: str) -> str:
 
 
 def element_authors(node: ET.Element) -> List[str]:
-    """The authors one author element names (issue 0137 B7): one per name child, its affiliation and
-    identifier children dropped; else its own text (author_names)."""
+    """The authors one author element names: one per name child, affiliations and identifiers dropped; else
+    its own text (author_names)."""
     named = [child for child in node if local_name(child.tag).lower() in NAME_TAGS]
     if named:
         return list(dict.fromkeys(name for child in named for name in element_authors(child)))
@@ -1698,20 +1587,19 @@ def element_authors(node: ET.Element) -> List[str]:
 
 
 def clean_authors(names: Sequence[Any]) -> List[str]:
-    """A stored author list with each line read again by author_names (the repair of issue 0137 B7)."""
+    """A stored author list with each line read again by author_names."""
     return list(dict.fromkeys(name for line in names if isinstance(line, str) for name in author_names(line)))
 
 
 def _undated(post: Dict[str, Any]) -> Dict[str, Any]:
-    """An item with no date says it will be dated when first seen (issue 0137 B9: the saver keeps that time)."""
+    """An item with no date is dated when first seen (the saver keeps that time)."""
     if post.get("date") is None:
         post["date_precision"] = "seen"
     return post
 
 
 def feed_channel_title(feed_text: str) -> Optional[str]:
-    """The feed's own title (RSS's and RSS 1.0's <channel><title>, Atom's <feed><title>), spaces collapsed;
-    None when it has none or does not parse (issue 0178: an unnamed source's name). Never raises."""
+    """The feed's own title, spaces collapsed; None when it has none or does not parse. Never raises."""
     try:
         root = feed_root(feed_text)
     except Exception:  # noqa: BLE001 - no title from a document that does not parse
@@ -1728,10 +1616,9 @@ def feed_channel_title(feed_text: str) -> Optional[str]:
 
 
 def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
-    """Parse an RSS 2.0, Atom or RSS 1.0 (RDF) document into post drafts, newest first. A document a
-    strict parser refuses is read repaired (feed_root, issue 0137 B4); each item's address is its
-    identity (item_identity, B1); an undated item is "seen" (B9). An item that does not parse is skipped, the rest
-    read (read_feed, issue 0254): the list's `broken` says which."""
+    """Parse an RSS 2.0, Atom or RSS 1.0 document into post drafts, newest first. Each item's address is its
+    identity (item_identity); an undated item is "seen"; an item that does not parse is skipped and listed in
+    the result's `broken` (read_feed)."""
     root, broken = read_feed(feed_text)
     posts = FeedPosts()
     posts.broken = broken
@@ -1762,8 +1649,7 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "categories": _extract_xml_categories(item),
                 # <comments>: the item's discussion page (on Hacker News, the HN thread).
                 "metadata": {"comments_url": comments} if (comments := child_text(item, "comments")) else {},
-                # <source url="...">title</source>: the feed the item came from (a Telegram bridge's forward,
-                # issue 0178); a kind that knows what it means reads it (telegram_rss), the others ignore it.
+                # the feed the item came from; only a kind that knows what it means reads it (telegram_rss)
                 **({"origin_item": origin} if (origin := rss_source(item)) else {}),
             }))
     elif local_name(root.tag) == "feed":
@@ -1791,9 +1677,7 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "metadata": {},
             }))
     elif local_name(root.tag).lower() == "rdf":
-        # RSS 1.0 (issue 0135): <rdf:RDF> holds its <item>s beside its <channel>, each dated by
-        # Dublin Core (dc:date) or PRISM (prism:publicationDate), its authors dc:creator: one author
-        # per name element, affiliations and identifiers dropped (issue 0137 B7).
+        # RSS 1.0: items beside the channel, dated by dc:date or prism:publicationDate, authors in dc:creator
         for item in (child for child in root if local_name(child.tag) == "item"):
             content_html = normalize_feed_urls(
                 child_inner_xml(item, "encoded") or child_inner_xml(item, "description")
@@ -1828,12 +1712,10 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
 
 
 def _bound_undated(posts: List[Dict[str, Any]]) -> None:
-    """v10.30: an undated item listed on the older side of a dated one is no newer than it. A feed that dates only
-    its recent items (a blog's archive left undated) gave its old items the time they were first seen (B9), so a 2015
-    post read on a first fetch was this week's news. In the document's order (newest first or oldest first, read from
-    its dated items; 2+ needed), each undated item takes the date of the nearest dated item on its newer side,
-    precision "before" (the saver stores it as no date given: published_precision "none"). Undated items newer than
-    every dated one stay "seen". A document with fewer than 2 dated items is left as it was."""
+    """An undated item listed on the older side of a dated one is no newer than it, so an undated archive is not
+    news. In the document's order (read from its 2+ dated items), each undated item takes the date of the nearest
+    dated item on its newer side, precision "before" (stored as published_precision "none"); undated items newer
+    than every dated one stay "seen". Fewer than 2 dated items: left as it was."""
     dated = [i for i, p in enumerate(posts) if isinstance(p.get("date"), datetime)]
     if len(dated) < 2 or len(dated) == len(posts):
         return

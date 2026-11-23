@@ -1,33 +1,17 @@
-"""KindHttp: the one HTTP client every source kind uses (moved from SourceFetchService).
+"""KindHttp: the one HTTP client every source kind uses (User-Agent, TLS policy, politeness sleep).
 
-It owns the User-Agent and TLS-skip policy and the politeness sleep, so tests swap the
-whole network edge with one fake (tests/_kind_fakes.FakeHttp) and record every delay a
-kind asks for through the injected sleeper instead of waiting it out.
+Tests swap the whole network edge with one fake (tests/_kind_fakes.FakeHttp). Requests run in a worker thread (the
+given executor, else the loop's default).
 
-urllib is blocking, so every request runs in a worker thread: the loop's default executor,
-or the executor given (the Add source dialog's client has its own few threads, so a slow
-site it is asked about never holds up ingestion's).
+Security (0187): only http and https, and only where AddressGuard allows: a host must resolve to public addresses
+unless it is a LAN bridge (bridge_hosts()); the connection goes to the checked address (no DNS rebinding); every
+redirect hop is checked (MAX_REDIRECTS, Cookie / Authorization never follow to another host); no environment proxy.
+TLS is verified except for a LAN bridge and RSS_SKIP_TLS_VERIFY_HOSTS. A body is capped at MAX_BODY_BYTES raw and
+unpacked (a gzip bomb is an HttpError). The media proxy uses the same guard.
 
-It requests only http and https addresses, and only where AddressGuard lets it (issue 0187): a host must resolve to
-public addresses only, unless it is one of the owner's LAN bridges (bridge_hosts()); the connection goes to the
-address that was checked (no second DNS answer can move it), every redirect hop is checked the same way (at most
-MAX_REDIRECTS, http and https only, a Cookie or Authorization header never follows to another host), and no
-environment proxy is used. TLS is verified everywhere except on a bridge that resolves to a LAN address (its
-self-signed certificate) and the hosts RSS_SKIP_TLS_VERIFY_HOSTS names. The media proxy opens through the same guard.
-
-A body is read to MAX_BODY_BYTES at most, raw and unpacked alike (a gzip bomb is an HttpError, not a full
-memory); a caller that truly needs more passes a larger max_bytes, with its reason.
-
-It only classifies failures: every one (a dropped connection or a truncated body too) is an HttpError (a ValueError), carrying the status,
-the Retry-After seconds and whether it timed out. Retrying and slowing down are the
-caller's, where the host is known (issue 0016).
-
-A conditional GET (get_conditional, issue 0044) sends what the server said last time (ETag ->
-If-None-Match, Last-Modified -> If-Modified-Since) and gets back either "not modified" (a 304,
-never an error, no body) or the body with its new validators. AddressMemory is one fetch's
-validators, per address: what it may send (none when asked to read in full, or when they are
-older than VALIDATORS_MAX_AGE, so a server answering 304 wrongly cannot hide new posts for
-long) and what it learned, for the caller to keep once the fetch's posts are safe.
+Every failure is an HttpError (a ValueError) with status, Retry-After and timed_out; retrying is the caller's.
+get_conditional sends the last validators and gets a 304 (no body, never an error) or the body; AddressMemory holds
+one fetch's validators per address (none older than VALIDATORS_MAX_AGE are sent).
 """
 from __future__ import annotations
 
@@ -57,7 +41,7 @@ DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_USER_AGENT = "INSIGHT Archive Fetcher/1.0"
 READ_CHUNK = 64 * 1024    # get_start reads its body in pieces of at most this, checking its deadline
 VALIDATORS_MAX_AGE = timedelta(days=7)   # older validators are not sent: the address is read in full
-MAX_BODY_BYTES = 10 * 1024 * 1024        # a body's cap, raw and unpacked (issue 0187); raised only by a caller with a reason
+MAX_BODY_BYTES = 10 * 1024 * 1024        # a body's cap, raw and unpacked; raised only by a caller with a reason
 ERROR_BODY_BYTES = 64 * 1024              # an error answer's body: only its first 200 characters are kept
 MAX_REDIRECTS = 3
 # The owner's LAN bridges (the Telegram RSS bridge, Nitter): fetched though they resolve to private addresses.
@@ -68,9 +52,8 @@ T = TypeVar("T")
 
 
 class HttpError(ValueError):
-    """A failed request: status (None for a network error), retry_after (integer seconds from
-    the Retry-After header, else None), timed_out (a connect or read timeout), unreachable (the host
-    does not resolve, refuses the connection or has no route: issue 0242, the source doctor's dead host)."""
+    """A failed request: status (None for a network error), retry_after (Retry-After seconds, else None),
+    timed_out, unreachable (no resolve, refused or no route: the source doctor's dead host)."""
 
     def __init__(self, message: str, *, status: Optional[int] = None, retry_after: Optional[int] = None,
                  timed_out: bool = False, unreachable: bool = False) -> None:
@@ -82,7 +65,7 @@ class HttpError(ValueError):
 
     @property
     def their_trouble(self) -> bool:
-        """The other server's trouble (issue 0088): an HTTP 5xx or no answer in time, usually over within hours."""
+        """The other server's trouble: an HTTP 5xx or no answer in time, usually over within hours."""
         return self.timed_out or (self.status or 0) >= 500
 
     @property
@@ -96,7 +79,7 @@ _UNREACHABLE_ERRNOS = frozenset({errno.ECONNREFUSED, errno.ENETUNREACH, errno.EH
 
 
 def _unreachable(reason: Any) -> bool:
-    """urllib's URLError reason says the host is not there (issue 0242): it does not resolve, or no route to it."""
+    """urllib's URLError reason says the host is not there: it does not resolve, or no route to it."""
     return isinstance(reason, socket.gaierror) or (isinstance(reason, OSError)
                                                    and getattr(reason, "errno", None) in _UNREACHABLE_ERRNOS)
 
@@ -172,11 +155,11 @@ def _resolve(host: str, port: int) -> List[str]:
 
 
 class AddressGuard:
-    """Where INSIGHT's outgoing requests may connect (issue 0187), decided at the moment of connecting.
+    """Where INSIGHT's outgoing requests may connect, decided at the moment of connecting.
 
-    connect() resolves the host once, refuses it unless every address is public or the host is a bridge
-    (bridge_hosts()), and connects to one of the addresses it checked: a second DNS answer (rebinding) is
-    never asked. opener() is a urllib opener whose every connection, redirects included, goes through it."""
+    connect() resolves the host once, refuses it unless every address is public or the host is a bridge, and
+    connects to a checked address (no DNS rebinding). opener(): every connection, redirects included, goes
+    through it."""
 
     def __init__(self, *, bridges: Optional[Iterable[str]] = None, insecure_tls_hosts: Optional[Iterable[str]] = None,
                  resolve: Optional[Callable[[str, int], List[str]]] = None) -> None:
@@ -314,10 +297,8 @@ def read_capped(response: Any, cap: int, url: str) -> bytes:
 
 
 def _unpacked(body: bytes, encoding: Optional[str], max_bytes: int) -> bytes:
-    """The body as the server meant it: gzip or deflate undone, at most max_bytes of it. A server may compress a
-    body nobody asked to compress, with a Content-Encoding header or without one (then gzip's own 1f 8b start
-    gives it away). A cut-off body (a byte cap) unpacks as far as it goes; one that isn't really compressed
-    passes as it came."""
+    """The body as the server meant it: gzip or deflate undone (by header or by gzip's 1f 8b start), at most
+    max_bytes. A cut-off body unpacks as far as it goes; one that isn't really compressed passes as it came."""
     unpack = _unpacker(body, encoding)
     if unpack is None:
         return body
@@ -408,14 +389,11 @@ class Conditional:
 
 
 class AddressMemory:
-    """The validators one fetch may send and has learned, per address (issue 0044).
+    """The validators one fetch may send and has learned, per address.
 
-    stored: what the last fetch learned ({url: Validators}). full: send none (the owner's
-    "Fetch now" on one source). get() makes the conditional GET and learns its answer: a 200's
-    validators dated now, a 304's (or, when it repeats none, the ones sent) keeping their date.
-    learned is what to keep once the fetch's posts are saved; forget() keeps nothing (a fetch
-    that left work for the next one, which must then read in full). unchanged: every address
-    asked answered 304.
+    stored: what the last fetch learned ({url: Validators}); full: send none. get() makes the conditional GET and
+    learns its answer (a 200's dated now, a 304's keeping their date). learned: what to keep once the fetch's posts
+    are saved; forget() keeps nothing (the next fetch reads in full). unchanged: every address answered 304.
     """
 
     def __init__(self, stored: Optional[Mapping[str, Validators]] = None, *, now: datetime,
@@ -488,27 +466,21 @@ class KindHttp:
         self, url: str, *, user_agent: Optional[str] = None, headers: Optional[Dict[str, str]] = None,
         max_bytes: Optional[int] = None,
     ) -> Tuple[str, Dict[str, str]]:
-        """GET url; returns (body, lower-cased headers). Raises HttpError on HTTP/network errors, and
-        BodyTooLarge past MAX_BODY_BYTES (max_bytes raises that cap: a caller that needs more says why).
-
-        headers are extra request headers (e.g. a Cookie); they never appear in errors or logs.
+        """GET url; returns (body, lower-cased headers). Raises HttpError, and BodyTooLarge past MAX_BODY_BYTES
+        (max_bytes raises that cap). headers (e.g. a Cookie) never appear in errors or logs.
         """
         return await self._in_thread(self._get_text_sync, url, user_agent, headers, max_bytes)
 
     async def get_start(self, url: str, max_bytes: int) -> Tuple[bytes, str]:
-        """GET url, reading at most max_bytes of the body: (those bytes, the final URL after
-        redirects). For a quick look at a page or a feed (the feed finder). The body is read
-        within the timeout overall, not per read, so a server dripping it slowly is a timeout
-        (HttpError, timed_out) and its connection is closed. Raises HttpError."""
+        """GET url, reading at most max_bytes of the body: (those bytes, the final URL). The timeout is overall,
+        not per read, so a server dripping its body is a timeout. Raises HttpError."""
         return await self._in_thread(self._get_start_sync, url, max_bytes)
 
     async def get_conditional(self, url: str, validators: Optional[Validators] = None, *,
                               max_bytes: Optional[int] = None) -> Conditional:
-        """GET url sending validators (If-None-Match / If-Modified-Since); any address. A 304 is
-        a Conditional with no body, never an error; any other failure is an HttpError. Redirects
-        are followed (the validators go along). max_bytes cuts the body there, read as get_start reads
-        it (within the timeout overall); None reads it all, to MAX_BODY_BYTES (BodyTooLarge past it).
-        AddressMemory.get remembers the answer."""
+        """GET url sending validators (If-None-Match / If-Modified-Since). A 304 is a Conditional with no body,
+        never an error; any other failure is an HttpError. max_bytes cuts the body as get_start does; None reads
+        it all, to MAX_BODY_BYTES."""
         return await self._in_thread(self._get_conditional_sync, url, validators, max_bytes)
 
     async def get_json(self, url: str, *, user_agent: Optional[str] = None) -> Any:
@@ -534,7 +506,7 @@ class KindHttp:
         user_agent: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """POST url-encoded fields (an OAuth token request, issue 0242); the JSON answer. Raises HttpError.
+        """POST url-encoded fields (an OAuth token request); the JSON answer. Raises HttpError.
         extra_headers (an Authorization) never appear in errors or logs."""
         return await self._in_thread(self._post_sync, url, urllib.parse.urlencode(fields).encode("ascii"),
                                      "application/x-www-form-urlencoded", user_agent, extra_headers)

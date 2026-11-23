@@ -80,7 +80,7 @@ describe('SourcesConfig', () => {
     expect(rowIds()).toEqual(['flaky', 'tg', 'simon', 'off']);
     expect(rowOf('flaky')).toHaveTextContent('retry in 3h');
     expect(within(rowOf('off')).getByRole('switch', { name: 'Enable Road to VR' })).toHaveAttribute('aria-checked', 'false');
-    // The header does not repeat the chips' counts (issue 0027).
+    // The header does not repeat the chips' counts.
     const header = screen.getByText(/^4 sources · /);
     expect(header.textContent).not.toMatch(/ on\b|failing/);
   });
@@ -938,7 +938,7 @@ describe('SourcesConfig', () => {
   });
 });
 
-// Issue 0003: reading views link here by id; the URL owns the sheet.
+// Reading views link here by id; the URL owns the sheet (0003).
 describe('SourcesConfig deep links', () => {
   it('?source=<id> opens that source’s sheet; closing it removes the parameter', async () => {
     setup('/settings/sources?source=flaky');
@@ -1015,9 +1015,8 @@ describe('SourcesConfig deep links', () => {
     expect(await within(dialog).findByText('Found the feed for this page: openai.com/news/rss.xml')).toBeInTheDocument();
   });
 
-  // Issue 0109 B2: a platform account is followed through its platform's template, filled in, not as an
-  // address the feed finder reads (x.com/<user> found nothing: "Headlines only"). An X account is the exception since
-  // v10.15 c4: the finder answers with the server's bridge feed (below).
+  // A platform account is followed through its platform's template, filled in, not as an address the feed finder
+  // reads (0109); an X account is the exception: the finder answers with the server's bridge feed (below).
   it.each([
     ['t.me/sample_channel', 'Telegram RSS', 'Channel Username', 'sample_channel',
       { platform: 'rss', handle_or_url: 'https://telegram.local/rss/sample_channel?limit=50', display_name: 'sample_channel', fetch_delay_seconds: 5 }],
@@ -1157,7 +1156,7 @@ describe('SourcesConfig deep links', () => {
     expect(within(missing).getByRole('link', { name: 'openai.com · index' })).toHaveAttribute('href', 'https://openai.com/index/gpt-6-astra');
     expect(within(missing).getByRole('link', { name: 'Archive…' })).toHaveAttribute('href', '/settings/sources?tab=ingestion&sub=archive&source=s-openai');
     expect(within(missing).queryByRole('button', { name: 'Follow…' })).toBeNull();
-    // Issue 0109: a stopped feed is said, and no archive is offered for it.
+    // A stopped feed is said, and no archive is offered for it.
     expect(within(missing).getByText(/Its feed stopped \(Nov 11 ’24\)/)).toBeInTheDocument();
     expect(within(missing).getAllByRole('link', { name: 'Archive…' })).toHaveLength(1);
     expect(screen.getByText('Stories also start at pages that name no account to follow: youtube.com/watch (9).')).toBeInTheDocument();
@@ -1192,14 +1191,14 @@ describe('SourcesConfig deep links', () => {
       .mockResolvedValueOnce({ success: true, total: 3, more: false, suggestions: [{ ...base, key: 'later.example', url: 'https://later.example' }] });
     setup('/settings/sources?tab=discover', { getSuggestedSources });
     expect(await screen.findByText('Feed found')).toBeInTheDocument();
-    expect(screen.getByText('· also news.feeds.example')).toBeInTheDocument();   // one owner's hosts, one card (issue 0109)
-    // Issue 0109: the ones that can't be followed are a section of their own, below the followable, above the untested.
+    expect(screen.getByText('· also news.feeds.example')).toBeInTheDocument();  // one owner's hosts, one card
+    // The ones that can't be followed are a section of their own, below the followable, above the untested.
     const apart = screen.getByRole('region', { name: "Can't be followed as a feed" });
     expect(within(apart).getByText('walled.example')).toBeInTheDocument();
     expect(within(apart).getByText('Blocks readers')).toBeInTheDocument();
     expect(within(apart).getByText('Started 7 of your stories')).toBeInTheDocument();
     expect(screen.queryByText(/listed below the ones you can follow/)).toBeNull();
-    // A followed source's other channels: folded, never a suggestion (issue 0109).
+    // A followed source's other channels: folded, never a suggestion.
     const channels = screen.getByRole('region', { name: "Your sources' other channels" });
     expect(within(channels).queryByText('x.com/labnotes')).toBeNull();
     await userEvent.click(within(channels).getByRole('button', { name: 'Other channels of sources you follow (1)' }));

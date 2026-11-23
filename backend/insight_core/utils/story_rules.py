@@ -1,33 +1,11 @@
-"""One story, many sources (issue 0050): the rules that join posts into stories, each post's
-role and a story's voices. Pure functions over plain data: the story job (services/stories_service.py)
-loads the posts and writes what these return. Each story is a tree (tree_rules.py, issue 0064);
-Discover's rules are discover_rules.py (issue 0071 split them out of this file).
+"""One story, many sources: the rules that join posts into stories (`grouping`), each post's role and a story's
+voices. Pure functions over plain data; the story job (services/stories_service.py) loads the posts and writes what
+these return. Each story is a tree (tree_rules.py); the thresholds are here, in one place.
 
-Ported from the prototype (`plan/research/dedup-prototype/stories.py`, `rank.py`, `report.py`),
-the reference the real code reproduces. The thresholds are here, in one place.
-
-- A **voice** is one publication for websites (the host its source publishes at, issue 0069),
-  one channel or account for Telegram, X and YouTube, and on Reddit the person who posted: a
-  story's voices count people.
-  Joining by links, and telling a copy, go by where a post was said (`place`): the voice, but
-  on Reddit the subreddit, so one person posting a link to two subreddits makes one story of
-  one voice (a copy), as the prototype does. Posts of one place never join through links.
-- Posts join when they share a text (the same content_hash, 120+ characters, within 30 days),
-  a title (5+ words, within 7 days), an outside page linked by 2+ voices within 72 hours, or one
-  cites a stored post of another voice within 72 hours. A post with 3+ anchors is a roundup: it
-  joins only the story of its first and mentions the others. A post told a round-up (`StoryPost.roundup`,
-  Mark X's tag, v10.39) joins no story by its links: it mentions all of them. Home and profile pages join nothing.
-- Two posts at one address (0049 keeps them apart when their titles differ) join (`address`).
-- A story is a group of posts from 2+ sources, keyed by its first post.
-- **On X (issue 0066)** the platform says how tweets connect, and that is as certain as an address:
-  - `repost`: a repost stored apart from its original (one address, 0049) hangs from it; a repost
-    is a share, and never its address's own page;
-  - `thread`: an author's reply to itself hangs from the tweet of its own it quotes, stored from the
-    24 hours before (issue 0103), else from the post right before it in its source's timeline, when that is the author's own
-    (not a repost, not a reply to another account); within 24 hours. Its posts are one story, whatever
-    the sources: a thread is one item;
-  - `quote`: a quoting tweet hangs from the tweet it quotes; a stored one joins its story
-    within 72 hours (as a citation), whatever the place.
+Posts join by a shared text, title, address, an outside page linked by 2+ places, a citation of a stored post, and
+on X by thread and quote. Joining by links goes by where a post was said (`place`: the voice, but the subreddit on
+Reddit); posts of one place never join through links. A post with ROUNDUP_ANCHORS+ anchors is a roundup: it joins
+only the story of its first and mentions the others (a told round-up, `StoryPost.roundup`, joins none).
 """
 from __future__ import annotations
 
@@ -43,33 +21,26 @@ from insight_core.utils.addresses import bare, host_of, is_tweet, paper_id, pape
 from insight_core.utils.post_links import NUMBERISH, PLATFORM_KINDS, is_home, is_reference
 from insight_core.utils.tree_rules import _PAGE, SLUG_MIN_WORDS, _origin_node, _slug_words, tree
 
-# Each tuned value says whether it was measured (issue 0071). "The prototype's": the value of
-# plan/research/dedup-prototype, whose rules were checked as a whole (0050: 24 stories, none wrong),
-# never one value against another.
+# "The prototype's": plan/research/dedup-prototype's value, checked as a whole, never one value against another.
 SAME_TEXT_WITHIN = timedelta(days=30)     # the prototype's, not measured
 SAME_TEXT_MIN_CHARS = 120                 # the prototype's, not measured
 SAME_TITLE_WITHIN = timedelta(days=7)     # the prototype's, not measured
 SAME_TITLE_MIN_WORDS = 5                  # the prototype's, not measured
 SAME_ADDRESS_WITHIN = SAME_TEXT_WITHIN    # two posts at one address (0064), as a shared text
 LINK_WITHIN = timedelta(hours=72)         # the prototype's, not measured
-THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's own tweet it quotes, else the one before it (0066, 0103); not measured
-# v10.39: a reply that opens a run of its account's replies (the next one within THREAD_BURST) THREAD_GAP or more after
-# the tweet before it is another thread, its first tweet not stored (Artificial Analysis's Muse Ember thread hung from
-# the Decision Index thread of 18 hours before). Measured on the 11-19 server copy: 7 of 7 such edges joined two threads.
+THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's own tweet; not measured
+# A reply opening a quick run of replies THREAD_GAP or more after the tweet before it starts another thread (measured).
 THREAD_GAP = timedelta(hours=1)
 THREAD_BURST = timedelta(minutes=2)
-# A post with 3+ anchors is a roundup: the prototype's value. Measured, the rule: its first link's
-# join is right 34 of 40 times on the lab (0050); no other count compared.
 ROUNDUP_ANCHORS = 3
-LINK_POST_MAX_WORDS = 60          # a Reddit or HN post with fewer words of its own is a share; the prototype's, not measured
+LINK_POST_MAX_WORDS = 60          # a Reddit or HN post with fewer words of its own is a share; not measured
 LINK_POST_KINDS = ("reddit", "hn")   # the kinds whose posts can be a link with a few words of its own
 SIGNATURE_SHARE = 0.25            # a link in 25% of a source's posts ...
 SIGNATURE_MIN_POSTS = 4           # ... and in 4 of them at least is the source's signature (the prototype's, not measured)
 WORD = re.compile(r"\w+", re.U)
 
 REASONS = ("address", "text", "title", "link", "citation", "thread", "quote")   # why a post is in its story; Mark X adds more
-# Kinds whose posts' addresses are not their own pages: an HN item is the page it links, a Saved
-# page is anyone's. Their posts never claim an address.
+# Kinds whose posts' addresses are not their own pages (an HN item, a Saved page): they never claim an address.
 NOT_PUBLISHERS = ("hn", "saved")
 HOME_SITE_SHARE = 0.5   # a source whose address is elsewhere publishes on a site holding half its posts; not measured
 
@@ -84,40 +55,35 @@ class StoryPost:
     own_site: str                   # its source's publication (SourceFacts.publication): a website's voice
     t: datetime                     # published_at, else fetched_at
     title: Optional[str] = None
-    # The text's start its stored title said, when that is more than the title shown (issue 0076: a bridge's
-    # title is its post's first ~85 characters, two lines glued): copies of one post share it.
+    # the text's start its stored title said, when more than the title shown: copies of one post share it
     opening: Optional[str] = None
     content_hash: Optional[str] = None
     text_chars: int = 0             # len(content)
     words: Optional[int] = None     # words of its own (Reddit, HN): the share rule
-    author: Optional[str] = None    # a Reddit post's author; a tweet's account (issue 0066)
+    author: Optional[str] = None    # a Reddit post's author; a tweet's account
     url: Optional[str] = None       # normalized
     links: List[Tuple[str, Optional[str]]] = field(default_factory=list)   # (target, stored post id)
     link_texts: Dict[str, str] = field(default_factory=dict)              # target -> the link's words
-    updated: bool = False           # a watched page that changed since its date (0037)
+    updated: bool = False           # a watched page that changed since its date
     home_site: Optional[str] = None  # the site its source publishes on; None: its own site (not HN, Saved)
-    reposted: bool = False          # a tweet of another account its source reposted (issue 0066)
+    reposted: bool = False          # a tweet of another account its source reposted
     reply_to: Optional[str] = None  # the account a tweet replies to
     quoted: Optional[str] = None    # the tweet it quotes (normalized)
-    quoted_words: Dict[str, str] = field(default_factory=dict)   # page -> its own words as quoted (0070)
-    # Who else of your sources put this tweet before you (issue 0068): the sources that reposted it
-    # (from posts.reposted_by), each a share voice in its story, and its author's own source when
-    # the row is another source's repost, a report voice. Never the row's own source.
+    quoted_words: Dict[str, str] = field(default_factory=dict)   # page -> its own words as quoted
+    # the sources that reposted it (share voices), and its author's own source when the row is another source's
+    # repost; never the row's own source
     reposters: Tuple[str, ...] = ()
     author_source: Optional[str] = None
-    stored_at: Optional[datetime] = None   # when INSIGHT stored it (posts.created_at): what a story's id keeps to (0072)
+    stored_at: Optional[datetime] = None   # when INSIGHT stored it (posts.created_at): what a story's id keeps to
     date_alone: Optional[bool] = None      # its time is a date alone; None: told by the time (`date_only`)
-    undated: bool = False                  # the source gave no date: its time is when it was fetched (0076)
-    moved_to: Optional[str] = None         # where its page moved (issue 0108: a redirect stub's target), normalized
-    # A round-up as Mark X tells it (markx/units.py owns the tag: its reading says so, or a digest source's digest
-    # shape; v10.39): about many stories, it joins none by its links (each a mention), whatever their count.
+    undated: bool = False                  # the source gave no date: its time is when it was fetched
+    moved_to: Optional[str] = None         # where its page moved (a redirect stub's target), normalized
+    # a round-up as Mark X tells it (markx/units.py): it joins no story by its links
     roundup: bool = False
-    # Its owner's voice when that is another (issue 0111: a person's blog and video channel are one owner,
-    # SourceFacts.owners), and the same for each of `other_sources`: News counts voices by owner.
+    # its owner's voice when that is another (SourceFacts.owners), and each of `other_sources`': News counts by owner
     owner: Optional[str] = None
     other_owners: Tuple[Optional[str], ...] = ()
-    # v10.39: whether its reading says it reports an event (Mark X: kind report, never a leak or rumour); None: no
-    # reading (Mark IX reads none). A post its reading says is no report never leads a story with a report (`lead_order`).
+    # its Mark X reading says it reports an event (None: no reading); a non-report never leads (`lead_order`)
     report: Optional[bool] = None
 
     @property
@@ -126,8 +92,7 @@ class StoryPost:
 
     @property
     def voice(self) -> str:
-        """Its own voice, Mark IX's key (utils/voice.py), stored as story_posts.voice. What a story or News counts it
-        as is Voice's (voice.voice_of with Policy.STORIES_IX or NEWS_IX)."""
+        """Its own voice (utils/voice.py), stored as story_posts.voice."""
         return voice.key(self.kind, self.source_id, self.own_site, self.author)
 
     @property
@@ -137,7 +102,6 @@ class StoryPost:
 
     @property
     def link_post(self) -> bool:
-        """A Reddit or HN post that is mostly a link (fewer than LINK_POST_MAX_WORDS words of its own)."""
         return self.kind in LINK_POST_KINDS and (self.words or 0) < LINK_POST_MAX_WORDS
 
     @property
@@ -150,46 +114,36 @@ class StoryPost:
 
     @property
     def title_keys(self) -> Tuple[str, ...]:
-        """What it joins by as a title (SAME_TITLE_WITHIN): its title's key, and its opening's (issue 0076)."""
         keys_ = (self.title_key, title_key(self.opening) if self.opening else None)
         return tuple(dict.fromkeys(k for k in keys_ if k))
 
     @property
     def trusted_time(self) -> bool:
-        """Its time can order it (issue 0064): a time of day (not a date alone, 00:00:00), not a
-        Saved page (the day you saved it), not a watched page updated since its date, not a post its
-        source gave no date (issue 0076: its fetch's time, or a made-up backlog time)."""
+        """A time of day, not a Saved page, not a watched page updated since its date, not an undated post."""
         return not (self.kind == "saved" or self.updated or self.date_only or self.undated)
 
     @property
     def date_only(self) -> bool:
-        """Its time is a date alone: when that day it was posted is unknown (issue 0072 D). As the post
-        was read (`date_alone`), else told by its time, 00:00:00 UTC."""
         return self.date_alone if self.date_alone is not None else date_alone(self.t)
 
     @property
     def on_own_site(self) -> bool:
-        """It is at an address on the site its source publishes on: that address's own page. A repost
-        is another account's tweet: never its own page."""
+        """It is at an address on the site its source publishes on (a repost never is)."""
         home = self.home_site if self.home_site is not None else ("" if self.kind in NOT_PUBLISHERS else site_of(self.own_site))
         return bool(home and self.url and not self.reposted and site_of(host_of(self.url)) == home)
 
     @property
     def own_tweet(self) -> bool:
-        """A tweet its source's account wrote, and not as a reply to another account (issue 0066)."""
         return bool(self.kind == "x" and self.author and not self.reposted
                     and (self.reply_to is None or self.reply_to.lower() == self.author.lower()))
 
 
 def date_alone(t: datetime) -> bool:
-    """A time that is a date alone, as feeds without a time of day are stored: 00:00:00 UTC."""
     t = t.astimezone(timezone.utc) if t.tzinfo else t
     return (t.hour, t.minute, t.second, t.microsecond) == (0, 0, 0, 0)
 
 
 def title_key(title: Optional[str]) -> Optional[str]:
-    """A title as two posts share it: the words of its comparable form (utils/titles.py: styled letters
-    as plain, issue 0070; entities decoded, issue 0071)."""
     words = WORD.findall(titles.title_key(title))
     return " ".join(words) if len(words) >= SAME_TITLE_MIN_WORDS else None
 
@@ -218,24 +172,21 @@ class Story:
     roles: Dict[str, str]            # post id -> report | share
     reasons: Dict[str, List[str]]    # post id -> why it joined
     mentions: Set[str]               # roundups that mention it and are not in it
-    # Its tree (issue 0064): post id -> (parent post, parent page, reason). The origin post has
-    # (None, None, None); a post under the outside page origin has (None, origin_url, reason).
+    # its tree: post id -> (parent post, parent page, reason); the origin post has (None, None, None)
     parents: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = field(default_factory=dict)
     origin_url: Optional[str] = None       # the origin, when it is a page outside INSIGHT
-    origin_title: Optional[str] = None     # its title by evidence (origin_title, issue 0068)
+    origin_title: Optional[str] = None     # its title by evidence (origin_title)
     origin_linked_by: int = 0              # how many of the story's posts are about it
 
 
 def _order(post: StoryPost) -> Tuple[datetime, int, str]:
-    """Time order. Tweets of one second follow their ids, which X gives in the order they were
-    written (issue 0066: a thread's replies often share a second)."""
+    """Time order; tweets of one second by their ids (X gives them in the order written)."""
     return post.t, int(post.url.rsplit("/", 1)[-1]) if is_tweet(post.url) else 0, post.id
 
 
 def anchors(post: StoryPost) -> List[Tuple[str, str]]:
-    """What a post points at: ('post', id) for a stored post, ('url', address) for an outside page.
-    Home and profile pages, and the post itself, are no anchor. A stored post is never a home
-    page, however short its address (blog.cloudflare.com/yandex-outage is one segment)."""
+    """('post', id) for a stored post, ('url', address) for an outside page. Home and profile pages, and the post
+    itself, are no anchor; a stored post is never a home page."""
     out: Dict[Tuple[str, str], None] = {}
     for url, stored_id in post.links:
         if stored_id == post.id or (not stored_id and is_home(url)):
@@ -245,13 +196,11 @@ def anchors(post: StoryPost) -> List[Tuple[str, str]]:
 
 
 def _time_key(post: StoryPost) -> Tuple[bool, datetime, int, str]:
-    """Earlier trustworthy time first; a time that can't order comes after every one that can."""
     return (not post.trusted_time, *_order(post))
 
 
 def address_origins(posts: Iterable[StoryPost]) -> Dict[str, str]:
-    """Each address's own page among `posts`: address -> the post at it on its source's own site
-    (two such: the earlier trustworthy time)."""
+    """address -> the post at it on its source's own site (two such: the earlier trustworthy time)."""
     out: Dict[str, StoryPost] = {}
     for p in posts:
         if p.on_own_site and (p.url not in out or _time_key(p) < _time_key(out[p.url])):
@@ -261,11 +210,8 @@ def address_origins(posts: Iterable[StoryPost]) -> Dict[str, str]:
 
 @lru_cache(maxsize=1 << 15)   # read for each address of each post, in each group of a run
 def _page_key(url: str) -> Optional[Tuple[str, str, Tuple[str, ...]]]:
-    """What names a page on its host whatever its section (issue 0070): (host, its last segment, its
-    path's numbers and dates), when the last segment is a slug of SLUG_MIN_WORDS+ words of letters
-    (not an id), and the page is no reference page (a /docs/ or /collections/ page is another one).
-    A paper is named by its id on its host, whatever the path around it (issue 0106, addresses.paper_id):
-    (host, "paper " + its id, ())."""
+    """(host, last segment, the path's numbers) naming a page whatever its section, when the last segment is a slug of
+    SLUG_MIN_WORDS+ words and no reference page; a paper: (host, "paper " + its id, ())."""
     paper = paper_id(url)
     if paper:
         return host_of(url), "paper " + paper, ()
@@ -278,17 +224,8 @@ def _page_key(url: str) -> Optional[Tuple[str, str, Tuple[str, ...]]]:
 
 
 def page_aliases(posts: Sequence[StoryPost]) -> Dict[str, str]:
-    """Another path of a website's own page (issue 0070): address -> the stored page's address, for
-    the posts' and their links' addresses on one host with its last segment, a slug (_page_key):
-    anthropic.com/engineering/redesigning-source-control is anthropic.com/research/redesigning-source-control,
-    darioamodei.com/machines-of-loving-grace is darioamodei.com/essay/machines-of-loving-grace, and a
-    language before it (openai.com/ru-RU/index/...) is skipped with the section. A slug two stored
-    pages share (a weekly series' "this-week-in-..." under its dates) names neither.
-    A paper (issue 0106) is one page on its host across its paths, its abstract, PDF, HTML and versions:
-    its stored page when there is one, else the address that names it among those seen (its page before
-    its file, then without a query, then the shortest: addresses.paper_page_order).
-    A post whose page moved (issue 0108: a redirect stub, its article read where it pointed) is one page
-    with the address it moved to, on any host."""
+    """address -> the stored page's address, for another path of a website's own page (one host, the same slug:
+    /engineering/<slug> is /research/<slug>), a paper's paths and versions, and a page that moved."""
     own: Dict[Tuple[str, str, Tuple[str, ...]], Set[str]] = defaultdict(set)
     for p in posts:
         if p.kind == "site" and p.on_own_site and _page_key(p.url):
@@ -307,8 +244,7 @@ def page_aliases(posts: Sequence[StoryPost]) -> Dict[str, str]:
 
 
 def paper_aliases(papers: Iterable[Iterable[str]], stored: Iterable[str] = ()) -> Dict[str, str]:
-    """Each address of a paper -> the one that names it (issue 0106), for `papers`, each one paper's
-    addresses on its host: a `stored` one (a post is at it), else by addresses.paper_page_order."""
+    """Each address of a paper -> the one that names it: a `stored` one, else by addresses.paper_page_order."""
     out: Dict[str, str] = {}
     stored = set(stored)
     for addresses in papers:
@@ -319,14 +255,12 @@ def paper_aliases(papers: Iterable[Iterable[str]], stored: Iterable[str] = ()) -
 
 
 def link_via(target: str) -> str:
-    """The key a link join to an outside page holds (Edge.via): its address ("u:"), and for a paper the
-    key every path of it shares ("g:", issue 0106), so the incremental job compares it from any of them."""
+    """Edge.via of a link join: "u:" + address, for a paper the key all its paths share ("g:")."""
     return (page_key(target) or "u:" + target) if paper_id(target) else "u:" + target
 
 
 def one_page(post: StoryPost, aliases: Mapping[str, str]) -> StoryPost:
-    """A post whose links to another path of a paper are links to its one page (issue 0106): the page,
-    its words and the words it quotes, as origin_title reads them."""
+    """A post whose links to another path of a paper are links to its one page."""
     if not any(target in aliases for target, _ in post.links):
         return post
     links: Dict[str, Optional[str]] = {}
@@ -342,23 +276,14 @@ def one_page(post: StoryPost, aliases: Mapping[str, str]) -> StoryPost:
 
 
 def own_quote(post: StoryPost) -> Optional[str]:
-    """The tweet of its own account a tweet quotes (issue 0103): what a reply of the author to itself
-    continues, when its source holds it from the 24 hours before."""
     if post.quoted and post.author and (tweet_author(post.quoted) or "").lower() == post.author.lower():
         return post.quoted
     return None
 
 
 def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
-    """Each reply of an author to itself -> its parent (issue 0066), its author's own tweet within 24
-    hours. A thread starts at the author's own post, never at a repost of another account.
-    - A reply that quotes a tweet of its own account continues that tweet (issue 0103), when its source
-      holds it from the 24 hours before: the account's previous tweet may be about something else
-      (a self-quote of the 15:19 tweet at 16:39 is no reply to the 16:22 thread on another model).
-    - Otherwise (that tweet isn't stored, or is older: "a related tweet from earlier", a reference
-      within the thread before it) the post right before it in its source's timeline (reposts included).
-      Measured on the lab (0103): the 2 of 44 stored self-quotes past 24 hours both continue the
-      tweet right before them."""
+    """Each reply of an author to itself -> its parent within THREAD_WITHIN: the stored tweet of its own it quotes,
+    else the post right before it in its source's timeline unless it opens another thread. Never a repost."""
     timeline: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in sorted(posts, key=_order):
         if p.kind == "x":
@@ -381,9 +306,8 @@ def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
 
 
 def opens_thread(run: Sequence[StoryPost], i: int) -> bool:
-    """Whether the reply `run[i]` (its source's timeline, in time order) begins another thread than the tweet before it:
-    its account's next reply follows within THREAD_BURST (a thread is written in one go) while the tweet before it is
-    THREAD_GAP or more earlier. A lone late reply ("update, 18 hours later") still continues the tweet before it."""
+    """The reply `run[i]` begins another thread: its next reply follows within THREAD_BURST while the tweet before it
+    is THREAD_GAP or more earlier. A lone late reply still continues the tweet before it."""
     p, nxt = run[i], run[i + 1] if i + 1 < len(run) else None
     return (p.t - run[i - 1].t >= THREAD_GAP and nxt is not None and nxt.own_tweet and bool(nxt.reply_to)
             and nxt.t - p.t <= THREAD_BURST)
@@ -391,9 +315,8 @@ def opens_thread(run: Sequence[StoryPost], i: int) -> bool:
 
 @dataclass
 class Edge:
-    """One connection the rules found (issue 0072 A, stored in `post_edges`): `src` joins `dst` (a post's
-    id, or _PAGE + an outside page's address) by `kind`, a REASONS join, or `mention` (a roundup lists
-    it and is not in its story). `via`: the key both hold (`keys`) when a key made it."""
+    """One connection (stored in `post_edges`): `src` joins `dst` (a post id, or _PAGE + an address) by `kind` (a
+    REASONS join, or `mention`); `via`: the key both hold (`keys`) when a key made it."""
     src: str
     dst: str
     kind: str
@@ -402,9 +325,8 @@ class Edge:
 
 @dataclass
 class Grouping:
-    """What `grouping` finds among some posts: their stories, every connection, each node's group (its
-    root) and each roundup's listed nodes. The incremental job (issue 0072 A) reads the last three to
-    tell which stories a new post can change."""
+    """`grouping`'s stories, edges, each node's root and each roundup's listed nodes: the incremental job reads the
+    last three to tell which stories a new post changes."""
     stories: List[Story]
     edges: List[Edge]
     root: Dict[str, str]             # node (a post id, or _PAGE + an address) -> its group's root
@@ -412,17 +334,12 @@ class Grouping:
 
 
 def group(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = None) -> List[Story]:
-    """The stories among `posts` (2+ sources each), first post first, each a tree (issue 0064)."""
     return grouping(posts, replies=replies).stories
 
 
 def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = None) -> Grouping:
-    """`group`, with what it found on the way. `replies`: each thread reply -> the post it continues,
-    when known (the stored thread edges; `threads(posts)` when None)."""
-    # A link to an address is a link to its own page when one is stored: the row a link resolves
-    # to (the first seen at the address) may be another source's post of that page (HN's). Another
-    # path of a website's page is that page too (issue 0070, page_aliases); a link to any path of a
-    # paper no post is stored at is a link to the address that names it (issue 0106).
+    """`group`, with what it found on the way. `replies`: thread reply -> the post it continues (None: `threads`)."""
+    # a link to an address is a link to its stored own page; another path of a page or a paper is that page too
     aliases = page_aliases(posts)
     papers = {url: named for url, named in aliases.items() if paper_id(url)}
     posts = sorted((one_page(p, papers) for p in posts) if papers else posts, key=_order)
@@ -445,7 +362,6 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
         return list(out)
 
     def quote_of(post: StoryPost) -> Optional[Tuple[str, str]]:
-        """The anchor of the tweet a tweet quotes (issue 0066), when it links it."""
         links = dict(post.links)
         if not post.quoted or post.quoted not in links:
             return None
@@ -488,16 +404,14 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
     linkers: Dict[Tuple[str, str], List[StoryPost]] = defaultdict(list)
     every: Dict[str, List[Tuple[str, str]]] = {}     # every anchor of a post: its citations
     focused: Dict[str, List[Tuple[str, str]]] = {}   # what it is about: a roundup's first anchor only
-    quotes: Dict[str, str] = {}   # a quoting tweet -> the stored tweet it quotes (issue 0066)
+    quotes: Dict[str, str] = {}   # a quoting tweet -> the stored tweet it quotes
     listed: Dict[str, List[Tuple[str, str]]] = {}    # a roundup -> the anchors it mentions, in order
     for p in posts:
         every[p.id] = resolved(p)
-        # A quote is what its tweet is about, never one of a roundup's listed links.
         quote = quote_of(p)
         points = [anchor for anchor in every[p.id] if anchor != quote]
         if len(points) >= ROUNDUP_ANCHORS:
-            # v10.39: a told round-up (a newsletter issue, a daily brief) is about none of its links; its first
-            # one joined it to that story by citation or link (The Download, AI #N, a daily AI brief on the server).
+            # a told round-up (a newsletter issue) is about none of its links, not even its first
             lead = 0 if p.roundup else 1
             for anchor in points[lead:]:
                 mentioned[anchor].add(p.id)
@@ -514,12 +428,8 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             if cited is None:
                 continue   # a stored post outside the posts recomputed
             if cited.kind == "saved":
-                # A page you saved is still the outside page its linkers link (issue 0113): they keep that
-                # page's link join among themselves (2+ places within 72 hours of its first link), and the
-                # saved page joins them, whatever its own date or the save's. Without it a page dated far from
-                # its links (saved days later, or stating an older date) pulled their story apart: 0113's
-                # measure, 31 of 50. The citation below still joins its other linkers by its date, which the
-                # save path makes its first link's when the page states none (saved_service, 0122's rule).
+                # a saved page is still the outside page its linkers link: their link join holds, and it joins them
+                # whatever its own date (0113)
                 near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
                 if len({p.place for p in near}) >= 2:
                     for p in near:
@@ -538,7 +448,6 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
                 for p in near:
                     join(p.id, _PAGE + target, "link", link_via(target))
                     why[p.id].add("link")
-    # On X (issue 0066): a thread is one story, and a quote joins the stored tweet it quotes.
     replies = threads(posts) if replies is None else {c: p for c, p in replies.items() if c in by_id and p in by_id}
     joins = [(child, parent, "thread", None) for child, parent in replies.items()]
     joins += [(child, parent, "quote", "u:" + by_id[child].quoted) for child, parent in quotes.items()
@@ -555,19 +464,13 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
         return out
 
     def is_story(group_posts: Sequence[StoryPost]) -> bool:
-        """2+ sources (a reposter is one, issue 0068; a Saved page none, 0070), or one account's thread
-        or quote of itself (0066)."""
+        """2+ sources (a reposter counts; a Saved page doesn't), or one account's thread or self-quote."""
         return len({s for p in group_posts if p.kind != "saved" for s in (p.source_id, *p.other_sources)}) >= 2 \
             or any(why[p.id] & {"thread", "quote"} for p in group_posts)
 
     members = grouped()
-    # A post with links about one story (issue 0070): a platform's post (PLATFORM_KINDS) with 3+ links,
-    # whose first link joins no story, is a member of the story its first link into a story is the
-    # origin of, when it links that story twice or more (the origin and a page or post of the
-    # story's) and links no other story. r/LocalLLaMA's "mistralai/Mistral-Large-4-1T-A52B · Hugging
-    # Face" lists GGUFs, then Mistral's announcement (the origin) and the model page paperfeed links.
-    # An article or a digest with links stays a roundup: measured on the lab, websites' were mostly
-    # essays and digests building on the story (Mark X tells those apart by meaning).
+    # A platform post of 3+ links whose first joins no story joins the story it links twice or more, when that is the
+    # only story it links and the link is its origin (0070). An article or a digest with links stays a roundup.
     story_of = {node: uf.find(node) for node in uf.parent if is_story(members[uf.find(node)])}
     pages: Dict[str, Set[Tuple[str, str]]] = defaultdict(set)   # a story -> what its posts are and link
     for root, group_posts in members.items():
@@ -588,7 +491,6 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             origins[root] = _origin_node(tree(members[root], every=every, focused=focused, origin_of=origin_of,
                                               replies=replies, quotes=quotes))
         node = first[1] if first[0] == "post" else _PAGE + first[1]
-        # A page you saved is its story's origin as the page (0070 A8: "U:" + its address), not as its post (0113).
         saved_page = by_id.get(node) if first[0] == "post" else None
         as_origin = {node} | ({_PAGE + saved_page.url} if saved_page and saved_page.kind == "saved" and saved_page.url else set())
         if origins[root] in as_origin and len(pages[root].intersection(mentions)) >= 2:
@@ -614,8 +516,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
         if root not in roots:
             continue
         shape = tree(group_posts, every=every, focused=focused, origin_of=origin_of, replies=replies, quotes=quotes)
-        # A date alone counts as that day's earliest timed post (issue 0072 D); the id is the post
-        # stored first, so a post that joins later, however early it was posted, keeps it (0072 A).
+        # the id is the post stored first: a post that joins later, however early posted, never takes it
         times = story_times(group_posts)
         ordered = sorted(group_posts, key=lambda p: (times[p.id], not p.date_only, *_order(p)[1:]))
         stored = [p for p in ordered if p.stored_at is not None]
@@ -635,9 +536,8 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
 
 
 def story_times(posts: Sequence[StoryPost]) -> Dict[str, datetime]:
-    """Each post's time as its story counts it (issue 0072 D): a date alone (`date_only`) counts as that
-    day's earliest timed post among the story's (`trusted_time`), never its 00:00 (at that time it comes
-    first: it is as early as that post, and is said first); with none that day, its date. A story's start, its order ("first") and the News window read it."""
+    """Each post's time as its story counts it: a date alone counts as that day's earliest timed post of the story,
+    else its date. A story's start, its order and the News window read it."""
     earliest: Dict[object, datetime] = {}
     for p in posts:
         if p.trusted_time:
@@ -646,17 +546,13 @@ def story_times(posts: Sequence[StoryPost]) -> Dict[str, datetime]:
     return {p.id: earliest.get(p.t.astimezone(timezone.utc).date(), p.t) if p.date_only else p.t for p in posts}
 
 
-# 0263: a page you saved joins its linkers whatever its own date (0113), and is no voice (voice.NOT_VOICE): a Saved copy
-# of a paper a release cites, dated a year before it, became its story's start and took the release out of News. A
-# post of no voice dated more than LINK_WITHIN before its story's first post of a voice is background: still a member
-# (its page, Cited, the originals), never the story's start, its first post or the date News windows on. A post of a
-# voice is never background, however early (a leak days before a launch still begins its story).
+# A post of no voice dated more than BACKGROUND_BEFORE before its story's first voiced post is background: a member,
+# never the story's start, first post or News date. A voiced post is never background (0263).
 BACKGROUND_BEFORE = LINK_WITHIN
 
 
 def background(posts: Sequence[Any], times: Mapping[str, datetime]) -> Set[str]:
-    """The ids of `posts` (anything with `id` and `kind`: a StoryPost, Mark X's rules' Post) that are background to
-    their story (0263): of no voice, dated (`times`) more than BACKGROUND_BEFORE before its first post of a voice."""
+    """The ids of `posts` (with `id` and `kind`) that are background to their story."""
     voiced = [times[p.id] for p in posts if p.kind not in voice.NOT_VOICE and p.id in times]
     if not voiced or not isinstance(min(voiced), datetime):   # the prototype's ISO strings: no date to measure
         return set()
@@ -664,16 +560,12 @@ def background(posts: Sequence[Any], times: Mapping[str, datetime]) -> Set[str]:
     return {p.id for p in posts if p.kind in voice.NOT_VOICE and p.id in times and times[p.id] < edge}
 
 
-# v10.39: what a story or News row is led by (its first post: the row's id, its lead line). A post that says nothing of
-# its own (a page you saved with no text, a reply that is only a link) or whose reading says it is no report (a
-# preview, a rumour, an explainer) leads only when no post reports the event: the lead is the earliest report. The
-# story's start (`story_start`, the window's date) is still its earliest post.
+# A post that says nothing of its own, or is read as no report, leads only when no post reports the event.
 _NO_WORDS = re.compile(r"https?://\S+|\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/\S*)?|@\w+|\bR to\b|\bRT by\b", re.I)
 
 
 def says_nothing(post: Any) -> bool:
-    """Whether a post says nothing of its own: a saved page (voice.NOT_VOICE) with no text, or one whose title and
-    opening (when it has either) are only links and handles."""
+    """A saved page with no text, or a post whose title and opening are only links and handles."""
     if post.kind in voice.NOT_VOICE and not post.text_chars:
         return True
     own = " ".join(t for t in (post.title, post.opening) if t)
@@ -681,13 +573,11 @@ def says_nothing(post: Any) -> bool:
 
 
 def lead_rank(post: Any) -> int:
-    """0: may lead; 1: its reading says it is no report; 2: it says nothing of its own (`says_nothing`)."""
     return 2 if says_nothing(post) else 1 if post.report is False else 0
 
 
 def lead_order(posts: Sequence[Any], times: Mapping[str, datetime]) -> List[Any]:
-    """`posts` lead first: never a background post (0263), then by `lead_rank`, then by time (a date alone after a
-    timed post of its day), then id; the posts after the lead in that same time order."""
+    """`posts` lead first (never a background post, by `lead_rank`, then time, then id), the rest in time order."""
     bg = background(posts, times)
     ordered = sorted(posts, key=lambda p: (p.id in bg, times[p.id], not p.date_only, p.id))
     if not ordered:
@@ -697,27 +587,23 @@ def lead_order(posts: Sequence[Any], times: Mapping[str, datetime]) -> List[Any]
 
 
 def story_start(posts: Sequence[Any], times: Mapping[str, datetime]) -> Optional[datetime]:
-    """A story's start (0263): its earliest post that is not background (`background`); None with no post timed."""
+    """Its earliest post that is not background; None with no post timed."""
     bg = background(posts, times)
     return min((times[p.id] for p in posts if p.id in times and p.id not in bg), default=None)
 
 
 def page_key(url: str) -> Optional[str]:
-    """`_page_key` as a key (`keys`): "g:" + host, slug and the path's numbers."""
     key = _page_key(url)
     return "g:" + "|".join((key[0], key[1], *key[2])) if key else None
 
 
 def keys(post: StoryPost) -> Set[str]:
-    """What a post can join or change another by (issue 0072 A): its text ("h:"), its title ("t:"), its
-    address and the pages it links ("u:"; a home page only when a post is stored at it: no anchor
-    else), and each one's page key ("g:", another path of one page). The incremental job regroups
-    the posts that hold a key a new or changed post holds."""
+    """The keys a post joins or changes others by: "h:" text, "t:" title, "u:" its address, where it moved and its
+    links (a home page only when stored), and their "g:" page keys. The incremental job regroups by them."""
     out = set()
     if post.text_key:
         out.add("h:" + post.text_key)
     out |= {"t:" + key for key in post.title_keys}
-    # A post whose page moved (issue 0108) holds the address it moved to: the post stored there is regrouped with it.
     own = [post.url] if post.url else []
     for url in own + ([post.moved_to] if post.moved_to else []) + [target for target, stored in post.links if stored or not is_home(target)]:
         out.add("u:" + url)
@@ -727,8 +613,8 @@ def keys(post: StoryPost) -> Set[str]:
 
 
 def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
-    """report (its own writing) or share: a copy of an earlier post's text or title from another
-    place, a Reddit or HN post that is mostly a link, or a repost. `posts` in time order."""
+    """report or share (a copy of an earlier post's text or title from another place, a link post, or a repost);
+    `posts` in time order."""
     first_text: Dict[str, str] = {}
     first_title: Dict[str, str] = {}
     out = {}
@@ -736,7 +622,7 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
         text, titles_ = p.text_key, p.title_keys
         copy = (text and text in first_text and first_text[text] != p.place) or \
                any(title in first_title and first_title[title] != p.place for title in titles_)
-        out[p.id] = "share" if copy or p.link_post or p.reposted else "report"   # a repost is a share (0066)
+        out[p.id] = "share" if copy or p.link_post or p.reposted else "report"
         if text:
             first_text.setdefault(text, p.place)
         for title in titles_:
@@ -745,27 +631,20 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
 
 
 def text_key(content_hash: Optional[str], chars: int) -> Optional[str]:
-    """What copies of one text share: its hash, when it is long enough to tell (SAME_TEXT_MIN_CHARS)."""
     return content_hash if content_hash and chars >= SAME_TEXT_MIN_CHARS else None
 
 
 def text_chars_sql(text: str) -> str:
-    """SQL over a text column: its length in characters, counted up to SAME_TEXT_MIN_CHARS (all text_key reads of it).
-    v10.22: a text of 4 x that many bytes or more has that many characters (a character is 1-4 bytes in UTF-8), told by
-    octet_length, which reads a stored text's header and never fetches or decompresses it; length() decompressed every
-    post's text the story job loaded (85% of its post load's time, its TOAST reads on the server)."""
+    """SQL: a text column's length in characters, up to SAME_TEXT_MIN_CHARS. octet_length >= 4n implies n characters
+    without decompressing the text, which length() does."""
     n = SAME_TEXT_MIN_CHARS
     return f"(CASE WHEN octet_length({text}) >= {4 * n} THEN {n} WHEN length({text}) > {n} THEN {n} ELSE length({text}) END)"
 
 
 def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """A story's voices as you know them (issue 0082), the ones voice.count counts, one item each, so
-    a count reads as its names and "+N". `posts` in the order to name them, each {source_id, name (its
-    source's), kind, voice (StoryPost.voice), text_key, others: [{id, name}] (its other_sources)}; a
-    page you saved is none. Each voice is {id, name, place, with}: named by its first post's source,
-    a Reddit author as u/<author> with `place` its subreddit, a publication's copies once; `with` the
-    voice's other sources (a copy's, a reposter's), each once. The voices named by a followed source
-    come first, then those named by a Reddit post (issue 0103), each part by its first post."""
+    """A story's voices as named, one item each (voice.count's): {id, name, place, with}, named by the first post's
+    source (a Reddit author as u/<author>, `place` its subreddit), `with` its other sources; followed sources' voices
+    first, then Reddit posters'. `posts` in naming order: {source_id, name, kind, voice, text_key, others}."""
     items = []
     for i, p in enumerate(posts):
         if p["kind"] == "saved":
@@ -776,7 +655,7 @@ def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for group in voice.groups(items):
         sources = [{"id": posts[i]["source_id"], "name": posts[i]["name"]} if j < 0 else
                    {k: v for k, v in posts[i]["others"][j].items() if k != "owner"} for i, j in group]
-        # One owner's channels are one voice (issue 0111), named by a followed channel before a Reddit post.
+        # one owner's channels are one voice, named by a followed channel before a Reddit post
         k = next((k for k, (i, j) in enumerate(group) if not (j < 0 and posts[i]["kind"] == "reddit")), 0)
         group, sources = [group[k], *group[:k], *group[k + 1:]], [sources[k], *sources[:k], *sources[k + 1:]]
         (i, j), first = group[0], dict(sources[0])
@@ -784,14 +663,12 @@ def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             first.update(name="u/" + voice.poster(posts[i]["voice"]), place=posts[i]["name"])
         seen = {first["id"]}
         first["with"] = [s for s in sources if not (s["id"] in seen or seen.add(s["id"]))]
-        # Followed sources are named before Reddit's posters (issue 0103), each part in the order given.
         (reddit if j < 0 and posts[i]["kind"] == "reddit" else followed).append(first)
     return followed + reddit
 
 
 def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = site_of) -> str:
-    """A source's own site: the most common site of its posts' hosts ((host, posts) pairs); with
-    `of=publication_of`, its publication (issue 0069)."""
+    """The most common site of a source's posts' hosts; with `of=publication_of`, its publication."""
     sites: Counter = Counter()
     for host, n in hosts:
         sites[of(host)] += n

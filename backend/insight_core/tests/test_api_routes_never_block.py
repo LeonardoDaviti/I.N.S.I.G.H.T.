@@ -1,13 +1,8 @@
-"""v10.17 (issue 0195): no route blocks the API's event loop. An `async def` route runs on the loop itself, so a sync
-service call inside it (a database read, a file write) stops every other request of the process until it returns:
-the audit found 16 GET routes so (the top bar's overview, polled on every page, among them). A sync route is a plain
-`def` (FastAPI runs it in its threadpool); an async one awaits its sync work (asyncio.to_thread).
-
-The guard reads every route of the app's modules (main.py, the routers) from the source:
-  - an async route awaits something (else it is a plain def), except ALLOWED_ASYNC;
-  - an async route calls no sync service directly: no call on services()'s services (services().x.y(...)) and no
-    call of a module function that makes one, unless awaited (an async service method) or handed to to_thread.
-No database."""
+"""No route blocks the API's event loop (0195). An `async def` route runs on the loop itself, so a sync service call
+inside it stops every other request of the process until it returns. A sync route is a plain `def` (FastAPI runs it
+in its threadpool); an async one awaits its sync work (asyncio.to_thread). The guard reads every route of the app's
+modules from the source: an async route awaits something (except ALLOWED_ASYNC) and calls no sync service directly
+unless awaited or handed to to_thread. No database."""
 from __future__ import annotations
 
 import ast
@@ -16,7 +11,7 @@ from pathlib import Path
 from typing import List, Set
 
 BACKEND = Path(__file__).resolve().parents[2]
-# An async route that awaits nothing on purpose: the watchdog's measure busy-loops this process's loop (issue 0117).
+# an async route that awaits nothing on purpose: the watchdog's measure busy-loops this process's loop (0117)
 ALLOWED_ASYNC = {("main.py", "debug_spin")}
 
 
@@ -80,9 +75,8 @@ def blocking_routes() -> List[str]:
     return out
 
 
-# Issue 0206: a page's open starts no work in the API process (Discover's list and its web reads, the main source's
-# scan and tests ran in its background: 17-300 s with the API's memory); the jobs process does it, the API marks it
-# wanted. The GET routes that still do, each with why (not this wave's).
+# a page's open starts no work in the API process: the jobs process does it, the API marks it wanted (0206). The GET
+# routes that still do, each with why.
 ALLOWED_GET_STARTS = {("insight_core/markx/research_api.py", "mx_research_page")}   # a research run's next step
 
 

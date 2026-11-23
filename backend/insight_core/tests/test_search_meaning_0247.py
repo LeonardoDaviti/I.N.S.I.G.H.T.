@@ -1,9 +1,7 @@
-"""Issue 0247, search by meaning: in best order the posts nearest the query's vector join the word matches, merged by
-reciprocal rank; a post only meaning found is marked (`matched`/`snippet_from`: "meaning"); a short post is never a
-meaning match; the switch off or no embedder, search is the word search alone. The query's vector is stubbed (the
-embedder is the worker's llama-server, not in the test run).
-
-Rows are committed, so the classes run only against a `_test` database. Every post and source is synthetic."""
+"""Search by meaning (0247): in best order the posts nearest the query's vector join the word matches, merged by
+reciprocal rank; a post only meaning found is marked "meaning"; a short post is never a meaning match; with the
+switch off or no embedder, search is the word search alone. The query's vector is stubbed. Rows are committed, so only
+against a `_test` database; everything is synthetic."""
 from __future__ import annotations
 
 import sys

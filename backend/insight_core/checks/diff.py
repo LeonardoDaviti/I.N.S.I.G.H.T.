@@ -1,11 +1,11 @@
-"""What changed between two versions' snapshots of one copy (issue 0075 C): for each derived thing, how
-many changed, by kind of change, with up to EXAMPLES random examples each (id, before -> after).
+"""What changed between two versions' snapshots of one copy: for each derived thing, how many changed, by kind of
+change, with up to EXAMPLES random examples each (id, before -> after).
 
     python -m insight_core.checks.diff --before main.json --after branch.json [--out report.md] [--json counts.json]
                                        [--label-before main --label-after <branch>] [--seed 75]
 
-The examples hold the owner's data: the report goes to plan/research/lab/checks/ (private). The hand
-checks of a change are drawn from it, across its kinds of change (0075 C2), not only the one it targets.
+The examples hold the owner's data: the report goes to plan/research/lab/checks/ (private). The hand checks of a
+change are drawn from it, across its kinds of change, not only the one it targets.
 """
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ def origins(a: Dict, b: Dict) -> Changes:
     return out
 
 
-# A lead change a reader notices first (issue 0104): listed in full and counted, never a failure on its own.
+# A lead change a reader notices first: listed in full and counted, never a failure on its own.
 NEEDS_READING = "lead changed: needs reading"
 
 
@@ -175,9 +175,8 @@ def _same_rows(gone: Dict[str, Dict], new: Dict[str, Dict]) -> List[Tuple[str, s
 
 def _lead_flags(x: Dict, y: Dict) -> List[str]:
     """Why a lead change `x` -> `y` (one row in two versions) needs reading: the new lead's title says
-    no row name (the name most of the row's posts joined by, 0083's), or the old lead was the row's
-    origin or first post and the new one is neither. A snapshot without names, origins or first post
-    (one taken before issue 0104) is read for what it has."""
+    no row name (the name most of the row's posts joined by), or the old lead was the row's origin or first post and
+    the new one is neither. A snapshot without names, origins or first post is read for what it has."""
     flags = []
     names = y.get("names") or []
     if names and "said" in y and names[0] not in y["said"]:
@@ -226,7 +225,7 @@ def news(a: Dict, b: Dict) -> Changes:
 
 
 def needs_reading(found: Dict[str, Optional[Changes]]) -> int:
-    """How many changes the report lists for reading (issue 0104)."""
+    """How many changes the report lists for reading."""
     return sum(len((ch or {}).get(NEEDS_READING, [])) for ch in found.values())
 
 

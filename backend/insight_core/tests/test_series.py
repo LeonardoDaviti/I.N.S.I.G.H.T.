@@ -1,6 +1,6 @@
-"""Series (issue 0134): the rule (utils/series.py, the lab's frozen series_v1 with the five fixes) on fixed texts,
-then the pass (db/repo_series.py): storage, navigation marked in post_refs, the incremental update, the post page's
-Series line and Connected's navigation rows, the invariant. Synthetic data only; the DB tests roll back."""
+"""Series (0134): the rule (utils/series.py) on fixed texts, then the pass (db/repo_series.py): storage, navigation
+marked in post_refs, the incremental update, the post page's Series line, Connected's navigation rows, the invariant.
+Synthetic data only; the DB tests roll back."""
 from __future__ import annotations
 
 import sys
@@ -172,8 +172,8 @@ class Kinds(unittest.TestCase):
 
 
 class Shapes0137(unittest.TestCase):
-    """Issue 0137 B6: "#N." and "Name N Title" when the stem recurs with rising numbers; the stem is the segment next
-    to the number, a guest's name before or after it is not part of it."""
+    """"#N." and "Name N Title" when the stem recurs with rising numbers; a guest's name beside the number is not part
+    of the stem (0137 B6)."""
 
     def m(self, title, kind="site"):
         got = series.marker(Post("x", T0, title, "", kind))
@@ -236,8 +236,8 @@ class Navigation(unittest.TestCase):
                           ("https://o.test/x", "https://o.test/x?utm_source=y", "a page")])
 
     def test_navigation_links_are_link_words_navigation_entries(self):
-        """0199: the pass's fast read keeps exactly link_words' entries with navigation words, a text holding a marker
-        character of its own too (read the long way), and none when no link's words are navigation."""
+        """The pass's fast read keeps exactly link_words' entries with navigation words (a text holding a marker
+        character is read the long way), and none when no link's words are navigation (0199)."""
         base = "https://b.test/2026/06/part-two"
         cases = [
             '<p>See <a href="/2026/05/part-one">the previous part</a> and <a href="/x">a page</a>, '

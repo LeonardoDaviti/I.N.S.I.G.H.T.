@@ -1,20 +1,10 @@
 """reddit_subreddit: a subreddit given as a bare r/<sub> handle or any /r/<sub> address (its old .rss feed too).
 
-Reddit ended its subreddit RSS feeds and refuses unregistered reads of its JSON (issue 0242, server 2026-11-19:
-/r/<sub>/new/.rss answers 404 or 429, .json 403, old.reddit 403). The kind reads through Reddit's OAuth API with
-the owner's registered app ("script" type): application-only OAuth (grant client_credentials, HTTP Basic with the
-app's client id and secret) gives a bearer token, and every read goes to oauth.reddit.com with a descriptive
-User-Agent naming the owner's Reddit account, as Reddit's API rules ask. The live read is /r/<sub>/new, the
-archive pages /r/<sub>/top?t=all by `after`: one client, one listing reader.
-
-The credentials come from Sources → Connections (ingestion/credentials.py, provider "reddit": client_id,
-client_secret, username). Without them the kind is unavailable (profile.requires "reddit_creds",
-schedule.unavailable_reason): the source says "Reddit closed its feeds: add Reddit credentials in Sources →
-Connections", never a backoff. Credentials Reddit refuses are KindUnavailable too, with why.
-
-The token is kept on the kind (one string and its expiry, per process) and asked again a minute before it
-expires, or once when a read answers 401. The 8s spacing is a host floor (gates.HOST_FLOORS: reddit.com and
-platform:reddit).
+Reddit refuses unregistered reads (0242), so the kind uses its OAuth API with the owner's registered "script" app
+(client_credentials) and a User-Agent naming the owner's account: live reads /r/<sub>/new, archive pages
+/r/<sub>/top?t=all by `after`. Credentials come from Connections (provider "reddit"); without them, or refused, the
+kind is unavailable, never backoff. The token is kept per process and renewed TOKEN_MARGIN_S before expiry or once on
+a 401. Spacing is a host floor (gates.HOST_FLOORS).
 """
 from __future__ import annotations
 
@@ -136,7 +126,7 @@ class RedditKind(BaseKind):
             return True
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
         segments = [segment for segment in parsed.path.split("/") if segment]
-        # Any /r/<sub> address, its old .rss feed too (Reddit ended those, issue 0242); not one thread's page.
+        # any /r/<sub> address, its old .rss feed too; not one thread's page
         return ((parsed.hostname or "").lower() in REDDIT_HOSTS and len(segments) >= 2 and segments[0] == "r"
                 and "comments" not in segments)
 

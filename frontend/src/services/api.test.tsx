@@ -30,7 +30,7 @@ describe('the read-state and source routes', () => {
       ['PUT', '/api/feed/read', { ids: ['a'], read: true }],
       ['PUT', '/api/feed/read', { ids: ['a', 'b'], read: false }],
       ['PUT', '/api/feed/read', { scope: 'folder:f', through_cursor: 'THROUGH', newest_cursor: 'NEWEST' }],
-      // a topic track's every post of its sources (v10.12.1)
+      // a topic track's every post of its sources
       ['PUT', '/api/feed/read', { scope: 'folder:f', through_cursor: 'THROUGH', newest_cursor: 'NEWEST', all_sources: true }],
       ['GET', '/api/feed?scope=folder%3Af&filter=unread&view=stream', undefined],
       ['GET', '/api/feed?scope=folder%3Af&filter=unread&view=stream&all_sources=1', undefined],

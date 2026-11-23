@@ -1,9 +1,8 @@
-"""Issue 0212 (v10.21): ent-v5, one reading of a post, in Shadow: the guide and schema, the checks (per section; the
-entities entry by entry, 0213), the planner (new posts only, a window each, only while the switch is shadow or on),
-the one adapter (a reading row in read-v3's shape, mentions not made current in Shadow), the one preference list of
-the reading pickers, the switch (on: ent-v5 first, its sets current, the old kinds not asked of what it reads; back:
-the old sets current again) and the /markx comparison. Fixed answers; synthetic posts with invented names; the
-database tests roll back."""
+"""ent-v5, one reading of a post (0212): the guide and schema, the checks (per section; the entities entry by entry),
+the planner (new posts only, a window each, only while the switch is shadow or on), the one adapter (a reading row in
+read-v3's shape), the reading pickers' one preference list, the switch (on: ent-v5's sets current and the old kinds
+not asked; back: the old sets current again) and the /markx comparison. Fixed answers; invented names; DB tests roll
+back."""
 from __future__ import annotations
 
 import unittest

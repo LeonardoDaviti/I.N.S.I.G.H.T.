@@ -18,18 +18,15 @@ function keptSearch(search: string): string {
   return view === 'news' || view === 'classics' ? `?view=${view}` : '';
 }
 
-/** 0132 C2: the voice's other channels you don't follow, each with Add (the feed finder, prefilled). */
+/** The voice's other channels you don't follow, each with Add (the feed finder, prefilled). */
 function VoiceNotFollowed({ id }: { id: string }) {
   const query = useQuery({ queryKey: [...VOICES_KEY, 'not-followed', id], queryFn: () => voicesApi.get(id), staleTime: 60_000, retry: false });
   const channels = query.data?.not_followed ?? [];
   return channels.length ? <div className="w-full"><NotFollowed channels={channels} /></div> : null;
 }
 
-/**
- * A voice's header on the reader (issue 0132 A): one tab for every channel together and one per channel (a single
- * channel can still be read alone), on the voice's page and on each channel's. The voice's page renames it (its
- * name is its main channel's until you do) and names its related voices.
- */
+/** A voice's header on the reader: one tab for all its channels and one per channel, on the voice's page and on each
+ *  channel's. The voice's page renames it (its main channel's name until you do) and names its related voices. */
 export default function VoiceHeader({ scope, voice }: { scope: string; voice: Voice }) {
   const location = useLocation();
   const queryClient = useQueryClient();

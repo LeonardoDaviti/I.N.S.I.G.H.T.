@@ -1,7 +1,5 @@
-"""PostDetailService writes the read-state projection (open -> read_at, favorite -> starred_at).
-
-Scratch-source pattern: record_post_open opens and commits its own connection, so it can
-only see a committed post. Committing class -> @requires_test_db.
+"""PostDetailService writes the read-state projection (open -> read_at, favorite -> starred_at). record_post_open
+commits its own connection, so these classes are @requires_test_db.
 """
 from __future__ import annotations
 
@@ -94,7 +92,7 @@ class PostDetailReaderStateTests(unittest.TestCase):
         self.assertEqual(post["video"], {"provider": "youtube", "id": "rHCpgtc5nzs"})
 
     def test_detail_carries_its_story_and_its_links_to_stored_posts(self):
-        """Issues 0055 and 0057, through the route: no story here; a link to a stored post maps to it."""
+        """Through the route: no story here; a link to a stored post maps to it (0055, 0057)."""
         target = f"https://test.invalid/mark-ix/post/{uuid.uuid4().hex}"
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             cur.execute("SELECT source_id FROM posts WHERE id = %s", (self.post_id,))
@@ -128,8 +126,8 @@ class PostDetailReaderStateTests(unittest.TestCase):
 
 @requires_test_db
 class ReadingPositionTests(unittest.TestCase):
-    """Continue where I stopped (issue 0030): the top block in view of a long post, kept with
-    its read state until the post is finished (or marked read)."""
+    """Continue where I stopped (0030): the top block in view of a long post, kept with its read state until the post
+    is finished (or marked read)."""
 
     def setUp(self):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
@@ -190,7 +188,7 @@ class ReadingPositionTests(unittest.TestCase):
         self.assertEqual(self._position(), (None, None))
 
     def test_the_feed_marking_what_it_opens_keeps_it(self):
-        # keep_later (issue 0022) is a read that is only an open: it finishes nothing.
+        # keep_later is a read that is only an open: it finishes nothing
         self.service.save_position(self.post_id, 12, 30)
         call(main.app, "PUT", "/api/feed/read", json_body={"ids": [self.post_id], "read": True, "keep_later": True})
         self.assertEqual(self._position(), (12, 30))

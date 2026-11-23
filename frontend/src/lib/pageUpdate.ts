@@ -1,15 +1,13 @@
 /**
- * A watched page's changes and its own state, in words (issue 0039): "Updated Nov 3: +2
- * sections, +1,400 words", and what a page says of itself (when it last changed, its status
- * and confidence) for the post's header. Only the latest text is kept, never a version.
+ * A watched page's changes and its own state in words ("Updated Nov 3: +2 sections, +1,400 words"). Only the
+ * latest text is kept, never a version.
  */
 
 import type { PageUpdate } from '../services/api';
 import { feedDateLabel, toDate } from './dates.ts';
 import { plural } from './format.ts';
 
-/** A post sorted this long after its date (surfaced: first seen 2+ days late, or added to its feed after INSIGHT's
- * previous read, v10.13.13): the row says when it was published. */
+/** A post sorted this long after its date (surfaced late): the row says when it was published. */
 export const LATE_FIND_MS = 60 * 60_000;
 
 /** "+2 sections, +1,400 words"; "−300 words" when the page mostly lost text. */
@@ -30,7 +28,7 @@ export function updateLine(update: PageUpdate, now: Date = new Date()): string {
   return `Updated ${feedDateLabel(update.at, now)}${changes ? `: ${changes}` : ''}`;
 }
 
-/** A row that sorts well after its published date (new to you, issue 0039) and did not change. */
+/** A row that sorts well after its published date (new to you) and did not change. */
 export function lateFind(item: { sort_at: string; published_at: string | null; update?: PageUpdate | null }): boolean {
   const sorted = toDate(item.sort_at);
   const published = toDate(item.published_at);
@@ -42,9 +40,8 @@ function text(value: unknown): string | null {
 }
 
 /**
- * What the page states about itself, from the post's metadata: `modified` when it says it
- * changed (shown only when that is another day than `published`), and its `status` and
- * `confidence` where the site writes them.
+ * What the page states about itself: `modified` (shown only on another day than `published`), and its `status`
+ * and `confidence` where the site writes them.
  */
 export function pageState(metadata: Record<string, unknown> | null | undefined, published: string | null | undefined) {
   const modified = toDate(text(metadata?.modified));

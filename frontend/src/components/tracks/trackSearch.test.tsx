@@ -1,5 +1,4 @@
-// Stealth v10.41: the table's search params and the suggested fields (Add is the owner's schema edit, Dismiss asks the
-// server). Synthetic data only.
+// The table's search params and the suggested fields (Add is the owner's schema edit). Synthetic data only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

@@ -1,13 +1,8 @@
-"""What an address says (issue 0071: one definition of each, used everywhere): its host, its site,
-its publication, whether it is a tweet and whose, the account it is under on a platform.
-
-- **host**: the address's host name, lower case, without a port (`host_of`).
-- **site**: the registrable part of a host, one label under a hosting platform's suffix
-  (`site_of`): where a post is. Two addresses are on one site when their sites are one (`same_site`).
-- **publication**: the host without `www.` (`publication_of`): who said it, a website's voice.
-- **tweet**: an address of the shape /<user>/status/<id> on any host (url_normalization.TWEET_PATH,
-  issue 0066), normalized to x.com/<user>/status/<id> (`is_tweet`, `tweet_author`); the account
-  `x.com/<user>` (`x_account`).
+"""What an address says, one definition of each used everywhere: its host (`host_of`), its site (`site_of`: the
+registrable part, one label under a hosting platform's suffix: where a post is), its publication (`publication_of`:
+the host without `www.`: who said it), whether it is a tweet and whose (`is_tweet`, `tweet_author`: every form of
+/<user>/status/<id> on any host, normalized to x.com), the account it is under on a platform (`account_key`), and the
+paper it names (`paper_id`).
 """
 from __future__ import annotations
 
@@ -26,12 +21,12 @@ PLATFORM_SITES = {
     "x": frozenset({"x.com", "twitter.com"}),
     "telegram": frozenset({"t.me", "telegram.me", "telegram.org"}),
     "youtube": frozenset({"youtube.com", "youtu.be"}),
-    "bluesky": frozenset({"bsky.app"}),   # 0235: an account is bsky.app/profile/<handle> (account_key)
+    "bluesky": frozenset({"bsky.app"}),   # an account is bsky.app/profile/<handle> (account_key)
 }
 # A first path segment that names a kind of account, the account's name following it:
 # reddit.com/r/<sub>, reddit.com/u/<user>, youtube.com/channel/<id>, youtube.com/c/<name>.
 ACCOUNT_NAMESPACES = frozenset({"r", "u", "user", "c", "channel"})
-# The labels a site's own blog or newsroom sits under (feed_finder's blog links, issue 0041).
+# The labels a site's own blog or newsroom sits under (feed_finder's blog links).
 BLOG_HOSTS = ("blog.", "news.", "newsroom.")
 
 
@@ -60,10 +55,9 @@ def _hosting_suffixes() -> FrozenSet[str]:
 
 
 def site_of(host: Optional[str]) -> str:
-    """The registrable part of a host: one label under a hosting platform's suffix (issue 0068:
-    nnteacher.github.io and lilianweng.github.io are two sites), else its last two labels, three for
-    a co.uk-like ending. Where a post is (Discover's places, a site's sections, a link to its own
-    site); who said it is its publication (publication_of, issue 0069)."""
+    """The registrable part of a host: one label under a hosting platform's suffix (nnteacher.github.io and
+    lilianweng.github.io are two sites), else its last two labels, three for a co.uk-like ending. Where a post is;
+    who said it is its publication (publication_of)."""
     host = (host or "").lower()
     if host.startswith("www."):
         host = host[4:]
@@ -86,7 +80,7 @@ def same_site(a_host: Optional[str], b_host: Optional[str]) -> bool:
 
 
 def blog_site(host: str) -> str:
-    """The site a page's blog belongs to, as the feed finder reads a home page's links (issue 0041):
+    """The site a page's blog belongs to, as the feed finder reads a home page's links:
     the host without a www., blog., news. or newsroom. label. Narrower than site_of: another
     subdomain (shop., docs.) is not the blog's."""
     first, _, rest = host.partition(".")
@@ -94,9 +88,8 @@ def blog_site(host: str) -> str:
 
 
 def publication_of(host: Optional[str]) -> str:
-    """A publication (issue 0069): a host without `www.`. A website source's voice is the one it
-    publishes at, so writers on one platform (Substack, github.io) are voices of their own, and two
-    sources at one host (a feed and a page watch) are one."""
+    """A publication: a host without `www.`. A website source's voice is the one it publishes at, so writers on one
+    platform (Substack, github.io) are voices of their own, and two sources at one host are one."""
     host = (host or "").lower()
     return host[4:] if host.startswith("www.") else host
 
@@ -107,38 +100,37 @@ def account_key(url: str) -> str:
     host, _, rest = bare(url).partition("/")
     segments = rest.split("?", 1)[0].split("/")
     first = segments[0].lower()
-    profile = first == "profile" and site_of(host) in PLATFORM_SITES["bluesky"]   # 0235: bsky.app/profile/<handle>
+    profile = first == "profile" and site_of(host) in PLATFORM_SITES["bluesky"]   # bsky.app/profile/<handle>
     if (first in ACCOUNT_NAMESPACES or profile) and len(segments) > 1 and segments[1]:
         return f"{host.lower()}/{first}/{segments[1].lower()}"
     return f"{host.lower()}/{first}"
 
 
 def is_tweet(url: Optional[str]) -> bool:
-    """A normalized address that is a tweet (issue 0066: every form of one is x.com/<user>/status/<id>)."""
+    """A normalized address that is a tweet (every form of one is x.com/<user>/status/<id>)."""
     return host_of(url) == "x.com" and bool(TWEET_PATH.match("/" + bare(url or "").partition("/")[2]))
 
 
 def tweet_author(url: Optional[str]) -> Optional[str]:
-    """A tweet's account, as its address writes it (issue 0066): `user` of /<user>/status/<id>."""
+    """A tweet's account, as its address writes it: `user` of /<user>/status/<id>."""
     match = TWEET_PATH.match(urlparse(url or "").path)
     return match.group(1) if match else None
 
 
-# A paper's id in its address (issue 0106; 0080's paper-source shapes): a preprint's yymm.nnnnn, its
-# version and file aside, as the address's last segment; a DOI (10.<registrant>/<suffix>) to the end of
-# the path, a version or a file ending aside.
+# A paper's id in its address: a preprint's yymm.nnnnn, its version and file aside, as the address's last segment; a
+# DOI (10.<registrant>/<suffix>) to the end of the path, a version or a file ending aside.
 _PREPRINT = re.compile(r"^(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?$", re.I)
 _DOI_PREFIX = re.compile(r"^10\.\d{4,9}$")
 _DOI_END = re.compile(r"(?:\.full)?(?:\.pdf|\+html)?$", re.I)
 # A Postgres regex every address `paper_id` names a paper in matches (a superset: a preprint id, or a DOI prefix with
-# more after it, as a path segment), for reading only the links that can be papers (v10.22).
+# more after it, as a path segment), for reading only the links that can be papers.
 PAPER_SHAPE = r"/(\d{4}\.\d{4,5}|10\.\d{4,9}/)"
 _FILE_SEGMENTS = frozenset({"pdf", "epdf", "pdfdirect", "download"})
 
 
 @lru_cache(maxsize=1 << 15)
 def paper_id(url: Optional[str]) -> Optional[str]:
-    """The paper an address names on its host (issue 0106), whatever the path around it: the abstract,
+    """The paper an address names on its host, whatever the path around it: the abstract,
     its PDF, its HTML and each version are one page (`preprints.example/abs/2005.14165`, `/pdf/2005.14165v2`;
     `/doi/10.1145/123`, `/doi/pdf/10.1145/123`). The id sits in the first three segments; None when the
     address names none."""
@@ -162,7 +154,7 @@ def paper_file(url: str) -> bool:
 
 
 def paper_page_order(url: str) -> Tuple[bool, bool, int, str]:
-    """Which address of one paper names it (issue 0106): its page before its file, then one without a
+    """Which address of one paper names it: its page before its file, then one without a
     query (a tracking one), then the shortest (no version), then the first in order."""
     return (paper_file(url), "?" in url, len(url), url)
 

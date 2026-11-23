@@ -3,12 +3,8 @@ import StatusGlyph from '../ui/StatusGlyph';
 import TextLink from '../ui/TextLink';
 import type { Status } from '../ui/styles';
 
-/**
- * The one way to say "ingestion is (not) running", shared by the reader and
- * the ingestion tab so the same fact is drawn once. Monochrome (design docs system/status.md):
- * a solid 1px box, a shape and a word. Stopped is a hollow ring (nothing is
- * happening, not "loading"), failing is the inverted "×" chip, running a dot.
- */
+/** The one way to say "ingestion is (not) running", shared by the reader and the ingestion tab: a 1px box, a shape
+ *  and a word (stopped a hollow ring, failing the inverted "×" chip, running a dot). */
 export type IngestionState = 'stopped' | 'failing' | 'running';
 
 const SPEC: Record<IngestionState, { glyph: Status; word: string; title: string; box: string }> = {

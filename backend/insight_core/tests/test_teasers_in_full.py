@@ -1,11 +1,6 @@
-"""Issue 0140: teasers read in full. Every read leaves a reason; a same-article test that works; a feed's
-read-more cut; pages that need scripts (their embedded data); the repair once per rule version; the reader's line.
-
-No network: FakeHttp. Fixtures are hand-written in the shape of the classes measured on the server (no real
-site or name): a project blog whose feed gives a written abstract, a tech site's "all posts" feed cut before
-"read more", a Next.js page, a page with JSON-LD articleBody, a script-built page with no data, and the pages
-that must NOT be taken (a link post's page, another article, a sign-in wall, a related post in the data).
-The FIXTURES table is the measure: right / wrong per class (plan/issues/0140-built.md).
+"""Teasers read in full (0140): every read leaves a reason; the same-article test; a feed's read-more cut; pages that
+need scripts (their embedded data); the repair once per rule version. No network: FakeHttp, hand-written fixtures per
+class, including pages that must NOT be taken. The FIXTURES table is the measure: right / wrong per class.
 """
 from __future__ import annotations
 
@@ -170,7 +165,7 @@ class SameArticleTests(unittest.TestCase):
         self.assertFalse(self.same(ABSTRACT, page(ARTICLE_HTML, title="x", canonical=f"{SITE}/")))
 
     def test_the_word_runs_rule_accepts_a_teaser_found_on_the_page_and_rejects_one_that_is_not(self):
-        middle = "In short, the middle of it. " + " ".join(ARTICLE_PARAGRAPHS[14:17])   # not the opening: today's rule refuses it
+        middle = "In short, the middle of it. " + " ".join(ARTICLE_PARAGRAPHS[14:17])   # not the opening: refused
         self.assertFalse(full_text._same_article(middle, ARTICLE_TEXT))
         self.assertTrue(self.same(middle, page(ARTICLE_HTML, title="x")))
         self.assertFalse(self.same(ABSTRACT, page(ARTICLE_HTML, title="x")))
@@ -204,7 +199,7 @@ class CutMarkerTests(unittest.TestCase):
         self.assertFalse(self.cut(f'<p>The post <a href="{self.URL}">A post</a> appeared first on <a href="{SITE}/">Blog</a>.</p>'))
         self.assertFalse(self.cut(f'<p>Text. <a href="{SITE}/2026/b">Read more</a></p>'))
         self.assertFalse(self.cut(f'<p>See <a href="{self.URL}">here</a> and then the whole rest of the post goes on for a while.</p>'))
-        # Whole feed bodies end so on the 2026-11-05 export: comments, a permalink, a footnote's return.
+        # whole feed bodies end so: comments, a permalink, a footnote's return
         self.assertFalse(self.cut(f'<p>Text.</p><a href="{self.URL}">Comments</a>'))
         self.assertFalse(self.cut(f'<p>Text.</p><a href="{self.URL}">[link]</a> <a href="{self.URL}">[comments]</a>'))
         self.assertFalse(self.cut(f'<p>Text.<a href="{self.URL}#fnref1">[return]</a></p>'))
@@ -326,7 +321,7 @@ class RuleRepairTests(unittest.IsolatedAsyncioTestCase):
 
     def _upsert(self, url: str, metadata: dict | None = None, title: str = TITLE, content: str = ABSTRACT) -> str:
         with psycopg.connect(self.url) as conn, conn.cursor() as cur:
-            # One source's same title and body is one post (issue 0070): each its own body.
+            # one source's same title and body is one post: each its own body
             post_id, _ = self.repo.upsert_post(cur, {"url": url, "title": title, "content": f"{content} ({url})", "date": None,
                                                      "metadata": metadata or {}}, self.source_id)
             conn.commit()
@@ -345,7 +340,7 @@ class RuleRepairTests(unittest.IsolatedAsyncioTestCase):
     async def test_it_reads_the_posts_left_short_once_per_rule_version_and_resumes(self):
         old = f"{RSITE}/2026/old"                # read before 0140: no outcome, checked by the old repair
         same = f"{RSITE}/2026/not-same"          # refused by the old opening rule
-        gone = f"{RSITE}/2026/gone"              # an HTTP error: 0062's retry, not this repair
+        gone = f"{RSITE}/2026/gone"              # an HTTP error: the retry's, not this repair's
         done = f"{RSITE}/2026/done"              # already read by this version
         ids = {
             old: self._upsert(old, {"full_text_checked_at": "2026-10-12T00:00:00+00:00"}),

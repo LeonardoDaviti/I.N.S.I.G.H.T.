@@ -6,14 +6,14 @@ import type { Byline } from '../lib/byline';
 import type { MarkxFlag, MarkxNews, MarkxOverview, MarkxPostPanel, MarkxRelated, MarkxSettings } from './markx';
 import type { MarkxEntityAnswer, MarkxEntityLimits, MarkxEntityList, MarkxEntityPage, MarkxEntityQueue, MarkxQueueView } from './markx';
 import type { MarkxFactAnswer, MarkxPerspectiveAccuracy, MarkxPerspectiveAnswer, MarkxStoryView } from './markx';
-import type { MarkxFold, MarkxFoldAnswer } from './markx';   // 0127
+import type { MarkxFold, MarkxFoldAnswer } from './markx';
 
 export type { Envelope };
 
 export interface SourceSettings {
   display_name?: string;
   fetch_delay_seconds?: number;
-  /** Watch for changes (issue 0039): re-read its stored pages now and then; off by default. */
+  /** Re-read its stored pages now and then for changes; off by default. */
   watch_changes?: boolean;
   archive?: Record<string, unknown>;
 }
@@ -36,8 +36,7 @@ export interface SourceSettingsResponse extends Envelope {
   source?: SourceWithSettings;
 }
 
-/** GET /api/sources: every source with its settings and post count; `settings.archive` without its `history`
- *  (issue 0105: kept in the database, read by GET /api/archive/{id}/status). */
+/** GET /api/sources: every source with its settings and post count; `settings.archive` without its `history`. */
 export interface SourcesResponse extends Envelope {
   sources: SourceWithSettings[];
   total: number;
@@ -50,10 +49,9 @@ export interface Post {
   external_id?: string | null;
   title?: string;
   content: string;
-  // When available (e.g., RSS), original HTML content of the post
-  // Prefer this for richer rendering; fall back to `content` (plain text)
+  // Original HTML when the connector has it (RSS); else render `content` (plain text)
   content_html?: string;
-  // Some connectors may omit or fail to serialize a date; treat as optional
+  // Some connectors omit the date
   date?: string | null;
   source: string;
   platform: string;
@@ -66,34 +64,24 @@ export interface Post {
   metadata?: Record<string, unknown>;
   handle_or_url?: string;
   source_display_name?: string;
-  /** The classics this post links (issue 0051), at most 2; empty or absent when none. */
   background?: BackgroundClassic[];
-  /** Its story with 2+ voices, the feed row's object (issue 0055); null when it is in none. */
   story?: FeedStory | null;
-  /** Each link of its text that is a stored post: href as written -> that post's id (issue 0057). */
+  /** Each link of its text that is a stored post: href as written -> that post's id. */
   internal_links?: Record<string, string>;
-  /** A repost (issue 0066): who reposted it, and its author; null when none. */
   repost?: Repost | null;
-  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
   byline?: Byline | null;
-  /** A Hacker News item's points and comments, from hnrss's lines (issue 0070); null when none. */
   counts?: Counts | null;
-  /** A link post's page (issue 0072): its title when known, and the stored post at it. */
   link?: { url: string; title: string | null; post_id: string | null; kind?: 'page' | 'picture' | 'video' } | null;
-  /** Its News row (issue 0083): the row's title and voices, and the scope whose News shows it; null when none. */
   news?: { id: string; title: string; voices: number; lead_id: string; scope: string } | null;
-  /** Why it shows its feed's summary only (issue 0140: "its page needs a script to show the article"); null when read in full or whole. */
+  /** Why it shows its feed's summary only; null when read in full. */
   teaser_reason?: string | null;
 }
-/** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }
 export type { Byline };
 export interface Counts { points: number; comments: number; }
 
-/** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */
 export interface BackgroundClassic {
   url: string; post_id: string | null; title: string | null;
-  /** How many of your sources cited it. */
   voices: number;
 }
 
@@ -104,24 +92,19 @@ export interface ReaderState {
   first_opened_at?: string | null;
   last_opened_at?: string | null;
   total_read_seconds?: number;
-  /** Mark IX projection (post_reader_state): set on first open or mark read. */
   read_at?: string | null;
   starred_at?: string | null;
-  /** Where a long post was left (issue 0030): the top text block in view, of the body's blocks. */
   resume_block?: number | null;
   resume_blocks?: number | null;
-  /** In Later since (issue 0022); null when not in Later. */
   later_at?: string | null;
 }
 
 // ---- Reader: GET /api/feed (every post list), PUT /api/feed/read (read state) ----
 
-/** `starred` is Keep, shown as "Kept" (issue 0022); `updated`, a watched source's changed pages (issue 0039);
- *  `history`, the posts you opened or read, last open first (issue 0052). */
+/** `starred` is Keep ("Kept"); `updated`: a watched source's changed pages; `history`: opened or read, last first. */
 export type FeedFilter = 'all' | 'unread' | 'later' | 'starred' | 'updated' | 'history';
 export type FeedView = 'stream' | 'by_source';
-/** The reader's View: the feed's two, and News and Classics next to it (issue 0051). */
-export type ReaderView = FeedView | 'news' | 'classics' | 'topic';   // topic: a track as a topic (0145, Mark X)
+export type ReaderView = FeedView | 'news' | 'classics' | 'topic';  // topic: a track as a topic (Mark X)
 
 export interface FeedItem {
   id: string; title: string; excerpt: string; url: string;   // title already falls back to the excerpt
@@ -129,49 +112,34 @@ export interface FeedItem {
   sort_at: string; published_at: string | null; read_at: string | null; starred_at: string | null;
   reading_minutes: number | null; duration_seconds: number | null;
   media_thumb: string | null;
-  /** Where the post was left (issue 0030), as on the post's reader state. */
   resume_block?: number | null; resume_blocks?: number | null;
-  /** In Later since (issue 0022); null or absent when not in Later. */
   later_at?: string | null;
-  /** History only (issue 0052): your last open or reading session, which is also its `sort_at`. */
+  /** History only: your last open or reading session, also its `sort_at`. */
   opened_at?: string | null;
-  /** Search results only (issue 0040): the matching line, its words marked; null when the
-   *  words matched only the title or the source's name. */
+  /** Search results only: the matching line, words marked; null when only the title or source name matched. */
   snippet?: SnippetPart[] | null;
-  /** Issue 0139: `markx` when only Mark X's English layer matched, the snippet then its English headline. */
+  /** `markx` when only Mark X's English layer matched (the snippet is then its English headline). */
   snippet_from?: 'markx' | 'meaning' | null;
-  /** A watched page's last meaningful change (issue 0039); null or absent when it never changed. */
   update?: PageUpdate | null;
-  /** The Main feed and a track (issue 0050): the story this row leads, its other posts folded
-   *  under it; null or absent when the post is in no story (or the view shows every post). */
+  /** The story this row leads, its other posts folded under it; null when in no story (or every post is shown). */
   story?: FeedStory | null;
-  /** News only (issue 0051): the story's part of the week and what its score is made of. */
   news?: NewsScore | null;
-  /** A repost (issue 0066); null or absent when none. */
   repost?: Repost | null;
-  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
   byline?: Byline | null;
-  /** A Hacker News item's points and comments (issue 0070): "1,675 points · 1,628 comments". */
   counts?: Counts | null;
-  /** A page you saved that is its source's post (issue 0122): "<source> · saved by you". */
   saved_by_you?: boolean;
 }
-/** A News story's numbers (issue 0051): each voice once, in its strongest role. */
 export interface NewsScore {
   /** recent: begun in the last 48 hours; earlier: earlier this week. */
   part: 'recent' | 'earlier';
   first_at: string;
   reports: number; shares: number; mentions: number;
   score: number;
-  /** Issue 0208 (Mark X's rows): its kept rank, when ranked; and whether it is in the "Notable for you" lane. */
   rank?: NewsRank | null;
   notable?: boolean;
-  /** Issue 0208: its expert breakdowns (at most 2), shown apart from its reports, when Analysis is on. */
   analysis?: { id: string; title: string; source: string; author: string }[];
-  /** Issue 0238: the row's posts unread (its lead and its lines) when the API answered. */
   unread?: number;
 }
-/** A page your sources keep citing (issue 0051): a stored post (`post_id`) or an outside page. */
 export interface Classic {
   url: string;
   post_id: string | null;
@@ -180,47 +148,34 @@ export interface Classic {
   voices: number;
   days: number;
   first_at: string; last_at: string;
-  /** One of your sources cited it in the last 7 days. */
   cited_again: boolean;
-  /** Each voice once, at its first citation, first first; on one source's page its own voices first, a Reddit
-   *  author with `place` its subreddit (issue 0105). */
+  /** Each voice once, at its first citation; on one source's page its own voices first; a Reddit author with `place`. */
   citers: { name: string; at: string; place?: string | null }[];
   read_at: string | null; later_at: string | null;
 }
-/** GET /api/classics: a page of them (issue 0195: 100 a page); next_cursor asks the next, null at the end. */
 export interface ClassicsResponse { success: true; classics: Classic[]; next_cursor?: string | null; }
 export interface StoryVoice { id: string; name: string; place?: string | null; with?: { id: string; name: string }[]; }
-/** One story, many sources (issue 0050). `sources` in the order they covered it. */
 export interface FeedStory {
   id: string;
   voices: number;
-  /** Its origin post (issue 0064; before the tree is drawn, its first report, else its first share); null when the origin is a page outside INSIGHT. */
+  /** Its origin post (before the tree is drawn: its first report, else first share); null for an outside origin. */
   first?: string | null;
-  /** Its voices named, one a voice (issue 0082: `voices` is these and "+N"): a Reddit author `u/name` with
-   *  `place` its subreddit, a publication's copies once; `with` the voice's other sources (a copy's, a reposter's).
-   *  A story of one voice lists that voice's sources instead ("also shared by", issue 0072). */
+  /** Its voices, one row each (`voices` is these and "+N"); `with`: the voice's other sources. A one-voice story
+   *  lists that voice's sources instead ("also shared by"). */
   sources: StoryVoice[];
   posts: StoryPost[];
-  /** The origin when it is a page outside INSIGHT 2+ of the story's posts link (issue 0064). */
   origin?: StoryOrigin | null;
-  /** This row's (or this post page's) own place in the tree, as each post's (issue 0064). */
   parent_id?: string | null;
   parent_reason?: StoryParentReason | null;
-  /** One account's replies to itself, or its quotes of itself (issue 0066): read as a thread. */
   thread?: boolean;
-  /** Who reposted this row's (or this post page's) tweet (issue 0068), as each post's. */
   reposted_by?: string[] | null;
-  /** The roundups that mention the story and are not in it, each source once (issue 0068). */
   roundups?: StoryRoundup[];
 }
-/** A roundup mentioning a story (issue 0068): opens that post. */
 export interface StoryRoundup { id: string; title: string; source_display_name: string; }
-/** Why a post hangs from its parent, the most certain first (issues 0064, 0066). */
 export type StoryParentReason = 'address' | 'repost' | 'thread' | 'quote' | 'citation' | 'copy' | 'time' | 'none';
-/** A story's origin outside INSIGHT: its address, its best link words (null: show the address), how many posts link it. */
 export interface StoryOrigin {
   url: string; title: string | null; linked_by: number;
-  /** The address to open (issue 0126): its first post's link as written, a gift link kept; else `url`. */
+  /** The address to open: its first post's link as written (a gift link kept); else `url`. */
   href?: string;
 }
 export interface StoryPost {
@@ -228,45 +183,32 @@ export interface StoryPost {
   sort_at: string; published_at: string | null; read_at: string | null;
   /** report: its own writing; share: a copy, a forward or a link post. */
   role: 'report' | 'share';
-  /**
-   * Its parent in the story's tree (issue 0064): a post of the story, else (with a reason) the
-   * story's outside `origin`; neither (no reason): it is the origin. Absent: no tree (News).
-   */
+  /** Its parent in the tree: a post of the story, else (with a reason) the outside `origin`; neither: it is the
+   *  origin. Absent: no tree (News). */
   parent_id?: string | null;
   parent_reason?: StoryParentReason | null;
-  /** A thread's reply (issue 0066): its own words, read in order on the post page. */
   text?: string | null;
-  /** On the post page, a thread's reply as stored (issue 0068): read as the post's body is, with its links to stored posts. */
   html?: string | null;
   internal_links?: Record<string, string>;
-  /** A thread's reply that quotes a tweet of its story (issue 0070): no card, "↩ quotes the post above". */
+  /** A thread's reply that quotes a tweet of its story: no card, "↩ quotes the post above". */
   quotes_above?: boolean;
-  /** The accounts that reposted it (issue 0068): "↻ reposted by @toolsmith_pete, @oddlogic_games". */
   reposted_by?: string[] | null;
-  /** A tweet its source reposted (issue 0070): the line names its author, "@dan_theory · … · ↻ lab_sam". */
   repost?: Repost | null;
-  /** Who wrote it, via whom, quoting whom (issue 0185: Byline). */
   byline?: Byline | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
-/** What changed when a watched page was last re-read (posts.metadata.page_update). */
 export interface PageUpdate {
   at: string; words: number; words_added: number; words_removed: number;
   sections_added: number; sections_removed: number;
 }
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
-/** GET /api/news (issue 0205): whose rows (`mark`: Mark X's, the main News, or Mark IX's, the older News), and when
- *  the main News fell back to the older one (`fallback`, with the `note` the page shows). */
+/** GET /api/news: whose rows (`mark`), and whether the main News fell back to the older one (`fallback`, `note`). */
 export interface NewsPage extends FeedPage {
   mark?: 'x' | 'ix'; fallback?: boolean; note?: string | null;
-  /** Issue 0208: the order of Mark X's rows: ranked for the reader (the Notable lane first) or by coverage (the score). */
   order?: NewsOrder;
-  /** Issue 0238: the scope's News rows, and those with an unread post, over every page (not only this one). */
   rows?: number;
   unread_rows?: number;
 }
-/** Issue 0271, "Since you looked": News rows begun since the reader's one look, rows a voice joined since, and each
- *  track's new things. */
 export interface SinceRow extends FeedItem {
   since?: { voices: string[]; lines: Array<{ id: string; title: string | null; source: string }> };
 }
@@ -281,59 +223,49 @@ export interface SinceLooked {
 }
 export type NewsMark = 'main' | 'ix';
 export type NewsOrder = 'ranked' | 'coverage';
-/** Issue 0208: a Mark X News row's kept rank: its significance (the worker's answer), coverage and fit, each 0..1. */
+/** A Mark X News row's kept rank: significance (the worker's answer), coverage and fit, each 0..1. */
 export interface NewsRank {
   significance: number | null; coverage: number; fit: number; score: number;
   event?: string | null; effect?: number | null; usable?: string | null; why?: string | null;
 }
-/** An entity the search's words name (issue 0139, Mark X on, a first page): it opens /markx/entities/:id. */
 export interface SearchEntity {
   id: string; name: string; type: string | null; maker: string | null; posts: number; voices: number;
-  /** 0184 (identity facts, when on): what it is, and the name's senses with theirs ("terminal app (3)"). */
   what?: string | null;
   senses?: { id: string; what: string | null; posts: number }[];
 }
-/** GET /api/search: a FeedPage and the entity cards ([] while Mark X is off or nothing matched). */
 export interface SearchPage extends FeedPage { entities?: SearchEntity[]; }
 export interface FeedGroup {
   source_id: string; source_display_name: string; platform: string;
   newest_sort_at: string; count: number; items: FeedItem[];   // items <= 3
 }
 export interface FeedGroupsPage { success: true; groups: FeedGroup[]; next_cursor: string | null; }
-/** PUT /api/feed/read: `ids` are the posts whose read state changed. */
 export interface ReadStateResult { success: true; updated: number; ids: string[]; }
 export interface UnreadCounts {
   total: number; by_source: Record<string, number>; by_folder: Record<string, number>;
-  /** Each source's newest unread post, as By source orders its groups (issue 0088): the rail's order. */
   newest_unread?: Record<string, string | null>;
-  /** Every post in Later and its reading time in minutes (issue 0022). */
   later?: { count: number; minutes: number };
 }
 
 export interface FeedParams {
-  /** `all`, `folder:<uuid>` or `source:<uuid>`. */
   scope: string;
   filter: FeedFilter;
   cursor?: string | null;
   limit?: number;
   days?: number;
-  /** A topic track (0145, Mark X on) lists only its items; `true` lists every post of its sources (v10.12.1). */
   allSources?: boolean;
   signal?: AbortSignal;
 }
 
-// ---- Search: GET /api/search (issue 0040) ----
+// ---- Search: GET /api/search ----
 
-/** Search narrows to Later, Kept or History (issue 0139), never to read state; or searches News stories or
- *  Classics (issue 0056: `classics` answers ClassicsResponse with `next_cursor`, not a FeedPage). */
+/** Search narrows to Later, Kept or History, never to read state; or searches News or Classics (`classics`
+ *  answers ClassicsResponse with `next_cursor`, not a FeedPage). */
 export type SearchFilter = 'all' | 'later' | 'starred' | 'history' | 'news' | 'classics';
 export type SearchOrder = 'newest' | 'best';
 export interface SearchParams {
   q: string;
-  /** No scope searches every post; `all` is the Main feed, `folder:<uuid>`, `source:<uuid>`. */
   scope?: string | null;
   filter?: SearchFilter;
-  /** The last N days. */
   days?: number | null;
   order?: SearchOrder;
   cursor?: string | null;
@@ -346,7 +278,7 @@ function searchPath(params: SearchParams): string {
   if (params.scope) qs.set('scope', params.scope);
   if (params.filter && params.filter !== 'all') qs.set('filter', params.filter);
   if (params.days) qs.set('days', String(params.days));
-  if (params.order) qs.set('order', params.order);   // none: the backend's, by the words (issue 0139)
+  if (params.order) qs.set('order', params.order);  // none: the backend's order, by the words
   if (params.cursor) qs.set('cursor', params.cursor);
   if (params.limit) qs.set('limit', String(params.limit));
   return `/api/search?${qs.toString()}`;
@@ -355,21 +287,17 @@ function searchPath(params: SearchParams): string {
 /** What a kind's available_posts means (backend kinds/base.py AvailableBasis). */
 export type AvailableBasis = 'exact' | 'upper_bound' | 'estimate' | 'listing_cap' | 'feed_window' | 'unknown';
 
-/** GET /api/version: the build an image was stamped with (issue 0020); null when unset. */
 export interface BuildVersion { version: string | null; commit: string | null; commit_date: string | null; }
 
-/** GET /api/archive/{id}/status `support`: can this source archive (no network involved). */
 export interface ArchiveSupport {
   kind: string;
   available_basis: AvailableBasis;
   archivable: boolean;
-  /** Why it cannot archive (kind unavailable, a feed with nothing older), or null. */
   reason: string | null;
   unavailable: boolean;
   live_fetch_limit: number;
 }
 
-/** The newest archive_source job for a source, summarised. */
 export interface ArchiveJobSummary {
   id: string;
   status: string;
@@ -384,12 +312,9 @@ export interface ArchiveJobSummary {
     pages_fetched?: number;
     stored_posts?: number;
     error?: string;
-    /** Issue 0016: the archive paused (a site limiting us); Resume continues from its checkpoint. */
     paused?: boolean;
     paused_reason?: string;
-    /** Issue 0084 B: the job read the source's linked, not stored pages (not its archive). */
     linked?: boolean;
-    /** Issue 0107: while the job waits out a host's limit, when it continues and which host. */
     waiting_until?: string;
     waiting_host?: string;
     waiting_reason?: string;
@@ -402,7 +327,6 @@ export interface ArchiveRateLimit {
   batch_cooldown_seconds?: number;
 }
 
-/** settings.archive plus live storage stats, as GET /api/archive/{id}/status returns it. */
 export interface ArchiveState {
   status?: string;
   stored_posts?: number;
@@ -413,20 +337,17 @@ export interface ArchiveState {
   checkpoint?: { collected_posts?: number; pages_fetched?: number; completed?: boolean } | null;
   rate_limit?: ArchiveRateLimit | null;
   oldest_published_at?: string | null;
-  /** A feed's coverage, once the smart archiver measured its site (issue 0143). */
   coverage?: import('./smartArchive').ArchiveCoverage | null;
 }
 
 export interface ArchiveStatusResponse extends Envelope {
   archive?: ArchiveState;
-  /** Missing from a backend older than the source sheet's archive section. */
   support?: ArchiveSupport | null;
   latest_job?: ArchiveJobSummary | null;
 }
 
-/** GET /api/archive/{id}/linked `linked` (issue 0084 B): the source's own pages that your stored posts
- *  link and no stored post is. `readable`: one fetch can read them one page at a time; `archive_holds`:
- *  the source's archive pages back, so it would hold them (offered first until `archive_ran`). */
+/** GET /api/archive/{id}/linked: the source's own pages your posts link that are not stored. `readable`: one
+ *  fetch can read them; `archive_holds`: the source's archive reaches them (offered first until `archive_ran`). */
 export interface LinkedPagesSummary {
   count: number;
   readable: boolean;
@@ -436,18 +357,15 @@ export interface LinkedPagesSummary {
   pages: Array<{ url: string; posts: number; first_linked_at: string | null }>;
 }
 
-/** POST /api/archive/{id}/plan `archive`: one measurement of the source, where the archive starts, and the estimate. */
 export interface ArchivePlan {
   available_posts: number | null;
   available_basis?: AvailableBasis;
   /** available - stored, or null when the source reports no size (the archive still runs to its end). */
   older_posts: number | null;
-  /** The estimate for `older_posts`; null when that is unknown. */
   estimated_pages: number | null;
   estimated_seconds: number | null;
   current_stored_posts?: number;
   oldest_published_at?: string | null;
-  /** The oldest stored post's date when the archive jumps below the stored posts, else null. */
   continues_from?: string | null;
   resume: boolean;
   resume_available: boolean;
@@ -461,15 +379,12 @@ export interface ArchiveCatalogEntry {
   display_name: string;
   platform: string;
   enabled: boolean;
-  /** Source kind (Mark IX §D), e.g. `generic_rss`, `telegram_mtproto`. */
   kind?: string;
   stored_posts: number;
   available_posts?: number | null;
-  /** max(available - stored, 0), or null when the available count is unknown (E1). */
+  /** max(available - stored, 0), or null when the available count is unknown. */
   backlog_posts?: number | null;
-  /** The time estimate for `backlog_posts`, in seconds. */
   estimated_seconds?: number | null;
-  /** When planning last measured the source; null when it never was. */
   last_inspected_at?: string | null;
   archive_status?: string | null;
   resume_ready?: boolean;
@@ -478,9 +393,7 @@ export interface ArchiveCatalogEntry {
   last_live_fetch_at?: string | null;
   checkpoint?: Record<string, unknown> | null;
   rate_limit?: Record<string, unknown>;
-  /** Issue 0107: the archive waits out this host's limit and continues by itself at `until`. */
   waiting?: ArchiveWaiting | null;
-  /** Issue 0143: a feed's coverage ("19 of ~34 stored"), once the smart archiver measured its site. */
   coverage?: import('./smartArchive').ArchiveCoverage | null;
 }
 
@@ -491,7 +404,6 @@ export interface ArchiveWaiting {
   reason?: string | null;
 }
 
-/** Issue 0107: a host's budget, learned from the limits archives met. */
 export interface HostLimit {
   host: string;
   requests: number;
@@ -499,7 +411,6 @@ export interface HostLimit {
   /** How many limits it was learned from; an archive paces to it from 2. */
   limits: number;
   archive_gap_s: number;
-  /** "<host>: about 40 requests per 16 min, learned from 2 limits". */
   line: string;
 }
 
@@ -508,7 +419,7 @@ export interface ArchiveCatalogResponse extends Envelope {
   total?: number;
 }
 
-/** An archive request's pacing overrides, in the names the backend's `ArchiveRequest` takes; a key left out keeps the saved or default value. */
+/** An archive request's pacing overrides (the backend's `ArchiveRequest` names); a key left out keeps the saved value. */
 export interface ArchivePacing {
   pageDelaySeconds?: number;
   batchSize?: number;
@@ -533,28 +444,21 @@ export interface SchedulerState {
 }
 
 export interface SchedulerConfig {
-  /** The daily upkeep interval (pruning, cadence). Not edited here; sent back as read. */
   interval_hours?: number;
-  /** How often the ingestion tick looks for due sources (>= 15). */
   ingest_tick_minutes?: number;
-  /** Collect originals (issue 0123): a News story's original INSIGHT lacks is collected, one page, within the
-   *  shared budget (under 1% of the schedule's requests). On unless you switched it off (issue 0126). */
+  /** Collect a News story's missing original, one page, within the shared budget. On unless switched off. */
   collect_originals?: boolean;
-  /** Look up unlinked originals (issue 0138 C): a document several sources talk about that none links is looked up by
-   *  its title (arXiv, Crossref), one request each, within the same budget. Off unless you switch it on. */
+  /** Look up unlinked originals by title (arXiv, Crossref) within the same budget. Off unless switched on. */
   lookup_originals?: boolean;
-  /** Store Classics (issue 0138 E1): every Classic INSIGHT doesn't have collected once, under its own allowance (100
-   *  pages a day, one site at a time). On unless you switch it off. */
+  /** Store every Classic INSIGHT lacks once, under its own allowance (100 pages a day). On unless switched off. */
   store_classics?: boolean;
   updated_at?: string | null;
-  /** Only on GET /api/operations/scheduler. */
   state?: SchedulerState;
 }
 
 export interface JobRun {
   id: string;
   job_type: string;
-  /** Human label from the backend (`ingestion_run` -> "Ingestion run"). */
   job_label?: string;
   status: string;
   trigger: string;
@@ -569,17 +473,15 @@ export interface JobRun {
   finished_at?: string | null;
 }
 
-// ---- Mark IX ingestion types (spec §F.3) ----
+// ---- Ingestion types ----
 
 export type DecisionKind = 'fetch_new_source' | 'fetch_due' | 'fetch_retry' | 'fetch_forced' | 'fetch_linked'
   | 'skip_not_due' | 'skip_backoff' | 'skip_unavailable' | 'skip_disabled';
 export type OutcomeStatus = 'healthy' | 'empty' | 'error' | 'unavailable';
-/** One status per health row (B6): the summary buckets plus `disabled`. */
 export type HealthStatus = 'error' | 'backoff' | 'unavailable' | 'due' | 'deferred' | 'disabled';
 export type IntervalBasis = 'override' | 'tier' | 'probation' | 'backlog_guard' | 'profile_floor';
 export type RunStatus = 'success' | 'partial' | 'failed' | 'skipped_busy' | 'nothing_due';
 
-/** The parts of a run report a reader sees (issue 0021); the payload carries more. */
 export interface RunReport {
   run_id: string | null;
   status: RunStatus;
@@ -587,18 +489,15 @@ export interface RunReport {
   sources_considered: number;
   sources_fetched: number;
   sources_failed: number;
-  /** Sources with at least one new post; absent from reports stored before issue 0021. */
   sources_with_new?: number;
   /** THE "new posts" number. */
   posts_inserted: number;
-  /** Posts that could not be saved. */
   posts_failed: number;
   failures: { source_id: string; display_name: string; stage: 'fetch' | 'save' | 'connector'; error: string }[];
-  /** At most 20, most new posts first. */
   inserted_by_source: { source_id: string; display_name: string; inserted: number }[];
 }
 
-// ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
+// ---- Connections: write-only secrets. No call returns a stored value. ----
 
 export type CredentialProviderId = 'substack' | 'telegram' | (string & {});
 
@@ -641,7 +540,6 @@ export interface CredentialsResponse {
   providers: CredentialProviderView[];
 }
 
-/** GET /api/markx/token: the Mark X worker token's state, never the token. */
 export interface MarkxTokenView {
   set: boolean;
   last4: string | null;
@@ -664,9 +562,7 @@ export interface SourceHealthRow {
   in_main_digest: boolean;
   folders: { id: string; name: string }[];
   stored_posts: number;
-  /** When its newest post was published (fetched, if undated); null without posts. */
   last_post_at: string | null;
-  /** When the source was added. */
   created_at: string;
   backlog_posts: number | null;
   mean_gap_hours: number | null;
@@ -676,15 +572,10 @@ export interface SourceHealthRow {
   next_due_at: string | null;
   would_fetch_now: boolean;
   decision: DecisionKind;
-  /** The decision's human text (for example the unavailable reason). */
   decision_detail?: string | null;
-  /** Why the kind cannot fetch at all (no Telegram session, ...), or null. */
   unavailable_reason?: string | null;
-  /** A kind that fetches less without a credential says so (Substack: teasers only). */
   credential_notice?: string | null;
-  /** How its newest page reads went (issue 0032): "Pages from this source lose most of their images (5 of the last 8)", or null. */
   reading_notice?: string | null;
-  /** Its kind can re-read its pages for changes, and whether the owner switched that on (issue 0039). */
   watchable?: boolean;
   watch_changes?: boolean;
   status: HealthStatus;
@@ -697,66 +588,47 @@ export interface SourceHealthRow {
   consecutive_failures: number;
   next_retry_at: string | null;
   dormant: boolean;
-  /** When the source doctor last looked for this broken source's replacement (issue 0036);
-   *  null when it has not in this failure streak, or the finding was dismissed. */
   doctor_looked_at?: string | null;
-  /** What it found; null with doctor_looked_at set: nothing. */
   replacement?: SourceReplacement | null;
-  /** The doctor read a server error (issue 0072 D3): not moved, retried; status null when it timed out;
-   *  site: whose server ("example.org", issue 0088), '' when the address has no host. */
   server_error?: { status: number | null; site?: string } | null;
-  /** Source hygiene (issue 0046): its fetches work but nothing new came for 30 days and
-   *  more than 3x its usual gap. Never on a broken or disabled source, nor within 90 days of Keep. */
+  /** Fetches work but nothing new for 30 days and over 3x its usual gap; never on a broken, disabled or kept source. */
   quiet?: boolean;
-  /** 20 posts or more, added 30 days ago or more, and none opened, put in Later or kept. */
+  /** 20+ posts, added 30+ days ago, none opened, put in Later or kept. */
   never_opened?: boolean;
-  /** How many of its posts were opened, put in Later, kept or part-read. */
   opened_posts?: number;
   /** When the owner last kept it from Tidy up; the marks hide for 90 days from then. */
   tidy_kept_at?: string | null;
-  /** Its posts now live on another site (issue 0108: their pages redirect there); `followed`: a source of yours is there. */
   moved_to?: { host: string; followed: boolean } | null;
-  /** Silent far beyond its own rhythm (issue 0178): over max(5x its usual gap, 14 days) since its newest post, and
-   *  where the source doctor found it went. null when it is not, or the owner said it stopped (until it posts). */
+  /** Silent beyond max(5x its usual gap, 14 days), and where the doctor found it went; null when not, or marked stopped. */
   silent?: SourceSilence | null;
-  /** Stopped without anyone seeing (issue 0242): on, and its last success (else the day it was added) older than
-   *  max(3 days, 5x its interval), or failing 5+ in a row. null when it works (absent from an older API). */
+  /** Stopped unseen: its last success (else added) older than max(3 days, 5x interval), or 5+ failures in a row. */
   stalled?: SourceStalled | null;
-  /** The source doctor marked its host dead (issue 0242): no answer for 14+ days. Switch it off or replace it;
-   *  nothing is switched off by itself. */
+  /** The doctor marked its host dead (no answer for 14+ days). Nothing is switched off by itself. */
   dead?: SourceDeadHost | null;
 }
 
-/** A stopped source (issue 0242): since its last success (null: it never worked), days since then (or since it was
- *  added), and its failures in a row. */
 export interface SourceStalled {
   since: string | null;
   days: number | null;
   failures: number;
-  /** The posts it holds (issue 0254): an archive may have brought them while its live fetch never worked. */
   posts?: number;
-  /** Its last attempt's error, when that attempt failed. */
   reason?: string | null;
 }
 
 export interface SourceDeadHost {
   host: string;
-  /** Its last success, else when it was added. */
   since: string | null;
-  /** "does not resolve or has no route", "times out". */
   reason: string;
   checked_at: string | null;
 }
 
-/** A silent source (issue 0178): how long, against its usual gap, and the doctor's look (looked_at null: not yet). */
 export interface SourceSilence {
   days: number;
   usual_gap_hours: number;
   last_post_at: string | null;
   looked_at: string | null;
-  /** Its address, home page or newest posts now landing on another site. */
   moved: { via: string; from: string; to: string }[];
-  /** A live feed found where it went: Switch to it (never switched by itself). */
+  /** A live feed found where it went (never switched by itself). */
   replacement: SilentReplacement | null;
 }
 
@@ -765,22 +637,17 @@ export interface SilentReplacement {
   url: string;
   title: string;
   latest?: string[];
-  /** Its newest item's date. */
   newest?: string | null;
-  /** Where it was found: "its address now lands at …", "its home page". */
   via: string;
 }
 
-/** A broken source's replacement: a feed, or a page to follow (`found` articles under `prefix`). */
 export interface SourceReplacement {
   kind: 'feed' | 'page_watch';
   url: string;
   title: string;
   found: number | null;
   prefix: string | null;
-  /** How many of its items are the source's own (issue 0072: never 0 at another address). */
   shared?: number;
-  /** Its latest titles, shown before Switch. */
   latest?: string[];
 }
 
@@ -790,9 +657,7 @@ export interface SourceHealthSummary {
   backoff: number;
   unavailable: number;
   errors: number;
-  /** Sources silent far beyond their rhythm (issue 0178), whatever their status. */
   silent?: number;
-  /** Sources that stopped without anyone seeing (issue 0242), whatever their status. */
   stalled?: number;
 }
 
@@ -801,7 +666,6 @@ export interface SourcesHealthResponse {
   generated_at: string;
   rows: SourceHealthRow[];
   summary: SourceHealthSummary;
-  /** Issue 0107: each host's learned budget. */
   host_limits?: HostLimit[];
 }
 
@@ -814,44 +678,36 @@ export interface JobAccepted {
   message?: string;
 }
 
-/** Options for the Mark IX tracked ingestion methods. */
 export interface RunRequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   intervalMs?: number;
-  /** Called once the backend accepted the run (202), before polling: the job id is known. */
   onAccepted?: (job: JobAccepted) => void;
 }
 
-/** The story job's last run, as it recorded it (the `stories` system setting, issue 0050). */
 export interface StoriesRunSummary {
   computed_at: string;
   seconds?: number | null;
   full?: boolean | null;
-  /** The posts it regrouped: those new posts touch (issue 0072 A), every post on a full run. */
   posts?: number | null;
   stories?: number | null;
   news?: number | null;
   classics?: number | null;
   links_filled?: number | null;
-  /** New rules regroup every post in batches (issue 0072 A): how many are done. */
   rebuild?: { done: number; total: number } | null;
 }
 
-/** Of `total` posts, `pending` still to do. */
 export interface BackgroundProgress {
   total: number;
   pending: number;
 }
 
-/** What runs on its own (issue 0062), read only: GET /api/operations/background. */
 export interface BackgroundWorkResponse extends Envelope {
   stories: { running: boolean; last_run: StoriesRunSummary | null };
   search: BackgroundProgress;
   links: BackgroundProgress;
 }
 
-/** GET /api/operations/running (issue 0195): the recent jobs, newest first, as the overview lists them. */
 export interface RunningJobsResponse extends Envelope {
   jobs?: JobRun[];
 }
@@ -859,7 +715,6 @@ export interface RunningJobsResponse extends Envelope {
 export interface OperationsOverviewResponse extends Envelope {
   scheduler?: SchedulerConfig;
   jobs?: JobRun[];
-  /** Summary plus the 8 worst rows. */
   source_health?: { summary: SourceHealthSummary; rows: SourceHealthRow[]; host_limits?: HostLimit[] };
   alerts?: Array<{
     id: string;
@@ -952,81 +807,56 @@ export interface NewSource {
   handle_or_url: string;
   display_name?: string;
   fetch_delay_seconds?: number;
-  /** Follow a page without a feed (issue 0028): stored as settings.page_watch. */
   page_watch?: { prefix: string };
 }
 
 export interface AddSourceResponse extends Envelope {
   source_id?: string;
-  /** Added, but its test read failed for a reason that may pass (issue 0254): the reason. */
   warning?: string;
 }
 
 export interface FoundFeed {
   url: string;
   title: string;
-  /** How many of the site's articles your sources linked it holds (issue 0060); only when they linked some. */
   holds?: number;
-  /** The site its posts now live at (issue 0108: its posts' pages redirect there); that site's feed is offered first. */
   moved_to?: string;
 }
 
-/** Discover's follow test (issue 0080): what following it would give, read once in 30 days. */
 export type FollowLabel = 'feed' | 'page' | 'headlines' | 'blocked' | 'other_feed';
 
-/** Discover (issue 0050): a site or account 3+ of your sources link in article-like pages, not followed. */
 export interface SuggestedSource {
   /** A site (`openai.com`) or an account on a platform (`x.com/nn_teacher`). */
   key: string;
   url: string;
-  /** The sources linking it (issue 0080: a Reddit source once, never Saved). */
   voices: number;
   voice_names: string[];
   article_count: number;
   link_count: number;
-  /** The most linked of its articles (up to 20): its own title, else none (the line names its site, issue 0080). */
   articles: { url: string; title: string | null; linked_by: string[] }[];
-  /** Its follow test, on the first page (issue 0080). */
   follow_test?: { label: FollowLabel; at: string };
-  /** One owner's hosts on its domain, the card's first (issue 0109): `deepmind.google`, `blog.deepmind.google`. */
   places?: string[];
-  /** Set when its follow test says it can't be followed as a feed: listed in a section of its own (issue 0109). */
   section?: 'unfollowable';
-  /** How many of its pages are classics (issue 0051): a suggestion that holds some comes first. */
   classics?: number;
-  /** How many of your stories start there (issue 0065): Discover's first reason and its first order. */
   origins?: number;
-  /** The most covered of those stories (up to 3). */
   origin_stories?: OriginStory[];
-  /** A section of a site you follow: the places of it your sources hold (`anthropic.com/research`). */
   follows?: string[];
-  /** 0138 D2: how many originals of things your sources talked about were at this site in 30 days, and the line saying so. */
   originals?: number;
   originals_reason?: string;
-  /** 0138 F3: how often the long-reads you opened cite it (3+ from 2+ long-reads suggest it below the voices bar). */
   cited_by_longreads?: number;
-  /** v10.15 b5: the site's own account on a platform (its X account), offered when the site itself can't be followed
-   *  (follow test headlines, blocked, other_feed). Follow… on it goes through the feed finder like any address. */
   account?: { url: string; label: string } | null;
 }
-/** A story's origin (issue 0064) as Discover shows it: its page, its title when known, its voices. */
 export interface OriginStory { url: string; title: string | null; voices: number; stored: boolean; }
-/** A source you follow whose own pages start stories it doesn't hold (issue 0065): its archive may. */
 export interface MissingOrigins {
   source_id: string;
   name: string;
-  /** Where those pages are (`openai.com/index`). */
   places: string[];
   origins: number;
-  /** Its first post, and how many of those stories are older. */
   since: string | null;
   older: number;
   origin_stories: OriginStory[];
-  /** Its archive as stored (issue 0080): running, paused or finished, and how many of these pages it has stored since. */
   archive?: { state: 'running' | 'paused' | 'finished' | null; found: number; pages_fetched?: number };
-  /** Issue 0109: `origins` counts the pages it still lacks; `stored` those it has stored since (their stories join at the next
-   *  story run); `stopped`: its newest post, when its feed stopped; `watches`: the prefix it watches and the sections outside it;
-   *  `archivable`: the missing pages an archive can reach. */
+  /** `origins`: pages it still lacks; `stored`: stored since; `stopped`: its newest post when its feed stopped;
+   *  `watches`: the prefix it watches and the sections outside it; `archivable`: missing pages an archive can reach. */
   stored?: number;
   stopped?: string;
   watches?: { prefix: string; not: string[] };
@@ -1034,37 +864,23 @@ export interface MissingOrigins {
 }
 export interface SuggestedSourcesResponse {
   success: true;
-  /** One page of them (issue 0080: 30 at a time, the rest behind More): the tested followable first, then those that
-   *  can't be followed as a feed (`section: 'unfollowable'`), then the untested (issue 0109). */
   suggestions: SuggestedSource[];
-  /** A followed source's other channels (issue 0109): linked by that source, under its name. One folded group, with the first page. */
   also?: (SuggestedSource & { of: string; source_id: string })[];
   total?: number;
   more?: boolean;
-  /** Help and docs sites your sources link: references, never suggestions (issue 0080). */
   references?: { key: string; voices: number }[];
   archives?: MissingOrigins[];
-  /** Pages that start stories but name no account to follow (`youtube.com/watch`). */
   unnamed?: { place: string; origins: number }[];
-  /** Discover's Pages (issue 0113): each story's root you don't follow and haven't stored, one page a row; then (0138 D1)
-   *  the originals of things several of your sources talked about (`entity`). */
   pages?: DiscoverPage[];
-  /** 0138 D3: sources you followed from an "original of N things" suggestion, and the originals each brought first. */
   supplied?: { key: string; source_id: string; name: string; followed_at: string; originals_first: number }[];
-  /** 0138 E4: entities whose world has sites you don't follow or works you don't have. */
   worlds?: { entity: { id: string; name: string }; sites: number; not_followed: number; works_not_stored: number }[];
-  /** v10.15: Discover is served from its last background build: when that build was made (ISO), and whether a newer one
-   *  is being made now (the list is asked again once, a minute later). Older servers send neither. */
   built_at?: string | null;
   refreshing?: boolean;
 }
 
-/** Issue 0170: why a row is in "main source missing". */
 export type MainSourceKind = 'missing' | 'wrong_section' | 'disabled';
-/** A channel's follow test (0170): the feed finder on the section, then page watching's preview of it. */
 export interface MainSourceTest {
   label: FollowLabel;
-  /** Of `of` own pages of the events, the most a feed or page found keeps; null when unknown. */
   holds?: number | null;
   of?: number;
   feeds?: { url: string; title?: string | null; holds?: number | null }[];
@@ -1078,8 +894,8 @@ export interface MainSourceEvent {
   event_type: string;
   voices: number;
   first_at: string | null;
-  /** The actor's own page the event's posts carry: held (a member's own address), linked (2+ members, or a post on X),
-   *  main_link (a short link post's), source_page (the page members link when none is the original). */
+  /** The actor's own page: held (a member's own address), linked (2+ members, or an X post), main_link (a short
+   *  link post's), source_page (the page members link when none is the original). */
   own_page: { url: string; how: 'held' | 'linked' | 'main_link' | 'source_page'; held_by: string[] } | null;
   posts: { id: string; title: string; source: string; source_id: string; url: string | null; at: string | null }[];
 }
@@ -1089,13 +905,11 @@ export interface MainSourceRow {
   kind: MainSourceKind;
   channel: { key: string; kind: 'account' | 'site' | 'source'; platform: string; url: string; prefix: string | null };
   actor: { id: string; name: string };
-  /** The followed source it is about: a site's other section (wrong_section), a turned-off source (disabled). */
   source: { id: string; name: string; enabled: boolean; watch: string | null } | null;
   events: MainSourceEvent[];
   latest: string | null;
   test: MainSourceTest | null;
 }
-/** Discover's people and makers (issue 0276): who your tracks' posts and News quote, repost, mention, link or name. */
 export interface PeopleEvidence {
   post_id: string;
   title: string;
@@ -1140,7 +954,6 @@ export interface MainSourceResponse {
   within_days: number;
 }
 
-/** Issue 0196: an official channel the official-channels job found, and where it stands. */
 export type OfficialKind = 'x' | 'telegram' | 'youtube' | 'section' | 'releases';
 export type OfficialState = 'candidate' | 'proven' | 'would_add' | 'added' | 'undone' | 'refused' | 'covered';
 export type OfficialFrom = 'own_page' | 'site_section' | 'code_address' | 'handle' | 'web_search' | 'web_announcement';
@@ -1152,9 +965,7 @@ export interface OfficialProof {
   holds: number;
   linked: number;
   newest_days: number | null;
-  /** Issue 0241: how a site section announces (its path, or the stream its read returned); null: it doesn't. */
   announces?: 'path' | 'stream' | null;
-  /** Issue 0241: the bridge could not read the account; it is read again. */
   retry?: boolean;
 }
 export interface OfficialJudge {
@@ -1175,10 +986,8 @@ export interface OfficialRow {
   state: OfficialState;
   why: string;
   actor: { id: string | null; name: string | null };
-  /** The address followed. */
   follow: string | null;
   from: OfficialFrom | null;
-  /** How it is the actor's. */
   owned: string | null;
   proof: OfficialProof | null;
   judge: OfficialJudge | null;
@@ -1194,23 +1003,19 @@ export interface OfficialResponse {
   mode: 'off' | 'shadow' | 'on';
   cap: number;
   added_today: number;
-  /** Every row's state, not only the page's. */
   counts: Record<string, number>;
   events: Record<string, number>;
-  /** Issue 0241: a page of rows (would_add, added, candidate first); `total` the rows the asked states hold. */
   rows: OfficialRow[];
   total?: number;
   offset?: number;
   limit?: number;
   states?: OfficialState[] | null;
 }
-/** Issue 0241: a page of the official channels' view, optionally of some states only. */
 export interface OfficialPage {
   offset?: number;
   limit?: number;
   states?: OfficialState[];
 }
-/** A source's item filter (issue 0196): which of its items are hidden, and by whom. */
 export interface ItemFilterResponse {
   success: true;
   rule: OfficialFilter | null;
@@ -1218,55 +1023,39 @@ export interface ItemFilterResponse {
   hidden: number;
 }
 
-/** One Pages row (issue 0113): a page your stories start at, savable as one post. */
 export interface DiscoverPage {
   url: string;
   title: string | null;
   site: string;
-  /** Hide sends this key (one page, never its site). */
   hide_key: string;
-  /** A tweet: the save path reads x.com's app shell, so it isn't saved here; Collect originals keeps it from the quote. */
+  /** A tweet: not saved here (the save path reads x.com's app shell); Collect originals keeps it from the quote. */
   tweet?: boolean;
-  /** A platform's page that names no account (a video's watch page): no article to save. */
   video: boolean;
   first_linked_at: string;
   voices: number;
-  /** False when the server's reads of its site found it walled, or its address carried a token. */
   readable: boolean;
   stories: OriginStory[];
-  /** 0138 D1: the original of a thing (a Mark X entity) your sources talked about, not a story's root. */
   entity?: { id: string; name: string };
   voice_names?: string[];
-  /** v10.15 c3: the address Follow… opens for this page: a tweet's account (x.com/<handle>), a platform page's account,
-   *  a site page's section (https://host/blog/). Older servers send none: the client works it out (lib/discover pageFollow). */
   follow_url?: string | null;
 }
 
-/** What a source gave (issue 0054): posts, how many you opened, the stories it is in, how many it
- *  reported first, the classics it cited and the outside links it gave. */
 export interface SourceGives { posts: number; read: number; stories: number; first: number; classics: number; links: number; }
 export type AnatomyKind = 'feed' | 'page_watch' | 'site_reader' | 'telegram' | 'x' | 'reddit' | 'youtube' | 'saved';
 
-/** One source's anatomy (issue 0054): how it is read, and what it gives. */
 export interface SourceAnatomyRow {
   source_id: string;
-  /** Its own name, or null: it is named from its address. */
   display_name: string | null;
   address: string;
   platform: string;
   enabled: boolean;
   kind: AnatomyKind;
-  /** on: it reads each post's page; off: switched off; feed: the feed carries the whole post. */
   full_text: 'on' | 'off' | 'feed';
-  /** Its posts left as the feed's summary, by their last page read's outcome (issue 0140): nothing_longer,
-   *  not_same_article, needs_script, error:<class>, http:<status> → count. Absent from an older API. */
+  /** Its posts left as the feed's summary, by their last page read's outcome → count. Absent from an older API. */
   teasers?: Record<string, number>;
-  /** Change watching (0039); null: its kind cannot watch. */
   watch_changes: boolean | null;
   watched_pages: number;
-  /** 0138 F2: its pages other posts linked that its feed never carried, read once as its posts. */
   feed_misses?: number;
-  /** Conditional fetching (0044): validators stored; null: its kind always fetches in full. */
   validators: boolean | null;
   status: HealthStatus;
   interval_hours: number;
@@ -1276,69 +1065,50 @@ export interface SourceAnatomyRow {
   last_outcome: OutcomeStatus | null;
   last_error: string | null;
   last_error_at: string | null;
-  /** Over the last `window_days`. */
   recent: SourceGives;
   all: SourceGives;
 }
 export interface SourceAnatomyResponse { success: true; window_days: number; generated_at: string; rows: SourceAnatomyRow[]; }
 
-/** What the feed finder made of an address: a feed already, feeds found for it, a site INSIGHT reads itself, or nothing. */
 export interface FeedFinding extends Envelope {
   status?: 'feed' | 'found' | 'direct' | 'none';
   feeds?: FoundFeed[];
-  /** None, and the address is a site's home page (issue 0041): a poor page to follow. */
   homepage?: boolean;
-  /** For a home page: the site's own blog or news pages to follow instead, the most articles first
-   *  (the most of your sources' links held first, when they linked the site). */
   pages?: PageOffer[];
-  /** How many of the site's articles your sources linked (issue 0060): 0 when none. */
   linked?: number;
-  /** The section a home page was looked at from, where most of those links point; null from the home page. */
   start?: string | null;
 }
 
-/** Following a page without a feed (issue 0028): the article URLs found under the path, the first few read. */
 export interface PageWatchPreview extends Envelope {
   prefix?: string;
   found?: number;
-  /** Some of the articles came from the site's sitemap. */
   sitemap?: boolean;
   items?: { url: string; title: string; published_at: string | null }[];
 }
 
-/** A site's blog or news page to follow instead of its home page, with its preview (issue 0041). */
 export interface PageOffer {
   url: string;
   prefix: string;
   found: number;
   sitemap: boolean;
   items: { url: string; title: string; published_at: string | null }[];
-  /** How many of the articles your sources linked it holds (issue 0060). */
   holds?: number;
 }
 
-/** A followed source a page belongs to (issue 0122). */
 export interface PageSource { id: string; name: string; }
 
-/** POST /api/saved (issue 0031): a page saved into the Saved source, or one already stored. A page of a
- *  source you follow (issue 0122) is looked for under it first: `fetching` while that source is fetched
- *  (`savePage` waits and asks again), then `already` (its post) or `saved` as the source's post. */
+/** POST /api/saved: a page saved, or one already stored. A page of a followed source is looked for under it first:
+ *  `fetching` while that source is fetched (`savePage` waits and asks again), then `already` or `saved`. */
 export interface SavedPage extends Envelope {
   status?: 'saved' | 'already' | 'fetching';
   post_id?: string;
   title?: string;
   source_id?: string;
-  /** The followed source it is a post of; null or absent for the Saved source. */
   source?: PageSource | null;
-  /** `fetching` only: the source's fetch job. */
   job_id?: string;
-  /** Set by `savePage`: the source was fetched first (the page was looked for there). */
   fetched?: boolean;
-  /** False: the page could not be read as an article; its title and address were kept. */
   readable?: boolean;
-  /** Why it could not be read ("HTTP 403", "no article on the page"). */
   reason?: string | null;
-  /** A feed of the site that is not a source yet. */
   feed?: FoundFeed | null;
 }
 
@@ -1354,9 +1124,8 @@ export interface YouTubeProgressInput {
 
 const enc = encodeURIComponent;
 
-/** Wait for an operation job and resolve with its payload. Throws `JobFailedError`
- *  (payload in `.value`) when the job fails, `JobTimeoutError`, an `AbortError`, or
- *  the `ApiError` that ended polling (pollJob tolerates two transient read errors). */
+/** Wait for an operation job and resolve with its payload. Throws `JobFailedError` (payload in `.value`),
+ *  `JobTimeoutError`, an `AbortError`, or the `ApiError` that ended polling. */
 function waitForJob<T>(jobId: string, opts?: Pick<RunRequestOptions, 'signal' | 'timeoutMs' | 'intervalMs'>): Promise<T> {
   return pollJob<T>(
     async (signal) => {
@@ -1377,8 +1146,7 @@ function waitForJob<T>(jobId: string, opts?: Pick<RunRequestOptions, 'signal' | 
   );
 }
 
-/** Start an ingestion_run job, then wait for its run report. A finished run resolves
- *  with its report even when some sources failed (a `partial` run is a failed job). */
+/** Start an ingestion_run job and resolve with its run report, even when some sources failed (`partial`). */
 async function runIngestionJob(path: string, body: Record<string, unknown>, opts?: RunRequestOptions): Promise<RunReport> {
   const accepted = await request<JobAccepted>(path, { method: 'POST', body, signal: opts?.signal });
   if (!accepted || typeof accepted.job_id !== 'string') throw new Error('The backend did not start an ingestion run');
@@ -1404,45 +1172,35 @@ function feedPath(params: FeedParams, view: FeedView): string {
 }
 
 /**
- * The client. Methods throw `ApiError` on any failure (lib/request), for react-query
- * and the `ErrorState` components, except the ones wrapped in `settle`: those resolve
- * `{success: false, error}` for the screens that read the envelope instead.
- * Components reach it through `useApi()` (ApiContext), so a test can hand them a fake.
+ * The client. Methods throw `ApiError` on any failure, except those wrapped in `settle`, which resolve
+ * `{success: false, error}`. Components reach it through `useApi()`, so a test can hand them a fake.
  */
 export function createApi() {
   return {
     // ---- Reader ----
 
-    /** One newest-first page of the stream view. */
     getFeed: (params: FeedParams) => request<FeedPage>(feedPath(params, 'stream'), { signal: params.signal }),
-    /** One page of the by-source view: one group per source, at most 3 items each. */
     getFeedGroups: (params: FeedParams) => request<FeedGroupsPage>(feedPath(params, 'by_source'), { signal: params.signal }),
-    /** One page of search results (issue 0040): feed rows with their matching line. */
     searchPosts: (params: SearchParams) => request<SearchPage>(searchPath(params), { signal: params.signal }),
-    /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
     getUnreadCounts: () => request<UnreadCounts>('/api/feed/unread-counts'),
-    /** Mark one post or many (at most 500) read or unread. Marking read takes them out of
-     *  Later unless `keepLater` (the read is only an open, issue 0022). */
+    /** Mark posts (at most 500) read or unread. Marking read takes them out of Later unless `keepLater`. */
     setPostsRead: (ids: string[], read: boolean, { keepLater = false }: { keepLater?: boolean } = {}) =>
       request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: keepLater ? { ids, read, keep_later: true } : { ids, read } }),
-    /** Put posts in Later or take them out (issue 0022). */
     setPostsLater: (ids: string[], later: boolean) =>
       request<ReadStateResult>('/api/feed/later', { method: 'PUT', body: { ids, later } }),
-    /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). A topic track's
-     *  are its items, or every post of its sources with `allSources` (v10.12.1), as its list shows them. */
+    /** Mark read every unread post in `scope` from `newest` down to `through` (feed cursors), as its list shows them. */
     markReadThrough: (scope: string, through: string, newest: string, allSources = false) =>
       request<ReadStateResult>('/api/feed/read', {
         method: 'PUT',
         body: allSources ? { scope, through_cursor: through, newest_cursor: newest, all_sources: true } : { scope, through_cursor: through, newest_cursor: newest },
       }),
-    /** Star or unstar a post. Unlike `togglePostFavorite`, this throws on failure. */
+    /** Unlike `togglePostFavorite`, this throws on failure. */
     setPostStarred: (postId: string, starred: boolean) =>
       request<PostInteractionResponse>(`/api/posts/item/${enc(postId)}/favorite`, { method: 'POST', body: { favorited: starred } }),
 
     // ---- The post page ----
 
     getPostDetail: (postId: string) => request<PostDetailResponse>(`/api/posts/item/${postId}`),
-    /** Connected (issue 0125): Earlier, Later and Outside INSIGHT, capped; `all` answers every row. */   // 0125
     getPostConnected: (postId: string, all = false) =>
       request<PostConnected>(`/api/posts/item/${enc(postId)}/connected${all ? '?all=true' : ''}`),
     recordPostOpen: (postId: string, metadata?: Record<string, unknown>) =>
@@ -1451,7 +1209,7 @@ export function createApi() {
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata } })),
     togglePostFavorite: (postId: string, favorited: boolean) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, { method: 'POST', body: { favorited } })),
-    /** Where a long post was left (issue 0030); `null` clears it (the post was finished). */
+    /** Where a long post was left; `null` clears it (the post was finished). */
     savePostPosition: (postId: string, block: number | null, blocks: number | null) =>
       settle(request<Envelope>(`/api/posts/item/${enc(postId)}/position`, { method: 'PUT', body: { block, blocks } })),
     getYouTubeWatchProgress: (videoId: string) =>
@@ -1462,14 +1220,11 @@ export function createApi() {
     // ---- Sources ----
 
     getSources: () => request<SourcesResponse>('/api/sources'),
-    /** Every source's schedule-aware health row, worst first, plus the summary. */
     getSourcesHealth: () => request<SourcesHealthResponse>('/api/sources/health'),
     addSource: (payload: NewSource) => settle(request<AddSourceResponse>('/api/sources', { method: 'POST', body: payload })),
-    /** The feeds for any page address (issue 0026); takes up to about 10 seconds. */
     findFeed: (url: string) => settle(request<FeedFinding>('/api/sources/find-feed', { method: 'POST', body: { url } })),
-    /** What following a page without a feed would give (issue 0028); reads a few of its pages. */
-    /** Save any page (issue 0031). A page of a source you follow is looked for there first (issue 0122):
-     *  that source is fetched (`onFetching` says which), then the page is its post, or saved as one. */
+    /** Save any page. A page of a followed source is looked for there first: that source is fetched
+     *  (`onFetching` says which), then the page is its post, or saved as one. */
     savePage: (url: string, title?: string, { onFetching }: { onFetching?: (source: PageSource) => void } = {}) =>
       settle((async () => {
         const body = { url, ...(title ? { title } : {}) };
@@ -1481,7 +1236,6 @@ export function createApi() {
         const after = await request<SavedPage>('/api/saved', { method: 'POST', body: { ...body, after_fetch: true } });
         return { ...after, fetched: true };
       })()),
-    /** The followed source whose page an address is (issue 0122), or null. Nothing is fetched. */
     pageSource: (url: string) =>
       request<{ success: true; source: PageSource | null }>(`/api/saved/source?url=${enc(url)}`).then((r) => r.source),
     previewPageWatch: (url: string, prefix?: string) =>
@@ -1494,35 +1248,24 @@ export function createApi() {
     /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
     setCadenceOverride: (sourceId: string, hours: number | null) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/cadence`, { method: 'PUT', body: { override_hours: hours } }),
-    /** Point a broken source at its replacement (issue 0036): a feed, or with `pageWatch` a page
-     *  to follow. Its name, tracks and posts stay. */
+    /** Point a broken source at its replacement (a feed, or with `pageWatch` a page). Its name, tracks and posts stay. */
     switchSource: (sourceId: string, url: string, pageWatch?: { prefix?: string }) =>
       request<{ success: true; source_id: string; handle_or_url: string; previous: string }>(
         `/api/sources/${enc(sourceId)}/switch`, { method: 'POST', body: { url, ...(pageWatch ? { page_watch: pageWatch } : {}) } },
       ),
-    /** Hide the replacement notice until the source's next failure streak; the fresh row. */
     dismissReplacement: (sourceId: string) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/replacement/dismiss`, { method: 'POST' }),
-    /** Keep a source marked quiet or never opened (issue 0046): its mark hides for 90 days; the fresh row. */
     keepSource: (sourceId: string) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/tidy/keep`, { method: 'POST' }),
-    /** A silent source stopped (issue 0178): its silence is not shown again until it posts; the fresh row. */
     markSourceStopped: (sourceId: string) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/silence/stopped`, { method: 'POST' }),
-    /** Source anatomy (issue 0054): every source, how it is read and what it gives. Fetches nothing. */
     getSourceAnatomy: () => request<SourceAnatomyResponse>('/api/sources/anatomy'),
-    /** Discover (issue 0050): what your sources keep linking that you don't follow. Fetches nothing. */
-    /** One page (issue 0080): `page` is its query, `?offset=30&q=…` (Discover builds it, out of the reader's chunk). */
     getSuggestedSources: (page = '', signal?: AbortSignal) =>
       request<SuggestedSourcesResponse>(`/api/sources/suggested${page}`, { signal }),
-    /** Discover's "main source missing" (issue 0170): events whose actor's own channel you don't hold. Opening it tests
-     *  the shown channels in the background; nothing is followed here. */
     getMainSourceMissing: (signal?: AbortSignal) =>
       request<MainSourceResponse>('/api/discover/main-source', { signal }),
-    /** Discover's people and makers (issue 0276): kept by the jobs process; nothing is followed here. */
     getDiscoverPeople: (signal?: AbortSignal) =>
       request<PeopleResponse>('/api/discover/people', { signal }),
-    /** Official channels (issue 0196): what the official-channels job found, why, from where and how it was checked. */
     getOfficial: (signal?: AbortSignal, page: OfficialPage = {}) => {
       const qs = new URLSearchParams();
       if (page.offset) qs.set('offset', String(page.offset));
@@ -1531,35 +1274,25 @@ export function createApi() {
       const query = qs.toString();
       return request<OfficialResponse>(`/api/official${query ? `?${query}` : ''}`, { signal });
     },
-    /** Undo an official channel added automatically: its source stops and it is not added again. */
     undoOfficial: (id: string) =>
       request<{ success: true; id: string; state: 'undone'; source_id: string | null }>(
         `/api/official/${enc(id)}/undo`, { method: 'POST' }),
-    /** A source's item filter (issue 0196): the rule, who set it, and how many items it hides. */
     getItemFilter: (sourceId: string, signal?: AbortSignal) =>
       request<ItemFilterResponse>(`/api/sources/${enc(sourceId)}/item-filter`, { signal }),
     setItemFilter: (sourceId: string, rule: OfficialFilter | null) =>
       request<ItemFilterResponse>(`/api/sources/${enc(sourceId)}/item-filter`, { method: 'PUT', body: { rule } }),
-    /** Not interested: the suggestion is never shown again. */
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
-    /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. 0205: Mark X's rows
-     *  (`mark` main, falling back to Mark IX's when it has none) or the older News (`mark` ix). */
     getNews: ({ scope, cursor, signal, mark = 'main', order, unread = false }: { scope: string; cursor?: string | null; signal?: AbortSignal; mark?: NewsMark; order?: NewsOrder; unread?: boolean }) =>
       request<NewsPage>(`/api/news?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}${mark === 'ix' ? '&mark=ix' : ''}${order ? `&order=${order}` : ''}${unread ? '&unread=true' : ''}`, { signal }),
-    /** Issue 0238: "Mark all News read": every post of every News row the scope lists, read only (Later kept). Its ids undo it. */
+    /** Mark every post of every News row of the scope read (Later kept). Its ids undo it. */
     markAllNewsRead: (scope: string, mark: NewsMark = 'main') =>
       request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: mark === 'ix' ? { scope, news: true, mark } : { scope, news: true } }),
-    /** Issue 0271: "Since you looked", since the reader's one look (read only). */
     getSince: (signal?: AbortSignal) => request<SinceLooked>('/api/news/since', { signal }),
-    /** Issue 0271: the reader opened "Since you looked": the look moves to now. */
     lookSince: () => request<{ before: string | null; now: string }>('/api/news/since/look', { method: 'POST' }),
-    /** Classics (issue 0051): the pages a scope's sources keep citing, cited again first. */
     getClassics: ({ scope, cursor, signal }: { scope: string; cursor?: string | null; signal?: AbortSignal }) =>
       request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}${cursor ? `&cursor=${enc(cursor)}` : ''}`, { signal }),
-    /** Hide a classic: "I know it" and "not for me"; it never comes back. */
     hideClassic: (url: string) => request<Envelope>('/api/classics/hide', { method: 'POST', body: { url } }),
-    /** Show one source in the Main feed (true) or leave it out (false). */
     setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
       request<{ success: true; source_id: string; in_main_digest: boolean }>(
         `/api/sources/${enc(sourceId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } },
@@ -1570,10 +1303,8 @@ export function createApi() {
     getFolders: () => settle(request<FoldersResponse>('/api/folders')),
     createFolder: (payload: { name: string; description?: string; sort_order?: number }) =>
       settle(request<FolderResponse>('/api/folders', { method: 'POST', body: payload })),
-    /** Rename a track. */
     renameTrack: (folderId: string, name: string) => request<Envelope>(`/api/folders/${enc(folderId)}`, { method: 'PUT', body: { name } }),
     deleteFolder: (folderId: string) => settle(request<Envelope>(`/api/folders/${folderId}`, { method: 'DELETE' })),
-    /** Every source in the track shown in (true) or left out of (false) the Main feed. */
     setTrackMainDigest: (folderId: string, inMainDigest: boolean) =>
       request<Envelope>(`/api/folders/${enc(folderId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } }),
     getSourceFolders: (sourceId: string) => settle(request<SourceFoldersResponse>(`/api/sources/${sourceId}/folders`)),
@@ -1584,17 +1315,13 @@ export function createApi() {
 
     // ---- Ingestion ----
 
-    /** The manual "Run cycle": every enabled source; due ones only unless `force`. */
     runIngestionCycle: ({ force = false, ...opts }: { force?: boolean } & RunRequestOptions = {}) =>
       runIngestionJob('/api/ingestion/run', { force }, opts),
-    /** Fetch one source now (forced, even when disabled). */
     fetchSourceNow: (sourceId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
       runIngestionJob(`/api/sources/${enc(sourceId)}/fetch-now`, limit ? { limit } : {}, opts),
-    /** Fetch every enabled source of a folder/track now (forced). */
     fetchFolderNow: (folderId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
       runIngestionJob(`/api/folders/${enc(folderId)}/ingest`, limit ? { limit } : {}, opts),
     getOperationsOverview: () => request<OperationsOverviewResponse>('/api/operations/overview'),
-    /** What runs now (issue 0195): the overview's recent jobs without its source health. */
     getRunningJobs: () => request<RunningJobsResponse>('/api/operations/running'),
     getBackgroundWork: () => request<BackgroundWorkResponse>('/api/operations/background'),
     getOperationJob: (jobId: string) => request<OperationJobResponse>(`/api/operations/jobs/${jobId}`),
@@ -1617,8 +1344,7 @@ export function createApi() {
 
     getArchiveCatalog: () => request<ArchiveCatalogResponse>('/api/archive/catalog'),
     getSourceArchive: (sourceId: string) => request<ArchiveStatusResponse>(`/api/archive/${enc(sourceId)}/status`),
-    /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts.
-     *  `pacing` overrides the source's own for this plan. */
+    /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts. */
     planSourceArchive: async (sourceId: string, resume: boolean, pacing?: ArchivePacing): Promise<ArchivePlan> => {
       const response = await request<{ archive?: ArchivePlan }>(
         `/api/archive/${enc(sourceId)}/plan`, { method: 'POST', body: { resume, ...pacing } },
@@ -1626,7 +1352,6 @@ export function createApi() {
       if (!response.archive) throw new Error('Could not plan the archive');
       return response.archive;
     },
-    /** Start an archive_source job (202); poll it with getOperationJob. `pacing` as for the plan. */
     startSourceArchive: async (sourceId: string, resume: boolean, pacing?: ArchivePacing): Promise<{ job_id: string }> => {
       const response = await request<{ job_id?: string }>(
         `/api/archive/${enc(sourceId)}/run`, { method: 'POST', body: { resume, background: true, ...pacing } },
@@ -1635,20 +1360,18 @@ export function createApi() {
       return { job_id: response.job_id };
     },
 
-    /** Linked, not stored (issue 0084 B): how many of the source's own pages your posts link. */
     getLinkedPages: async (sourceId: string): Promise<LinkedPagesSummary> => {
       const response = await request<{ linked?: LinkedPagesSummary }>(`/api/archive/${enc(sourceId)}/linked`);
       if (!response.linked) throw new Error('Could not count the linked pages');
       return response.linked;
     },
-    /** Fetch them: an archive_source job reading each linked, not stored page once (202); poll it with getOperationJob. */
     fetchLinkedPages: async (sourceId: string): Promise<{ job_id: string }> => {
       const response = await request<{ job_id?: string }>(`/api/archive/${enc(sourceId)}/linked`, { method: 'POST' });
       if (!response.job_id) throw new Error('Could not fetch the linked pages');
       return { job_id: response.job_id };
     },
 
-    // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
+    // ---- Connections: write-only secrets. No call returns a stored value. ----
 
     getCredentials: () => request<CredentialsResponse>('/api/credentials'),
     /** Save one secret. The response is the provider's view (set, last4), never the value. */
@@ -1664,43 +1387,36 @@ export function createApi() {
     telegramLoginPassword: (password: string) =>
       request<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: { password } }),
     telegramLoginCancel: () => request<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' }),
-    /** Mark X's worker token (issue 0086 C): whether one is set. 404 while INSIGHT_MARKX is off. */
     getMarkxToken: () => request<MarkxTokenView>('/api/markx/token'),
-    /** A new worker token, shown once; it replaces the old one. */
     createMarkxToken: () => request<MarkxTokenCreated>('/api/markx/token', { method: 'POST' }),
-    /** Mark X's page (issue 0086 E): {on: true}, or a 404 while INSIGHT_MARKX is off (the menu item's probe). */
     getMarkxOn: () => request<{ on: boolean }>('/api/markx/on'),
     getMarkxNews: (all = false) => request<MarkxNews>(`/api/markx/news?all=${all ? 1 : 0}`),
     getMarkxPost: (postId: string) => request<MarkxPostPanel>(`/api/markx/posts/${enc(postId)}`),
-    /** v10.36: related reading, on request (~1.5 s: a scan of every stored vector). */
+    /** Related reading, on request (~1.5 s: a scan of every stored vector). */
     getMarkxRelated: (postId: string) => request<MarkxRelated>(`/api/markx/posts/${enc(postId)}/related`),
     getMarkxOverview: () => request<MarkxOverview>('/api/markx/overview'),
     runMarkxDecisions: () => request<Record<string, unknown>>('/api/markx/decide', { method: 'POST' }),
-    /** The reading window from the Worker tab: days, or null for every post; counts from the next planner run. */
+    /** The reading window: days, or null for every post; counts from the next planner run. */
     setMarkxReadingWindow: (days: number | null) =>
       request<MarkxSettings>('/api/markx/settings/reading-window', { method: 'POST', body: { days } }),
-    /** One tap on a Mark X News member: wrong story, not about this, or ok (taken back). */
     flagMarkxMember: (post: string, story: string, answer: MarkxFlag) =>
       request<{ id: string; post: string; story: string; answer: MarkxFlag }>('/api/markx/labels/news',
         { method: 'POST', body: { post, story, answer } }),
-    /** 0127: an answer on a member's fold, applied at once and stored as a label. */
     answerMarkxFold: (story: string, post: string, answer: MarkxFoldAnswer) =>
       request<{ story: string; post: string } & Partial<MarkxFold>>('/api/markx/folds/answer',
         { method: 'POST', body: { story, post, answer } }),
-    // 0119 A3: entities, an entity's page, the review queue (each answer applied at once and stored as a label)
+    // entities and the review queue: each answer applied at once and stored as a label
     getMarkxEntities: () => request<MarkxEntityList>('/api/markx/entities'),
-    /** 0144: `byLimit`, the by posts listed loose (default 50). 0168: `replies`, the replies to its handles too.
-     *  Issue 0195: `limits`, the stories and the posts in no story listed (the API's 20 and 30 by default, 0277).
-     *  0277: `whole`, every post of each story, every citing post and work and every timeline event. */
+    /** `byLimit`: by posts listed loose; `replies`: replies to its handles too; `limits`: stories and loose posts
+     *  listed; `whole`: every post, citing work and timeline event. */
     getMarkxEntity: (id: string, byLimit?: number, replies?: boolean, limits?: MarkxEntityLimits, whole?: boolean) => {
       const q = [byLimit !== undefined ? `by_limit=${byLimit}` : '', replies ? 'replies=true' : '',
         limits?.stories !== undefined ? `stories_limit=${limits.stories}` : '',
         limits?.loose !== undefined ? `loose_limit=${limits.loose}` : '',
-        whole ? 'all=true' : ''].filter(Boolean).join('&');   // 0277: every post, work and event (else the first)
+        whole ? 'all=true' : ''].filter(Boolean).join('&');
       return request<MarkxEntityPage>(`/api/markx/entities/${enc(id)}${q ? `?${q}` : ''}`);
     },
-    /** Issue 0195: the first `limit` open items (the API's default 50); next_offset says more are open. 0222: `view`
-     *  flagged (the API's default: only Claude's flags) or all (the operator's view). */
+    /** The first `limit` open items; next_offset says more are open. `view`: flagged (default) or all. */
     getMarkxEntityQueue: (limit?: number, view?: MarkxQueueView) => {
       const q = [limit !== undefined ? `limit=${limit}` : '', view ? `view=${view}` : ''].filter(Boolean).join('&');
       return request<MarkxEntityQueue>(`/api/markx/entities/queue${q ? `?${q}` : ''}`);
@@ -1709,7 +1425,6 @@ export function createApi() {
       request<Record<string, unknown>>(`/api/markx/entities/queue/${enc(item)}`, { method: 'POST', body: { answer } }),
     undoMarkxMerge: (redirect: string) =>
       request<Record<string, unknown>>(`/api/markx/entities/merges/${enc(redirect)}/undo`, { method: 'POST', body: {} }),
-    // 0119 B6-B7: a story's perspectives and sheet, the label buttons on them, their accuracy on your labels
     getMarkxStory: (id: string) => request<MarkxStoryView>(`/api/markx/stories/${enc(id)}`),
     labelMarkxPerspective: (story: string, post: string, answer: MarkxPerspectiveAnswer) =>
       request<{ id: string; answer: MarkxPerspectiveAnswer; shown: string }>('/api/markx/labels/perspective',
@@ -1719,29 +1434,24 @@ export function createApi() {
         { method: 'POST', body: { story, post, index, answer } }),
     getMarkxPerspectiveAccuracy: () => request<MarkxPerspectiveAccuracy>('/api/markx/labels/perspectives'),
 
-    // ---- Data (issue 0079): the export downloads as a link; these read around it ----
+    // ---- Data: the export downloads as a link; these read around it ----
 
     getExportInfo: () => request<ExportInfo>('/api/export'),
     getExportProgress: (token: string) => request<ExportProgress>(`/api/export/progress/${enc(token)}`),
   };
 }
 
-/** GET /api/export: shown before the click. */
 export interface ExportInfo {
   database_bytes: number;
   estimate_bytes: number;
   estimate_seconds: number;
   tables: number;
   login_tables: string[];
-  /** What "Include stored logins" adds, in words. */
   logins_include: string;
-  /** What the estimate is from (issue 0105): the last whole export, grown with the rows since, else the
-   *  live rows' stored bytes. Optional: an API before 0105 sends neither. */
   estimate_basis?: 'last_export' | 'live_rows';
   last_export?: ExportRecord | null;
 }
 
-/** The last whole export, kept for the next estimate (issue 0105). */
 export interface ExportRecord {
   bytes: number;
   seconds: number;
@@ -1749,7 +1459,6 @@ export interface ExportRecord {
   logins_included: boolean;
 }
 
-/** GET /api/export/progress/{token}: how far the download started with that token got. */
 export interface ExportProgress {
   file_name: string;
   bytes: number;
@@ -1757,50 +1466,36 @@ export interface ExportProgress {
   error: string | null;
 }
 
-/** The client's shape, shared by the real client and the test fake (test/fakeApi). */
 export type Api = ReturnType<typeof createApi>;
 
-// 0128 (Stealth v10.4): how a Mark X story is built. Sent as `built` on each Mark X News row and on the story view
-// (GET /api/markx/stories/{id}); each News line carries its `built` role. Nothing new is stored server-side.
+// How a Mark X story is built: `built` on each Mark X News row and the story view; each News line has its role.
 export type MarkxOriginalHow = 'links' | 'maker' | 'maker-page' | 'maker-link';
 export interface MarkxBuiltLeak {
   post: string;
-  /** Hours before the story's release. */
   hours: number;
-  /** Joins the release (hours before, or the only voice leaking it). */
   joins: boolean;
-  /** Two or more voices leaked it more than a day before: by the rule its own story (not split yet). */
   own_coverage: boolean;
 }
 export interface MarkxBuiltLink {
   story: string;
   headline: string;
-  /** Hours from the leak story's first post to the release. */
   hours: number;
-  /** A one-voice leak hours before the release: shown as joining it. */
   joins: boolean;
   via: 'connection' | 'subject';
 }
 export interface MarkxBuilt {
   code: string;
-  /** The story's event type from its members' read-v3 readings (null: none read yet). */
   event_type: string | null;
   read: { read: number; members: number };
-  /** The original found by code, shown first; null: no member is (then `source_page` may name the page). */
   original: { post: string; how: MarkxOriginalHow } | null;
   source_page: string | null;
-  /** The story view only: its members in published order, the original first. */
   order?: string[];
   release_at: string | null;
   leaks: MarkxBuiltLeak[];
-  /** On a leak story: the releases it came true in. */
   came_true: MarkxBuiltLink[];
-  /** On a release story: the leak stories before it. */
   leaked_before: (MarkxBuiltLink & { posts: string[] })[];
-  /** 0273: where the story's sources differ on one fact (empty when they agree, or the switch is off). */
   disputes?: MarkxDispute[];
 }
-/** 0273: one fact the story's sources state differently; each side a value, its sources and their quotes. */
 export interface MarkxDispute {
   fact: string;
   kind: 'number' | 'date' | 'status' | 'cause' | 'attribution' | 'other';
@@ -1810,16 +1505,14 @@ export type MarkxBuiltLine =
   | { role: 'original'; how: MarkxOriginalHow }
   | { role: 'leak'; hours: number; joins: boolean; own_coverage: boolean };
 
-// 0125
-/** One row of a post's Connected block (issue 0125): a stored post (Earlier, Later) or a page INSIGHT doesn't
- *  store (Outside: no post_id; its host, its link words as `title`). `reason`: the line the author gave for it. */
+/** One row of a post's Connected block: a stored post (Earlier, Later) or an outside page (no post_id; its host
+ *  and link words as `title`). `reason`: the line the author gave for it. */
 export interface ConnectedRow {
   post_id: string | null;
   url: string;
   address?: string;
   host?: string;
   source: string | null;
-  /** Who wrote it, via whom (issue 0185); stored rows only. */
   byline?: Byline | null;
   source_id?: string;
   date: string | null;
@@ -1829,7 +1522,6 @@ export interface ConnectedRow {
   reason_kind: 'quote' | 'sentence' | 'title' | 'link_words' | null;
 }
 
-/** GET /api/posts/item/{id}/connected: the three groups and how many rows each leaves out. */
 export interface PostConnected extends Envelope {
   earlier: ConnectedRow[];
   later: ConnectedRow[];
@@ -1837,14 +1529,11 @@ export interface PostConnected extends Envelope {
   more: { earlier: number; later: number; outside: number };
 }
 
-// 0130 D: a post's translation (Mark X, guide translate-v*): what the post page shows, the request, the owner's ✓ / ✗.
-// Kept in one block here (not inside createApi); components read it through `markxTranslationApi(useApi())`, so a
-// test's fake api can still provide these methods.
+// A post's translation (Mark X). Outside createApi: components read it through `markxTranslationApi(useApi())`, so
+// a test's fake api can provide these methods.
 export interface MarkxTranslationView {
   post_id: string;
-  /** The post's language: its Mark X reading's `lang`, else the feed's language code; null when neither names one. */
   lang: string | null;
-  /** Known and not English: the Translate button shows. */
   foreign: boolean;
   task: { id: string; status: 'open' | 'leased' | 'answered' | 'failed'; guide: string; error: string | null } | null;
   translation: { title_en: string; text_en: string; guide: string; model: string; at: string } | null;
@@ -1854,7 +1543,6 @@ export type MarkxTranslationAnswer = 'right' | 'wrong' | 'undo';
 const markxTranslationMethods = {
   getMarkxTranslation: (postId: string) =>
     request<MarkxTranslationView>(`/api/markx/posts/${enc(postId)}/translation`),
-  /** Adds the post's translate task (the same task when asked again); the next worker run answers it. */
   askMarkxTranslation: (postId: string) =>
     request<{ task_id: string; new: boolean; view: MarkxTranslationView }>(`/api/markx/posts/${enc(postId)}/translate`,
       { method: 'POST' }),
@@ -1862,7 +1550,7 @@ const markxTranslationMethods = {
     request<MarkxTranslationView>(`/api/markx/posts/${enc(postId)}/translation/label`, { method: 'POST', body: { answer } }),
 };
 export type MarkxTranslationApi = typeof markxTranslationMethods;
-/** These methods from `api` when it answers them (a test's fake: its own, or its thrower), else the real client's. */
+/** These methods from `api` when it answers them (a test's fake), else the real client's. */
 export function markxTranslationApi(api: object): MarkxTranslationApi {
   const own = api as Partial<MarkxTranslationApi>;
   const pick = <K extends keyof MarkxTranslationApi>(k: K): MarkxTranslationApi[K] => {
@@ -1873,36 +1561,27 @@ export function markxTranslationApi(api: object): MarkxTranslationApi {
     labelMarkxTranslation: pick('labelMarkxTranslation') };
 }
 
-// 0130 B (Stealth v10.5): archives that work again, archives back to a date, and the archive queue.
-/** Why the last archive added no more: its pages' skipped counts, and the posts stored already. */
+// Archives that work again, archives back to a date, and the archive queue.
 export interface ArchiveUnreached {
   stored?: number;
   no_post?: number;
   unreadable?: number;
   updated?: number;
 }
-/** What an archive job's result says besides its counts (read from `ArchiveJobSummary.result` or a job's payload). */
 export interface ArchiveResultExtra {
   unreached?: ArchiveUnreached;
-  /** The horizon asked ("2025-11-01"), and the one it stopped at (an ISO time) when it did. */
   until?: string;
   until_reached?: string;
-  /** Every listed post read as no post: the site's layout changed. */
   layout_changed?: boolean;
-  /** Set while the job waits in the queue for its lane (one Telegram, one Nitter archive at a time). */
   queued_at?: string;
 }
 export interface ArchiveSupport {
-  /** Its archive can stop at a date: its pages go newest first (Telegram, X, a newsletter's list). */
   until?: boolean;
 }
 export interface ArchiveCatalogResponse {
-  /** The sources whose last archive a restart interrupted. */
   interrupted?: string[];
-  /** The queued archives, oldest first. */
   queued?: Array<{ id: string; source_id: string; lane: string | null; queued_at: string | null }>;
 }
-/** A started or queued archive (POST /run, /queue: 202). */
 export interface ArchiveStarted {
   job_id: string;
   status: 'running' | 'queued';
@@ -1911,10 +1590,9 @@ export interface ArchiveStarted {
 
 const archivePath = (sourceId: string, what: string) => `/api/archive/${encodeURIComponent(sourceId)}/${what}`;
 
-/** The archive queue's calls (issue 0130), beside createApi's: start an archive back to a date (a Telegram or
- *  Nitter archive while another of its kind runs is queued), queue one, and resume every interrupted archive. */
+/** The archive queue's calls, beside createApi's: start (or queue) an archive back to a date, queue one, and
+ *  resume every interrupted archive. */
 export const archiveQueueApi = {
-  /** Start (or queue) an archive; `until` ("2025-11-01") stops it once its pages pass that date. */
   startArchive: async (sourceId: string, resume: boolean, until?: string | null, pacing?: ArchivePacing): Promise<ArchiveStarted> => {
     const response = await request<{ job_id?: string; status?: string; message?: string }>(archivePath(sourceId, 'run'), {
       method: 'POST', body: { resume, background: true, ...(until ? { until } : {}), ...pacing },
@@ -1922,7 +1600,6 @@ export const archiveQueueApi = {
     if (!response.job_id) throw new Error('Could not start the archive');
     return { job_id: response.job_id, status: response.status === 'queued' ? 'queued' : 'running', message: response.message };
   },
-  /** Queue an archive: it runs in its turn, one per kind and host at a time. */
   queueArchive: async (sourceId: string, resume: boolean, until?: string | null): Promise<ArchiveStarted> => {
     const response = await request<{ job_id?: string; message?: string }>(archivePath(sourceId, 'queue'), {
       method: 'POST', body: { resume, ...(until ? { until } : {}) },
@@ -1930,29 +1607,24 @@ export const archiveQueueApi = {
     if (!response.job_id) throw new Error('Could not queue the archive');
     return { job_id: response.job_id, status: 'queued', message: response.message };
   },
-  /** v10.13.9: stop the source's running archive after its current page (POST /stop: 202). */
   stopArchive: async (sourceId: string): Promise<void> => {
     await request<{ stopping?: boolean }>(archivePath(sourceId, 'stop'), { method: 'POST', body: {} });
   },
-  /** Queue every source whose last archive a restart interrupted, to resume from its checkpoint. */
   resumeInterrupted: async (): Promise<{ count: number }> => {
     const response = await request<{ count?: number }>('/api/archive/resume-interrupted', { method: 'POST', body: {} });
     return { count: response.count ?? 0 };
   },
 };
 
-// 0131: the owner's right / wrong on an edge of the Mark X post panel's Before list (Stalker's first edges).
+// The owner's right / wrong on an edge of the Mark X post panel's Before list.
 export type MarkxEdgeAnswer = 'right' | 'wrong' | 'undo';
 export const markxGraphApi = {
-  /** Mark the edge from the newer post to the older one right or wrong (undo takes the mark back). */
   labelEdge: (newer: string, older: string, answer: MarkxEdgeAnswer) =>
     request<{ id: string; answer: MarkxEdgeAnswer; label: 'right' | 'wrong' | null; relation: string }>(
       '/api/markx/labels/edge', { method: 'POST', body: { newer, older, answer } }),
 };
 
-// 0132 B (Stealth v10.6): the source analysis page (/markx/sources). One block here (not inside createApi); components
-// read it through `markxSourcesApi(useApi())`, so a test's fake api can provide these methods.
-/** A signal as the list shows it: its number, what it counted, and whether that is too few to tell. */
+// The source analysis page (/markx/sources), outside createApi: read through `markxSourcesApi(useApi())` for test fakes.
 export interface MarkxSourceCell {
   value: unknown;
   n: number;
@@ -1962,15 +1634,12 @@ export interface MarkxSourceRow {
   kind: 'source' | 'voice';
   id: string;
   name: string;
-  /** The source's kind (site, x, telegram, youtube, reddit, hn) or "voice". */
   platform: string;
   enabled: boolean;
   channels: number;
   stats: Partial<Record<string, MarkxSourceCell>>;
-  /** 0266: "switch off?" (a suggestion only: nothing is switched). */
   switch_off?: MarkxSwitchOff | null;
 }
-/** 0266: an enabled source with a high noise share, no first, few opens and few voices linking it. */
 export interface MarkxSwitchOff {
   line: string;
   noise: number;
@@ -1985,7 +1654,6 @@ export interface MarkxSourcesList {
   computed_at: string | null;
   job: { ok?: boolean; seconds?: number; peak_mb?: number; rows?: number; at?: string; error?: string } | null;
 }
-/** A post a card cites as evidence. */
 export interface MarkxEvidencePost {
   id: string;
   title: string;
@@ -1997,9 +1665,7 @@ export interface MarkxSourceSignal {
   signal: string;
   value: unknown;
   n: number;
-  /** "too few to tell" below this n (0: always shown). */
   min: number;
-  /** What n counts ("posts", "stories", "read posts", ...). */
   counts: string;
   too_few: boolean;
   formula: string;
@@ -2016,7 +1682,6 @@ export interface MarkxSourceTab {
   id: string;
   name: string;
   platform: string;
-  /** False until the stats job has run for it. */
   computed: boolean;
   cards: MarkxSourceCard[];
   switch_off?: MarkxSwitchOff | null;
@@ -2030,7 +1695,6 @@ export type MarkxStanceAnswer = 'right' | 'wrong' | 'undo';
 const markxSourcesMethods = {
   getMarkxSources: () => request<MarkxSourcesList>('/api/markx/sources'),
   getMarkxSource: (id: string) => request<MarkxSourcePage>(`/api/markx/sources/${enc(id)}`),
-  /** The owner's right / wrong on a stance pattern (its 0-based number); undo takes it back. */
   labelMarkxStance: (task: string, pattern: number, answer: MarkxStanceAnswer) =>
     request<{ labels: Record<string, 'right' | 'wrong'> }>('/api/markx/sources/stance/label',
       { method: 'POST', body: { task, pattern, answer } }),
@@ -2047,7 +1711,6 @@ export function markxSourcesApi(api: object): MarkxSourcesApi {
     labelMarkxStance: pick('labelMarkxStance') };
 }
 
-// 0132 A ---------------------------------------------------------------------------------------------------
 // Voices: one company, person or publication made of its channels (today's sources), joined only by you.
 
 /** One line of a suggestion's evidence: which rule, what it saw, up to 3 example posts. */
@@ -2079,38 +1742,34 @@ export interface AlsoOnLine {
   sort_at: string; why: 'links' | 'copy';
 }
 export interface FeedItem {
-  /** Issue 0132 A: one post on two channels of a voice shows once; the others are lines under it. */
+  /** One post on two channels of a voice shows once; the others are lines under it. */
   also_on?: AlsoOnLine[];
 }
 // The voices' calls are services/voices.ts (voicesApi): loaded only by the voice pages' own chunks.
 
-// 0134
-/** A part of a post's series (issue 0134): a stored post, its number as its title writes it ("3", "32a"). */
+/** A part of a post's series: a stored post, its number as its title writes it ("3", "32a"). */
 export interface SeriesPart {
   post_id: string; number: string | null; position: number; title: string | null; date: string | null; current: boolean;
 }
-/** The post's Series line: "Part 3 of 4 in <name>" (a series, every stored part) or "Issue #136 of <name>" (a column,
- *  the previous and next issues only). */
+/** The post's Series line: "Part 3 of 4 in <name>" (a series) or "Issue #136 of <name>" (a column: previous and next only). */
 export interface PostSeries {
   id: string; kind: 'series' | 'column'; name: string; number: string | null; position: number; count: number;
   total: number; parts: SeriesPart[]; prev: SeriesPart | null; next: SeriesPart | null;
 }
-/** Connected with 0134's parts: the series line, and the same-source links that are series navigation (not Earlier /
- *  Later rows). Older servers send neither. */
+/** Connected with the series line and the same-source links that are series navigation. Older servers send neither. */
 export type PostConnectedSeries = PostConnected & {
   series?: PostSeries | null;
   navigation?: (ConnectedRow & { group: 'earlier' | 'later' })[];
 };
 
-// 0135: the finder's saved searches and refusals, and the Telegram bridge the Add-source dialog builds on.
+// The finder's saved searches and refusals, and the Telegram bridge the Add-source dialog builds on.
 export interface FoundFeed { /** It reads as a saved search ("Keyword search for query", ?q=): ranked last. */ saved_search?: boolean }
 export interface FeedFinding { /** A feed was found whose items INSIGHT cannot read: never offered. */ refused?: string }
 /** The bridge's origin ("https://telegram.local"), or null when none is set (TELEGRAM_RSS_HOSTS empty). */
 export const telegramBridge = async (): Promise<string | null> =>
   (await request<{ bridge?: string | null }>('/api/sources/telegram-bridge')).bridge ?? null;
 
-// 0136 (Stealth v10.8): back in the news on /markx (Shadow): the old stories judged back with a development, and the
-// owner's label on each. Read by components/markx/MarkXBack.tsx (the Mark X chunk).
+// Back in the news on /markx: the old stories judged back with a development, and the owner's label on each.
 export type MarkxBackLabel = 'development' | 'retold' | 'related' | 'unrelated';
 export interface MarkxBackPost {
   id: string; n: number; title: string | null; source: string | null; byline?: Byline | null; at: string | null; url: string | null;
@@ -2123,7 +1782,7 @@ export interface MarkxBackRow {
 }
 export interface MarkxBackPrecision { labelled: number; development: number; precision: number | null; }
 export interface MarkxBack {
-  /** 0233: its feature's switch (markx/consumers.py `back`, off since its bar failed): off, nothing is shown. */
+  /** Its feature's switch (markx/consumers.py `back`): off, nothing is shown. */
   on: boolean;
   items: MarkxBackRow[]; counts: Record<string, number>; precision: MarkxBackPrecision | null;
   measured: { precision: number; lo: number; hi: number; n: number; words: string };
@@ -2135,7 +1794,7 @@ export const markxBackApi = {
       '/api/markx/labels/back', { method: 'POST', body: { row, answer } }),
 };
 
-// 0181: own round-ups. A round-up's item is display only: never a voice, a member or a News count.
+// Own round-ups. A round-up's item is display only: never a voice, a member or a News count.
 export interface MarkxRoundupItem {
   key: string; kind: 'mx_story' | 'ix_story' | 'post' | 'page' | 'unit'; ref: string | null; headline: string | null;
   curators: number; issues: number; only_roundups: boolean; at: string; posts: string[];
@@ -2144,7 +1803,7 @@ export interface MarkxRoundupItem {
 export interface MarkxRoundupIssue {
   id: number; span: 'day' | 'week'; from: string; until: string; version: number; built_at: string;
   roundups: number; units: number; count: number; items?: MarkxRoundupItem[];
-  /** 0181 round 2: the items left out as no news ({type: n}, `continues`), still untyped, and over the per-source cap. */
+  /** The items left out as no news ({type: n}, `continues`), still untyped, and over the per-source cap. */
   left_out?: Record<string, number>; untyped?: number; capped?: number;
 }
 export interface MarkxRoundupIssues {
@@ -2155,7 +1814,7 @@ export const markxRoundupApi = {
   issue: (id: number) => request<MarkxRoundupIssue>(`/api/markx/roundups/issues/${id}`),
 };
 
-// 0132 C2: channel profiles and the channels you don't follow (declaration merging adds the suggestions' fields).
+// Channel profiles and the channels you don't follow (declaration merging adds the suggestions' fields).
 export interface NotFollowedChannel {
   key: string; url: string; label: string; platform: string; of: string[]; hosts?: number;
   why: { rule: 'profile' | 'own_links' | 'discover'; line: string; posts: string[] }[];
@@ -2163,18 +1822,15 @@ export interface NotFollowedChannel {
 export interface NotFollowedGroup { subject: { kind: 'voice' | 'source'; id: string; name: string }; channels: NotFollowedChannel[] }
 export interface VoiceSuggestions { not_followed?: NotFollowedGroup[]; profiles?: number }
 
-// 0137 references: a full text's reference list (post_links kind 'reference'), shown folded in Connected. Older
-// servers send none.
+// A full text's reference list (post_links kind 'reference'), shown folded in Connected. Older servers send none.
 export interface ConnectedReference { url: string; address: string; host: string; title: string | null }
 export type PostConnectedReferences = PostConnected & { references?: ConnectedReference[] };
 
-// 0137: the feed finder says why none, when only a saved search was found, and which feeds are the site's, not this
-// page's (with the page itself to follow). Older servers send none of these.
+// The finder says why none, when only a saved search was found, and which feeds are the site's, not this page's.
 export interface FoundFeed { /** The site's feed, not this page's. */ not_this_page?: 'other_scope' | 'stale' }
 export interface FeedFinding {
   /** Why none: blocked, rate-limited, needs login, gone, server error, empty feed, no bridge, none found. */
   reason?: string;
-  /** "only a saved search was found". */
   note?: string;
   /** Every feed found is the site's, not this page's: the page itself to follow, with its preview. */
   watch?: PageOffer;

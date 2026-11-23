@@ -5,11 +5,8 @@ import { cn } from '../../lib/utils';
 import { iconButtonClass } from './styles';
 import { overlayClass } from './Dialog';
 
-/**
- * A side sheet (Radix dialog) for parallel tasks: editing a source, the reader
- * nav drawer. It slides in from the right edge and leaves the same way
- * (apple §7, spatial consistency); 260ms in, 200ms out, fade under reduced motion.
- */
+/** A side sheet (Radix dialog) for parallel tasks: slides in from the right and leaves the same way, 260ms in,
+ *  200ms out, a fade under reduced motion. */
 export const Sheet = DialogPrimitive.Root;
 export const SheetTrigger = DialogPrimitive.Trigger;
 

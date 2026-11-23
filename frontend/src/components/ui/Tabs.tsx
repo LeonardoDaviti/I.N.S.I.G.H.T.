@@ -3,10 +3,7 @@ import * as TabsPrimitive from '@radix-ui/react-tabs';
 import { cn } from '../../lib/utils';
 import { tabTriggerClass } from './styles';
 
-/**
- * Lowercase underline tabs (design docs system/components.md). Switching never animates: tabs are
- * used constantly, so the change is instant (emil: frequency decides motion).
- */
+/** Lowercase underline tabs; switching never animates (tabs are used constantly). */
 export const Tabs = TabsPrimitive.Root;
 
 export const TabsList = forwardRef<

@@ -3,12 +3,8 @@ import { Button } from '../ui';
 
 const ReadingSettingsPanel = lazy(() => import('./ReadingSettingsPanel'));
 
-/**
- * The Aa control in the post page's navigation band (issue 0045): a small popover
- * with the reading settings, over the text it changes, so each choice previews on
- * the post itself. Not modal: Escape, a click outside or focus leaving closes it,
- * and focus returns to Aa. The panel's code loads on first open.
- */
+/** The Aa control: a non-modal popover with the reading settings over the text, so each choice previews on the post.
+ *  Escape, an outside click or focus leaving closes it, focus returns to Aa; the panel loads on first open. */
 export default function ReadingSettingsButton() {
   const [open, setOpen] = useState(false);
   const panelId = useId();

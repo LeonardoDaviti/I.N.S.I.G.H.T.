@@ -1,8 +1,8 @@
-"""Mark X's totals, kept (issue 0195, migration 0132): the tasks by kind and status, and the calls' number, tokens and
-cost. /api/markx/overview and /api/markx/status counted them over every task (~1M on the server) and every call on
-each request. The triggers on mx_tasks and mx_calls log each statement's change (mx_counts_delta, append-only: no
-counter row is locked by a worker); a read is the folded totals plus those deltas, so it always equals the GROUP BY.
-`fold` (after each ingestion run) moves the deltas into the totals in one statement.
+"""Mark X's totals, kept (issue 0195): the tasks by kind and status, and the calls' number, tokens and cost.
+
+Triggers on mx_tasks and mx_calls log each statement's change (mx_counts_delta, append-only: no counter row is locked
+by a worker); a read is the folded totals plus the deltas, so it always equals the GROUP BY. `fold` moves the deltas
+into the totals in one statement.
 """
 from __future__ import annotations
 

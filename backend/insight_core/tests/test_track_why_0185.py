@@ -1,5 +1,5 @@
-"""Issue 0185 (3): why a post is, or is not, in a track: a read of the stored verdict (markx/track_why.py,
-GET /api/markx/tracks/{id}/why). Read only: no task, no call, no row written. Synthetic data only."""
+"""Why a post is, or is not, in a track (0185): a read of the stored verdict (markx/track_why.py, GET
+/api/markx/tracks/{id}/why). Read only: no task, no call, no row written. Synthetic data only."""
 from __future__ import annotations
 
 import json

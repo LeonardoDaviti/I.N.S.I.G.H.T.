@@ -1,8 +1,6 @@
-"""Issue 0272 (Stealth v10.32): an entity's numbers over time (0095), read from its brief's measure rows
-(markx/entity_brief.py `series`): one series per measure name and unit, each value with its date, post and quote; a
-series only with 2+ values from 2+ posts; two posts' different values of one date and setting are a dispute (0097).
-
-Invented names only.
+"""An entity's numbers over time (0272), from its brief's measure rows (markx/entity_brief.py `series`): one series
+per measure name and unit, each value with its date, post and quote; a series only with 2+ values from 2+ posts; two
+posts' different values of one date and setting are a dispute. Invented names only.
 """
 from __future__ import annotations
 
@@ -137,7 +135,7 @@ class Page(_Briefer):
             EB.plan_things(self.cur, roots=[ent])
         self.things(ent, p4, {"kind": EB.WHAT, "fields": {"definition": v("a language model", "a language model"),
                                                           "subject": v("Zqmodel 3", "Zqmodel 3 is")}})
-        self.things(ent, p5)   # read, no row: 0269's SHOW_POSTS read
+        self.things(ent, p5)   # read, no row (SHOW_POSTS)
         s = TT.current_schema(self.cur, ent)
         self.assertEqual((s["track_version"], [k["kind"] for k in s["schema"]["kinds"]]),
                          (EB.NUMBERS_VERSION, [EB.WHAT, EB.HOW, EB.MEASURE, TT.PRACTICE_KIND]),

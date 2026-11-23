@@ -1,4 +1,4 @@
-"""v10.35: stored listing pages hidden through the item filter's `listing` flag (never deleted), once by
+"""Stored listing pages hidden through the item filter's `listing` flag (never deleted), once by
 scripts/hide_listing_pages and at store time for one that slips past the fetch's checks. Invented sites only."""
 from __future__ import annotations
 

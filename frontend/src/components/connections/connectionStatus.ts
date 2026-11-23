@@ -3,7 +3,7 @@ import type { Status } from '../ui/styles';
 import { publicationOf } from '../../lib/addresses';
 import { localDateISO, toDate } from '../../lib/dates';
 
-/** The Connections tab's URL (spec §10.1); one place so every link agrees. */
+/** The Connections tab's URL; one place so every link agrees. */
 export const CONNECTIONS_PATH = '/settings/sources?tab=connections';
 
 export function connectionsHref(provider?: string): string {
@@ -17,11 +17,8 @@ export interface ProviderStatus {
   message?: string;
 }
 
-/**
- * One provider's state as a glyph and a word (monochrome, design docs system/status.md):
- * working (tested ok), failing (last test failed, or a saved value cannot be read),
- * set (all fields set, not tested yet), not set.
- */
+/** One provider's state as a glyph and a word: working (tested ok), failing (last test failed, or a saved value
+ *  cannot be read), set (not tested yet), not set. */
 export function providerStatus(view: CredentialProviderView): ProviderStatus {
   const broken = view.fields.find((f) => f.error);
   if (broken) return { glyph: 'failing', label: 'failing', message: broken.error ?? undefined };

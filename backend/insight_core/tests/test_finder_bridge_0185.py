@@ -1,6 +1,5 @@
-"""Issue 0185 (2): the feed finder's "no bridge" says only that no bridge is configured. A configured bridge
-whose feed gave nothing (timeout, empty, no feed) is asked once more, then says BRIDGE_SILENT; one that
-answered an HTTP error keeps that error's reason. X's and Telegram's bridges alike."""
+"""The feed finder's "no bridge" says only that no bridge is configured (0185): a configured bridge whose feed gave
+nothing is asked once more, then says BRIDGE_SILENT; one that answered an HTTP error keeps that error's reason."""
 from __future__ import annotations
 
 import sys

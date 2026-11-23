@@ -1,14 +1,8 @@
-"""0257 (Stealth v10.30): a track post's questions also show the stored pages it links on its own site (its maker's
-docs), so a terse release note's fields may be quoted from the page it links; the value names the page.
-
-  - `maker_page`: the registrable site of the post's own address; on a platform or code host, its account too;
-  - `page_window`: the part of the page the link's anchor names;
-  - the post's own questions are the same with or without pages (so the switch is on by default); the pages add at
-    most LINKED_DOCS questions within MAX_WINDOWS;
-  - salvage: a quote must be in what the question showed (the page included); a value quoted only from the page
-    names it, kept in the report and the row; the post's own address is never offered;
-  - off (entity_bands.json tracks.linked_docs false): only the post's own questions.
-Invented names only; the DB tests run on a database whose name ends in _test."""
+"""A track post's questions also show the stored pages it links on its own site (0257), so a terse release note's
+fields may be quoted from the page it links; the value names the page. Covers `maker_page`, `page_window`, the post's
+own questions unchanged with or without pages (at most LINKED_DOCS more within MAX_WINDOWS), salvage (a quote must
+be in what the question showed; the post's own address is never offered), and the switch off (tracks.linked_docs).
+Invented names; DB tests on a _test database."""
 from __future__ import annotations
 
 import unittest

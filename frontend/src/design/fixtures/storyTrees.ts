@@ -1,11 +1,6 @@
-/**
- * Stories as trees (issue 0064), from the lab's real cases: GPT-6.1 Terra (OpenAI's own post is
- * the origin; HN's row of its address and two citers under it; LessWrong's roundup mentions it,
- * issue 0068), Claude Fable 5 (the origin is Anthropic's page, outside INSIGHT, linked by 14; this
- * row is one of its citers, a copy under another) and Ghostty leaving GitHub (mitchellh.com's post,
- * read, is the origin; @toolsmith_pete's repost of Mitchell's tweet and this row, Mat Duggan's, under it;
- * Andrew Nesbitt's under Duggan: on a phone "↳ matduggan.com" in place of a second indent).
- */
+/** Stories as trees, from the lab's real cases: GPT-6.1 Terra (OpenAI's own post is the origin; a roundup mentions
+ *  it), Claude Fable 5 (the origin is a page outside INSIGHT; a copy under a citer) and Ghostty leaving GitHub (a
+ *  read origin, a repost under it, a third level shown on a phone as "↳ matduggan.com"). */
 import type { FeedItem, StoryPost, StoryParentReason } from '../../services/api';
 import { feedItem } from '../../components/reader/fixtures';
 import { HOUR, at, sourceId } from './sites';
@@ -19,11 +14,8 @@ function storyPost(now: Date, id: string, source: string, name: string, title: s
   };
 }
 
-/**
- * X (issue 0066), from the lab: oddlogic_games' thread "software is dead. sad." (5 replies to
- * itself, and a quote of its first post 2 hours later: one row "Thread · 7 posts"), and
- * toolsmith_pete's repost of oddlogic_games' tweet.
- */
+/** X, from the lab: a thread (5 replies to itself and a later quote of its first post: one row "Thread · 7 posts"),
+ *  and a repost of its tweet. */
 export const THREAD_REPLIES: [string, string, number][] = [
   ['p-bg-1', 'pretty joyless now. guess i switch to gardening.', 4.9],
   ['p-bg-2', "there will remain some niche holdouts, where some bespoke, artisan, well crafted piece of software is still appreciated.\n\nbut i'm too tired to find such a niche.", 4.8],
@@ -48,7 +40,7 @@ export function xItems(now: Date): FeedItem[] {
     source_id: sourceId('s-toolsmith_pete'), source_display_name: 'toolsmith_pete', sort_at: at(now, -2 * HOUR), published_at: at(now, -2 * HOUR),
     url: 'https://nitter.local/oddlogic_games/status/2114444636303364349#m', read_at: null, repost: { by: [], author: 'oddlogic_games' },
     byline: { author: '@oddlogic_games', via: 'toolsmith_pete', quoting: null },
-    // Issue 0068: oddlogic_games, whom you follow, wrote it; toolsmith_pete reposted it: two voices.
+    // one account you follow wrote it, another reposted it: two voices
     story: { id: 'p-toolsmith_pete-rt', voices: 2, first: 'p-toolsmith_pete-rt', parent_id: null, parent_reason: null, origin: null, reposted_by: ['toolsmith_pete'],
       sources: [{ id: sourceId('s-toolsmith_pete'), name: 'toolsmith_pete' }, { id: sourceId('s-bg'), name: 'oddlogic_games' }], posts: [] },
   }, now);

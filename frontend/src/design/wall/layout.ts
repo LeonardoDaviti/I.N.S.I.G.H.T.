@@ -1,13 +1,8 @@
 /**
- * Where the Wall draws things (Design Studio S4), in wall coordinates: each
- * page a card of the frame's 1400 × 900 aspect with its caption under it, on
- * the site map's column and row; each move a line from page to page, arrow at
- * the page it leads to, its label on the line where it arrives. A move to the
- * next column curves through the gutter between the two; within a column it
- * runs straight down or up beside the captions; across more than one column it
- * goes over the top of the wall, never through a page in between.
- *
- * Plus the view: the pan and zoom the studio applies as one transform.
+ * Where the Wall draws things, in wall coordinates: each page a 1400 × 900 card with its caption, on the site map's
+ * column and row; each move a line from page to page, arrow at its target, label where it arrives. A move to the
+ * next column curves through the gutter; within a column it runs beside the captions; across more columns it goes
+ * over the top, never through a page. Plus the view: the pan and zoom the studio applies as one transform.
  */
 import type { SiteEdge, SiteNode } from './siteMap';
 
@@ -30,9 +25,8 @@ const PADDING = 32;
 
 export interface WallNode {
   id: string;
-  /** The frame. */
   card: Rect;
-  /** The frame and its caption. */
+  /** With its caption. */
   box: Rect;
 }
 
@@ -86,8 +80,7 @@ export function layoutWall(siteNodes: readonly SiteNode[], siteEdges: readonly S
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   };
 
-  // Ports: the edges on each side of a card, ordered by where the other end
-  // is, so lines leave and arrive without crossing at the card.
+    // ports: the edges on each side of a card, ordered by where the other end is, so lines never cross at the card
   const ports = new Map<string, { edge: string; other: number; order: number }[]>();
   const routed = siteEdges.map((edge, order) => {
     const [fromSide, toSide] = sides(site.get(edge.from)!, site.get(edge.to)!);
@@ -106,7 +99,7 @@ export function layoutWall(siteNodes: readonly SiteNode[], siteEdges: readonly S
     if (side === 'left' || side === 'right') {
       return { x: side === 'left' ? rect.x : rect.x + rect.width, y: Math.round(rect.y + (rect.height * (index + 1)) / (list.length + 1)) };
     }
-    // Top and bottom ports sit at the card's right end, clear of the caption.
+    // top and bottom ports sit at the card's right end, clear of the caption
     return { x: Math.round(rect.x + rect.width * 0.92 - index * 24), y: side === 'top' ? rect.y : rect.y + rect.height };
   };
 
@@ -137,7 +130,7 @@ export function layoutWall(siteNodes: readonly SiteNode[], siteEdges: readonly S
       label = { x: Math.round((left + right - width) / 2), y: LANE_Y - LABEL_HEIGHT / 2, width, height: LABEL_HEIGHT };
     } else {
       path = `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
-      // In the gap between the upper card's caption and the lower card.
+      // in the gap between the upper card's caption and the lower card
       const upper = Math.min(start.y, end.y) + CAPTION_HEIGHT;
       const lower = Math.max(start.y, end.y);
       label = { x: start.x - LABEL_GAP - width, y: Math.round((upper + lower - LABEL_HEIGHT) / 2), width, height: LABEL_HEIGHT };

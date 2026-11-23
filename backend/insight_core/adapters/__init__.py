@@ -1,5 +1,4 @@
-"""The seven site adapters. Each one is a SourceKind (see base_adapter.py); KindRegistry.default
-builds them with the shared KindHttp, ahead of the generic kinds in resolution priority."""
+"""The site adapters, each a SourceKind (base_adapter.py), resolved ahead of the generic kinds."""
 
 from __future__ import annotations
 

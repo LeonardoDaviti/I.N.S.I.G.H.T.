@@ -1,14 +1,6 @@
-"""Background work (issue 0062): what the API and the ingestion do on their own, read from what the
-jobs already record. Read only; nothing here starts, stops or tunes a job (owner, 2026-10-31:
-checkable, not controllable).
-
-- Stories: the story job's last summary (the `stories` system setting, StoriesService.recompute),
-  a rule change's progress through every post (`rebuild`: done of total, issue 0072 A), and whether
-  a run holds the job's lock now (an advisory lock: pg_locks).
-- Search index: the posts whose vector is missing or made by an older rule (0042's
-  search_version, ReaderService.fill_search_vectors) of all posts.
-- Links: the posts whose links were never read (posts.links_scanned_at, filled by the story job,
-  StoriesRepository.fill_missing_links) of all posts.
+"""Background work, read from what the jobs already record: the story job's last summary, rebuild progress and
+whether it runs now (pg_locks); posts missing a current search vector; posts whose links were never read.
+Read only: nothing here starts, stops or tunes a job.
 """
 from __future__ import annotations
 
@@ -39,7 +31,7 @@ def background_work(cur: Cursor, *, stories_key: str, stories_lock: str) -> Dict
     last: Optional[Dict[str, Any]] = None
     if isinstance(summary, dict) and summary.get("computed_at"):
         last = {field: summary.get(field) for field in SUMMARY_FIELDS}
-        rebuild = summary.get("rebuild")   # new rules regroup every post in batches (issue 0072 A)
+        rebuild = summary.get("rebuild")   # new rules regroup every post in batches
         last["rebuild"] = {"done": int(rebuild.get("done") or 0), "total": int(rebuild.get("total") or 0)} \
             if isinstance(rebuild, dict) else None
     return {

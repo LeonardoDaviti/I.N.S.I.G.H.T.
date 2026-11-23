@@ -1,9 +1,6 @@
-"""Source anatomy (issue 0054): what each source gives, counted from tables that exist. Read only;
-every method takes the caller's cursor.
-
-One query per column group, each grouped by source, each counting all time and since `since`
-(the last 30 days) by a post's date as the feed sorts it (Pairing's ordinary date: surfaced, else published, else
-fetched). A source with nothing in a group has no row in it; the caller reads that as zero.
+"""Source anatomy: what each source gives, counted from tables that exist. Read only; every method takes the
+caller's cursor. One query per column group, grouped by source, counting all time and since `since` by the
+feed's sort date. A source with nothing in a group has no row; the caller reads that as zero.
 """
 from __future__ import annotations
 
@@ -16,7 +13,6 @@ from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_OUTCOME_KEY
 from insight_core.ingestion.kinds.saved import PLATFORM as SAVED_PLATFORM
 from insight_core.markx import pairing
 
-# A post's date as the feed sorts it.
 POST_DATE = pairing.ordinary_date("p")
 RECENT = f"{POST_DATE} >= %(since)s"
 
@@ -30,8 +26,7 @@ def _by_source(cur: Cursor) -> Counts:
 class SourceAnatomyRepository:
     @staticmethod
     def posts(cur: Cursor, since: datetime) -> Counts:
-        """(posts, posts recent, read, read recent): read is opened, as History (0052) counts it
-        (an `opened` or `reading_session` interaction), never a bulk mark read."""
+        """(posts, posts recent, read, read recent): read is opened, as History counts it, never a bulk mark read."""
         cur.execute(
             f"""
             SELECT p.source_id, count(*), count(*) FILTER (WHERE {RECENT}),
@@ -47,9 +42,8 @@ class SourceAnatomyRepository:
 
     @staticmethod
     def stories(cur: Cursor, since: datetime) -> Counts:
-        """(stories, stories recent, first, first recent): the stories its posts are in (0050), and
-        how many it leads: a story's lead is its first report, else its first share, in the story's
-        order (repo_reader._ORDER_RANK). Recent by the source's own post."""
+        """(stories, stories recent, first, first recent): the stories its posts are in, and how many it leads
+        (repo_reader._ORDER_RANK). Recent by the source's own post."""
         cur.execute(
             f"""
             WITH leads AS (
@@ -71,8 +65,8 @@ class SourceAnatomyRepository:
 
     @staticmethod
     def classics(cur: Cursor, since: datetime) -> Counts:
-        """(classics, classics recent): the classics (0051) its posts link, not hidden ones; a
-        source's signature links are no citation, and the Saved source is no voice (as 0051)."""
+        """(classics, classics recent): the classics its posts link, not hidden ones; signature links are no
+        citation, and the Saved source is no voice."""
         cur.execute(
             f"""
             SELECT p.source_id, count(DISTINCT c.target_url), count(DISTINCT c.target_url) FILTER (WHERE {RECENT})
@@ -89,8 +83,7 @@ class SourceAnatomyRepository:
 
     @staticmethod
     def links(cur: Cursor, since: datetime) -> Counts:
-        """(links, links recent): the outside links its posts gave (0050's post links), less its
-        signature and its own site (`boilerplate`)."""
+        """(links, links recent): the outside links its posts gave, less its signature and own site."""
         cur.execute(
             f"""
             SELECT p.source_id, count(*), count(*) FILTER (WHERE {RECENT})
@@ -104,9 +97,8 @@ class SourceAnatomyRepository:
 
     @staticmethod
     def reading(cur: Cursor) -> Dict[str, Dict[str, Any]]:
-        """How each source is read, beyond its settings: validators stored (0044), any post read
-        from its article page (full text), its watched pages (0039), and its posts left as the
-        feed's summary by their last page read's outcome (teasers, issue 0140)."""
+        """How each source is read, beyond its settings: validators stored, any post read from its article page,
+        its watched pages, and its teasers by their last page read's outcome."""
         cur.execute(
             f"""
             SELECT s.id,
@@ -119,7 +111,7 @@ class SourceAnatomyRepository:
         found = {str(r[0]): {"validators": bool(r[1]), "pages_read": bool(r[2]), "watched_pages": int(r[3] or 0),
                              "teasers": {}}
                  for r in cur.fetchall()}
-        # Its posts left as the feed's summary (issue 0140), by their last page read's outcome.
+        # its posts left as the feed's summary, by their last page read's outcome
         cur.execute(
             f"""
             SELECT p.source_id, p.metadata -> '{PAGE_OUTCOME_KEY}' ->> 'outcome', count(*)

@@ -1,6 +1,5 @@
-// 0245 (frontend v10.28): the track briefer's words and the pure parts of its views: days, weeks, a thing's name and
-// facts, the cite numbers, the filter chips a kind's typed fields give, and sorting. Nothing here names a track, a
-// kind or a field: every rule is about a type (text, number, money, link, enum).
+// The track briefer's words and the pure parts of its views: dates, a thing's name and facts, cite numbers, filter
+// chips and sorting. Nothing here names a track, a kind or a field: every rule is about a type.
 import { PRACTICE_KIND } from '../../services/tracks';
 import type {
   BriefPoint, FieldSuggestion, Thing, ThingFieldDef, ThingKindDef, ThingSection, ThingValue,
@@ -86,11 +85,8 @@ export function hostOf(url: string): string {
   }
 }
 
-/**
- * The superscripts of a set of points: each cited thing found in the sections gets a number (its row number when the
- * backend gave one, else in the order first cited) and the post it links to (its newest report). A cite whose thing
- * is not on the page is left out.
- */
+/** The superscripts of a set of points: each cited thing in the sections gets a number (its row number, else first
+ *  cited order) and the post it links to (its newest report); a cite whose thing is not on the page is left out. */
 export function citeMarks(points: BriefPoint[], sections: ThingSection[]): Map<string, { n: number; thing: Thing }> {
   const things = new Map(sections.flatMap((s) => s.things.map((t) => [t.id, t] as const)));
   const out = new Map<string, { n: number; thing: Thing }>();
@@ -142,9 +138,9 @@ export function niceNumber(x: number): number {
 const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
 /**
- * The chips a kind's typed fields give over its rows: a number or money field with two or more different values
- * splits at a round middle ("≤ 1,500 USD", "≥ 1,500 USD"; money only in its most common currency); an enum, one chip
- * per value its rows hold; a link, "has <field>". Text fields give none (a question box is later, 0098).
+ * The chips a kind's typed fields give over its rows: a number or money field with two or more values splits at a
+ * round middle ("≤ 1,500 USD"; money only in its most common currency); an enum, one chip per value; a link,
+ * "has <field>". Text fields give none.
  */
 export function filterChips(fields: ThingFieldDef[], things: Thing[]): FilterChipDef[] {
   const out: FilterChipDef[] = [];
@@ -236,7 +232,7 @@ export function fieldKey(typed: string): string {
 /** The track's kinds and fields query (the page and the sheet's editor share it). */
 export const schemaKey = (id: string) => ['markx-track-schema', id] as const;
 
-// ---- v10.41: search inside a table, suggested fields -----------------------------------------------------------------
+// ---- search inside a table, suggested fields -----------------------------------------------------------------------
 
 /** The table's search params: words across a row (`q`), an entity its posts name, a type of one; empty ones left out. */
 export function searchParams(q: string, entity: string, entityType: string): Record<string, string> {
@@ -247,7 +243,7 @@ export function searchParams(q: string, entity: string, entityType: string): Rec
   return out;
 }
 
-/** The owner's kinds with a suggested field added (Add: the owner's schema edit). The kind the code adds is left out. */
+/** The owner's kinds with a suggested field added (the owner's schema edit); the kind the code adds is left out. */
 export function withField(kinds: ThingKindDef[], s: FieldSuggestion): ThingKindDef[] {
   const field: ThingFieldDef = {
     name: s.name, type: s.type, key: false, ...(s.unit ? { unit: s.unit } : {}), ...(s.values?.length ? { values: s.values } : {}),

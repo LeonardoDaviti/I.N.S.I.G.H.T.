@@ -1,8 +1,7 @@
-"""Issue 0133 (ent-v4): the entities guide switch and its cut, `paper` read as `document`, the new roles, `by` as a
-`published` edge, the citation rule (each first-set pattern on fixed English and Russian texts, the identifiers, the
-document links) and its merge with the model's mentions, re-extraction as new tasks, the newest valid answer as the
-current set, the pages, and surges that ignore `source` and `recommended`. Fixed answers, never the guide's wording.
-Synthetic posts with invented names; the database tests roll back (a database whose name ends in _test)."""
+"""ent-v4 (0133): the entities guide switch and its cut, `paper` read as `document`, the new roles, `by` as a
+`published` edge, the citation rule and its merge with the model's mentions, re-extraction as new tasks, the newest
+valid answer as the current set, the pages, and surges that ignore `source` and `recommended`. Fixed answers;
+invented names; DB tests roll back on a _test database."""
 from __future__ import annotations
 
 import unittest
@@ -63,7 +62,7 @@ class TheRoles(unittest.TestCase):
         return validate.check("entities", {"entities": list(ents), "relations": []}, self.TEXT, guide)[1]
 
     def test_a_published_relation_validates_under_ent_v4_2(self):
-        """v10.10.1: ent-v4.2's guide asks for `published` (a issues or publishes document b); the schema refused it."""
+        """ent-v4.2's guide asks for `published` (a issues or publishes document b): the schema accepts it."""
         a = ent("Orbit Filing", "Orbit Filing", "document", "source", by="Acme Corp")
         c = ent("Acme Corp", "Acme Corp", "org", "source")
         answer = {"entities": [a, c], "relations": [{"a": "Acme Corp", "rel": "published", "b": "Orbit Filing"}]}
@@ -216,7 +215,7 @@ class StoredAndRead(_Db):
         self.assertEqual(tasks.plan_posts(self.cur, "entities", days=1, now=T0 + H), 1)   # a new ent-v4 task
         self.cur.execute("SELECT guide, input LIKE %s FROM mx_tasks WHERE kind = 'entities' AND a = %s "
                          "AND input NOT LIKE %s ORDER BY created_at",
-                         ("%Kestrel Report%", p, "%\nWindow: %"))   # 0176: ent-v3's later windows of the long text apart
+                         ("%Kestrel Report%", p, "%\nWindow: %"))   # ent-v3's later windows apart (0176)
         self.assertEqual(self.cur.fetchall(), [("ent-v3", False), ("ent-v4", True)])        # the 6,000 cut
         self.assertEqual(repo.current_guide(self.cur, p), "ent-v3")
         self.answer(p, [ent("Kestrel Report", "Kestrel Report", "document", "source", by="Word Corp")])
@@ -231,8 +230,8 @@ class StoredAndRead(_Db):
         self.assertEqual(panel["sources"][1]["rule"], "citation")
 
     def test_the_source_pages_and_voices_read_the_current_set_only(self):
-        # v10.9.1: after a guide switch a re-read post has two sets of rows; the source analysis page read only
-        # ent-v3's and the role rule (official, focused) read both. Both read the current set (mx_mentions_now).
+        # after a guide switch a re-read post has two sets of rows: the source page and the role rule both read the
+        # current set (mx_mentions_now)
         from insight_core.markx import source_stats
         from insight_core.utils import source_roles
         p = self.post(0, T0, text=LONG)
@@ -250,8 +249,8 @@ class StoredAndRead(_Db):
         self.assertIn("Kestrel Report", names(posts[p]))
         data = source_stats.load(self.cur, T0 + H)
         self.assertNotIn("Word Corp", names(data.mentions.get(p, [])))
-        # v10.38: source_stats reads only the roles the role rule reads (SELF_ROLES, MAKER_ROLES): a "source" mention
-        # of the current set is not loaded there (load_reads above reads it)
+        # source_stats reads only the roles the role rule reads (SELF_ROLES, MAKER_ROLES): a "source" mention of the
+        # current set is not loaded there (load_reads above reads it)
         self.assertNotIn("Kestrel Report", names(data.mentions.get(p, [])))
 
     def test_an_empty_newer_answer_is_current_too(self):

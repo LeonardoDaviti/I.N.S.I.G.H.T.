@@ -6,11 +6,8 @@ import { useApi } from '../../services/ApiContext';
 import { fieldSummary } from './connectionStatus';
 import { useReplaceProvider, useSaveCredential } from './useConnections';
 
-/**
- * One secret, write-only: a password input until it is saved, then only
- * "set · ••••a3f · updated <date>" with replace and remove. The typed value is
- * dropped from state as soon as the save succeeds, so it is never rendered again.
- */
+/** One secret, write-only: a password input until saved, then only "set · ••••a3f · updated <date>" with replace
+ *  and remove. The typed value is dropped from state once saved, so it is never rendered again. */
 export default function ConnectionField({
   provider,
   field,

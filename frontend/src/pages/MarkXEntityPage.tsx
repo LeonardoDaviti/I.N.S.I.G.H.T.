@@ -6,8 +6,8 @@ import { toast } from 'sonner';
 import { Button, ExternalLink, Page, PageHeader, TextLink } from '../components/ui';
 import { ErrorState, LoadingState } from '../components/states';
 import { EntityPostLine, MentionContext, QueueItem, SurgeMark, entityHref, entityMeta } from '../components/markx/MarkXEntities';
-import { ThingLinks, Timeline, VersionLine } from '../components/markx/MarkXTimeline';   // 0165 C: its timeline
-import { EntityBrief } from '../components/markx/EntityBrief';   // 0261: what it is, how it works, its results
+import { ThingLinks, Timeline, VersionLine } from '../components/markx/MarkXTimeline';
+import { EntityBrief } from '../components/markx/EntityBrief';
 import { useApi } from '../services/ApiContext';
 import { plural } from '../lib/format';
 import type { MarkxEntityPage as EntityPageData, MarkxEntityPost, MarkxEntityStory, MarkxOlderPost, MarkxRabbitHole,
@@ -19,7 +19,7 @@ import { bylineText } from '../lib/byline';
 type PageCalls = {
   answerMarkxEntitySources: (entity: string, sourceIds: string[], answer: 'yes' | 'no') => Promise<unknown>;
 };
-/** 0144's calls, here (this page's chunk) and not in api.ts; a test's fake api may provide them. */
+/** This page's calls, here (its chunk) and not in api.ts; a test's fake api may provide them. */
 function pageCalls(api: object): PageCalls {
   const got = api as Partial<PageCalls>;
   return {
@@ -30,11 +30,11 @@ function pageCalls(api: object): PageCalls {
 
 const WHY: Record<string, string> = { release: 'its release', by: 'its own post', origin: 'the page it began from', root: 'the first post' };
 
-/** 0144 B2-B3: a Mark X story (or, marked so, the Mark IX story of a post in none) with all its posts, the original
- *  first: the entity's own earliest post, else the story's root (Mark IX's outside page when it began from one). */
+/** A Mark X story (or, marked so, a post's Mark IX story) with all its posts, the original first: the entity's own
+ *  earliest post, else the story's root. */
 export function StoryBlock({ s, onAll }: { s: MarkxEntityStory; onAll?: () => void }) {
   const o = s.original;
-  const total = s.posts_total ?? s.posts.length;   // 0277: the first 6 listed by default
+  const total = s.posts_total ?? s.posts.length;  // the first 6 listed by default
   const title = s.headline ?? (s.mark === 'ix' ? 'A Mark IX story' : 'A Mark X story');
   return (
     <section aria-label={title}>
@@ -72,10 +72,8 @@ const RULES: Record<string, string> = {
 };
 const KINDS: Record<string, string> = { paper: 'paper', release: 'release page', code: 'code', demo: 'demo', package: 'package' };
 
-/**
- * 0138: the entity's original first: the stored post when INSIGHT has it, else the page with how it was found.
- * 0229: then, apart, the papers and pages its posts cite (never its original).
- */
+/** The entity's original first (the stored post, else the page and how it was found); then, apart, the papers
+ *  and pages its posts cite (never its original). */
 export function Original({ d }: { d: EntityPageData }) {
   const o = d.original;
   if (!o && !d.addresses?.length && !d.cited?.length) return null;
@@ -120,9 +118,9 @@ const followHref = (url: string) => `/sources?follow=${encodeURIComponent(url)}`
 const SITE_STATE: Record<string, string> = { followed: 'Followed ✓', stored: 'Stored ✓' };
 
 /**
- * 0138 E3, the rabbit hole: the entity's sites (Follow or Watch page through Add source: the feed finder, then page
- * watching), its works (Collect: the save path) and its people. "Go down the rabbit hole" collects every work not stored,
- * then opens Add source on the first site you don't follow; nothing is followed without your tap there.
+ * The rabbit hole: the entity's sites (Follow or Watch page through Add source), its works (Collect) and people.
+ * "Go down the rabbit hole" collects every work not stored, then opens Add source on the first site you don't
+ * follow; nothing is followed without your tap there.
  */
 export function RabbitHole({ hole, entityId }: { hole: MarkxRabbitHole; entityId: string }) {
   const api = useApi();
@@ -146,7 +144,7 @@ export function RabbitHole({ hole, entityId }: { hole: MarkxRabbitHole; entityId
   };
   const open = hole.sites.find((s) => s.state !== 'followed' && s.state !== 'stored');
   const missing = hole.works.filter((w) => w.url && !w.stored).map((w) => w.url as string);
-  const missingAll = hole.missing ?? missing.length;   // 0277: the answer lists its first 30 works, counts them all
+  const missingAll = hole.missing ?? missing.length;  // the answer lists its first 30 works, counts them all
   const dive = async () => {
     let urls = missing;
     if (missingAll > missing.length) {   // every work not stored, from the whole page (?all=true)
@@ -196,7 +194,7 @@ export function RabbitHole({ hole, entityId }: { hole: MarkxRabbitHole; entityId
   );
 }
 
-/** 0138: an entity no post's current reading names: the posts an earlier guide named it in, and what each names now. */
+/** An entity no post's current reading names: the posts an earlier guide named it in, and what each names now. */
 export function Older({ older }: { older: MarkxOlderPost[] }) {
   const guides = [...new Set(older.map((p) => p.guide))].join(', ');
   return (
@@ -223,25 +221,20 @@ export function Older({ older }: { older: MarkxOlderPost[] }) {
 }
 
 const H2 = 'border-b border-line pb-2 text-[0.8125rem] font-semibold text-fg-2';
-const MORE = 'mt-2 text-[0.8125rem] text-fg underline-offset-2 hover:underline';   // 0277: an "All N" link
+const MORE = 'mt-2 text-[0.8125rem] text-fg underline-offset-2 hover:underline';  // an "All N" link
 
 const ROLE_GROUP: Record<string, number> = { subject: 0, actor: 0, by: 1, venue: 2, source: 2, recommended: 2, mention: 3 };
-/** 0144 B4: subject or actor (0), by (1), venue / source / recommended (2), mentions (3): the server's order. */
+/** Subject or actor (0), by (1), venue / source / recommended (2), mentions (3): the server's order. */
 export const looseGroup = (p: MarkxEntityPost) => Math.min(3, ...(p.roles ?? []).map((r) => ROLE_GROUP[r] ?? 3));
 
 /**
- * An entity's page, `/markx/entities/<id>` (0119 A3, 0115 Decided 3): every post naming it in every role, grouped by
- * its Mark X stories (most voices first), the posts in no story last; every source with its counts; its family and
- * versions as links. Read posts stay, dimmed. A merged entity's id opens its group's page. 0133: a document shows who
- * published it and the posts citing it as evidence or recommending it; an org or person, what it published. 0138: its
- * Original first (and its code, demo, other pages); one no current reading names lists the posts an earlier guide named
- * it in, with what each names now.
+ * An entity's page, `/markx/entities/<id>`: every post naming it, grouped by its Mark X stories (most voices
+ * first), loose posts last; its sources, family and versions; its original, brief, timeline and relations. Read
+ * posts stay, dimmed. A merged entity's id opens its group's page.
  */
 const PLATFORM: Record<string, string> = { x: 'X', github: 'GitHub', telegram: 'Telegram', bluesky: 'Bluesky', hf: 'Hugging Face' };
 
-/** 0168: its handles (the owner's yes, its own sources' accounts; an old one with the months its pairs span) and how
- *  many posts cite them by the handle rule (their posts are in the stories and the lists above, as by / source /
- *  mention); the replies to them are hidden until asked. */
+/** Its handles and how many posts cite them by the handle rule; the replies to them are hidden until asked. */
 function Handles({ h, name, onReplies }: { h: MarkxEntityHandles; name: string; onReplies: () => void }) {
   return (
     <section aria-label={`${name}'s handles`}>
@@ -263,7 +256,6 @@ function Handles({ h, name, onReplies }: { h: MarkxEntityHandles; name: string; 
   );
 }
 
-/** How many more stories and posts in no story one Show more asks for (issue 0195: the API's pages). */
 const ENTITY_MORE = { stories: 20, loose: 30 } as const;
 
 export default function MarkXEntityPage() {
@@ -273,10 +265,10 @@ export default function MarkXEntityPage() {
   const client = useQueryClient();
   const [byLimit, setByLimit] = useState<number | undefined>(undefined);
   const [mentionsOpen, setMentionsOpen] = useState(false);
-  const [replies, setReplies] = useState(false);   // 0168: the replies to its handles, hidden by default
-  // Issue 0195: the API lists the first 20 stories and 30 posts in no story (0277; were 50 and 100); Show more asks for more.
+  const [replies, setReplies] = useState(false);  // the replies to its handles, hidden by default
+  // The API lists the first 20 stories and 30 loose posts; Show more asks for more.
   const [limits, setLimits] = useState<MarkxEntityLimits | undefined>(undefined);
-  // 0277: the API lists each story's first posts, the first citing posts and works and the timeline's top events;
+  // The API lists each story's first posts, the first citing posts and works and the timeline's top events;
   // an "All" link asks for every one (?all=true)
   const [whole, setWhole] = useState(false);
   const all = () => setWhole(true);
@@ -316,12 +308,12 @@ export default function MarkXEntityPage() {
               </p>
             ) : null;
           })()}
-          <EntityBrief brief={d.brief} />{/* 0261 */}
+          <EntityBrief brief={d.brief} />
           <Original d={d} />
           {d.current === false && d.older?.length ? <Older older={d.older} /> : null}
           {d.rabbit_hole ? <RabbitHole hole={d.rabbit_hole} entityId={entityId} /> : null}
-          {d.version_line ? <VersionLine line={d.version_line} /> : null}{/* 0220 */}
-          {d.relations?.length ? <ThingLinks relations={d.relations} /> : null}{/* 0220 */}
+          {d.version_line ? <VersionLine line={d.version_line} /> : null}
+          {d.relations?.length ? <ThingLinks relations={d.relations} /> : null}
           {d.relations && (d.relations_total ?? 0) > d.relations.length ? (
             <button type="button" className={MORE} onClick={all}>All {plural(d.relations_total ?? 0, 'link')}</button>
           ) : null}
@@ -332,12 +324,12 @@ export default function MarkXEntityPage() {
                 {d.versions.map((v) => (
                   <li key={v.id}>{v.id === e.id ? <span className="font-semibold text-fg">{v.name}</span>
                     : <TextLink to={entityHref(v.id)}>{v.name}</TextLink>}
-                    {v.settings?.length ? (/* 0259: a version's settings, under it */
+                    {v.settings?.length ? (/* a version's settings, under it */
                       <span className="text-fg-3"> ({v.settings.map((s, i) => (
                         <span key={s.id}>{i ? ', ' : ''}{s.id === e.id ? <span className="font-semibold text-fg">{s.variant ?? s.name}</span>
                           : <TextLink to={entityHref(s.id)}>{s.variant ?? s.name}</TextLink>}</span>))})</span>
                     ) : null}
-                    {v.builds?.length ? (/* v10.35: its builds (GGUF, NVFP4), under it */
+                    {v.builds?.length ? (/* its builds (GGUF, NVFP4), under it */
                       <span className="text-fg-3"> · builds: {v.builds.map((b, i) => (
                         <span key={b.id}>{i ? ', ' : ''}{b.id === e.id ? <span className="font-semibold text-fg">{b.build}</span>
                           : <TextLink to={entityHref(b.id)}>{b.build}</TextLink>}</span>))}</span>
@@ -357,7 +349,7 @@ export default function MarkXEntityPage() {
               </ul>
             </section>
           ) : null}
-          {d.timeline ? <Timeline timeline={d.timeline} onAll={all} /> : null}{/* 0165 C; 0277: All asks for every event */}
+          {d.timeline ? <Timeline timeline={d.timeline} onAll={all} /> : null}
           {d.published?.length ? (
             <section aria-label="Published">
               <h2 className={H2}>Published</h2>
@@ -394,7 +386,7 @@ export default function MarkXEntityPage() {
             </section>
           ) : null}
           {d.queue.some((item) => !item.flag) ? (
-            // 0222: the rest is decided by its measured band or asked again: the operator's view, collapsed
+            // The rest is decided by its measured band or asked again: the operator's view, collapsed
             <details aria-label="Open questions (operator view)">
               <summary className="cursor-pointer text-[0.8125rem] text-fg-2">
                 Operator view: {plural(d.queue.filter((item) => !item.flag).length, 'open question')} about it

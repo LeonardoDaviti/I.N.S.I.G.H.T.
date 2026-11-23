@@ -16,9 +16,8 @@ export function searchKey(state: SearchState) {
 }
 
 /**
- * Search results (issue 0040) as the reader's list reads them: pages of feed rows, each with
- * its matching line. Nothing is fetched while the query is empty. A search shown again
- * within 30 seconds comes from the cache; later it asks again.
+ * Search results as the reader's list reads them: pages of feed rows with their matching line. Nothing is
+ * fetched while the query is empty; a search shown again within 30 seconds comes from the cache.
  */
 export function useSearch(state: SearchState) {
   const api = useApi();
@@ -48,7 +47,7 @@ export function useSearch(state: SearchState) {
         entries.push({ id: item.id, pageCursor });
       }
     });
-    // The entity cards the words name (issue 0139): the first page's, [] while Mark X is off.
+    // The entity cards the words name: the first page's, [] while Mark X is off.
     const entities: SearchEntity[] = data?.pages[0]?.entities ?? [];
     return { items, groups: [], entries, entities };
   }, [query.data]);

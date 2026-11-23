@@ -1,22 +1,11 @@
-"""Whose row a page is (issue 0167): a page's own source takes it back from a source that stored it first.
+"""Whose row a page is (0167): a page's own source takes it back from a source that stored it first. One rule for the
+live save and the repair (scripts/repair_own_pages_0167.py).
 
-A post is stored once, at its address (posts.url is unique). An aggregator (Hacker News, a link blog, a trending
-list) that stores a company's page first used to keep it for ever: the company's own followed source (its feed, its
-page watch) fetched the same address later and only updated that row, which stayed the aggregator's.
-
-The rule, one for the live save and the repair (scripts/repair_own_pages_0167.py):
-  - **A source owns a page** when it is a website source (a feed, a page watch, a Substack: `source_kind` "site",
-    never a platform account, Hacker News or Saved) whose own address is at the page's publication (`page_site`:
-    the host without www., and without a blog., news. or newsroom. label, so a site's blog and its pages are one;
-    two writers' subdomains of one platform are two). The live save adds the evidence that the source's own fetch
-    brought the address (its feed or page watch lists it); the repair asks the listing.
-  - **It takes the row back** from a holder that doesn't own it: the row (its id, so every story, reading, label,
-    News row and reader state on it) moves to the owner; the holder keeps a post of its own that cites the page
-    (`citation_address`): the page's address with CITATION_FRAGMENT and the holder's id, its text, date and
-    read state as they were, and metadata.cites {url, normalized_url, post_id}.
-  - **A holder that owns it too** (two sources of one site: a blog's feed and a page watch of one section) keeps it,
-    as before. A platform's post address (a tweet, a Telegram or Reddit post) never moves: one post, its reposts by.
-  - **The aggregator's later fetches** of a page its owner holds update its citation, never the owner's row.
+A post is stored once, at its address. A source owns a page when it is a website source (`source_kind` "site") whose
+own address is at the page's publication (`page_site`). It takes the row back from a holder that doesn't own it: the
+row (its id, so every story, reading, label and reader state on it) moves to the owner; the holder keeps a post of its
+own citing the page (`citation_address`, metadata.cites). A holder that owns it too keeps it. A platform's post address
+never moves. The aggregator's later fetches update its citation, never the owner's row.
 """
 from __future__ import annotations
 

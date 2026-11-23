@@ -1,9 +1,8 @@
-"""Issue 0252 (Stealth v10.28): track judging gaps. (1) a post from a source tied to the track, or linked by 2+ of
-the track's sources, is always asked, whatever its probe score (finders' ALWAYS finders); (2) a `track` answer that is
-no verdict (confidence 0, or a why naming nothing of the post) fails validation, is asked once more, then stays
-invalid, never "out"; (3) a guide change asks the old guide's verdicts of the last REASK_DAYS once more, newest first,
-a cap a day, the old answers kept; (4) Discover is newest first within confidence bands; (5) a post is judged per
-track. Invented tracks and posts only; the DB tests run on a database whose name ends in _test."""
+"""Track judging gaps (0252): (1) a post from a source tied to the track, or linked by 2+ of its sources, is always
+asked whatever its probe score; (2) a `track` answer that is no verdict fails validation, is asked once more, then
+stays invalid, never "out"; (3) a guide change asks the old guide's recent verdicts once more, newest first, capped a
+day, the old answers kept; (4) Discover is newest first within confidence bands; (5) a post is judged per track.
+Invented tracks and posts; DB tests on a _test database."""
 from __future__ import annotations
 
 import json
@@ -35,7 +34,7 @@ class Verdicts(unittest.TestCase):
 
     def check(self, answer, q=None):
         fit = {"subject": "the post", "fits": answer["in"], "matches": "tools and methods" if answer["in"] else None,
-               "excluded": None}   # v10.41 (track-v3): a stated fit that agrees with `in`
+               "excluded": None}   # a stated fit that agrees with `in`
         return validate.check("track", dict({"id": "x", "subtopic": None}, **fit, **answer),
                               self.Q if q is None else q)[1]
 
@@ -113,7 +112,7 @@ class AlwaysAsked(_Judging):
             p = self.post(title=f"Agent harness note {k}", source=self.third)
             self.vector(p, NEAR)
             ps.append(p)
-        self.post(title="A holiday photo", source=self.third)   # no vector: never asked before 0252
+        self.post(title="A holiday photo", source=self.third)   # no vector
         self.plan()
         for p in ps:
             self.judge(p, verdict(conf=0.9, why="An agent harness note."))

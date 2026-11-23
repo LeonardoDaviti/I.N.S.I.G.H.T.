@@ -1,5 +1,5 @@
-"""What Discover reads of the web for its first page (issue 0080): the follow test's labels, a page's
-title, read once in 30 days and stored with a date. Fixtures only: nothing is fetched.
+"""What Discover reads of the web for its first page (0080): the follow test's labels, a page's title, read once in 30
+days and stored with a date. Fixtures only: nothing is fetched.
 """
 from __future__ import annotations
 
@@ -68,8 +68,8 @@ def bridge_rss(user, items=2):
 
 
 class PlatformAccountTests(unittest.TestCase):
-    """Issue 0109 W1: a platform account is tested through the source kind INSIGHT follows it by, not the
-    feed finder on its web address (which found nothing on x.com and called 11 of 11 accounts headlines)."""
+    """W1: a platform account is tested through the source kind INSIGHT follows it by, not the feed finder on its web
+    address (0109)."""
 
     def registry(self, http=None):
         return KindRegistry.default(http or FakeHttp({}), None)
@@ -121,7 +121,7 @@ def site_rss(host, paths):
 
 
 class FeedOfThesePagesTests(unittest.TestCase):
-    """Issue 0109 W9: "Feed found" for a hub's owners, whose feed is the hub's own blog (it holds none of their pages)."""
+    """W9: "Feed found" for a hub's owners, whose feed is the hub's own blog (it holds none of their pages) (0109)."""
 
     def test_a_hubs_feed_is_not_its_owners(self):
         owner = ["https://hub.example/anowner/model-one", "https://hub.example/anowner/model-two"]
@@ -132,7 +132,7 @@ class FeedOfThesePagesTests(unittest.TestCase):
         got = asyncio.run(discover_reads.follow_test(http, KindRegistry.default(http, None), "https://hub.example/anowner",
                                                      owner + ["https://hub.example/blog/post-1"]))
         self.assertEqual(got, "other_feed", "the hub's blog post linked elsewhere is not the owner's")
-        # The hub's blog feed under another section (/blog/feed.xml) is not even found for an owner (v10.13.5).
+        # the hub's blog feed under another section (/blog/feed.xml) is not even found for an owner
         responses["https://hub.example/"] = page('<link rel="alternate" type="application/rss+xml" href="/blog/feed.xml">')
         responses["https://hub.example/blog/feed.xml"] = responses.pop("https://hub.example/feed.xml")
         http = FakeHttp(responses)

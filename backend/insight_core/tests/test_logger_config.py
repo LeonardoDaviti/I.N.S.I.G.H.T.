@@ -1,6 +1,4 @@
-"""The shared log files (issue 0188): many processes append to one file, rotated once by size, no line lost.
-
-No database."""
+"""The shared log files (0188): many processes append to one file, rotated once by size, no line lost. No database."""
 from __future__ import annotations
 
 import glob

@@ -15,11 +15,8 @@ import { useMarkxOn } from '../../hooks/useMarkxOn';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-/**
- * The activity sign: "fetching · 3 of 41" while an ingestion run or archive job runs,
- * "last fetch failed" for an hour after a failed run, nothing otherwise. It links to
- * the job in Sources → ingestion → jobs. Static text, so it never animates.
- */
+/** The activity sign: "fetching · 3 of 41" while an ingestion run or archive job runs, "last fetch failed" for an
+ *  hour after a failed run, nothing otherwise; links to the job. Static text, so it never animates. */
 function FetchActivity() {
   const jobs = useRunningJobs().data?.jobs;
   const nowMs = useNow(60_000).getTime();
@@ -40,10 +37,8 @@ function FetchActivity() {
 }
 
 /**
- * The one top bar (design docs system/information-architecture.md): the inverted INSIGHT wordmark on the left,
- * the activity sign beside it, the lowercase slash nav (`feed / sources / blog`) and the ⌘K switcher
- * on the right. A translucent material over the black page; its hairline appears only once content
- * scrolls beneath it (apple §12: no divider where nothing overlaps).
+ * The one top bar: the INSIGHT wordmark and the activity sign on the left, the slash nav and the ⌘K switcher on the
+ * right. A translucent material; its hairline appears only once content scrolls beneath it.
  */
 export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void }) {
   const { pathname } = useLocation();
@@ -52,10 +47,8 @@ export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void 
   const [scrolled, setScrolled] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  // A 2px sentinel at the top of the document: once it leaves the viewport,
-  // content is under the bar. An observer instead of a scroll listener, because
-  // reading window.scrollY on every scroll event forced a synchronous layout
-  // right after React commits (68ms self time while holding j in the feed).
+  // A 2px sentinel at the top of the document: once it leaves the viewport, content is under the bar. An observer,
+  // not a scroll listener: reading window.scrollY on every scroll forced a synchronous layout (slow j in the feed).
   useEffect(() => {
     const node = sentinelRef.current;
     if (!node || typeof IntersectionObserver === 'undefined') return undefined;
@@ -70,7 +63,7 @@ export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void 
     <header
       data-scrolled={scrolled || undefined}
       className={cn(
-        // Its height includes the notch, and its bar sits under it (issue 0073).
+        // its height includes the notch, and its bar sits under it
         'material sticky top-0 z-40 h-[var(--topbar-h)] border-b pt-[env(safe-area-inset-top)]',
         scrolled ? 'border-line' : 'border-transparent',
       )}

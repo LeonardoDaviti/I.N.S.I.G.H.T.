@@ -1,8 +1,5 @@
-"""The fetch schedule: one pure decision for "should this source be fetched now?".
-
-Pure - no DB, no clock. Everything goes through decide_fetch, fetch_interval, tier_for,
-backoff_delay and cadence_stats (spec §5.1). Expected values are worked by hand from the
-rules in spec §C.2, not recomputed the way the code does.
+"""The fetch schedule: one pure decision for "should this source be fetched now?" (no DB, no clock). Expected values
+are worked by hand from the rules, not recomputed the way the code does.
 """
 from __future__ import annotations
 
@@ -71,7 +68,7 @@ def decide(s: CadenceStats, profile: PolitenessProfile = RSS, **kwargs):
 
 class DecideFetchTests(unittest.TestCase):
     def test_a_story_linking_its_page_makes_it_due_once(self):
-        """Issue 0114: due now while no fetch succeeded since the link; backoff still wins."""
+        """Due now while no fetch succeeded since the link; backoff still wins (0114)."""
         page = "https://lab.example.com/news/a-release"
         d = decide(stats(linked_wanted_at=NOW - H / 2, linked_url=page))
         self.assertEqual((d.kind, d.fetch), (DecisionKind.FETCH_LINKED, True))
@@ -99,8 +96,7 @@ class DecideFetchTests(unittest.TestCase):
         self.assertTrue(due.fetch)
 
     def test_a_source_is_fetched_at_its_own_pace(self):
-        """Owner 2026-11-11: a source posting every 6h is fetched every 6h, not once a day; a slower
-        one keeps half its gap (at least daily), so none is fetched less often than before."""
+        """A source is fetched at its own gap; a slower one at half its gap (at least daily, at most 21 days)."""
         cases = [
             (timedelta(minutes=30), CadenceTier.FAST, 1 * H),       # every 30 min: every tick
             (6 * H, CadenceTier.FAST, 6 * H),                        # its own gap
@@ -132,7 +128,7 @@ class DecideFetchTests(unittest.TestCase):
         # 30m gap x 20 posts per fetch = the feed rolls over in 10h; its own pace (the tick) is sooner.
         s = stats(mean_gap=timedelta(minutes=30), max_posts_per_fetch=20)
         self.assertEqual(fetch_interval(s, RSS), (1 * H, "tier"))
-        # r/LocalLLaMA: a post every ~10 minutes, 25 in the feed = a 4.25h window: hourly.
+        # a post every ~10 minutes, 25 in the feed = a 4.25h window: hourly
         s = stats(mean_gap=timedelta(minutes=10.2), max_posts_per_fetch=25)
         self.assertEqual(fetch_interval(s, RSS), (1 * H, "tier"))
 
@@ -192,14 +188,14 @@ class DecideFetchTests(unittest.TestCase):
         self.assertEqual(d.kind, DecisionKind.FETCH_FORCED)
 
     def test_force_never_beats_ytdlp_off(self):
-        """Regression: the manual paths used to bypass the yt-dlp switch."""
+        """The manual paths obey the yt-dlp switch."""
         d = decide(stats(), YOUTUBE, force=True, availability=YTDLP_OFF)
         self.assertEqual(d.kind, DecisionKind.SKIP_UNAVAILABLE)
         self.assertFalse(d.fetch)
         self.assertIsNone(d.next_due_at)
 
     def test_ytdlp_off_is_unavailable_not_backoff(self):
-        """Regression for the 🚫 miscount: yt-dlp-off sources were counted as backoff."""
+        """yt-dlp-off sources are not counted as backoff."""
         d = decide(stats(consecutive_failures=4, next_retry_at=NOW + H), YOUTUBE,
                    availability=YTDLP_OFF)
         self.assertEqual(d.kind, DecisionKind.SKIP_UNAVAILABLE)
@@ -217,11 +213,8 @@ class DecideFetchTests(unittest.TestCase):
         self.assertIn("no Telegram session", d.detail)
 
     def test_rss_platform_source_of_youtube_kind_gets_the_ytdlp_rules(self):
-        """The rules read only the profile, which comes from the kind, never the platform.
-
-        A /feeds/videos.xml URL stored as platform rss resolves to youtube_channel, so it
-        must get the yt-dlp floor and switch - the Mark VIII code had two checks that
-        disagreed on exactly this source.
+        """The rules read only the profile, which comes from the kind, never the platform: a /feeds/videos.xml URL
+        stored as platform rss resolves to youtube_channel and gets the yt-dlp floor and switch.
         """
         s = stats(mean_gap=3 * D, tier=CadenceTier.MEDIUM, last_success_at=NOW - 48 * H)
         self.assertEqual(decide(s, YOUTUBE).kind, DecisionKind.SKIP_NOT_DUE)
@@ -353,7 +346,7 @@ class BackoffDelayTests(unittest.TestCase):
         self.assertEqual(self.band(10), (7 * D * 0.85, 7 * D))
 
     def test_the_other_servers_trouble_waits_at_most_12h_however_many_failures(self):
-        # Issue 0088: a 5xx or a timeout is never days; the ladder below the cap is the same.
+        # a 5xx or a timeout is never days; the ladder below the cap is the same (0088)
         trouble = lambda n, r: backoff_delay(n, rand=lambda: r, their_trouble=True)  # noqa: E731
         self.assertEqual((trouble(4, 0.0), trouble(4, 1.0)), self.band(4))
         for n in (5, 6, 10, 11, 500):

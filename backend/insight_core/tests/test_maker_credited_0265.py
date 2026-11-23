@@ -1,7 +1,6 @@
-"""Issue 0265: a maker's page reached through another source (Hacker News, a link blog, Saved) is credited to the
-maker: the byline names the followed source whose site the page is on as its author and the carrier as `via`
-("Example Labs News via Hacker News"), on Mark X's News lines and every view reading `bylines`. Display only.
-Invented names only."""
+"""A maker's page reached through another source is credited to the maker (0265): the byline names the followed source
+whose site the page is on and the carrier as `via`, on Mark X's News lines and every view reading `bylines`. Display
+only; invented names."""
 from __future__ import annotations
 
 import json

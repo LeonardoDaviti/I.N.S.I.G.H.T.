@@ -2,21 +2,21 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../../services/ApiContext';
-import { markxGraphApi, type MarkxEdgeAnswer } from '../../services/api';   // 0131
+import { markxGraphApi, type MarkxEdgeAnswer } from '../../services/api';
 import type { MarkxBefore, MarkxPostPanel } from '../../services/markx';
 import { Button, TextLink } from '../ui';
 import { judged, relationWords, whyWords } from '../../lib/markx';
-import { request } from '../../lib/request';   // 0133 v4.2
+import { request } from '../../lib/request';
 import { plural } from '../../lib/format';
 import { postBylineTime } from '../../lib/dates';
 import { bylineText } from '../../lib/byline';
-import MarkXTranslation from './MarkXTranslation';   // 0130 D
-import { TimelineLine } from './MarkXTimeline';       // 0165 D
+import MarkXTranslation from './MarkXTranslation';
+import { TimelineLine } from './MarkXTimeline';
 
 /**
- * The post page's "Mark X" panel (issue 0086 E), folded, loaded only when opened (its own chunk, and only while
- * Mark X is on): the post's reading, its entities and their roles, its Mark X stories with why it is in each, and
- * its connections, each with its reason; and (0131) the older posts it connects to, "Before".
+ * The post page's "Mark X" panel, folded, loaded only when opened (its own chunk, only while Mark X is on): the
+ * post's reading, its entities and their roles, its Mark X stories with why it is in each, its connections with
+ * their reasons, and the older posts it connects to ("Before").
  */
 export default function MarkXPanel({ postId, url }: { postId: string; url?: string | null }) {
   const api = useApi();
@@ -57,7 +57,7 @@ export default function MarkXPanel({ postId, url }: { postId: string; url?: stri
                 </p>
               ) : <p className="mt-1 text-fg-3">Not read yet: the worker reads the newest posts first.</p>}
             </section>
-            <MarkXTranslation postId={postId} where="panel" />{/* 0130 D */}
+            <MarkXTranslation postId={postId} where="panel" />
             <section aria-label="Entities">
               <h3 className="text-[0.75rem] font-medium text-fg-3">
                 Entities{data.entities_guide && data.entities_guide !== 'ent-v3' ? ` · ${data.entities_guide}` : ''}
@@ -66,7 +66,7 @@ export default function MarkXPanel({ postId, url }: { postId: string; url?: stri
                 <Entities postId={postId} items={data.entities.filter((e) => !CITED.has(e.role ?? ''))} />
               ) : <p className="mt-1 text-fg-3">None read yet.</p>}
             </section>
-            {/* 0133: the documents it names and its cited sources, under their roles */}
+            {/* the documents it names and its cited sources, under their roles */}
             {(data.documents?.length || data.sources?.length || data.recommended?.length) ? (
               <section aria-label="Documents and cited sources">
                 <h3 className="text-[0.75rem] font-medium text-fg-3">Documents and cited sources</h3>
@@ -122,10 +122,10 @@ export default function MarkXPanel({ postId, url }: { postId: string; url?: stri
   );
 }
 
-const CITED = new Set(['source', 'recommended']);   // 0133: listed under "Documents and cited sources"
+const CITED = new Set(['source', 'recommended']);   // listed under "Documents and cited sources"
 
-/** A post's entities, each opening its page; the citation rule's marked, a document's publisher after it (0133);
- *  the second question's marked, and right / wrong on each new entity (0133 v4.2). */
+/** A post's entities, each opening its page; the citation rule's marked, a document's publisher after it; the
+ *  second question's marked, and right / wrong on each new entity. */
 function Entities({ postId, items }: { postId: string; items: MarkxPostPanel['entities'] }) {
   return (
     <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
@@ -146,7 +146,7 @@ function Entities({ postId, items }: { postId: string; items: MarkxPostPanel['en
 
 type MentionAnswer = 'right' | 'wrong';
 type LabelMention = (postId: string, guide: string, n: number, answer: MentionAnswer) => Promise<{ label: MentionAnswer }>;
-/** 0133 v4.2: the label's call, here (the panel's chunk) and not in api.ts; a test's fake api may provide it. */
+/** The label's call, here (the panel's chunk) and not in api.ts; a test's fake api may provide it. */
 function markxMentionApi(api: object): { labelMarkxMention: LabelMention } {
   const got = (api as { labelMarkxMention?: unknown }).labelMarkxMention;
   return { labelMarkxMention: typeof got === 'function' ? (got as LabelMention)
@@ -154,7 +154,7 @@ function markxMentionApi(api: object): { labelMarkxMention: LabelMention } {
       { method: 'POST', body: { guide, n, answer } }) };
 }
 
-/** 0133 v4.2: the owner's right / wrong on one new entity (ent-v4.2 is measured on the server by these labels). */
+/** The owner's right / wrong on one new entity (ent-v4.2 is measured on the server by these labels). */
 function MentionButtons({ postId, entity }: { postId: string; entity: MarkxPostPanel['entities'][number] }) {
   const api = markxMentionApi(useApi());
   const client = useQueryClient();
@@ -178,23 +178,21 @@ function MentionButtons({ postId, entity }: { postId: string; entity: MarkxPostP
   );
 }
 
-/** What made an edge (0131): an author's link, entity identity, or the judge alone. */
+/** What made an edge: an author's link, entity identity, or the judge alone. */
 const RULE_WORDS: Record<string, string> = {
   author_link_other: 'the author links it',
   author_link_own: 'the source links its own post',
   entity_next_version: 'entities: the next version',
 };
 
-/**
- * The older posts this post connects to (issue 0131, Stalker's first edges), oldest first, with their relation and
- * the reason line. An edge the judge alone made is marked uncertain, with ✓ / ✗ (the owner's labels).
- */
+/** The older posts this post connects to, oldest first, with their relation and the reason line. An edge the judge
+ *  alone made is marked uncertain, with ✓ / ✗ (the owner's labels). */
 function BeforeList({ postId, rows, more, timeline }: { postId: string; rows: MarkxBefore[]; more: number;
   timeline: NonNullable<MarkxPostPanel['before_timeline']> }) {
   return (
     <section aria-label="Before">
       <h3 className="text-[0.75rem] font-medium text-fg-3">Before</h3>
-      {/* 0165 D: what came before in its subject's timeline (its birth, its last release, its first outside mention) */}
+      {/* what came before in its subject's timeline (its birth, its last release, its first outside mention) */}
       {timeline.map((t) => (
         <div key={t.entity.id} className="mt-1" data-timeline={t.entity.id}>
           <p className="text-fg-3">

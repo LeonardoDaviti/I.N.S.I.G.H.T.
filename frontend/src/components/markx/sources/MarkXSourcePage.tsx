@@ -25,7 +25,7 @@ const SIGNAL_TITLES: Record<string, string> = {
 
 type RecordStory = { story: string; title: string; first: boolean; post: string; other: string; hours: number; date_alone?: boolean };
 
-/** 0266: a track record story: first and how far ahead of your next source, or who was first and how much earlier. */
+/** A track record story: first and how far ahead of your next source, or who was first and how much earlier. */
 function RecordStories({ stories }: { stories: unknown }) {
   const st = list<RecordStory>(stories);
   if (!st.length) return null;
@@ -164,7 +164,7 @@ function Evidence({ s, tab }: { s: MarkxSourceSignal; tab: MarkxSourceTab }) {
     case 'audience':
       return <p className="text-fg-3">{String(ev.what ?? 'no audience data')}</p>;
     case 'followers': {
-      // 0132 C2: each channel's profile count, as last fetched
+      // each channel's profile count, as last fetched
       const chans = list<{ source: string; name: string; followers: number | null; label: string | null; fetched_at: string | null }>(ev.channels);
       if (!chans.length) return <p className="text-fg-3">{String(ev.what ?? 'no audience data')}</p>;
       return (
@@ -287,11 +287,9 @@ function TabBody({ tab }: { tab: MarkxSourceTab }) {
   );
 }
 
-/**
- * A voice's or a source's analysis (0132 B, `/markx/sources/<id>`): a tab per channel (a voice's own first), one card
- * per signal, each with its number, a one-line formula, clickable evidence posts, and "too few to tell" below its
- * threshold. Rows only: the page computes nothing.
- */
+/** A voice's or a source's analysis (`/markx/sources/<id>`): a tab per channel (a voice's own first), one card per
+ *  signal with its number, formula, evidence posts, and "too few to tell" below its threshold. Rows only: the page
+ *  computes nothing. */
 export default function MarkXSourcePage() {
   const { sourceId = '' } = useParams();
   const api = markxSourcesApi(useApi());

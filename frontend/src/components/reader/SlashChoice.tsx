@@ -2,11 +2,8 @@ import { Fragment } from 'react';
 
 import { FOCUS_RING } from '../states';
 
-/**
- * A radio group drawn in the top bar's language: lowercase words separated by
- * slashes, the current one bold and underlined. No pills, no fills. Each word is
- * a 36px target (44px on touch), padded so the slash gaps do not shrink it.
- */
+/** A radio group in the top bar's language: lowercase words between slashes, the current one bold and underlined;
+ *  each word a 36px target (44px on touch). */
 export default function SlashChoice<T extends string>({ label, value, options, onChange, className = '' }: {
   label: string;
   value: T;

@@ -1,10 +1,6 @@
-"""A gift link's token, and a share mark, are kept for clicking and ignored for matching (issue 0126 (1)).
-
-The rule is url_normalization's: every compared address drops an access token (a key naming a token, gift, unlock or
-access, or a signed JWT value) and a share mark (who shared the page, never which). A link keeps the address its
-post wrote in post_links.shared_url; a story's outside origin opens it (`href`). Links stored before are read again
-from their post's stored HTML, and a post's own address is rewritten (migration 0073); the story sample holds the
-case, so the rules' stamp regroups every story once (test_stamps).
+"""A gift link's token, and a share mark, are kept for clicking and ignored for matching (0126): every compared address
+drops an access token and a share mark; a link keeps the address its post wrote in post_links.shared_url; stored links
+are read again and a post's own address rewritten (migration 0073).
 """
 from __future__ import annotations
 
@@ -33,7 +29,7 @@ from insight_core.utils.post_links import extract_links
 MIGRATION = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0073_access_tokens.sql"
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IngifQ.c2lnbmF0dXJl"
 PAGE = "https://paper.example.com/2026/11/04/the-budget-story"
-# The kinds of key the server's copy holds (0126's measure), on made-up addresses.
+# The kinds of key seen, on made-up addresses.
 KEYED = [
     f"{PAGE}?accessToken={JWT}", f"{PAGE}?unlocked_article_code=1.N1E.abc", f"{PAGE}?gift=5MjK",
     f"{PAGE}?giftId=OWRh", f"{PAGE}?view_token={JWT}", f"{PAGE}?access_token=x", f"{PAGE}?pwapi_token=x",
@@ -116,7 +112,7 @@ class MigrationTests(unittest.TestCase):
             for position, target in enumerate(links):
                 self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position) VALUES (%s, %s, %s, %s)",
                                  (rows[name], target, "example.com", position))
-        # A post whose own address is a gift link, stored by the rule before (normalized_url kept the token).
+        # a post whose own address is a gift link, stored before (normalized_url kept the token)
         own = {}
         for url in (f"https://www.paper-{self.mark}.example.com/a/b?accessToken={JWT}&id=3",
                     f"https://paper-{self.mark}.example.com/c?smid=x&unlocked_article_code=1.a",

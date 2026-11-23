@@ -287,7 +287,7 @@ cmd_clone() {
   exists "$src" || die "$src does not exist (scripts/prepared-db.sh build ${set#prep_})"
   [[ "$new" == prep_* || "$new" == insight || "$new" == insight_lab || "$new" == insight_server_1105* ]] && die "refusing to create $new"
   exists "$new" && die "$new exists already (scripts/prepared-db.sh drop $new)"
-  cmd_prune   # 2026-11-19: clones left behind filled the scratch server to 99 GB
+  cmd_prune   # clones left behind fill the scratch server
   local used; used=$(admin "SELECT sum(pg_database_size(datname)) / 1073741824 FROM pg_database")
   (( ${used%.*} < CAP_GB )) || die "the scratch server holds ${used%.*} GB (cap ${CAP_GB}): drop your clones (scripts/prepared-db.sh clones)"
   local t0; t0=$(date +%s%N)
@@ -312,7 +312,7 @@ cmd_drop() {
   fi
 }
 
-cmd_adopt() {   # adopt <set> <db on insight-db>: a database made there (before v10.17) copied over as prep_<set>
+cmd_adopt() {   # adopt <set> <db on insight-db>: a database made there copied over as prep_<set>
   local set="$1" src="$2"; valid_name "$src"; source_of "$set" >/dev/null
   local target="prep_$set" building="prep_${set}__building"
   [ "$(docker exec "$SRC_CONTAINER" psql -X -At -U insight -d postgres -c "SELECT datallowconn FROM pg_database WHERE datname = '$src'")" = t ] \
@@ -333,7 +333,7 @@ cmd_list() {
            FROM pg_database WHERE datname LIKE 'prep\\_%' ORDER BY 1" | python3 "$ROOT/scripts/prep/list.py"
 }
 
-cmd_clones() {   # every clone, its size and age (hours; ? = made before clones carried their time), the server's total
+cmd_clones() {   # every clone, its size and age (hours; ? = unknown), the server's total
   admin "SELECT datname || E'\t' || pg_size_pretty(pg_database_size(datname)) || E'\t' ||
                 coalesce(((extract(epoch FROM now()) - (shobj_description(oid, 'pg_database')::json->>'at')::numeric) / 3600)::int::text, '?')
            FROM pg_database WHERE shobj_description(oid, 'pg_database') LIKE '{\"clone_of\"%' ORDER BY pg_database_size(datname) DESC"

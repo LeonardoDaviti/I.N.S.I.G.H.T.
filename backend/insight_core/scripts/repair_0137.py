@@ -2,23 +2,18 @@
 
     python -m insight_core.scripts.repair_0137 [--db DSN] [--dry-run] [--collapsed] [--authors] [--telegram]
 
-Collapsed feeds (B1): a feed whose items had no link of their own were all stored as one post at the
-feed's own address (a podcast of 282 episodes as 1 post). Each source holding a post at its own address
-has its conditional validators dropped, so its next fetch reads the feed in full: the items are stored
-again, each at its identity (parsing.item_identity). Nothing is fetched here. The collapsed post is kept,
-marked metadata.collapsed_repair_0137 {at, source}: a source is re-read once, a second run finds nothing.
+Collapsed feeds: a feed whose items had no link of their own was stored as one post at the feed's address. Each
+such source has its validators dropped, so its next fetch reads the feed in full and stores each item at its
+identity. Nothing is fetched here; the collapsed post is kept, marked metadata.collapsed_repair_0137.
 
-Authors (B7): a stored author line that holds affiliations or identifiers ("Sam B. KimDepartment of
-Psychology…", "…https://ror.org/…") is read again by parsing.clean_authors; the old list is kept in
-metadata.authors_repair_0137. No request; a second run finds nothing (each is marked).
+Authors: a stored author line holding affiliations or identifiers is read again by parsing.clean_authors; the
+old list is kept in metadata.authors_repair_0137.
 
-Telegram dates (A4): a bridge post whose channel is also followed through MTProto (Telegram's own message
-date) takes that message's date; the bridge's is kept in metadata.bridge_date, date_from "mtproto". The
-measured widening of 0135's message-order cap to every post (interpolating between neighbours) is not
-applied: on the 179 posts checked against t.me it made wrong-day posts 18 -> 19..36 (plan/issues/0137-built.md).
+Telegram dates: a bridge post whose channel is also followed through MTProto takes that message's date; the
+bridge's is kept in metadata.bridge_date.
 
-The ingestion process runs it at each start (logged); this runs it by hand. Prints the summary as JSON.
-No post or row is removed.
+The ingestion process runs it at each start; this runs it by hand. A second run finds nothing. Prints the
+summary as JSON. No post or row is removed.
 """
 from __future__ import annotations
 
@@ -50,12 +45,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# --------------------------------------------------------------------------- collapsed feeds
-
-
 def collapsed_posts(cur) -> List[tuple]:
-    """(post id, source id, source address) of the unmarked posts stored at their own feed's address (a
-    followed page, page watch, posts its own page by design: not one)."""
+    """(post id, source id, source address) of the unmarked posts stored at their own feed's address (a page watch,
+    which posts its own page by design, excepted)."""
     cur.execute("""SELECT id, handle_or_url FROM sources WHERE handle_or_url ~* '^https?://' AND platform = 'rss'
                      AND jsonb_typeof(coalesce(settings, '{}'::jsonb) -> 'page_watch') IS DISTINCT FROM 'object'""")
     found: List[tuple] = []
@@ -78,15 +70,12 @@ def repair_collapsed(db_url: str, *, dry_run: bool = False) -> Dict[str, Any]:
                 cur.execute("UPDATE posts SET metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb WHERE id = %s",
                             (json.dumps({COLLAPSED_MARK: {"at": _now(), "source": handle}}), post_id))
             for source_id in sources:
-                # Its next fetch reads the feed in full (no 304): every item stored at its identity.
+                # its next fetch reads the feed in full (no 304)
                 cur.execute("DELETE FROM source_fetch_validators WHERE source_id = %s", (source_id,))
             conn.commit()
             for handle in sorted({handle for _, _, handle in found}):
                 logger.info("Collapsed feed: %s is read again in full at its next fetch", handle)
     return {"collapsed_posts": len(found), "sources": len(sources)}
-
-
-# --------------------------------------------------------------------------- authors
 
 
 def author_fixes(rows: Sequence[tuple]) -> List[tuple]:
@@ -115,9 +104,6 @@ def repair_authors(db_url: str, *, dry_run: bool = False) -> Dict[str, Any]:
     return {"glued_authors": len(fixes)}
 
 
-# --------------------------------------------------------------------------- Telegram dates
-
-
 def bridge_channels(cur) -> Dict[str, List[str]]:
     """channel (lower case) -> the ids of the sources reading it through a Telegram RSS bridge."""
     cur.execute("SELECT id, handle_or_url FROM sources WHERE handle_or_url ~* '^https?://[^/]+/rss/[^/?]+'")
@@ -129,7 +115,7 @@ def bridge_channels(cur) -> Dict[str, List[str]]:
 
 
 def repair_telegram(db_url: str, *, dry_run: bool = False) -> Dict[str, Any]:
-    """Bridge posts take the message date of the same message read through MTProto (A4)."""
+    """Bridge posts take the message date of the same message read through MTProto."""
     moved = 0
     with db.connection(db_url) as conn, conn.cursor() as cur:
         channels = bridge_channels(cur)
@@ -154,9 +140,6 @@ def repair_telegram(db_url: str, *, dry_run: bool = False) -> Dict[str, Any]:
         if not dry_run:
             conn.commit()
     return {"channels_on_both": len(both), "dated_by_mtproto": moved}
-
-
-# --------------------------------------------------------------------------- the start
 
 
 def repair_safely(db_url: str) -> Optional[Dict[str, Any]]:

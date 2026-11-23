@@ -2,11 +2,7 @@ import { Dialog, DialogContent, Kbd, Switch } from '../ui';
 import { useShortcutPreference } from '../../hooks/useShortcutPreference';
 import { SHORTCUT_ROWS } from '../../lib/shortcuts';
 
-/**
- * The `?` dialog: the key map plus the "Keyboard shortcuts" on/off switch
- * (WCAG 2.1.4). When off, only `?` stays bound. Built on the Dialog, Kbd and
- * Switch primitives, so it shares their scrim, surface and motion.
- */
+/** The `?` dialog: the key map plus the "Keyboard shortcuts" switch (WCAG 2.1.4); when off, only `?` stays bound. */
 export default function ShortcutHelp({ open, onOpenChange, feedContext = true }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;

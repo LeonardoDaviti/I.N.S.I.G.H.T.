@@ -1,7 +1,6 @@
-"""The app's functions the checks call, imported so an older checkout still runs them (issue 0075:
-realdata-check.sh copies this package into main's tree, or a past commit's, to snapshot it). A version
-that stores each post's parts (issue 0076) is read from them, as its pages read it; the parsers are
-imported here on purpose (the import guard of tests/test_post_parts.py exempts this file)."""
+"""The app's functions the checks call, imported so an older checkout still runs them (realdata-check.sh copies this
+package into main's tree, or a past commit's). A version that stores each post's parts is read from them, as its pages
+read it; the parsers are imported here on purpose (the import guard of tests/test_post_parts.py exempts this file)."""
 from __future__ import annotations
 
 from typing import Callable, Optional, Tuple
@@ -11,11 +10,11 @@ TITLE_HTML_CHARS = 2000
 
 
 def title_function() -> Callable[..., str]:
-    """The title every page shows a stored post by: post_title (0072 D1), else display_title."""
+    """The title every page shows a stored post by: post_title, else display_title."""
     try:
         from insight_core.utils.post_fields import post_title
         return post_title
-    except ImportError:   # before 0072 D1
+    except ImportError:   # an older version without post_title
         from insight_core.utils.post_fields import display_title
         return display_title
 
@@ -48,8 +47,8 @@ def link_target_function() -> Optional[Callable[[Optional[str]], Optional[str]]]
 
 
 def stored_parts():
-    """(BODY_COLUMNS, body) when this version reads each post's stored parts (issue 0076: post_parts, as
-    every page reads them), else None: the checks read what the pages read."""
+    """(BODY_COLUMNS, body) when this version reads each post's stored parts (post_parts, as every page reads them),
+    else None: the checks read what the pages read."""
     try:
         from insight_core.db.repo_post_parts import BODY_COLUMNS, body
         return BODY_COLUMNS, body
@@ -66,7 +65,7 @@ def normalize(url: str) -> str:
 
 
 def phrases_function() -> Optional[Callable[[Optional[str]], set]]:
-    """news_rules.phrases(title): where a title says a name, as this version's name rule reads it (issue 0104)."""
+    """news_rules.phrases(title): where a title says a name, as this version's name rule reads it."""
     try:
         from insight_core.utils.news_rules import phrases
         return phrases

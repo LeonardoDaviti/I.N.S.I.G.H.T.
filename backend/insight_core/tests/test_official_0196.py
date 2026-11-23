@@ -1,5 +1,5 @@
-"""Issue 0196 (Stealth v10.18): official channels and the item filter. The rules on plain values, the pass on a database
-whose name ends in _test with a fake test read and the worker's answers through the API (invented names only)."""
+"""Official channels and the item filter (0196): the rules on plain values, the pass on a _test database with a fake
+test read and the worker's answers through the API (invented names only)."""
 from __future__ import annotations
 
 import json
@@ -415,7 +415,7 @@ class RankedByFit(unittest.TestCase):
         self.assertEqual([r["key"] for r in order(rows)], ["x.com/practitioner", "middle.example", "big-news.example"])
 
     def test_the_worker_checks_first_the_fastest_growing(self):
-        # 0235: source_judge.daily owns the pick (was official.to_check: the sources read most, in the first 300 rows)
+        # source_judge.daily owns the pick (0235)
         from insight_core.markx import source_judge
         sgs = [{"key": "big-news.example", "growth": 0.1, "score": 9.0},
                {"key": "x.com/practitioner", "growth": 1.9, "score": 2.8},

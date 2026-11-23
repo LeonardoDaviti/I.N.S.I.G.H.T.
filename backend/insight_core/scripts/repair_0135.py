@@ -2,21 +2,17 @@
 
     python -m insight_core.scripts.repair_0135 [--db DSN] [--dry-run] [--dates] [--transcripts] [--limit N]
 
-Dates: a Telegram bridge post dated by its edit (posted 2 Sep, shown 20 Sep). Within each bridge source
-(telegram_rss.TELEGRAM_RSS_HOSTS, /rss/<channel>) a post dated after a post numbered after it takes the
-earliest date of those, as a fetch now reads it (telegram_rss.message_order_dates): `published_at`
-moves, the old date is kept in metadata.bridge_date. Nothing is fetched; a second run finds nothing.
+Dates: a Telegram bridge post dated by its edit. Within each bridge source a post dated after a post numbered
+after it takes the earliest of those dates (telegram_rss.message_order_dates); the old date is kept in
+metadata.bridge_date. Nothing is fetched; a second run finds nothing.
 
-Transcripts: a stored video whose transcript is YouTube's machine translation (an automatic track in
-another language than the video's: metadata.video_language, else its title's) or raw caption markup
-("<?xml…><transcript>"). Each is read again through the normal path (YouTubeService._build_video_post:
-the video's own track, as plain text) and its text replaced in place; the track it replaced is kept in
-metadata.transcript_repair_0135 {from, chars, at, result}. Once each: a post tried is marked, whatever
-came back, except a bot check, which stops the run and leaves the rest for the next one. Within budgets:
-at most --limit videos a run (TRANSCRIPTS_PER_START at a start), PACE_S apart, never with yt-dlp off.
+Transcripts: a stored video whose transcript is YouTube's machine translation or raw caption markup is read
+again (YouTubeService._build_video_post) and its text replaced in place; the old track is kept in
+metadata.transcript_repair_0135. Once each (a post tried is marked), except a bot check, which stops the run.
+At most --limit videos a run (TRANSCRIPTS_PER_START at a start), PACE_S apart, never with yt-dlp off.
 
-The ingestion process runs it at each start (logged; the dates once, the transcripts a budget at a time
-until none is left); this runs it by hand. Prints the summary as JSON. No post or row is removed.
+The ingestion process runs it at each start; this runs it by hand. Prints the summary as JSON. No post or row
+is removed.
 """
 from __future__ import annotations
 
@@ -49,9 +45,6 @@ PACE_S = 3.0               # yt-dlp's start spacing (kinds/youtube.py's pool)
 MARKUP_RE = re.compile(r"^\s*<(?:\?xml|transcript|timedtext|tt\b|text\b)", re.IGNORECASE)
 
 
-# --------------------------------------------------------------------------- dates
-
-
 def bridge_sources(cur) -> List[tuple]:
     """(id, handle) of every source read through a Telegram RSS bridge."""
     cur.execute("SELECT id, handle_or_url FROM sources WHERE handle_or_url ~* '^https?://[^/]+/rss/[^/?]+'")
@@ -60,8 +53,8 @@ def bridge_sources(cur) -> List[tuple]:
 
 
 def date_fixes(rows: Sequence[tuple]) -> List[tuple]:
-    """(post id, old date, new date) for the posts dated after a post numbered after them. rows: (id,
-    external_id, published_at) of one source."""
+    """(post id, old date, new date) for the posts dated after a post numbered after them. rows: (id, external_id,
+    published_at) of one source."""
     fixes, floor = [], None
     for post_id, _, published in sorted((r for r in rows if str(r[1] or "").isdigit()),
                                         key=lambda r: int(r[1]), reverse=True):
@@ -95,9 +88,6 @@ def repair_dates(db_url: str, *, dry_run: bool = False) -> Dict[str, Any]:
     return {"edit_dated": found, "fixed": fixed}
 
 
-# --------------------------------------------------------------------------- transcripts
-
-
 def needs_transcript(post: Dict[str, Any]) -> Optional[str]:
     """Why the stored transcript is wrong: "markup", "translation", else None."""
     meta = post.get("metadata") or {}
@@ -110,8 +100,7 @@ def needs_transcript(post: Dict[str, Any]) -> Optional[str]:
     track = base_language(source.split(":", 1)[1])
     video = base_language(meta.get("video_language"))
     if not video:
-        # Only a title's script tells its language: the stopword guess reads English titles as Portuguese
-        # (44 of 54 stored "translations" on the server's copy were English videos so misread).
+        # only a title's script tells its language: the stopword guess misreads English titles
         detected = detect_language(post.get("title") or "")
         script = (detected.get("signals") or {}).get("script")
         video = base_language(str(detected["language_code"])) if script in ("cyrillic", "georgian") else ""
@@ -164,7 +153,7 @@ def repair_transcripts(db_url: str, *, dry_run: bool = False, limit: Optional[in
             logger.info("Transcripts: %s could not be read again (%s)", post["url"], str(exc)[:200])
         with db.connection(db_url) as conn, conn.cursor() as cur:
             meta = (fresh or {}).get("metadata") or {}
-            # Another track, or the same one now read as plain text (it was stored as markup).
+            # another track, or the same one now read as plain text
             if (fresh and meta.get("transcript_source") and fresh.get("content")
                     and (meta["transcript_source"] != mark["from"] or post["why"] == "markup")):
                 posts.save_full_text(cur, post["id"], {**fresh, "metadata": {**meta, MARK: {**mark, "result": "replaced"}}})
@@ -176,9 +165,6 @@ def repair_transcripts(db_url: str, *, dry_run: bool = False, limit: Optional[in
             conn.commit()
     logger.info("Transcripts: %s", summary)
     return summary
-
-
-# --------------------------------------------------------------------------- the start
 
 
 def repair_safely(db_url: str) -> Optional[Dict[str, Any]]:

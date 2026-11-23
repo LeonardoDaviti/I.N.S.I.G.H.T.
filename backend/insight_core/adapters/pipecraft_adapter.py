@@ -1,12 +1,7 @@
 """Tornike Gomareli's blog, pipecraft.me: a client-rendered site with no feed.
 
-The page is an empty shell filled in by JavaScript. The posts come from the site's own
-JSON API, the one its pages call:
-  /api/posts                    the index: {"posts": [...], "essays": [...], "projects": [...],
-                                "talks": [...]}, each entry {slug, title, date, section, ...}
-  /api/posts/<section>/<slug>   one entry plus "content", the post's whole HTML
-A post is an entry of "posts" or "essays" (the site's own writing list); projects and talks
-are product pages and videos. Any pipecraft.me URL is the whole blog.
+Posts come from the site's own JSON API: /api/posts (the index) and /api/posts/<section>/<slug> (one entry with its
+HTML). A post is an entry of "posts" or "essays"; projects and talks are not. Any pipecraft.me URL is the whole blog.
 """
 
 from __future__ import annotations

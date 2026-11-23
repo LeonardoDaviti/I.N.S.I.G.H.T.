@@ -3,9 +3,8 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 
 import BlogPage from './BlogPage';
-// The post's body is a lazy chunk. Imported here, so rendering inside act() resolves it in the
-// same turn: the long article's render (~0.3 s idle, over findBy's 1 s on a loaded machine)
-// is awaited, not raced against a timeout.
+// The post's body is a lazy chunk, imported here so rendering inside act() resolves it in the same turn
+// (the long article's render is awaited, not raced against findBy's timeout).
 import '../blog/posts/junior-to-senior';
 import { POSTS } from '../blog/posts';
 import { makeFakeApi } from '../test/fakeApi';

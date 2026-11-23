@@ -3,10 +3,7 @@ import { Button, ExternalLink } from '../components/ui';
 import { cn } from '../lib/utils';
 import { highlight, TOKEN_CLASS, type Lang } from '../lib/highlight';
 
-/*
- * The blog's building blocks. Monochrome like the rest of the app
- * (plan/INSIGHT_mark_ix_design.md): hierarchy by weight, size and space, never hue.
- */
+// The blog's building blocks, monochrome like the rest of the app: hierarchy by weight, size and space, never hue.
 
 /** A section heading with an anchor, so a paragraph can be linked to. */
 export function H2({ id, children }: { id: string; children: ReactNode }) {
@@ -41,7 +38,7 @@ export function Cite({ href, children }: { href: string; children: ReactNode }) 
 
 const tidy = (code: string) => code.replace(/^\n/, '').replace(/\s+$/, '');
 
-/** Highlighted code: monochrome tokens (weight, tone, slant), never hue (P2). */
+/** Highlighted code: monochrome tokens (weight, tone, slant), never hue. */
 function Highlighted({ code, lang }: { code: string; lang: Lang }) {
   return (
     <code data-lang={lang}>
@@ -54,7 +51,6 @@ function Highlighted({ code, lang }: { code: string; lang: Lang }) {
 
 const PRE = 'overflow-x-auto rounded-md border border-line bg-surface p-4 font-mono text-[0.8125rem] leading-[1.6] text-fg';
 
-/** A real code excerpt, with where it lives. */
 export function Code({ caption, lang = 'text', children }: { caption?: ReactNode; lang?: Lang; children: string }) {
   return (
     <figure className="mt-6">
@@ -131,10 +127,7 @@ export interface QuizQuestion {
   why: ReactNode;
 }
 
-/**
- * Retrieval practice: answer from memory, check, read why. Nothing is stored;
- * "try again" resets the question so it can be retrieved again later.
- */
+/** Retrieval practice: answer from memory, check, read why. Nothing is stored; "try again" resets the question. */
 export function Quiz({ questions }: { questions: QuizQuestion[] }) {
   return (
     <ol className="mt-6 space-y-6">

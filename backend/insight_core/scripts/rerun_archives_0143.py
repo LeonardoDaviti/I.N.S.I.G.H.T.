@@ -2,19 +2,14 @@
 
     python -m insight_core.scripts.rerun_archives_0143 [--db DSN] [--dry-run]
 
-A feed source (generic RSS) is selected when its archive says `archived` but never ran (`last_archived_at` empty:
-the plan measured the feed alone and a live fetch called it archived), or its stored count is about its feed's
-(stored >= what the feed lists - 1: a feed that lists its latest 10 to 30 posts and nothing more was read). Each is
-planned again (the ladder: its platform, every strategy's probe, the site's estimate), one source at a time,
-PLAN_GAP_S apart; where a strategy finds more, an archive is queued (one per host lane, 0107's waits and gates).
-Telegram, X and every other kind are untouched. Each source is marked `settings.archive.rerun_0143` {at, outcome}:
-a later start finds nothing to plan, and the run resumes where a stop left it.
+A generic RSS source is selected when its archive says `archived` but never ran, or its stored count is about
+its feed's. Each is planned again (the archive ladder), one source at a time, PLAN_GAP_S apart; where a strategy
+finds more, an archive is queued. Other kinds are untouched. Each source is marked
+`settings.archive.rerun_0143` {at, outcome}, so the run resumes and a later start finds nothing.
 
-The ingestion process runs it at each start (`rerun_safely`, a thread, logged); this runs it by hand. Its summary
-(system_settings `archive_rerun_0143`): selected, planned, queued, nothing more, errors, the platforms, the reasons
-of the ones left partial, the requests the plans spent, and how many went from capped to full (their archive since
-says archived). Nothing when INSIGHT_DISCOVER_READS=0 (a machine that must not fetch) or INSIGHT_ARCHIVE_RERUN=0.
-No post or row is removed.
+The ingestion process runs it at each start (`rerun_safely`); this runs it by hand. Its summary is kept in
+system_settings `archive_rerun_0143`. Nothing when INSIGHT_DISCOVER_READS=0 or INSIGHT_ARCHIVE_RERUN=0. No post
+or row is removed.
 """
 from __future__ import annotations
 
@@ -181,8 +176,8 @@ def _keep_summary(db_url: str, summary: Dict[str, Any]) -> None:
 
 
 def rerun_safely(db_url: str) -> Optional[Dict[str, Any]]:
-    """The ingestion process's start (issue 0143): the capped feeds planned again once and their archives queued,
-    logged, the summary kept; resumable. Never raises."""
+    """The ingestion process's start: the capped feeds planned again once and their archives queued, logged, the
+    summary kept; resumable. Never raises."""
     if os.getenv("INSIGHT_DISCOVER_READS", "1") == "0" or os.getenv("INSIGHT_ARCHIVE_RERUN", "1") == "0":
         return None
     try:

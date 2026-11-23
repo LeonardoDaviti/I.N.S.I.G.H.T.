@@ -1,23 +1,11 @@
-"""The Telegram client edge for the telegram_mtproto kind (spec §B8, §3).
+"""The Telegram client edge for the telegram_mtproto kind: the only module that imports Telethon, lazily.
 
-This is the only ingestion module that knows Telethon exists, and it imports it lazily:
-inside TelethonClientFactory.create() and translate_telethon_error(). Importing ingestion,
-the kinds or this module never pulls Telethon into sys.modules.
-
-- TelegramClientPort: the small async surface the kind uses (connect, authorisation check,
-  get_entity, get_messages). The test adapter is tests/test_telegram_kind.FakeTelegramClient.
-- TelethonClientFactory: builds a TelethonClient (the port over telethon.TelegramClient),
-  with flood_sleep_threshold=0 so every FloodWaitError reaches the kind instead of being
-  slept inside Telethon. Credentials and the session come through the credential seam
-  (Sources → Connections only): the session is the StringSession saved by the browser
-  sign-in. It never calls client.start().
-- TelethonLoginClient: the browser sign-in's port (send code, sign in with the code, then
-  the 2FA password), its Telethon errors turned into TelegramLoginError messages.
-- TelegramFloodWait / TelegramChannelError: what Telethon's errors become. A channel error
-  is the channel's problem (source error, backoff applies); a flood wait is the account's.
-- PgAdvisorySessionLock: one Telegram session must not be used by two processes at once
-  (the API's test and an ingestion run), so a session is only opened under
-  pg_try_advisory_lock(hashtext('insight.telegram_session')).
+- TelegramClientPort: the async surface the kind uses (fake: tests/test_telegram_kind.FakeTelegramClient).
+- TelethonClientFactory: the real client, flood_sleep_threshold=0 so every flood wait reaches the kind; credentials
+  and the browser sign-in's StringSession come from Connections only; never calls client.start().
+- TelethonLoginClient: the browser sign-in's port (code, then 2FA password).
+- TelegramFloodWait / TelegramChannelError: a channel error is the source's (backoff); a flood wait is the account's.
+- PgAdvisorySessionLock: one session is never used by two processes at once.
 """
 from __future__ import annotations
 
@@ -41,9 +29,8 @@ def _provider(credentials: Any) -> Any:
 
 
 def telegram_credentials(*, credentials: Any = None) -> tuple[Optional[int], Optional[str], Optional[str]]:
-    """(api_id, api_hash, reason): reason names what is missing, None when both are usable.
-
-    Read from `credentials` (a CredentialProvider), default the Connections store.
+    """(api_id, api_hash, reason): reason names what is missing, None when both are usable. Read from
+    `credentials`, default the Connections store.
     """
     provider = _provider(credentials)
     raw_id = (provider.get("telegram", "api_id") or "").strip()
@@ -96,7 +83,7 @@ class TelegramClientPort(Protocol):
     async def get_messages(self, entity: Any, *, limit: int, offset_id: int = 0,
                            reverse: bool = False) -> Sequence[Any]: ...   # newest first; `.total` when known
 
-    async def get_full(self, entity: Any) -> Any: ...   # the channel's full info (0132 C2): full_chat.about, participants_count
+    async def get_full(self, entity: Any) -> Any: ...   # the channel's full info: full_chat.about, participants_count
 
 
 class TelegramClientFactory(Protocol):
@@ -151,7 +138,7 @@ class TelethonClient:
             raise translated from exc
 
     async def get_full(self, entity: Any) -> Any:
-        """GetFullChannelRequest (issue 0132 C2): the channel's about and subscriber count, one request."""
+        """GetFullChannelRequest: the channel's about and subscriber count, one request."""
         from telethon.tl.functions.channels import GetFullChannelRequest
         try:
             return await self.telethon(GetFullChannelRequest(entity))
@@ -203,7 +190,7 @@ class TelethonClientFactory:
             session,
             api_id,
             api_hash,
-            flood_sleep_threshold=0,    # every FloodWaitError reaches the kind (bounded rule, §D.2)
+            flood_sleep_threshold=0,    # every FloodWaitError reaches the kind (its bounded rule)
             receive_updates=False,      # a fetcher, not a chat client
         )
         return TelethonClient(client)
@@ -293,10 +280,8 @@ class TelethonLoginClient:
 
 
 class PgAdvisorySessionLock:
-    """The run lock's shape (try_acquire() -> async context yielding bool) on the session key.
-
-    The database URL is resolved when the lock is taken, so building the default kind
-    registry never needs a database.
+    """The run lock's shape (try_acquire() -> async context yielding bool) on the session key. The database URL is
+    resolved when the lock is taken, so building the kind registry needs no database.
     """
 
     def __init__(self, db_url: Optional[str] = None, key: str = SESSION_LOCK_KEY) -> None:

@@ -1,16 +1,9 @@
 """youtube_channel: a channel read through yt-dlp (services/youtube_service.py).
 
-yt-dlp is a subprocess that can run for minutes, and YouTubeService calls it with a
-blocking communicate(). Awaited bare from an async def it freezes the event loop - /health
-included, which flips the API container unhealthy - so every call goes through a worker
-thread (blocking_io=True). That now covers the archive too, which used to run on the loop.
-
-The profile carries the rest of yt-dlp's policy:
-  - the ytdlp concurrency pool (2 at once, starts spaced 3s): YouTube's bot detection is
-    per IP, and 22 channels fired together guarantee "Sign in to confirm you're not a bot"
-  - requires="ytdlp": INSIGHT_YTDLP_ENABLED=0 makes every channel unavailable
-  - a 168h cadence floor: channels publish ~10 videos a month
-  - min 15 posts per fetch: over a week, anything past a stored limit of 5 would be dropped
+yt-dlp is a blocking subprocess that can run for minutes, so every call goes through a worker thread
+(blocking_io=True) or it would freeze the event loop, /health included. The profile carries the rest of the policy:
+the ytdlp pool (YouTube's bot detection is per IP), requires="ytdlp" (INSIGHT_YTDLP_ENABLED=0: unavailable), a
+168h cadence floor and at least 15 posts per fetch.
 """
 from __future__ import annotations
 
@@ -60,7 +53,7 @@ class YouTubeKind(BaseKind):
         return await asyncio.to_thread(self.youtube.fetch_live_posts, str(source["handle_or_url"]), limit)
 
     async def test_read(self, source: Source) -> Optional[ReadCheck]:
-        """The channel's newest video listed (one short yt-dlp call, issue 0254): a wrong handle is yt-dlp's 404."""
+        """The channel's newest video listed (one short yt-dlp call): a wrong handle is yt-dlp's 404."""
         try:
             await asyncio.to_thread(self.youtube.test_read_channel, str(source["handle_or_url"]))
             return None
@@ -84,9 +77,8 @@ class YouTubeKind(BaseKind):
         return start_at(mode="youtube_channel", playlist_start=start)
 
     async def archive_pages(self, source, target, checkpoint, rate):
-        # Single shot: one yt-dlp listing of every video from the checkpoint's video number (one
-        # long call that cannot pause), so checkpoint None (finished). An archive runs until the
-        # channel ends, so the listing has no end and gets the channel-scan time budget.
+        # single shot: one long yt-dlp listing from the checkpoint's video number to the channel's end (checkpoint
+        # None), given the channel-scan time budget
         start = int((checkpoint or {}).get("playlist_start") or 1)
         result = await asyncio.to_thread(self.youtube.archive_channel_posts, str(source["handle_or_url"]), start)
         yield ArchivePage(list(result.get("posts") or []), None)

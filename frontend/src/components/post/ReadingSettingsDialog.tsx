@@ -3,10 +3,7 @@ import ReadingSettingsPanel from './ReadingSettingsPanel';
 import { useReadingSettings } from '../../hooks/useReadingSettings';
 import { READING_TEXT_CLASS, readingStyle } from '../../lib/readingSettings';
 
-/**
- * The reading settings from ⌘K (issue 0045), anywhere in the app: the same panel
- * as the post page's Aa popover, over a sample paragraph set as a post is.
- */
+/** The reading settings from ⌘K, anywhere in the app: the Aa popover's panel over a sample paragraph. */
 export default function ReadingSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [settings] = useReadingSettings();
   return (

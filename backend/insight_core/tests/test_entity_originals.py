@@ -1,11 +1,8 @@
-"""Issue 0138: originals from entities. The pure rules (A's addresses and their order, B's trigger, C's match, D2's
-threshold), A on the database (the entity stage writes mx_entity_addresses; merges read the target's; a front page is
-never one), the entity page's Original and, when no current reading names the entity, the posts an earlier guide
-named it in; B and C through OriginalsService (Collect originals' credit and record; the lookup's switch off by
-default), D1's Pages rows and D2's kept suppliers.
-
-No network: FakeHttp answers every request. Invented names and example hosts only. The A and page tests roll back;
-the service tests commit (a database whose name ends in _test) and clean their rows."""
+"""Originals from entities (0138): the pure rules (A's addresses and order, B's trigger, C's match, D2's threshold), A
+on the database (the entity stage writes mx_entity_addresses; merges read the target's; a front page never one), the
+entity page's Original and earlier-guide posts, B and C through OriginalsService (the lookup off by default), D1's
+Pages rows and D2's kept suppliers. No network (FakeHttp); invented names. The A and page tests roll back; the service
+tests commit (a _test database) and clean their rows."""
 from __future__ import annotations
 
 import json
@@ -110,8 +107,8 @@ class Rules(unittest.TestCase):
         self.assertIsNone(E.original_of({"code": (CODE, E.IDENTIFIER, t)}), "a repository alone is no original")
 
     def test_rule_1s_paper_is_its_own_only_with_evidence_it_is_the_entity(self):
-        """0229: the post's one paper beside its only document is a paper it cites when what names the page (its read
-        title, else the link's words) names another thing; a bare link or a page-kind label is no evidence."""
+        """The post's one paper beside its only document is a paper it cites when what names the page (its read title,
+        else the link's words) names another thing; a bare link or a page-kind label is no evidence (0229)."""
         names = {N.key("Nimbus Lattices"), N.key("The Nimbus Lattice Paper")}
         own = lambda **kw: E.paper_is_its_own(**{"carried": False, "title": None, "words": None, "url": PAPER,  # noqa: E731
                                                 "names": names, "key": N.key, **kw})
@@ -136,14 +133,14 @@ class Rules(unittest.TestCase):
         for url in ("https://dashboards.example/dashboard/1f2e", "https://en.encyclopedia.example/wiki/Nimbus_4",
                     "https://router.example/acme/nimbus-4", "https://paste.example/view/x"):
             self.assertFalse(E.own_site(url, words, N.squash), url)
-        # v10.35: a platform's page is whose it is under (platform_page_own), not anyone's by the platform
+        # a platform's page is whose it is under (platform_page_own), not anyone's by the platform
         names, makers = [N.key("Nimbus 4")], [N.key("Acme Labs")]
         for url in ("https://huggingface.co/collections/acmelabs/nimbus-4", "https://github.com/acme-labs/nimbus/tree/main",
                     "https://huggingface.co/nimbus/nimbus-4-gguf"):
             self.assertTrue(E.platform_page_own(url, repo=None, names=names, makers=makers, squash=N.squash), url)
 
     def test_whose_page_a_platform_page_is(self):
-        """v10.35: a chat is nobody's; a voice platform's post is its account's; a repository page its repository's."""
+        """A chat is nobody's; a voice platform's post is its account's; a repository page its repository's."""
         own = lambda url, names=("claude nimbus",), makers=("acme",), repo=None: E.platform_page_own(  # noqa: E731
             url, repo=repo, names=[N.key(n) for n in names], makers=list(makers), squash=N.squash)
         for url in ("https://chat.example/c/6afee144-664c-83e9-ba1e-60537991d582",
@@ -302,9 +299,8 @@ class Addresses(_AddressCase):
         self.assertEqual(self.stage()["addresses"]["added"], 0, "written once")
 
     def test_a_sweep_past_its_deadline_stops_after_a_chunk_and_resumes_where_it_stopped(self):
-        """v10.13.9: the sweep of every post keeps to the stage's budget; the next runs go on from its `after`, and
-        together they find what one sweep finds. v10.24 (0221): no chunk starts past the budget; a sweep with no time
-        to start waits (FROM_START)."""
+        """The sweep of every post keeps to the stage's budget; the next runs go on from its `after` and together find
+        what one sweep finds. No chunk starts past the budget; a sweep with no time to start waits (FROM_START)."""
         import time
         from unittest import mock
         posts = []
@@ -322,7 +318,7 @@ class Addresses(_AddressCase):
         self.assertEqual((once["posts"], once["done"], len(want)), (4, True, 4))
         seen, after = [], None
         from insight_core.tests.test_markx_entity_fixes import Tick
-        clock = Tick()   # v10.24 (0221): the time for one chunk a run (none starts past the budget)
+        clock = Tick()   # the time for one chunk a run (none starts past the budget)
         self.assertEqual(EA.stage(self.cur, now=T0, since=datetime.now(timezone.utc) + D, full=True,
                                   deadline=time.monotonic() - 1)["after"], EA.FROM_START)   # past it: waits to start
         with mock.patch.object(EA, "CHUNK", 1), mock.patch.object(EA, "time", clock):
@@ -369,8 +365,8 @@ class Addresses(_AddressCase):
         self.assertEqual(page["original"]["kind"], "paper")
 
     def test_a_paper_a_reports_post_cites_is_cited_never_its_original(self):
-        """0229: an org's report whose post links a paper the report cites (its link names that paper) has no
-        Original; the page lists the paper, its code and its demo apart, as cited."""
+        """An org's report whose post links a paper the report cites has no Original; the page lists the paper, its
+        code and its demo apart, as cited (0229)."""
         a = self.post(0, T0, text="Acme's report on Nimbus is out.", links=[PAPER, CODE, DEMO])
         self.link_text(a, PAPER, "Sleeping Kestrels: Training Models that Hide")
         self.say(a, m("Acme report on the Nimbus risk"))
@@ -398,14 +394,14 @@ class Addresses(_AddressCase):
         self.assertEqual([(c["url"], c["kind"]) for c in page["cited"]], [(other, "release")])
 
     def test_a_row_an_older_rule_took_follows_its_posts_reading_on_the_sweep(self):
-        """0229: a row written as the entity's paper becomes cited when the sweep reads its post again; a post that
-        gives it as its own turns it back."""
+        """A row written as the entity's paper becomes cited when the sweep reads its post again; a post that gives it
+        as its own turns it back (0229)."""
         a = self.post(0, T0, links=[PAPER])
         self.link_text(a, PAPER, "Sleeping Kestrels: Training Models that Hide")
         self.say(a, m("Acme report on the Nimbus risk"))
         self.stage()
         root = self.root(a)
-        self.cur.execute("UPDATE mx_entity_addresses SET kind = 'paper' WHERE url = %s", (PAPER,))   # as v10.24 wrote it
+        self.cur.execute("UPDATE mx_entity_addresses SET kind = 'paper' WHERE url = %s", (PAPER,))   # an older rule
         self.assertEqual(self.addresses(root), {"paper": (PAPER, "identifier")})
         got = EA.stage(self.cur, now=T0 + D, since=None, full=True)
         self.assertEqual((got["added"], got["changed"]), (0, 1))
@@ -417,8 +413,8 @@ class Addresses(_AddressCase):
         self.assertEqual(self.addresses(self.root(b)), {"paper": (PAPER, "identifier")}, "named as its own: its own")
 
     def test_a_row_its_post_now_gives_as_nothing_becomes_cited_on_the_sweep(self):
-        """v10.35: a release row an older rule took from a tweet's line or a chat, its post read again giving that
-        address as nothing of the entity's, is cited (never removed); a third party's tweet titled with it is cited."""
+        """A release row an older rule took from a tweet's line or a chat, its post read again giving that address as
+        nothing of the entity's, is cited (never removed); a third party's tweet titled with it is cited."""
         chat = "https://chat.example/c/6afee144-664c-83e9-ba1e-60537991d582"
         tweet = "https://x.com/some_writer/status/1885007847135609224"
         a = self.post(0, T0, links=[chat, tweet])
@@ -451,7 +447,7 @@ class Addresses(_AddressCase):
 
 
 class PlatformRule(unittest.TestCase):
-    """v10.13.5: rule `repo`, a platform's page of one thing whose <thing> segment is the entity's name."""
+    """Rule `repo`: a platform's page of one thing whose <thing> segment is the entity's name."""
 
     def repo(self, url, *names):
         return E.by_repo(url, {N.key(n) for n in names}, N.key, N.squash)
@@ -540,7 +536,7 @@ class PlatformAddresses(_AddressCase):
 
 @requires_test_db
 class OlderGuide(_AddressCase):
-    """Also (0138): an entity only an earlier guide named has its page with those posts, and is listed nowhere else."""
+    """An entity only an earlier guide named has its page with those posts, and is listed nowhere else (0138)."""
 
     def test_the_page_shows_the_older_posts_and_what_the_current_reading_names(self):
         a = self.post(0, T0, title="A post", text="A story about a franchise.")
@@ -592,8 +588,8 @@ class _CollectCase(OriginalsCase):
 
     def _mx_clean(self):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
-            # DELETE, children first (a committed TRUNCATE of 30 tables waits on the disk's sync: ~25 s a test); the
-            # guides and settings stay (load_guides is idempotent). TRUNCATE when a table this order misses holds a row.
+            # DELETE, children first (a committed TRUNCATE of 30 tables waits on the disk's sync); the guides and
+            # settings stay (load_guides is idempotent). TRUNCATE when a table this order misses holds a row.
             try:
                 with conn.transaction():
                     for table in DELETE_ORDER:
@@ -678,8 +674,8 @@ class Collecting(_CollectCase):
         self.assertEqual([(p["url"], p["kind"], p["voices"]) for p in planned], [(self.paper, O.PAGE, 1)])
 
     def test_a_switched_off_voice_lists_no_page_for_discover_but_still_collects(self):
-        """Issue 0200: Discover's Pages (`listing`) count no source switched off: one voice left, no trigger. The
-        collection (the originals of what your sources talk about, not a suggestion) is unchanged."""
+        """Discover's Pages (`listing`) count no source switched off: one voice left, no trigger; the collection is
+        unchanged (0200)."""
         self.two_voices()
         self.switch()
         self._rows("UPDATE sources SET enabled = false WHERE id = %s::uuid", self.b)
@@ -965,8 +961,7 @@ class LongReads(_CollectCase):
         self.assertEqual(cited.get("shared.oocitedx.example"), {"n": 3, "posts": 2})
 
     def test_a_switched_off_sources_long_reads_cite_nothing_for_discover(self):
-        """Issue 0200: Discover's citations never count a source the owner switched off; collecting its references
-        (membership, not a suggestion) still reads it."""
+        """Discover's citations never count a switched-off source; collecting its references still reads it (0200)."""
         from insight_core.db import repo_discover
         shared = ["shared.oocitedy.example"] * 2 + [f"other{n}.oorefc{chr(97 + n)}.example" for n in range(7)]
         pid, _ = self.longread(tag="-off", hosts=shared)

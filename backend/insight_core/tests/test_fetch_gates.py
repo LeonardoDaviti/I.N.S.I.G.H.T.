@@ -1,8 +1,4 @@
-"""FetchGates (Mark IX B3, spec §D.3 and §5.6).
-
-The HostLimiter, StartSpacer, interleave and host-floor tests moved here from
-test_safe_ingest.py together with the classes; the slot() tests are new.
-"""
+"""FetchGates: the HostLimiter, StartSpacer, interleave, host floors and slot()."""
 from __future__ import annotations
 
 import asyncio
@@ -65,7 +61,6 @@ class HostKeyTests(unittest.TestCase):
 
 class HostFloorTableTests(unittest.TestCase):
     def test_every_telegram_and_nitter_host_has_a_floor(self):
-        """The Mark VIII hardcoded table covered 2 of 5 hosts; telegram.local got 0s."""
         for host in TELEGRAM_RSS_HOSTS:
             self.assertEqual(HOST_FLOORS.get(host), 5.0, host)
         for host in NITTER_HOSTS:
@@ -129,7 +124,7 @@ class HostLimiterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LearnedPaceTests(unittest.IsolatedAsyncioTestCase):
-    """Issue 0016: a host that limits us gets a doubled gap; a run of successes shrinks it."""
+    """A host that limits us gets a doubled gap; a run of successes shrinks it (0016)."""
 
     def test_a_limit_doubles_the_gap_with_a_minimum_and_a_cap(self):
         limiter = HostLimiter({"reddit.com": 8.0, "big.test": 100.0})
@@ -219,7 +214,7 @@ class InterleaveTests(unittest.TestCase):
 
 
 class HostBudgetPerRunTests(unittest.TestCase):
-    """Every source at its own pace (2026-11-11): one run gives a host at most RUN_HOST_BUDGET_S of spacing."""
+    """Every source at its own pace: one run gives a host at most RUN_HOST_BUDGET_S of spacing."""
 
     def _split(self, items, gaps, budget_s=RUN_HOST_BUDGET_S):
         return over_host_budget(items, lambda item: item[0], lambda item, host: gaps.get(host, 0.0), budget_s)
@@ -297,7 +292,7 @@ class SlotTests(unittest.IsolatedAsyncioTestCase):
         """generic_rss on www.reddit.com and reddit_subreddit r/x both get 8s; tg RSS 5s; others 0."""
         registry = KindRegistry.default(KindHttp(), object())
         cases = [
-            (_source("https://www.reddit.com/r/x/.rss"), "reddit_subreddit", 8.0),   # 0242: an old .rss address is read as its subreddit,
+            (_source("https://www.reddit.com/r/x/.rss"), "reddit_subreddit", 8.0),   # an old .rss address: its subreddit (0242)
             (_source("r/x", platform="reddit"), "reddit_subreddit", 8.0),
             (_source("https://tg.i-c-a.su/rss/chan?limit=50"), "telegram_rss", 5.0),
             (_source("https://unlisted.example.com/feed"), "generic_rss", None),

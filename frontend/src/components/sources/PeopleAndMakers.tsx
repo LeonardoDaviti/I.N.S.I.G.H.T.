@@ -21,7 +21,7 @@ function whereLabel(where: string): string {
   return where === 'news' ? 'News' : where.replace(/^track:/, '');
 }
 
-/** One row: name · kind · N posts · tracks, Follow… (Add source, the feed finder then page watching), the posts on expand. */
+/** One row: name · kind · N posts · tracks, Follow… (Add source), the posts on expand. */
 function Row({ row, onFollow }: { row: PeopleRow; onFollow: (url: string) => void }) {
   const [open, setOpen] = useState(false);
   const listId = `people-${row.key.replace(/[^a-z0-9]+/gi, '-')}`;
@@ -76,11 +76,8 @@ function Row({ row, onFollow }: { row: PeopleRow; onFollow: (url: string) => voi
   );
 }
 
-/**
- * Discover → "People and makers your tracks quote" (issue 0276): the accounts your tracks' posts and News quote, repost,
- * mention or link, and the makers of what they name, ranked by those posts (30 days). Follow… opens Add source on the
- * address (the feed finder, then page watching, as every add); nothing is followed here. Shows nothing when empty.
- */
+/** Discover → "People and makers your tracks quote": the accounts your tracks' posts and News quote, repost, mention
+ *  or link, and the makers of what they name, ranked by those posts (30 days). Nothing is followed here. */
 export default function PeopleAndMakers({ onFollow }: { onFollow: (url: string) => void }) {
   const api = useApi();
   const query = useQuery({

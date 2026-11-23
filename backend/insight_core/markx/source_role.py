@@ -1,15 +1,13 @@
-"""0132 B (Stealth v10.6): who a source (or a voice) is, by the role rule, in the spec's order, and "official".
+"""Who a source (or a voice) is, by the role rule, and whether it is "official".
 
     role(facts) -> (role, the rule's line that decided it)
 
-The rule, applied in order (plan/issues/0132, Part B; measured on the lab's 94 read sources: 12 official, all right;
-87% of all roles agree with reading):
+The rule, applied in order (measured: plan/issues/0132):
   1. platform: many voices (Reddit, or a site with 10+ authors);
   2. curator by links: most posts are other sites' pages (a site whose own pages are under 30% of 10+ posts);
   3. official: the source itself is the subject, actor or venue in >= 30% of >= 5 read original posts, matched by
      name, handle, site label or acronym (`official`);
-  4. focused, staff or beat: >= 50% of >= 5 read posts about one other maker ("needs a bio": the stored rows can't tell
-     staff from a beat writer);
+  4. focused, staff or beat: >= 50% of >= 5 read posts about one other maker;
   5. reposter: own share under 60% (10+ posts);
   6. curator: roundups >= 30% (5+ read posts), or link posts >= 40% on X or Telegram (10+ posts);
   7. commentator: commentary >= 40% (5+ read posts);
@@ -32,7 +30,7 @@ AGGREGATOR_OWN = 0.3        # a site whose own pages are under this share of its
 AGGREGATOR_POSTS = 10
 OFFICIAL_SHARE = 0.3
 MIN_READ = 5
-FOCUSED_SHARE = 0.5         # raised from 0.3 on the lab: at 0.3 critics were labelled staff
+FOCUSED_SHARE = 0.5         # at 0.3 critics were labelled staff
 REPOSTER_OWN = 0.6
 MIN_POSTS = 10
 ROUNDUP_SHARE = 0.3

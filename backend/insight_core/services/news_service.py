@@ -1,18 +1,9 @@
-"""News and Classics (issue 0051): what many of your sources cover now, and what they keep citing.
+"""News and Classics (0051): what many of your sources cover now, and what they keep citing.
 
-Both are measured from your own sources, with no AI and no reading history:
-- **News:** several independent sources cover the same thing within days. The story job finds the
-  names surging in titles (over the last 32 days of titles) and joins 0050's stories by them, for
-  News only, then scores each story (utils/news_rules.py). GET /api/news reads the stories whose
-  first post is in the last 30 days. Every News row is kept (issue 0077): a run rewrites its own
-  window only.
-- **Classics:** your sources keep linking the same page over months. The story job aggregates the
-  kept post links into `classics`; GET /api/classics reads them, cited again this week first.
-- **Background:** a post that links a classic says so (at most 2, in the post's detail).
-- **Discover** counts each suggestion's classics (StoriesService.discover).
-
-The job part (`refresh`) runs inside the story job's transaction (StoriesService.regroup). The
-Main feed is never reordered: News and Classics are views next to it.
+News joins the stories by the names surging in titles and scores them (utils/news_rules.py); Classics are the pages
+your sources keep linking over months. The job part (`refresh`, `update`) runs inside the story job's transaction and
+rewrites only its own window (every News row is kept). The reads (`news`, `classics`, `since`) serve the pages; the
+Main feed is never reordered. No AI.
 """
 from __future__ import annotations
 
@@ -37,7 +28,7 @@ from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS
                                           Surge, lead, longest, main_story, name_surges, names, news, phrases)
 from insight_core.utils.story_rules import Story, StoryPost
 
-PARTS = ("recent", "earlier")    # "Last 48 hours", the rest (the reader splits it by week, issue 0077)
+PARTS = ("recent", "earlier")    # "Last 48 hours", the rest (the reader splits it by week)
 WORDS = re.compile(r"\w+")
 
 
@@ -54,17 +45,14 @@ class NewsService:
 
     def refresh(self, cur: Any, *, posts: Sequence[StoryPost], stories: Sequence[Story],
                 sources: SourceFacts) -> Dict[str, Any]:
-        """News and every classic of a full story run (`posts`, every post, grouped into `stories`), on
-        the caller's transaction: every name's surges, and News for the stories begun in the last
-        NEWS_KEEP and the posts of no story posted in it; the rows begun before it are kept (issue 0077,
-        `write_news`). Returns what it counted, how many rows changed and how many News rows it removed."""
+        """News, surges and every classic of a full story run, on the caller's transaction. Returns counts."""
         raw = name_surges(self._titled(sources, self.repo.load_titles(cur, None)), self.repo.followed_since(cur))
         surges_changed = self.repo.write_surges(cur, raw)
         found = sorted(longest(raw), key=lambda s: (s.at, s.name))
         since = self.clock() - NEWS_KEEP
         stories_now = self.rows(posts=posts, stories=stories, found=found, since=since)
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since)
-        self.repo.write_owners(cur, getattr(sources, "owners", {}))   # how News named its voices (issue 0111)
+        self.repo.write_owners(cur, getattr(sources, "owners", {}))
         found_classics = self._classics(cur, sources)
         classics_changed = self.repo.write_classics(cur, found_classics)
         return {"names": len(found), "surges_changed": surges_changed, "news": len(stories_now),
@@ -74,11 +62,8 @@ class NewsService:
     @staticmethod
     def rows(*, posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
              since: datetime, judged: Optional[Iterable[FrozenSet[str]]] = None) -> List[Any]:
-        """A full run's News rows, written by no one here (`refresh` writes them; Mark X writes its own, issue 0086
-        E): the stories begun since `since` and the posts of no story posted since, joined by the surging names. A
-        row is in the window by its first post (issue 0111): those of NEWS_EDGE before are read too, and a row they
-        begin is no row of the window (the one stored stays as it was). `judged`: Mark X's story pairs its judge
-        connected (news_rules.news: two large stories are joined by a name only when connected)."""
+        """A full run's News rows since `since` (not written here); a row is in the window by its first post.
+        `judged`: Mark X's connected story pairs (news_rules.news)."""
         edge = since - NEWS_EDGE
         shown = [s for s in stories if s.first_at >= edge]
         in_story = {p.id for s in stories for p in s.posts}
@@ -89,17 +74,14 @@ class NewsService:
     def update(self, cur: Any, *, sources: SourceFacts, posts: Dict[str, StoryPost],
                load: Callable[[Iterable[str]], None], touched: Set[str], titles: Sequence[Optional[str]],
                urls: Sequence[str], since: datetime, before: Optional[datetime]) -> Dict[str, int]:
-        """News and Classics after an incremental batch (issue 0072 A), on its transaction, as a full run
-        makes them: the names its titles say (`titles`: of the posts saved, changed or removed, as they
-        are and were) judged again; News for the stories it regrouped (`touched`), the posts of the surges
-        that changed, and the stories and posts that left the window or came into it since `before`;
-        Classics for the pages it links or held (`urls`). `posts`/`load`: the batch's StoryPosts."""
+        """News and Classics after an incremental batch, on its transaction, as a full run makes them (around
+        `touched`, `titles`' names, `urls` and the window's move since `before`)."""
         old = {(s.name, s.at, tuple(s.posts)) for s in longest(self.repo.stored_surges(cur))}
         surges_changed = self.judge_names(cur, sources, titles)
         raw = self.repo.stored_surges(cur)
         found = sorted(longest(raw), key=lambda s: (s.at, s.name))
         seeds = set(touched) | {p for name, at, ps in old ^ {(s.name, s.at, tuple(s.posts)) for s in found} for p in ps}
-        edge = since - NEWS_EDGE   # a row is in the window by its first post (issue 0111): read from the edge before it
+        edge = since - NEWS_EDGE   # a row is in the window by its first post: read from the edge before it
         if before is not None and before != since:
             lo, hi = min(before, since) - NEWS_EDGE, max(before, since)
             seeds |= set(self.repo.window_posts(cur, lo, hi))
@@ -107,8 +89,7 @@ class NewsService:
         for s in found:
             for pid in s.posts:
                 surges_of[pid].append(s)
-        # The News stories they are in, now and before: their stories, the roundups mentioning those,
-        # the surges they are in, until nothing more joins (news_rules.news).
+        # grow the seeds by their stories, the roundups mentioning those and their surges until nothing joins
         group, frontier, stories = set(seeds), set(seeds), {}
         while frontier:
             held = self.repo.stories_of(cur, sorted(frontier), edge)
@@ -125,20 +106,18 @@ class NewsService:
                       roles={}, reasons={}, mentions=story["mentions"]) for sid, story in sorted(stories.items())]
         stories_now = [s for s in news(window, held, found) if s.first_at >= since]   # a row begun before is left whole
         news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since, post_ids=sorted(group))
-        # How News named its voices (issue 0111); a source whose owner changed has its posts queued (_facts).
         self.repo.write_owners(cur, getattr(sources, "owners", {}))
-        # A classic no link points to any more (its links read into another address, 0109 B1) goes, as in a full run.
+        # A classic no link points to any more goes, as in a full run.
         urls = sorted(set(urls) | set(self.repo.unlinked_classics(cur)))
-        urls = self.repo.paper_paths(cur, urls)   # a paper's every path is one classic (issue 0106)
-        urls = self.repo.moved_paths(cur, urls)   # and a page that moved is one with where it moved (0108)
+        urls = self.repo.paper_paths(cur, urls)   # a paper's every path is one classic
+        urls = self.repo.moved_paths(cur, urls)
         found_classics = self._classics(cur, sources, urls)
         classics_changed = self.repo.write_classics(cur, found_classics, urls)
         return {"surges_changed": surges_changed, "news_posts": len(group), "news_changed": news_changed,
                 "news_removed": news_removed, "classics_changed": classics_changed}
 
     def judge_names(self, cur: Any, sources: SourceFacts, titles: Optional[Sequence[Optional[str]]]) -> int:
-        """The surges of the names these titles say (every name when None) judged again
-        (news_rules.name_surges), from every title that names or says them. Returns rows changed."""
+        """Judge again the surges of the names these titles say (every name when None). Returns rows changed."""
         followed = self.repo.followed_since(cur)
         if titles is None:
             raw = name_surges(self._titled(sources, self.repo.load_titles(cur, None)), followed)
@@ -157,8 +136,7 @@ class NewsService:
 
     @staticmethod
     def names_of(post: StoryPost) -> Set[str]:
-        """The names in a post's title, as the name rule reads them (none for arXiv's): its opening when its
-        stored title said more than the title shown (issue 0076: a bridge's glued second line), as load_titles."""
+        """The names in a post's title (or its opening, as load_titles), none for NAME_SKIP_KINDS."""
         said = post.opening or post.title
         return names(said) if said and post.kind not in NAME_SKIP_KINDS else set()
 
@@ -169,9 +147,7 @@ class NewsService:
                 for row in rows]
 
     def _classics(self, cur: Any, sources: SourceFacts, targets: Optional[Sequence[str]] = None) -> List[Classic]:
-        """The classics among the kept links (to `targets`, when given), each titled as every page you don't
-        follow is (issue 0106, page_titles.evidence): its stored post's title, else the evidence of every post
-        linking any path of it; else the link words classic_rules reads (none of 182 on the lab needed them)."""
+        """The classics among the kept links (to `targets`, when given), titled as page_titles.evidence titles them."""
         citations, stored, aliases = self._cited(cur, sources, targets)
         found = classics(citations, stored)
         outside = [c.target for c in found if c.post_id is None]
@@ -186,10 +162,7 @@ class NewsService:
         return self._cited(cur, sources, targets)[:2]
 
     def _cited(self, cur: Any, sources: SourceFacts, targets: Optional[Sequence[str]] = None):
-        """The kept links as citations, each paper's paths cited as the one address that names it (issue
-        0106: its abstract and its PDF are one classic), a page that moved as where it moved (issue 0108:
-        a redirect stub's post is one page with the post stored there), the stored posts they are, and
-        those aliases."""
+        """(the kept links as citations, the stored posts they are, aliases: a paper's paths or a moved page as one)."""
         rows = self.repo.citations(cur, reddit=sources.of_kind("reddit"), saved=sources.of_kind("saved"), targets=targets)
         papers: Dict[str, Set[str]] = defaultdict(set)
         at: Dict[str, Optional[str]] = {}
@@ -214,7 +187,7 @@ class NewsService:
                                 stored=row["stored"] if target == row["target"] else at.get(target), text=row["text"]))
         stored = {}
         for row in self.repo.stored_posts(cur, sorted({c.stored for c in out if c.stored})):
-            stored[row["id"]] = (self._voice(sources, row["source_id"], None), row["t"], row["title"])   # as every place (0072 D1)
+            stored[row["id"]] = (self._voice(sources, row["source_id"], None), row["t"], row["title"])
         return out, stored, aliases
 
     @staticmethod
@@ -226,25 +199,9 @@ class NewsService:
     def news(self, scope: str | None = None, *, limit: Optional[int] = None,
              cursor: Optional[str] = None, mark: str = "main", order: Optional[str] = None,
              unread: bool = False) -> Dict[str, Any]:
-        """The News of a scope (the Main feed, a track or one source): the stories with 2+ voices
-        begun in the last NEWS_DAYS, with a post from the scope's sources (the score counts every
-        source), in two parts ("recent": the last 48 hours; "earlier"), each by score, then the
-        newest. Each item is its story's lead as a feed row, with `story` (who covered it, its other
-        posts) and `news` {part, first_at, reports, shares, mentions, score}. On one source (issue
-        0077) also the stories a roundup of it mentions, and `news.scope_role`: its part, the
-        strongest of its posts' (`SCOPE_ROLES`): origin (its post began the row: the row's first, and
-        the origin of its 0050 story, issue 0082), report, share, else mention.
-
-        Issue 0205: whose rows (`mark`): "main" reads Mark X's stored rows (`rows_of`: its newest written run, mx_news)
-        when Mark X is on and has rows in the window, else Mark IX's, with `fallback` and a `note` saying so; "ix" is
-        the older view, Mark IX's rows, one click away. The answer says which: `mark` ("x" | "ix").
-
-        Issue 0208: Mark X's rows in the order the switch says (`order`: "ranked", News ranked for the reader with the
-        Notable lane first, or "coverage", the score's order), or as `order` asks; Mark IX's keep the score's.
-
-        Issue 0238: each row's `news.unread` (its posts unread: the lead and its lines, the per-post read state), the
-        answer's `rows` and `unread_rows` (rows with an unread post) over the whole scope, and with `unread` only the
-        rows with an unread post (News's Unread view), in the same order."""
+        """The News of a scope: its 2+ voice stories of the last NEWS_DAYS, each its lead as a feed row with `story`
+        and `news`. `mark`: "main" reads Mark X's rows when it has some (`rows_of`), else Mark IX's with a `note`; "ix"
+        Mark IX's. With `unread`, only unread rows."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             run, note = self.rows_of(cur, mark)
             answer = {**self.news_on(cur, scope, mx_run=run, order=order), "mark": "x" if run else "ix",
@@ -252,17 +209,15 @@ class NewsService:
         answer = read_state(answer, unread)
         if limit is None:
             return answer
-        items, next_cursor = page_of(answer["items"], limit, cursor)   # issue 0195: News in pages
+        items, next_cursor = page_of(answer["items"], limit, cursor)
         return {**answer, "items": items, "next_cursor": next_cursor}
 
     MARKX_EMPTY = "Mark X has no News yet (a new install, or its worker has not run): this is the older News."
     MARKX_OFF = "Mark X is off on this install: this is the older News."
 
     def since(self, at: Optional[datetime] = None) -> Dict[str, Any]:
-        """Issue 0271, "Since you looked": what came since the reader's one look (`at` given: since then; never
-        looked: the last SINCE_FIRST), read, never written (opening the view sets the look, `look`). {look (ISO),
-        first (never looked), news: `since_rows` over the Main feed's News as News ranks it, tracks: each topic track's
-        new things since its look (the later of its own and `at`; Mark X on only, `track_brief.since_lines`)}."""
+        """The "Since you looked" view, read only (`look` sets the look): {look, first, news (`since_rows` of Main's
+        News), tracks (each topic track's `track_brief.since_lines`, Mark X on only)}; never looked: SINCE_FIRST."""
         from insight_core.markx import api as mx_api, track_brief, track_subtopics, tracks
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             stored = track_subtopics.reader_look(cur)
@@ -282,21 +237,19 @@ class NewsService:
                 "tracks": [t for t in shown if t["new"] or t["also"]]}
 
     def look(self) -> Dict[str, Optional[str]]:
-        """Issue 0271: the reader opened "Since you looked" now: {before, now} (track_subtopics.look_all)."""
+        """The reader opened "Since you looked" now: {before, now} (track_subtopics.look_all)."""
         from insight_core.markx import track_subtopics
         with db.transaction(self.db_url) as cur:
             return track_subtopics.look_all(cur, now=self.clock())
 
     def post_ids(self, scope: str | None = None, mark: str = "main") -> List[str]:
-        """Issue 0238: every post of every News row the scope lists (as `news` lists them: each row's lead and its
-        lines), for "Mark all News read"."""
+        """Every post of every News row the scope lists, for "Mark all News read"."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             run, _ = self.rows_of(cur, mark)
             return row_post_ids(self.news_on(cur, scope, mx_run=run)["items"])
 
     def rows_of(self, cur: Any, mark: str = "main") -> Tuple[Optional[str], Optional[str]]:
-        """(the Mark X run whose rows News reads, or None for Mark IX's; the note when main fell back to Mark IX).
-        0205: Mark X's rows are main when Mark X is on and its newest written run has a row in the window."""
+        """(the Mark X run whose rows News reads, or None for Mark IX's; the note when main fell back to Mark IX)."""
         if mark == "ix":
             return None, None
         from insight_core.markx import api as mx_api, news as mx_news
@@ -312,26 +265,24 @@ class NewsService:
 
     def news_on(self, cur: Any, scope: str | None = None, news_id: Optional[str] = None,
                 mx_run: Optional[str] = None, order: Optional[str] = None) -> Dict[str, Any]:
-        """`news` on the caller's cursor; `news_id`: that row only; `mx_run`: Mark X's rows of that run (0205), in the
-        order `order` names or the switch says (0208: `ranked`)."""
+        """`news` on the caller's cursor; `news_id`: that row only; `mx_run`: Mark X's rows of that run (`ranked`)."""
         feed_scope = FeedScope.parse(scope)
-        one_source = feed_scope.kind in ("source", "voice")   # a voice's page reads as a source's (issue 0132 A)
+        one_source = feed_scope.kind in ("source", "voice")
         now = self.clock()
         rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS), news_id, mx_run=mx_run)
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
-        owners = self.repo.owners(cur)   # one owner's channels one voice, as the job counted them (issue 0111)
+        owners = self.repo.owners(cur)
         by_story: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for row in rows:
             by_story[row["_news"]].append(row)
         items = []
         for posts in by_story.values():
             shown = [p for p in posts if p["_in_scope"]]
-            # The lead is the origin (issue 0064): a post its 0050 story's tree starts from.
             origins = [p["id"] for p in posts if p["_origin"]]
-            roundups = [p["id"] for p in posts if p["_roundup"]]   # without an origin, never the lead (issue 0083)
-            # Without an origin, the first share of a story's outside origin page leads (issue 0103).
+            roundups = [p["id"] for p in posts if p["_roundup"]]   # without an origin, never the lead
+            # Without an origin, the first share of a story's outside origin page leads.
             sharers = [p["id"] for p in posts if p["_shares_origin"]]
-            # The lead comes from the row's main story, or what its own name joined (issue 0111), in the scope first.
+            # The lead comes from the row's main story, or what its own name joined, in the scope first.
             may = main_story([(p["id"], p["_story"], p["_story_voices"], p["_name"]) for p in posts])
             main = posts if may is None else [p for p in posts if p["id"] in may]
 
@@ -342,10 +293,8 @@ class NewsService:
             first_report = first(main) or first(posts)
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
-            # Every voice the count holds is named, once (issues 0069, 0082), the first reporter first.
             sources = story_voices([p["_voiced"] for p in covered], followed, owners)
             item = {k: v for k, v in head.items() if not k.startswith("_") and k != "role"}
-            # A lead whose own words are a short reaction reads what it quotes (post_parts.subject, issue 0076).
             item["title"] = head["_subject"] or item["title"]
             item["story"] = {"id": head["_news"], "voices": head["_voices"], "sources": sources,
                              "posts": NewsRepository.lines(posts, lead_id)}
@@ -353,11 +302,10 @@ class NewsService:
                 "part": "recent" if head["_first_at"] >= now - NEWS_RECENT else "earlier",
                 "first_at": head["_first_at"], "reports": head["_reports"], "shares": head["_shares"],
                 "mentions": head["_mentions"], "score": head["_score"],
-                "unread": len(unread_posts(item)),   # 0238: the row's posts unread (its lead and its lines)
+                "unread": len(unread_posts(item)),
             }
             if one_source:
-                # "Started it" only when first (issue 0082): the row's first post, the origin of its 0050
-                # story (the post page's first, 0072 D); a first share of an outside page is a share.
+                # "Started it" only when the row's first post is its story's origin
                 origin = posts[0]["id"] if posts[0]["_origin"] else None
                 item["news"]["scope_role"] = min(
                     (("origin" if p["id"] == origin else p["role"]) for p in shown),
@@ -371,10 +319,8 @@ class NewsService:
 
     @staticmethod
     def ranked(cur: Any, items: List[Dict[str, Any]], order: Optional[str] = None) -> Dict[str, Any]:
-        """0208: Mark X's News rows (in the score's order) with their kept rank (markx/news_rank: computed in the jobs
-        process; a row not ranked yet has none) as `news.rank`, in the order `order` or the switch names: "ranked"
-        puts the Notable lane first (`news.notable`), then each part by its rank score (a row not ranked yet by its
-        coverage alone), the score's order breaking ties; "coverage" leaves the score's order. {items, order}."""
+        """Mark X's rows with their kept rank (markx/news_rank), ordered by `order` or the switch ("ranked": Notable
+        first, then rank score; "coverage": the score's order). {items, order}."""
         from insight_core.markx import news_rank
         want = order if order in news_rank.ORDERS else news_rank.mode(cur)
         shown = news_rank.analysis_mode(cur) == "shown"
@@ -387,7 +333,7 @@ class NewsService:
                                      "score": r["score"], "event": why.get("event"), "effect": why.get("effect"),
                                      "usable": why.get("usable"), "why": why.get("why")}
             i["news"]["notable"] = bool(want == "ranked" and r is not None and r["notable"])
-            if shown and r is not None:   # 0208: its expert breakdowns, apart from its reports (the row's own lines)
+            if shown and r is not None:
                 lines = {p["id"]: p for p in i["story"].get("posts") or []}
                 i["news"]["analysis"] = [
                     {"id": pid, "title": lines[pid]["title"], "source": lines[pid]["source_display_name"],
@@ -402,9 +348,7 @@ class NewsService:
         return {"items": items, "order": want}
 
     def row_of(self, cur: Any, post_id: str, source_id: str) -> Optional[Dict[str, Any]]:
-        """The News row a post is in (issue 0083: its page says it), as the Main feed's News shows it,
-        else as its source's (a source outside the Main feed): {id, title, voices, lead_id, scope};
-        None when it is in no row of the last NEWS_DAYS."""
+        """The News row a post is in (Main's, else its source's): {id, title, voices, lead_id, scope}, or None."""
         cur.execute("SELECT np.news_id FROM news_posts np JOIN news_stories ns ON ns.id = np.news_id "
                     "WHERE np.post_id = %s AND ns.first_at >= %s", (post_id, self.clock() - timedelta(days=NEWS_DAYS)))
         found = cur.fetchone()
@@ -420,18 +364,14 @@ class NewsService:
 
     def classics(self, scope: str | None = None, *, limit: Optional[int] = None,
                  cursor: Optional[str] = None) -> Dict[str, Any]:
-        """The classics a source of the scope cited and you did not hide: cited again this week
-        first (`cited_again`), then most voices, then cited longest. Each {url, post_id (the stored
-        post, when it is one), title, voices, days, first_at, last_at, cited_again, citers [{name,
-        at}] (each voice once, first citation first), read_at, later_at}. On one source (issue 0077)
-        also its own posts that are classics, and `scope_role`: origin (its own post), else report."""
+        """The classics the scope's sources cited and you did not hide, cited again this week first; on one source
+        also its own posts that are classics, with `scope_role`."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.classics_on(cur, scope, limit=limit, cursor=cursor)
 
     def classics_on(self, cur: Any, scope: str | None = None, *, limit: Optional[int] = None,
                     cursor: Optional[str] = None) -> Dict[str, Any]:
-        """`classics` on the caller's cursor. With `limit` (issue 0195), one page from `cursor` (an offset) and
-        `next_cursor` (None at the end); the page's titles only are read."""
+        """`classics` on the caller's cursor; with `limit`, one page from `cursor` (an offset) and `next_cursor`."""
         feed_scope = FeedScope.parse(scope)
         now = self.clock()
         rows = sorted(self.repo.classics(cur, feed_scope),
@@ -451,15 +391,13 @@ class NewsService:
                 "citers": self._citers(row["citers"], feed_scope.id if named is not None else None, named),
                 "read_at": row["read_at"], "later_at": row["later_at"],
             })
-            if feed_scope.kind in ("source", "voice"):   # issue 0077: the source's own page, else a page it cites
+            if feed_scope.kind in ("source", "voice"):
                 out[-1]["scope_role"] = "origin" if row["own"] else "report"
         return {"success": True, "classics": out, **({} if limit is None else {"next_cursor": next_cursor})}
 
     @staticmethod
     def _citers(citers: Sequence[Dict[str, Any]], source_id: Optional[str], name: Optional[str]) -> List[Dict[str, Any]]:
-        """A classic's citers as the API sends them ({name, at}), first citation first. On one source's
-        page (issue 0105) that source's own voices come first, a Reddit author with the subreddit as its
-        `place` ("u/a in r/x", as on News), so the page names its source among the first shown."""
+        """A classic's citers ({name, at}), first citation first; on one source's page its own voices first."""
         if source_id is None:
             return [{"name": c["name"], "at": c["at"]} for c in citers]
         own = [c for c in citers if source_id in (c.get("source_ids") or ())]
@@ -490,31 +428,27 @@ class NewsService:
 
     @staticmethod
     def _read_titles(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, str]:
-        """The page titles read (issue 0106, discover_reads) of the classics the stored data leaves untitled:
-        a read fills one, never over a stored post's title or the evidence's."""
+        """The page titles read (discover_reads) of the classics the stored data leaves untitled."""
         untitled = [row["url"] for row in rows if not row["post_id"] and not row["title"]]
         return DiscoverRepository.read_titles(cur, untitled) if untitled else {}
 
     def untitled_classics(self, cur: Any) -> List[str]:
-        """The classics whose page's own title Discover's reads read (issue 0106): no stored post, no title."""
+        """The classics whose page's own title Discover's reads read: no stored post, no title."""
         return self.repo.untitled_classics(cur)
 
     def classic_urls(self, cur: Any) -> List[str]:
         return self.repo.classic_urls(cur)
 
 
-# ---- the answer the reader's News page reads (issue 0215) ------------------------------------------------------
+# ---- the answer the reader's News page reads ------------------------------------------------------
 
-# What GET /api/news sends of each row's story and News: the fields the page reads (components/reader/FeedItem.tsx,
-# lib/news.ts, lib/story.ts). The rest of what the service builds (its tests and other readers use it) was ~20% of the
-# answer: each story post's address, source id, date, platform and repost, the sources' `with`, the rank's parts.
+# What GET /api/news leaves out of each row: the fields no page reads (FeedItem.tsx, lib/news.ts, lib/story.ts)
 STORY_POST_DROPPED = ("url", "source_id", "published_at", "platform", "repost")
 RANK_KEPT = ("event", "usable")
 
 
 def row_posts(item: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Issue 0238: a News row's posts, as the reader sees them: its lead (the item) and its lines (`story.posts`). A row
-    is read when every one is read; marking a row marks them all."""
+    """A News row's posts: its lead and its lines; a row is read when every one is read."""
     return [item, *((item.get("story") or {}).get("posts") or [])]
 
 
@@ -528,8 +462,7 @@ def row_post_ids(items: Iterable[Dict[str, Any]]) -> List[str]:
 
 
 def read_state(answer: Dict[str, Any], unread: bool = False) -> Dict[str, Any]:
-    """Issue 0238: News's answer with its `rows` and `unread_rows` (rows with an unread post), and with `unread` only
-    those rows (the Unread view), in the answer's order."""
+    """News's answer with `rows` and `unread_rows`; with `unread`, only the rows with an unread post."""
     items = answer.get("items") or []
     unread_rows = sum(1 for item in items if item["news"]["unread"])
     if unread:
@@ -537,8 +470,8 @@ def read_state(answer: Dict[str, Any], unread: bool = False) -> Dict[str, Any]:
     return {**answer, "items": items, "rows": len(answer.get("items") or []), "unread_rows": unread_rows}
 
 
-SINCE_FIRST = timedelta(hours=24)   # 0271: never looked, "Since you looked" shows the last day
-SINCE_SHOWN = 20                    # rows of each list the view sends (the counts count them all)
+SINCE_FIRST = timedelta(hours=24)   # never looked: "Since you looked" shows the last day
+SINCE_SHOWN = 20
 
 
 def _at(value: Any) -> datetime:
@@ -546,11 +479,8 @@ def _at(value: Any) -> datetime:
 
 
 def since_rows(items: Sequence[Dict[str, Any]], at: datetime, shown: int = SINCE_SHOWN) -> Dict[str, Any]:
-    """Issue 0271: News since a look, in the order News gives (its rank): `new`, the rows begun after `at`; `changed`,
-    the rows begun before it that a voice joined after it (a post dated after the look from a source none of the
-    row's earlier posts came from: a confirming report, a release row's benchmarks), each with `since` {voices (the
-    new voices' names), lines (their posts: id, title, source)}, the most voices joined first (then News's order). A
-    later post from a voice already in the row is no change. {counts {new, changed}, new, changed}, `shown` of each list."""
+    """News since a look, in News's order: `new` (rows begun after `at`) and `changed` (older rows a new voice joined
+    after it, with `since` {voices, lines}, most voices first). {counts {new, changed}, new, changed}, `shown` each."""
     new: List[Dict[str, Any]] = []
     changed: List[Dict[str, Any]] = []
     for item in items:
@@ -564,13 +494,12 @@ def since_rows(items: Sequence[Dict[str, Any]], at: datetime, shown: int = SINCE
             voices = list(dict.fromkeys(p["source_display_name"] for p in joined))
             changed.append({**item, "since": {"voices": voices, "lines": [
                 {"id": p["id"], "title": p["title"], "source": p["source_display_name"]} for p in joined]}})
-    changed.sort(key=lambda i: -len(i["since"]["voices"]))   # most voices joined first; stable: News's order after
+    changed.sort(key=lambda i: -len(i["since"]["voices"]))
     return {"counts": {"new": len(new), "changed": len(changed)}, "new": new[:shown], "changed": changed[:shown]}
 
 
 def reader_view(answer: Dict[str, Any]) -> Dict[str, Any]:
-    """`news()`'s answer as the route sends it (issue 0215): each item's story posts and sources and its News rank
-    without the fields no page reads. The service's own answer is unchanged (its readers and tests)."""
+    """`news()`'s answer as the route sends it, without the fields no page reads; the service's answer is unchanged."""
     items = []
     for item in answer.get("items") or []:
         item = dict(item)

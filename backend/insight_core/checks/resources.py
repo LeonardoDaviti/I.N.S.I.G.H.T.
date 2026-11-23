@@ -1,25 +1,14 @@
-"""The jobs' resources on the check's copy (issue 0218): each job's own peak memory and seconds, as the jobs process
-runs it (a process of its own, `spawn`ed: markx/jobs.py `_job_main`), for the base and the head; the report fails a head
-over its budget or more than WORSE_BY worse than the base.
+"""The jobs' resources on the check's copy: each job's own peak memory and seconds, as the jobs process runs it (a
+spawned process of its own, markx/jobs.py `_job_main`), for the base and the head; the report fails a head over its
+budget or more than WORSE_BY worse than the base.
 
     python -m insight_core.checks.resources --db <scratch dsn> [--now ISO] [--json resources.json]
 
-The jobs, in this order, each in a fresh process (its peak is its own address space's high-water, utils/peak: what the
-server's job records say, `peak_mb`):
-  - `decide_full`: the decision run (the candidate finder, then decide.run) on the copy as the story job left it: the
-    first run on a copy has no kept state, so it is full (a deploy's first run, the night's). Recorded, compared with
-    the base, no budget of its own (a full run has jobs.CATCH_UP_LIMIT);
-  - `decide`: the next decision run, incremental (the state the first left): the hourly run's footprint;
-  - `stories`: Mark IX's story job, wanted (as a fetch that saved posts wants it), its originals and scouts left out
-    (they read the web: nothing is fetched in a check);
-  - `discover`: Discover's answer kept (its web reads off: INSIGHT_DISCOVER_READS=0).
-The decision runs' clock is the copy's (`--now`, decide's own clock patched in the child, as the measurement harness of
-0216 does). A version without a job (or its API) is "not measured" for it, never a failure.
-
-Budgets (BUDGETS, overridable with RESOURCE_BUDGETS='{"decide": {"peak_mb": 600, "seconds": 90}, ...}'): the decision
-run 600 MB and 90 s (incremental), the story job 300 MB, Discover 300 MB, at the server's size; the check's copy is
-smaller, so a head over them is over at any size. A head more than WORSE_BY (20%) above the base's peak or CPU seconds
-fails too, past a floor (FLOOR_MB, FLOOR_S: a few MB or seconds of noise never fail a check)."""
+The jobs, each in a fresh process (its peak is its own high-water, utils/peak): `decide_full` (the first decision run,
+full; compared, no budget), `decide` (the next, incremental), `stories` (Mark IX's story job, its web reads left out)
+and `discover` (its web reads off). The decision runs' clock is the copy's (`--now`). A version without a job is "not
+measured" for it, never a failure. BUDGETS (overridable with RESOURCE_BUDGETS JSON) are at the server's size; the
+check's copy is smaller, so a head over them is over at any size. Differences under FLOOR_MB / FLOOR_S never fail."""
 from __future__ import annotations
 
 import argparse

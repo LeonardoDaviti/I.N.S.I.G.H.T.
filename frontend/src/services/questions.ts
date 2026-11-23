@@ -1,5 +1,4 @@
-// Questions with citations (issue 0275, Mark X): the reader's question answered only from their own posts, by the
-// worker (the page polls while it waits).
+// Questions with citations (Mark X): the reader's question answered by the worker only from their own posts.
 import { request } from '../lib/request';
 
 export interface AnswerSentence {

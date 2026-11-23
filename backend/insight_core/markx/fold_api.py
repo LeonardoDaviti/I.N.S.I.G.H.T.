@@ -1,12 +1,11 @@
-"""0127 (v10.3)'s routes, the fold's (no bearer: the app's own; 404 when Mark X is off, as every /api/markx path):
+"""The fold's routes (no bearer: the app's own; 404 when Mark X is off), included into markx/api.py's router:
 
 GET  /api/markx/stories/{id}/folds   the story's members in published order, each {id, role (the rule's), state (head |
-                                     folded | shown | null), head, by (rule | owner), answer}: 0119 B6's story view
-POST /api/markx/folds/answer         {story, post, answer: same | not_same | undo, note?}: applied at once and stored as a
+                                     folded | shown | null), head, by (rule | owner), answer}
+POST /api/markx/folds/answer         {story, post, answer: same | not_same | undo, note?}: applied at once and stored as
+a
                                      label (mx_labels, item kind fold) -> the post's fold now
 GET  /api/markx/folds/score          the owner's count: {answered, folded {n, right, precision, interval}, missed, lab}
-
-Included into markx/api.py's router (its prefix and its switch).
 """
 from __future__ import annotations
 

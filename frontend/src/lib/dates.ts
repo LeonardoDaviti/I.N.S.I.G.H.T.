@@ -1,28 +1,19 @@
 /**
- * Dates and times, the one place that turns an instant into words: a calendar
- * date, a relative time, the reader's date column and day headers, a local
- * timestamp. Durations live in `duration.ts`.
- *
- * Local dates (Mark IX §F.6): `toISOString().split('T')[0]` gives the *UTC*
- * date, which is yesterday or tomorrow for part of every day outside UTC, so new
- * code uses `localDateISO` instead.
- *
- * `offsetMinutes` follows `Date#getTimezoneOffset` (UTC+2 is -120) and defaults to
- * the runtime's offset for that instant; tests inject it.
+ * Dates and times, the one place that turns an instant into words. Durations live in `duration.ts`.
+ * `toISOString().split('T')[0]` gives the UTC date (a day off outside UTC): use `localDateISO`.
+ * `offsetMinutes` follows `Date#getTimezoneOffset` (UTC+2 is -120), defaulting to the runtime's; tests inject it.
  */
 
 import { formatSpan } from './duration.ts';
 
 type DateInput = Date | string | number | null | undefined;
 
-/** A valid Date, or null for a missing or unparseable value. */
 export function toDate(value: DateInput): Date | null {
   if (value === null || value === undefined || value === '') return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** The calendar date (YYYY-MM-DD) of `date` in local time. */
 export function localDateISO(date: Date = new Date(), offsetMinutes: number = date.getTimezoneOffset()): string {
   const shifted = new Date(date.getTime() - offsetMinutes * 60_000);
   return shifted.toISOString().slice(0, 10);
@@ -70,15 +61,10 @@ export function formatLocalDateTime(value: DateInput): string | null {
   return toDate(value)?.toLocaleString() ?? null;
 }
 
-/*
- * The reader's date column and day headers (Mark IX lead review #2), in the
- * news.smol.ai style: a short calendar date ("Sep 29") on every row, a relative
- * time ("3h ago") only inside the last 24 hours, and one header per local day.
- * `now` and `timeZone` are injectable for tests; both default to the runtime's.
- */
+/* The reader's date column and day headers: "Sep 29" on every row, "3h ago" only within 24 hours, one header
+ * per local day. `now` and `timeZone` default to the runtime's. */
 
-// Building an Intl.DateTimeFormat costs far more than calling it, and every row
-// of the feed asks for its date on each render: one formatter per time zone.
+// Building an Intl.DateTimeFormat costs far more than calling it: one formatter per time zone.
 const formatters = new Map<string, Intl.DateTimeFormat>();
 function formatter(timeZone?: string): Intl.DateTimeFormat {
   const key = timeZone ?? '';
@@ -98,9 +84,8 @@ function parts(date: Date, timeZone?: string) {
 }
 
 /**
- * A date alone (issue 0070, 0064's `trusted_time`): a feed that gives only the day stores it at
- * 00:00:00 UTC, and an undated backlog is placed at the start of its day. It has no time of day:
- * it shows as its day, in UTC, never "04:00" or a day early west of UTC.
+ * A date alone: a day-only date is stored at 00:00:00 UTC (an undated backlog at its day's start). It has no
+ * time of day: it shows as its day, in UTC, never "04:00" or a day early west of UTC.
  */
 export function dateAlone(value: DateInput): boolean {
   const date = toDate(value);
@@ -117,7 +102,6 @@ export function feedDateLabel(value: string | Date | null | undefined, now: Date
   else if (diff >= 0 && diff < DAY) return formatRelativeTime(date, now);
   const d = parts(date, timeZone);
   const n = parts(now, timeZone);
-  // Another year stays short enough for the date column: "Sep 5 ’25".
   return d.year === n.year ? `${d.month} ${d.day}` : `${d.month} ${d.day} \u2019${d.year.slice(-2)}`;
 }
 
@@ -133,7 +117,6 @@ export function feedDayKey(value: string | Date | null | undefined, timeZone?: s
   if (cached !== undefined) return cached;
   const d = parts(date, timeZone);
   const key = `${d.year}-${d.month}-${d.day}`;
-  // A plain bounded cache: when full, drop the oldest entry (Map keeps insertion order).
   if (dayKeys.size >= DAY_KEY_CACHE_MAX) dayKeys.delete(dayKeys.keys().next().value as string);
   dayKeys.set(cacheKey, key);
   return key;
@@ -155,7 +138,7 @@ export function feedTimeLabel(value: string | Date | null | undefined, timeZone?
 }
 
 const bylineFormatters = new Map<string, Intl.DateTimeFormat>();
-/** The post byline's date and time: "Oct 9, 11:30 PM", with the year only when it is not this year ("Oct 9, 2025, 11:30 PM"); a date alone, its day ("Sep 29, 2025"). */
+/** "Oct 9, 11:30 PM" (the year only when not this year: "Oct 9, 2025, 11:30 PM"); a date alone, its day. */
 export function postBylineTime(value: string | Date | null | undefined, now: Date = new Date(), timeZone?: string): string {
   const date = toDate(value);
   if (!date) return '';

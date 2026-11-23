@@ -1,6 +1,5 @@
-"""Tests for scripts/markx-worker's `embed` kind (0086 B, the build plan's corrections 6) against a stub of
-POST /api/markx/embeddings and a fake embedder (a llama-server's /embedding and /props on 127.0.0.1, fixed
-vectors from each text's hash). Never the GGUF, never the real `claude`.
+"""Tests for scripts/markx-worker's `embed` kind against a stub of POST /api/markx/embeddings and a fake
+llama-server embedder (fixed vectors from each text's hash). Never the GGUF, never the real `claude`.
 
     python3 -m unittest discover -s scripts/tests -p 'test_markx_worker_embed.py'
 """
@@ -87,7 +86,7 @@ class Embedder(Http):
 
 
 class Server(Http):
-    """0086 C's /work, /release and S2's /embeddings, in memory."""
+    """The server's /work, /release and /embeddings, in memory."""
 
     def __init__(self, build=None):
         self.tasks, self.uploads, self.releases, self.stored = {}, [], [], {}

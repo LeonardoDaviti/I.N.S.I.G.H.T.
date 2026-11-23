@@ -1,7 +1,7 @@
-"""Official channels' routes (issue 0196): an APIRouter, included by main.py in one line. Reads only, but Undo and the
-owner's item filter; the decisions are markx/official.py's, made in the jobs process.
+"""Official channels' routes: an APIRouter included by main.py. Reads only, but Undo and the owner's item filter;
+the decisions are markx/official.py's, made in the jobs process.
 
-GET  /api/official?offset=&limit=&state=  the review view, a page at a time (0241: limit 1-500, default 100; state:
+GET  /api/official?offset=&limit=&state=  the review view, a page at a time (limit 1-500, default 100; state:
                                          a comma list), would_add, added, candidate first: {mode off|shadow|on, cap,
                                          added_today, counts {state: n} (every row), total (the rows `state` selects),
                                          offset, limit, states, events {outcome: n},

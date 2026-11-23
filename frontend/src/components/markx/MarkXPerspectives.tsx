@@ -36,11 +36,11 @@ function sources(f: MarkxSheetFact): string {
   return f.sources.filter(Boolean).join(', ');
 }
 
-/** The story sheet (0119 B4): what the story's members add, merged, above the members. */
+/** The story sheet: what the story's members add, merged, above the members. */
 export function StorySheet({ sheet, posts }: { sheet: MarkxSheet; posts: Record<string, MarkxStoryPost> }) {
   const o = sheet.original;
   const first = posts[o.post];
-  // Who wrote each (Byline, issue 0185): the member's byline, else the name the sheet kept.
+  // who wrote each: the member's byline, else the name the sheet kept
   const who = (post: string, source: string | null) => bylineText(posts[post]?.byline, source);
   return (
     <section aria-label="Story sheet" className="space-y-4 rounded-md border border-line p-4">
@@ -120,7 +120,7 @@ export function StorySheet({ sheet, posts }: { sheet: MarkxSheet; posts: Record<
   );
 }
 
-/** ✓ / ✗ on one new fact; ✗ asks why in one more tap (0119 B7). */
+/** ✓ / ✗ on one new fact; ✗ asks why in one more tap. */
 function FactButtons({ story, post, fact }: { story: string; post: string; fact: MarkxFact }) {
   const api = useApi();
   const [mine, setMine] = useState<MarkxFactAnswer | null>(fact.mine);
@@ -155,7 +155,7 @@ function FactButtons({ story, post, fact }: { story: string; post: string; fact:
   );
 }
 
-/** ✓ / ✗ on a member's label; ✗ offers the right label in one tap (0119 B7). */
+/** ✓ / ✗ on a member's label; ✗ offers the right label in one tap. */
 function LabelButtons({ story, line }: { story: string; line: MarkxPerspectiveLine }) {
   const api = useApi();
   const client = useQueryClient();
@@ -201,7 +201,7 @@ function LabelButtons({ story, line }: { story: string; line: MarkxPerspectiveLi
   );
 }
 
-/** One member's line (0119 B6): its sign and label, its new facts one line each, copies folded, the label buttons. */
+/** One member's line: its sign and label, its new facts one line each, copies folded, the label buttons. */
 export function MemberLine({ story, line, posts, now }: { story: string; line: MarkxPerspectiveLine;
   posts: Record<string, MarkxStoryPost>; now: Date }) {
   const p = posts[line.post];
@@ -247,7 +247,7 @@ function pc(r: MarkxRate): string {
   return `${Math.round(100 * r.p)}% (${Math.round(100 * r.lo)}–${Math.round(100 * r.hi)}), ${r.k}/${r.n}`;
 }
 
-/** The Labels tab's perspectives section (0119 B7): your labels counted, the running accuracy against the lab's. */
+/** The Labels tab's perspectives section: your labels counted, the running accuracy against the lab's. */
 export function PerspectiveAccuracy() {
   const api = useApi();
   const query = useQuery({ queryKey: ['markx-perspective-accuracy'], queryFn: () => api.getMarkxPerspectiveAccuracy(),

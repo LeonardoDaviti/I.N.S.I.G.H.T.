@@ -25,11 +25,9 @@ function download(path: string) {
 }
 
 /**
- * Settings → Data (issue 0079): export everything as one zip (a CSV per table,
- * the schema, a manifest, how to restore it), stored logins left out unless
- * ticked, after a confirmation; and the sources list as sources.json. Before the
- * click: the database's size and an estimate; after: the file, its size and the
- * restore command.
+ * Settings → Data: export everything as one zip (a CSV per table, the schema, a manifest, how to restore), stored
+ * logins left out unless ticked, after a confirmation; and the sources list as sources.json. Before: the database's
+ * size and an estimate; after: the file, its size and the restore command.
  */
 export default function DataPanel() {
   const api = useApi();
@@ -41,8 +39,8 @@ export default function DataPanel() {
   const [token, setToken] = useState<string | null>(null);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
 
-  // Follow the download the server is writing: bytes so far, then done or stopped. Only while this tab (Settings →
-  // Data, mounted only while shown) and the browser tab are visible (issue 0195): a hidden tab asks again on its return.
+  // Follow the download the server is writing. Only while this panel and the browser tab are visible: a hidden tab
+  // asks again on its return.
   useEffect(() => {
     if (!token) return undefined;
     let stopped = false;
@@ -60,11 +58,11 @@ export default function DataPanel() {
         const state = await api.getExportProgress(token);
         if (stopped) return;
         setProgress(state);
-        // A whole export is the next estimate's basis (issue 0105): read the line again.
+        // a whole export is the next estimate's basis: read the line again
         if (state.done) void queryClient.invalidateQueries({ queryKey: EXPORT_INFO_KEY });
         if (state.done || state.error) return;
       } catch {
-        // Not started yet (404) or a blip: ask again.
+        // not started yet (404) or a blip: ask again
       }
       if (!stopped) timer = window.setTimeout(poll, POLL_MS);
     };

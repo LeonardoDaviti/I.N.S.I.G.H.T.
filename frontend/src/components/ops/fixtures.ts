@@ -1,10 +1,5 @@
-/**
- * Fixtures for the ops components (spec §F.7, break-ui CATALOG): a realistic
- * demo, the worst case, empty, one, and a huge list. They are the regression
- * data for SourceHealthTable and RunReportSummary and back the dev-only
- * `?data=worst|empty|one|huge` switch on Settings → Sources → Health.
- * Dates are relative to `now`, so "retry in 3h" stays true whenever it renders.
- */
+/** Fixtures for the ops components: a realistic demo, the worst case, empty, one, and a huge list; regression data
+ *  for SourceHealthTable and RunReportSummary and the dev-only `?data=` switch. Dates are relative to `now`. */
 import type { RunReport, SourceHealthRow, SourcesHealthResponse } from '../../services/api';
 import type { HealthFixtureName } from './fixtureNames';
 

@@ -1,8 +1,7 @@
-"""Stories storage (issue 0050): post links, stories, their posts and mentions, Discover's hidden
-suggestions. Every method takes the caller's cursor and never commits.
-
-The rules live in utils/post_links.py, story_rules.py, tree_rules.py and discover_rules.py; this
-file only reads what they need and writes what they return, touching only the rows that differ.
+"""Stories storage: post links, stories, their posts and mentions, edges, the story queue, Discover's hidden
+suggestions. Every method takes the caller's cursor and never commits. The rules live in utils/post_links.py,
+story_rules.py, tree_rules.py and discover_rules.py; this file reads what they need and writes what they
+return, touching only the rows that differ.
 """
 from __future__ import annotations
 
@@ -23,21 +22,19 @@ from insight_core.utils.post_refs import refs_of
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN, channel_owners, owner_pairs
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE,
                                             Edge, Story, source_site, text_chars_sql)
-from insight_core.markx.pairing import ix_date   # Mark IX's time (0190)
-from insight_core.markx.units import roundup_sql   # the round-up tag (GLOSSARY "Round-up": units owns it; v10.39)
+from insight_core.markx.pairing import ix_date
+from insight_core.markx.units import roundup_sql   # the round-up tag: units owns it
 from insight_core.utils import voice as voice_keys
 from insight_core.utils.tree_rules import _PAGE
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
-KEY_CHARS = 500   # a key is kept to its first 500 characters (an index's row limit): two longer ones may share a row, never miss one
+KEY_CHARS = 500   # keys are cut to an index row's limit: two longer ones may share a row, never miss one
 
 
 def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
-    """The platform account a source follows, as Discover keys it (addresses.account_key): a
-    Telegram channel read through a bridge is t.me/<channel>, a Nitter feed x.com/<user>, a
-    subreddit reddit.com/r/<sub>, a YouTube channel youtube.com/channel/<id>, any other address
-    the account its path is under (github.com/<owner>). The kinds' own parsers read the address."""
+    """The platform account a source follows, as Discover keys it (addresses.account_key): t.me/<channel>,
+    x.com/<user>, reddit.com/r/<sub>, youtube.com/channel/<id>, else the account its path is under."""
     from insight_core.ingestion.kinds import nitter_rss, reddit, telegram_rss
 
     handle = (handle or "").strip()
@@ -60,13 +57,10 @@ def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[s
     return account_key(url) if url else None
 
 
-# Switched off (issue 0200, v10.17.1): a source the owner switched off (sources.enabled false) never feeds a
-# suggestion. Its posts are no evidence for any list that proposes something to follow, read or join (Discover's
-# sites, accounts, pages and archives, its main-source rows, a track's Discover, joined items and source
-# suggestions, the scout's and research's channels, the voices' suggestions), and its address is never proposed (it
-# stays followed: a site or account it holds is not suggested either). Its stored posts keep their places in News,
-# stories and Classics, where they still count as voices: membership is not a suggestion. The one rule, in SQL
-# (`suggestable_sql`) and in Python (`switched_off`, SourceFacts.suggestable); every list asks it, none restates it.
+# Switched off (0200): a source the owner switched off (sources.enabled false) never feeds a suggestion (any
+# list proposing something to follow, read or join), and its address is never proposed. Its stored posts keep
+# their places and voices in News, stories and Classics: membership is not a suggestion. The one rule, in SQL
+# (`suggestable_sql`) and Python (`switched_off`, SourceFacts.suggestable); every list asks it.
 _SUGGESTABLE = "enabled"   # of a sources row: the owner has not switched it off
 
 
@@ -91,18 +85,16 @@ class SourceFacts:
         cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
         self._read(rows, cur.fetchall())
         from insight_core.db.repo_voices import counted
-        self.voice_of: Dict[str, str] = counted(cur)   # the owner's confirmed voices (issue 0132 A)
+        self.voice_of: Dict[str, str] = counted(cur)   # the owner's confirmed voices
         self._own(self._linked(cur))
 
     @classmethod
     def of(cls, rows: Iterable[Tuple[Any, ...]], hosts: Iterable[Tuple[Any, str, int]],
            links: Iterable[Tuple[str, str]] = (), voices: Optional[Dict[str, str]] = None,
            off: Iterable[str] = ()) -> "SourceFacts":
-        """The facts of these sources ((id, platform, handle, name)) and their posts' hosts ((source, host,
-        posts)), as read from the database, and which source links which (`links`: (linking, linked), as
-        _linked reads them for the pairs that may be one owner): the rules' stamp reads its sample so
-        (utils/stamps.py). `voices`: source -> its confirmed voice (issue 0132 A; the sample has none). `off`: the
-        sources switched off (switched_off)."""
+        """The facts of these sources ((id, platform, handle, name)), their posts' hosts ((source, host, posts))
+        and `links` ((linking, linked), as _linked reads them): the rules' stamp builds its sample so
+        (utils/stamps.py). `voices`: source -> confirmed voice. `off`: the sources switched off."""
         facts = cls.__new__(cls)
         facts.off = {str(i) for i in off}
         facts._read(list(rows), list(hosts))
@@ -111,15 +103,13 @@ class SourceFacts:
         return facts
 
     def _channels(self) -> List[Tuple[str, str, str, Optional[str], str]]:
-        """The followed sources that are someone's channel (discover_rules.Channel): not an aggregator,
-        Saved or a subreddit."""
+        """The followed sources that are someone's channel: not an aggregator, Saved or a subreddit."""
         return [(i, kind, self.name.get(i, ""), self.account.get(i), self.publication(i))
                 for i, kind in sorted(self.kind.items()) if kind not in (*NOT_PUBLISHERS, "reddit")]
 
     def _linked(self, cur: Cursor) -> List[Tuple[str, str]]:
-        """(a, b): of the pairs that may be one owner (owner_pairs' named ones), a's posts link b's posts or
-        b's own place (its site's address or its account's), from one read of those sources' links (16k links of
-        52 sources on the server's copy)."""
+        """(a, b): of the pairs that may be one owner (owner_pairs), a's posts link b's posts or b's own place,
+        from one read of those sources' links."""
         self._pairs = owner_pairs(self._channels(), shared_sites=self.shared_sites)
         asks = [(a, b) for (x, y), why in self._pairs.items() if why == "name" for a, b in ((x, y), (y, x))]
         if not asks:
@@ -145,10 +135,9 @@ class SourceFacts:
         return [(a, b) for a, b in asks if links(a, b)]
 
     def _own(self, linked: Iterable[Tuple[str, str]]) -> None:
-        """Who owns each channel (issue 0111: News counts a voice by owner): `owner` (source -> its owner's first
-        source, for an owner of 2+ channels, discover_rules.channel_owners) and `owners` (a voice, as StoryPost
-        tells it -> its owner's voice, when another): a Reddit poster whose name is a followed account's handle
-        is that account's owner too."""
+        """Who owns each channel (News counts a voice by owner): `owner` (source -> its owner's first source, for
+        an owner of 2+ channels) and `owners` (voice -> its owner's voice, when another); a Reddit poster named
+        as a followed account's handle is that account's owner too."""
         if not hasattr(self, "_pairs"):
             self._pairs = owner_pairs(self._channels(), shared_sites=self.shared_sites)
         self.owner = channel_owners(self._channels(), self._pairs, linked)
@@ -156,7 +145,7 @@ class SourceFacts:
         def voice(i: str) -> str:
             return voice_keys.source_key(i, self.kind.get(i), self.publication(i))
         self.owners: Dict[str, str] = {voice(i): voice(o) for i, o in self.owner.items() if voice(i) != voice(o)}
-        # A confirmed voice of 2+ channels (issue 0132 A) is one voice everywhere: stories and News count it once.
+        # a confirmed voice of 2+ channels is one voice everywhere: stories and News count it once
         voice_of = getattr(self, "voice_of", {})
         for i, v in sorted(voice_of.items()):
             if self.kind.get(i) not in (*NOT_PUBLISHERS, "reddit"):
@@ -175,9 +164,9 @@ class SourceFacts:
         self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}
         self.name = {str(r[0]): r[3] for r in rows}
         self.account = {str(r[0]): source_account(r[1], r[2]) for r in rows}
-        # The source following each account (issue 0068: who reposted a tweet), the first by id.
+        # the source following each account (who reposted a tweet), the first by id
         self.of_account = {a: i for i, a in sorted(self.account.items(), reverse=True) if a}
-        # The Saved source's pages come from any site: it has no site of its own.
+        # the Saved source's pages come from any site: it has no site of its own
         self.handle_site = {str(r[0]): site_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
                             if self.kind[str(r[0])] != "saved"}
         self.handle_host = {str(r[0]): publication_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
@@ -188,37 +177,34 @@ class SourceFacts:
                 hosts[str(source_id)].append((host, int(n)))
         self.site = {source_id: source_site(pairs) for source_id, pairs in hosts.items()}
         self.host = {source_id: source_site(pairs, of=publication_of) for source_id, pairs in hosts.items()}
-        # A site of publications (issue 0070): one your website sources publish on at 2+ hosts
-        # (Substack's writers, github.io's). Elsewhere a site's other hosts are its publisher's own
-        # (tools.simonwillison.net, forms.technologyreview.com: measured on the lab).
+        # A site of publications: one your website sources publish on at 2+ hosts (Substack, github.io).
+        # Elsewhere a site's other hosts are its publisher's own.
         hosts_of: Dict[str, Set[str]] = defaultdict(set)
         for source_id, site in self.site.items():
             if self.kind.get(source_id) == "site":
                 hosts_of[site].add(self.host[source_id])
         self.shared_sites = {site for site, pubs in hosts_of.items() if len(pubs) >= 2}
-        # How much of a source is on its own site (issue 0064): an aggregator's most common site
-        # is only where it links most (Hacker News: 8% github.com on the server's data).
+        # how much of a source is on its own site: an aggregator's most common site is only where it links most
         self._site_share = {
             source_id: sum(n for host, n in pairs if site_of(host) == self.site[source_id]) / sum(n for _, n in pairs)
             for source_id, pairs in hosts.items() if sum(n for _, n in pairs)
         }
 
     def suggestable(self, source_id: Optional[str]) -> bool:
-        """Whether a source's posts may feed a suggestion (issue 0200: not switched off). A post of no source (an
-        outside page, a Reddit author's) is judged by the source that carried it, so None is suggestable."""
+        """Whether a source's posts may feed a suggestion (not switched off). A post of no source is judged by the
+        source that carried it, so None is suggestable."""
         return source_id is None or str(source_id) not in self.off
 
     def own_site(self, source_id: str) -> str:
         return self.site.get(source_id) or self.handle_site.get(source_id) or ""
 
     def publication(self, source_id: str) -> str:
-        """The host a source publishes at (issue 0069), as own_site finds its site: a website's voice.
-        Its site (own_site) still says where it is, for Discover's places and a site's sections."""
+        """The host a source publishes at: a website's voice. Its site (own_site) still says where it is."""
         return self.host.get(source_id) or self.handle_host.get(source_id) or ""
 
     def home_site(self, source_id: str) -> str:
-        """The site a source publishes on (issue 0064), "" when none can be told: its own site, if
-        its address is on it or half its posts are; never Hacker News' or Saved's."""
+        """The site a source publishes on, "" when none can be told: its own site, if its address is on it or half
+        its posts are; never Hacker News' or Saved's."""
         site = self.own_site(source_id)
         if not site or self.kind.get(source_id) in NOT_PUBLISHERS:
             return ""
@@ -227,11 +213,9 @@ class SourceFacts:
         return ""
 
     def followed(self, publications_on: Iterable[str] = ()) -> Set[str]:
-        """The sites you follow: each source's own site, and the site of its address. A source that
-        isn't the publisher of its posts' addresses (NOT_PUBLISHERS: Hacker News, Saved) follows no
-        site by them (issue 0080: an aggregator's most linked site was "followed").
-        0239: on a site of publications (`publications_on`: a publishing platform's, discover_rules.site_unit) a source
-        follows its publication, not the platform (one newsletter followed had hidden every other one there)."""
+        """The sites you follow: each source's own site and its address's. A source that isn't its posts' publisher
+        (NOT_PUBLISHERS) follows no site by them. On a site of publications (`publications_on`) a source follows
+        its publication, not the platform."""
         on = set(publications_on)
 
         def unit(site: str, host: str) -> str:
@@ -241,9 +225,8 @@ class SourceFacts:
         return {s for s in (*own, *handles) if s}
 
     def selves(self, source_id: str) -> Set[str]:
-        """A source's own names (issue 0080), as an address names it on a platform: its account's
-        (t.me/<name>, x.com/<name>), and its publication's first word that names it
-        (<name>.substack.com, <name>.net). Its links to pages under one are self-links."""
+        """A source's own names on a platform: its account's (t.me/<name>, x.com/<name>) and its publication's
+        first word (<name>.substack.com). Its links to pages under one are self-links."""
         names = set()
         account = self.account.get(source_id) or ""
         if "/" in account:
@@ -274,8 +257,6 @@ class SourceFacts:
 
 
 class StoriesRepository:
-    # ---- post links -------------------------------------------------------------------
-
     @staticmethod
     def write_links(cur: Cursor, post_id: str, links: Sequence[PostLink]) -> None:
         """One post's links become exactly `links` (rows that did not change are not written)."""
@@ -318,12 +299,11 @@ class StoriesRepository:
             return
         url, content_html, platform, handle, content = row
         self.write_links(cur, post_id, extract_links(content_html, url, source_kind(platform, handle), content))
-        PostRefsRepository.read_post(cur, post_id, url, content_html, content)   # issue 0125: every link, Connected's
+        PostRefsRepository.read_post(cur, post_id, url, content_html, content)   # every link, Connected's
         cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = %s AND links_scanned_at IS NULL", (post_id,))
 
     def fill_missing_links(self, cur: Cursor, limit: int = LINKS_BATCH) -> int:
-        """Read the links of up to `limit` posts never read (stored before 0050, or whose text a
-        repair rewrote). Returns how many posts were read."""
+        """Read the links of up to `limit` posts never read (or whose text a repair rewrote). Returns how many."""
         cur.execute(
             """
             SELECT p.id, p.url, p.content_html, s.platform, s.handle_or_url, p.content
@@ -338,19 +318,18 @@ class StoriesRepository:
         rows = cur.fetchall()
         for post_id, url, content_html, platform, handle, content in rows:
             self.write_links(cur, str(post_id), extract_links(content_html, url, source_kind(platform, handle), content))
-            PostRefsRepository.write(cur, str(post_id), refs_of(content_html, content, url))   # issue 0125
+            PostRefsRepository.write(cur, str(post_id), refs_of(content_html, content, url))
         if rows:
             cur.execute("UPDATE posts SET links_scanned_at = now(), refs_scanned_at = now() WHERE id = ANY(%s::uuid[])",
                         ([r[0] for r in rows],))
         return len(rows)
 
-    MENTIONS_KEY = "mentions_backfill"   # 0235: {"after": the last post read, "done"} (system_settings)
+    MENTIONS_KEY = "mentions_backfill"   # {"after": the last post read, "done"} (system_settings)
 
     def fill_mentions(self, cur: Cursor, limit: int = LINKS_BATCH) -> int:
-        """0235's backfill, resumable: the next `limit` posts of X and Bluesky sources (by id, after the last one read)
-        whose text holds an @, their links read again as extract_links reads them now (the same rows, plus their
-        mentions). The step's place is kept in system_settings (MENTIONS_KEY); a post stored since reads its mentions
-        when it is saved. Returns how many posts were read (0: done)."""
+        """The mentions backfill, resumable: the next `limit` X and Bluesky posts (by id) whose text holds an @,
+        their links read again as extract_links reads them now. Its place is kept in MENTIONS_KEY. Returns how
+        many posts were read (0: done)."""
         cur.execute("SELECT value FROM system_settings WHERE key = %s", (self.MENTIONS_KEY,))
         row = cur.fetchone()
         state = row[0] if row and isinstance(row[0], dict) else {}
@@ -382,7 +361,7 @@ class StoriesRepository:
 
     @staticmethod
     def mentions_left(cur: Cursor) -> bool:
-        """Whether 0235's backfill has posts left to read (fill_mentions)."""
+        """Whether the mentions backfill has posts left (fill_mentions)."""
         cur.execute("SELECT value FROM system_settings WHERE key = %s", (StoriesRepository.MENTIONS_KEY,))
         row = cur.fetchone()
         return not (row and isinstance(row[0], dict) and row[0].get("done"))
@@ -395,13 +374,10 @@ class StoriesRepository:
 
     @staticmethod
     def mark_boilerplate(cur: Cursor, sources: SourceFacts, source_ids: Optional[Sequence[str]] = None) -> List[str]:
-        """Mark every link that is its source's signature (in SIGNATURE_SHARE of its posts and
-        SIGNATURE_MIN_POSTS at least) or points at its source's own site. Returns rows changed. On a
-        site of publications (SourceFacts.shared_sites, issue 0070) its own is its publication: a
-        Substack writer linking another cites them. Returns the posts whose links changed. A platform is no source's own site: what is kept
-        of its links there (another tweet, issue 0066) is told by `extract_links`. With `source_ids`, only
-        those sources' links (a source's signature counts its own posts only). The post_refs of those sources are
-        marked by the same rule (issue 0125, PostRefsRepository.mark_boilerplate)."""
+        """Mark every link that is its source's signature (in SIGNATURE_SHARE of its posts, SIGNATURE_MIN_POSTS at
+        least) or points at its own site; on a site of publications its own is its publication; a platform is no
+        source's own site. With `source_ids`, only those sources'. Their post_refs are marked by the same rule.
+        Returns the posts whose links changed."""
         own = [(source_id, *((sources.host[source_id], True) if site in sources.shared_sites else (site, False)))
                for source_id, site in sources.site.items()
                if site not in PLATFORM_SITES.get(sources.kind.get(source_id, ""), ())]
@@ -435,20 +411,15 @@ class StoriesRepository:
              "min_posts": SIGNATURE_MIN_POSTS, "share": SIGNATURE_SHARE, "only": None if source_ids is None else list(source_ids)},
         )
         changed = sorted({str(r[0]) for r in cur.fetchall()})
-        # Connected's refs by the same rule (issue 0125); no story reads them, so they are not in `changed`.
+        # Connected's refs by the same rule; no story reads them, so they are not in `changed`
         PostRefsRepository.mark_boilerplate(cur, source_ids)
         return changed
 
-    # ---- the story job ----------------------------------------------------------------
-
     @staticmethod
     def load_posts(cur: Cursor, sources: SourceFacts, ids: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
-        """The posts the job groups: every post, or those of `ids` (the posts linking a page: `linking_posts`, read
-        in batches for issue 0070's evidence, 0231). Each with its kept links,
-        in order, and the stored post each link is, if any. Its parts (issue 0076, post_parts: a post not
-        parsed yet is parsed first): the title every page shows, the account a reply answers, the tweet it
-        quotes, the words of the pages it quotes, Reddit's poster and its words; those of its HTML only
-        on the platforms (`html_sources`). Whether Mark X tags it a round-up (`roundup`, units.roundup_sql: v10.39)."""
+        """The posts the job groups: every post, or `ids`, each with its kept links in order and the stored post each
+        link is. Its parts (post_parts; parsed first when missing): title, reply target, quoted tweet, quoted
+        pages' words, Reddit poster; HTML-derived ones only on `html_sources`. `roundup`: units.roundup_sql."""
         PostPartsRepository.write_missing(cur, ids)
         cur.execute(
             f"""
@@ -477,8 +448,7 @@ class StoriesRepository:
         cur.execute("""SELECT post_id, target_url, link_text FROM post_links
                         WHERE NOT boilerplate AND post_id = ANY(%s::uuid[]) ORDER BY post_id, position""", (list(by_id),))
         links = cur.fetchall()
-        # The stored post each link is: the first stored at its address. v10.22: looked up once an address (was a
-        # lateral probe for each of ~32k links a load on the server, 246 ms a call).
+        # the stored post each link is: the first stored at its address, looked up once an address
         cur.execute("""SELECT DISTINCT ON (normalized_url) normalized_url, id FROM posts WHERE normalized_url = ANY(%s)
                         ORDER BY normalized_url, fetched_at, created_at, id""", (sorted({t for _, t, _ in links}),))
         stored_at = {url: str(pid) for url, pid in cur.fetchall()}
@@ -490,8 +460,7 @@ class StoriesRepository:
 
     @staticmethod
     def linking_posts(cur: Cursor, urls: Sequence[str]) -> List[str]:
-        """The posts with a kept link to one of these addresses (Discover's articles, issue 0070), by id: their
-        evidence is read in batches (services/page_titles.evidence, 0231)."""
+        """The posts with a kept link to one of these addresses, by id (their evidence is read in batches)."""
         cur.execute("SELECT DISTINCT post_id::text FROM post_links WHERE NOT boilerplate AND target_url = ANY(%s) "
                     "ORDER BY 1", (list(urls),))
         return [r[0] for r in cur.fetchall()]
@@ -499,17 +468,15 @@ class StoriesRepository:
     @staticmethod
     def write_stories(cur: Cursor, stories: Sequence[Story], *, post_ids: Optional[Sequence[str]] = None,
                       mentions: Iterable[Tuple[str, str]] = ()) -> int:
-        """Make the stored stories of `post_ids` (every post when None) match `stories`, theirs: the
-        stories holding them before and now, their story rows and the mentions of those stories and by
-        those posts (`mentions`: (story, post) of stories not given, by those posts). The caller gives whole
-        stories (the incremental job's neighbourhood holds each
-        story a post of it was in). Writes only what differs; returns how many rows changed."""
+        """Make the stored stories of `post_ids` (every post when None) match `stories`: their story rows and the
+        mentions of those stories and by those posts (`mentions`: (story, post) of stories not given). The
+        caller gives whole stories. Writes only what differs; returns how many rows changed."""
         changed = 0
         want_posts: Dict[str, Tuple[Any, ...]] = {}
         want_mentions: Set[Tuple[str, str]] = set()
         for story in stories:
             for position, post in enumerate(story.posts):
-                # Its tree (issue 0064): the parent post, else the outside page origin, and why.
+                # its tree: the parent post, else the outside page origin, and why
                 parent_id, parent_url, reason = story.parents.get(post.id, (None, None, None))
                 want_posts[post.id] = (story.id, story.roles[post.id], story.reasons[post.id], post.voice,
                                        parent_id, reason, parent_url, position)
@@ -592,15 +559,12 @@ class StoriesRepository:
             changed += len(new)
         return changed
 
-    # ---- stored connections (issue 0072 A) -----------------------------------------------
-
     @staticmethod
     def write_edges(cur: Cursor, edges: Iterable[Edge], *, made_by: str, post_ids: Optional[Sequence[str]] = None,
                     threads: bool = False, mentioned: Sequence[str] = ()) -> int:
-        """Make the stored edges from `post_ids` (every post when None) exactly `edges`: the thread
-        edges with `threads`, every other kind without (a thread's are kept by its timeline,
-        StoriesService), and the mentions of the nodes `mentioned` (posts, and _PAGE + an address:
-        a roundup mentions a story it is not in). Returns how many rows changed."""
+        """Make the stored edges from `post_ids` (every post when None) exactly `edges`: thread edges with `threads`,
+        every other kind without, and the mentions of the `mentioned` nodes (posts, and _PAGE + an address).
+        Returns how many rows changed."""
         want: Dict[Tuple[str, str, str], Tuple[Any, ...]] = {}
         for e in edges:
             if (e.kind == "thread") == threads:
@@ -668,9 +632,8 @@ class StoriesRepository:
 
     @staticmethod
     def stories_holding(cur: Cursor, nodes: Sequence[str], *, besides: Sequence[str] = ()) -> Dict[str, str]:
-        """The stored story each node is in: a post's, and a page's (the story its link edges join), read
-        from posts not in `besides` (a batch's scope: its stories are rewritten now, and a page only its
-        posts linked joins no story outside it, issue 0110)."""
+        """The stored story each node is in (a post's, a page's through its link edges), read from posts not in
+        `besides` (a batch's scope, rewritten now)."""
         posts = [n for n in nodes if not n.startswith(_PAGE)]
         pages = [n[len(_PAGE):] for n in nodes if n.startswith(_PAGE)]
         cur.execute(
@@ -715,8 +678,8 @@ class StoriesRepository:
 
     @staticmethod
     def keys_moved(cur: Cursor, keys: Dict[str, Set[str]]) -> Dict[str, Tuple[Set[str], Set[str]]]:
-        """0216: of these posts, those whose stored keys are not `keys`: {post: (stored, `keys`)}, each kept to
-        KEY_CHARS as stored. Nothing is written."""
+        """Of these posts, those whose stored keys are not `keys`: {post: (stored, `keys`)}, cut to KEY_CHARS.
+        Nothing is written."""
         cur.execute("SELECT post_id::text, key FROM story_keys WHERE post_id = ANY(%s::uuid[])", (list(keys),))
         have: Dict[str, Set[str]] = defaultdict(set)
         for pid, key in cur.fetchall():
@@ -726,8 +689,7 @@ class StoriesRepository:
 
     @staticmethod
     def relabel_edges(cur: Cursor, made_by: str) -> int:
-        """0216: every connection made by the rules `made_by` (the grouping's stamp): at a grouping change's start (its
-        batches regroup every one) and when a setting from before the split is kept as parts. Returns rows changed."""
+        """Stamp every connection with the rules `made_by` (the grouping's stamp). Returns rows changed."""
         cur.execute("UPDATE post_edges SET made_by = %s WHERE made_by <> %s", (made_by, made_by))
         return cur.rowcount
 
@@ -741,8 +703,8 @@ class StoriesRepository:
 
     @staticmethod
     def holders(cur: Cursor, keys: Iterable[str]) -> Set[str]:
-        """The posts holding any of these keys: by story_keys, and for an address ("u:") every post
-        linking it too (a link to a home page is a key only once a post is stored there)."""
+        """The posts holding any of these keys: by story_keys, and for an address ("u:") every post linking it too
+        (a link to a home page is a key only once a post is stored there)."""
         keys = sorted({key[:KEY_CHARS] for key in keys})
         cur.execute(
             """
@@ -779,13 +741,10 @@ class StoriesRepository:
                     "WHERE sp.post_id = ANY(%s::uuid[])", (ids,))
         return set(ids) | {r[0] for r in cur.fetchall()}
 
-    # ---- the queue (issue 0072 A: migration 0059's triggers write it) ---------------------
-
     @staticmethod
     def take_queue(cur: Cursor, limit: int, *, redo: bool = False) -> List[Tuple[str, Any]]:
-        """Up to `limit` queued changes, removed from the queue: (key, what it was), the first queued first. With
-        `redo`, a rule change's posts (redo:<id>) once no saved or changed post is waiting, the newest posts first
-        (0216: `redo_every_post` queues each at its date, so the window the pages show is regrouped first)."""
+        """Up to `limit` queued changes, removed from the queue: (key, what it was), first queued first. With
+        `redo`, a rule change's posts (redo:<id>) once nothing else waits, newest first."""
         order = "queued_at DESC, key" if redo else "queued_at, key"
         cur.execute(
             f"""
@@ -800,11 +759,8 @@ class StoriesRepository:
 
     @staticmethod
     def regrouped(cur: Cursor) -> Dict[str, int]:
-        """0215: a rule change's progress, counted from the rows as they are: every post (`total`) and those
-        regrouped by the rules now (`done`): no regroup of it waits in the queue (its rule change's redo:, or a post:
-        saved or changed since). A post saved mid-rebuild counts in both once its own batch has run, a removed one in
-        neither. Was: the posts when the rebuild began less the redo: keys left, which went below zero once posts
-        saved since were queued with the rest (the server: done -1,132 of 157,752)."""
+        """A rule change's progress, counted from the rows: every post (`total`) and those with no regroup waiting
+        in the queue (`done`)."""
         cur.execute("""SELECT (SELECT count(*) FROM posts),
                               (SELECT count(DISTINCT p.id) FROM story_queue q JOIN posts p ON p.id = substr(q.key, 6)::uuid
                                 WHERE q.key LIKE 'redo:%%' OR q.key LIKE 'post:%%')""")
@@ -818,8 +774,7 @@ class StoriesRepository:
 
     @staticmethod
     def queue_posts(cur: Cursor, source_ids: Sequence[str], accounts: Sequence[str]) -> None:
-        """Queue the posts of these sources, and the X posts by or reposted by these accounts
-        (addresses.x_account: x.com/<name>)."""
+        """Queue the posts of these sources, and the X posts by or reposted by these accounts (x.com/<name>)."""
         names = [a.split("/", 1)[1] for a in accounts if a.startswith("x.com/")]
         cur.execute(
             """
@@ -840,8 +795,8 @@ class StoriesRepository:
 
     @staticmethod
     def redo_every_post(cur: Cursor) -> int:
-        """Queue every post for a rule change (redo:<id>), the changes already queued staying. 0216: each at its date
-        (Mark IX's time), which `take_queue` takes the newest first."""
+        """Queue every post for a rule change (redo:<id>), each at its date so `take_queue` takes the newest first;
+        changes already queued stay."""
         cur.execute("DELETE FROM story_queue WHERE key LIKE 'redo:%%'")
         cur.execute(f"INSERT INTO story_queue (key, queued_at) SELECT 'redo:' || id, {ix_date('posts')} FROM posts "
                     "ON CONFLICT DO NOTHING")
@@ -849,22 +804,21 @@ class StoriesRepository:
 
     @staticmethod
     def newest_first(cur: Cursor) -> int:
-        """0216: the rule change's posts still queued (a rebuild from before 0216 queued them all at one time), each at
-        its date, so the newest are regrouped first. Returns how many."""
+        """Requeue the rule change's posts still queued at their dates, so the newest are regrouped first. Returns
+        how many."""
         cur.execute(f"UPDATE story_queue q SET queued_at = {ix_date('p')} FROM posts p "
                     "WHERE q.key LIKE 'redo:%%' AND q.key = 'redo:' || p.id")
         return cur.rowcount
 
     @staticmethod
     def drop_redo(cur: Cursor) -> int:
-        """0216: a rule change's posts no longer queued (the rows they hold are already by the rules now). Returns
-        how many."""
+        """Unqueue a rule change's posts (the rows they hold are already by the rules now). Returns how many."""
         cur.execute("DELETE FROM story_queue WHERE key LIKE 'redo:%%'")
         return cur.rowcount
 
     @staticmethod
     def queue_regroup(cur: Cursor, post_ids: Sequence[str]) -> None:
-        """0216: these posts regrouped as a saved post is (post:<id>; their keys moved by a rule change)."""
+        """Queue these posts to regroup as a saved post is (post:<id>)."""
         cur.execute("INSERT INTO story_queue (key) SELECT 'post:' || unnest(%s::uuid[])::text ON CONFLICT DO NOTHING",
                     (list(post_ids),))
 
@@ -886,12 +840,9 @@ class StoriesRepository:
                     (after, after, limit))
         return [r[0] for r in cur.fetchall()]
 
-    # ---- Discover (its counts: repo_discover.py) -----------------------------------------
-
     @staticmethod
     def linked_articles(cur: Cursor, host: str) -> List[str]:
-        """The article-like addresses on a host (www. aside) your sources' kept links point to,
-        once each, in address order: what a site's findings are ranked by (issue 0060)."""
+        """The article-like addresses on a host (www. aside) your kept links point to, once each, in address order."""
         host = publication_of(host)
         if not host:
             return []
@@ -901,11 +852,9 @@ class StoriesRepository:
 
     @staticmethod
     def discover_inputs(cur: Cursor) -> str:
-        """What Discover is computed from, in one string: when a story run last changed what it counts
-        (StoriesService._settle's discover_at: new posts, links, stories, Classics), the sources by what
-        Discover reads of them (their address, kind, name, enabled state and confirmed voice: never their
-        updated_at, which every fetch's settings write moves, issue 0172 c1), the hidden suggestions and
-        what Discover read of the web (issue 0080). Same string, same list."""
+        """What Discover is computed from, in one string: the story run's discover_at, the sources by what Discover
+        reads of them (never their updated_at, which every fetch moves), the hidden suggestions and what
+        Discover read of the web. Same string, same list."""
         cur.execute(
             """
             SELECT concat_ws('|', (SELECT COALESCE(value->>'discover_at', value->>'computed_at') FROM system_settings

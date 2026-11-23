@@ -26,7 +26,7 @@ function classicsKey(scope: string) {
   return ['classics', scope];
 }
 
-/** Searching Classics (issue 0056): the words, and the search's scope, dates and order. */
+/** Searching Classics: the words, and the search's scope, dates and order. */
 export interface ClassicsSearch {
   q: string;
   scope: string | null;
@@ -39,11 +39,8 @@ export interface ClassicsSearch {
 /** One page is every classic a search shows: there are a few hundred classics at most. */
 const SEARCH_LIMIT = 100;
 
-/**
- * One classic: its title (Read: a stored post opens in the reader; an outside page is saved
- * through Save any page first, fetched only now), who cited it and when, then Later and Hide.
- * Cited again this week says so first.
- */
+/** One classic: its title (a stored post opens in the reader; an outside page is saved through Save any page
+ *  first), who cited it and when, then Later and Hide. Cited again this week says so first. */
 function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
   classic: ScopedClassic; busy: boolean;
   onRead: (c: Classic) => void; onLater: (c: Classic) => void; onHide: (c: Classic) => void;
@@ -51,7 +48,7 @@ function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
   const title = classicTitle(classic);
   const read = Boolean(classic.read_at);
   const later = Boolean(classic.later_at);
-  // On a source's page (issue 0077): the source's part, when the API sends it ("Cited it", issue 0105).
+  // on a source's page: the source's part, when the API sends it ("Cited it")
   const role = classicRoleWords(classic);
   const titleClass = `rounded-sm text-left underline-offset-4 hover:underline hover:decoration-fg-3 focus-visible:underline ${FOCUS_RING}`;
   return (
@@ -93,18 +90,16 @@ function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
 }
 
 /**
- * View classics (issue 0051): the pages 2 or more of your sources keep linking, 30 days apart
- * or more, of the Main feed, a track or one source (the classics it cites, issue 0077, each saying
- * the source's part when the API sends it). Cited again this week first, then most of your sources,
- * then cited longest; a page's age never counts against it. Nothing is fetched until you read
- * an outside page or put it in Later: then it is saved (Save any page) and reads like any post.
- * Hide is "I know it" and "not for me" in one: a hidden classic never comes back.
+ * View classics: the pages 2 or more of your sources keep linking, 30 days apart or more, of the Main feed, a track
+ * or one source. Cited again this week first, then most of your sources, then cited longest; a page's age never
+ * counts against it. Nothing is fetched until you read an outside page or put it in Later. Hide ("I know it" /
+ * "not for me") is for good.
  */
 export default function ClassicsList({ scope, search }: { scope: string; search?: ClassicsSearch }) {
   const api = useApi();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  // A search's classics live under the same root key, so reading, Later and Hide patch them too.
+  // a search's classics live under the same root key, so reading, Later and Hide patch them too
   const key = search
     ? ['classics', 'search', search.q, search.scope ?? '', search.days ?? 0, search.order]
     : classicsKey(scope);
@@ -112,14 +107,14 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
     queryKey: key,
     initialPageParam: null as string | null,
     queryFn: ({ signal, pageParam }) => (search
-      // Classics (issue 0056): their titles and addresses, as GET /api/classics shapes them.
+      // their titles and addresses, as GET /api/classics shapes them
       ? api.searchPosts({
         q: search.q, scope: search.scope, days: search.days, order: search.order, filter: 'classics', limit: SEARCH_LIMIT, signal,
       }) as unknown as Promise<ClassicsResponse>
       : api.getClassics({ scope, cursor: pageParam, signal })),
-    // Issue 0195: Classics come a page at a time (the API's first 100, then next_cursor); a search is one page.
+    // a page at a time (the API's first 100, then next_cursor); a search is one page
     getNextPageParam: (last) => (search ? undefined : last.next_cursor ?? undefined),
-    // Reading one changes it: coming back shows it read.
+    // reading one changes it: coming back shows it read
     staleTime: 0,
     refetchOnWindowFocus: false,
   });
@@ -132,7 +127,7 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
   };
 
   /** An outside page becomes a post of the Saved source (fetched now); a stored one is that post. A page of a
-   *  source you follow is looked for there first: that source is fetched, and the page is its post (issue 0122). */
+   *  source you follow is looked for there first: that source is fetched, and the page is its post. */
   const stored = async (classic: Classic): Promise<string | null> => {
     if (classic.post_id) return classic.post_id;
     setBusy(classic.url);

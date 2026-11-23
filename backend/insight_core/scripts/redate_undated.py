@@ -1,13 +1,11 @@
-"""Date again the posts a feed gave no date that were stored as "first seen" (v10.30, once).
+"""Date again the posts a feed gave no date that were stored as "first seen" (once).
 
     python -m insight_core.scripts.redate_undated [--dry-run] [--source ID]
 
-A feed that dates only its recent items (a blog's archive left undated) gave its old items the time they were first
-seen (issue 0137 B9): a 2015 post read on a first fetch was this week's news, in News, tracks and briefs. New reads
-are bounded by parsing._bound_undated; this repairs the posts stored before it. For each enabled feed source with
-posts stored as "seen": its feed is read once (one request a source), parsed as a new read is, and each stored
-"seen" post whose item now has a bound older than its stored date takes that bound (published_precision "none": no
-date given). Nothing else is written; --dry-run writes nothing and prints what a run would change. JSON summary.
+Old undated items of a feed were dated when first seen and read as news. For each enabled feed source with posts
+stored as "seen", its feed is read once and parsed as a new read is (parsing._bound_undated); each such post
+whose item now has an older bound takes it (published_precision "none"). Nothing else is written; --dry-run
+prints what a run would change. JSON summary.
 """
 from __future__ import annotations
 

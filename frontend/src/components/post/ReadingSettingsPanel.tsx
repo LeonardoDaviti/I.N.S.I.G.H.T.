@@ -2,11 +2,8 @@ import SlashChoice from '../reader/SlashChoice';
 import { useReadingSettings } from '../../hooks/useReadingSettings';
 import { READING_FONTS, READING_SIZES, READING_WIDTHS } from '../../lib/readingSettings';
 
-/**
- * The three reading settings (issue 0045): font, size and width, each a slash
- * choice. Every change applies at once to the post text behind (the live preview)
- * and is kept on this device. Loaded only when the Aa popover or ⌘K opens it.
- */
+/** The three reading settings (font, size, width), each a slash choice applied at once to the post text behind and
+ *  kept on this device. Loaded only when the Aa popover or ⌘K opens it. */
 export default function ReadingSettingsPanel() {
   const [settings, set] = useReadingSettings();
   const rows = [

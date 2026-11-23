@@ -3,13 +3,8 @@ import { ArrowLeft } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { buttonVariants } from './styles';
 
-/**
- * The one "get out" affordance of a detail page: the same arrow, a lowercase
- * destination word ("feed", "tracks") and the same place above the title on
- * every page. `to` renders a router link; `onClick` a button (e.g. history back
- * with a fallback). Pull it left by its own padding so the arrow lines up with
- * the title's edge.
- */
+/** The one "get out" affordance of a detail page: an arrow and a lowercase destination word above the title. `to`
+ *  renders a router link, `onClick` a button; pulled left by its own padding so the arrow lines up with the title. */
 export default function BackLink({
   label,
   to,

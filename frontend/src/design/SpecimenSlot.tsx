@@ -1,8 +1,4 @@
-/**
- * The specimen under a page doc (D4): the real page, in a frame, on fixtures
- * for one state, at a width and a theme (`frame/Frame.tsx`). The Handbook only
- * shows it for a state with a frame scenario.
- */
+/** The specimen under a page doc: the real page in a frame, on fixtures for one state, at a width and a theme. */
 import Frame from './frame/Frame';
 import { frameScenario } from './fixtures/scenarios';
 import type { SpecimenSlotProps } from './specimen';

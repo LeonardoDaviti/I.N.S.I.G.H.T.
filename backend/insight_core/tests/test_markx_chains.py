@@ -1,8 +1,6 @@
-"""0219 (Stealth v10.24): story chains. Two stories that are both stops of one thing (stored stop answers saying
-about) are asked how the later relates to the earlier (chain-v1, two runs that must agree); the verdict is a
-story-to-story edge (rule chain_stops), closed never deleted; a story's chain walks them both ways, "as of" any moment,
-and shows only the relations that passed their bar. Invented names (0165's second case: one model's launch story and
-its weights story a week later); the DB tests run on a database whose name ends in _test."""
+"""Story chains (0219): two stories that are both stops of one thing are asked how the later relates to the earlier
+(two runs that must agree); the verdict is a story-to-story edge (rule chain_stops), closed never deleted; a story's
+chain walks them both ways, "as of" any moment, showing only relations that passed their bar. DB tests on _test only."""
 from __future__ import annotations
 
 import unittest
@@ -15,7 +13,7 @@ from insight_core.tests import test_markx_timeline as TL
 from insight_core.tests.test_markx_api import _Api, call
 
 T0, H, D = base.T0, base.H, base.D
-SIBLINGS = True   # owner 2026-11-23: sibling launches switched on below the bar (87.5%)
+SIBLINGS = True   # sibling launches switched on below the bar
 GUIDE_SHA256 = "be24941d7e58424f6561ed1866cd5d13ccccebdc8b20e527d88ccf36aa598771"   # frozen before held-out round 2
 
 
@@ -44,9 +42,8 @@ class Rules(unittest.TestCase):
         self.assertEqual(got[("x", "b")], "family")
 
     def test_two_sibling_things_stops_are_paired_across_their_lines(self):
-        """v10.38: the stops of two things of one family (an adapter and its sibling, launched together) are paired
-        across the things, within the window and the cap; a story that is a stop of both, or two stops of one thing
-        (its own line pairs them), is no sibling pair; a thing of no family is in none."""
+        """Stops of two sibling things of one family are paired within the window and cap; a story that is a stop of
+        both, or two stops of one thing, is no sibling pair; a thing of no family is in none (v10.38)."""
         s = {"pi": [(T0, "p1"), (T0 + D, "p2")], "opencode": [(T0 + H, "o1"), (T0 + 2 * D, "o2")],
              "super": [(T0 + 3 * D, "s1")], "far": [(T0 + 40 * D, "f1")], "lone": [(T0 + D, "l1")],
              "both": [(T0 + 2 * H, "p1")]}
@@ -63,8 +60,8 @@ class Rules(unittest.TestCase):
         self.assertEqual(len([k for k in got if k[0] == "s1"]), 3)   # the 3 stories just before it, at most
 
     def test_a_build_is_on_its_versions_line(self):
-        """v10.38: a build (GGUF) of a version is matched to the thing of its family stating the same version and
-        variant and no build: its stories are paired with the version's (chain_candidates)."""
+        """A build (GGUF) of a version is matched to its family's thing of the same version and variant and no build
+        (v10.38)."""
         from insight_core.markx import identity as I
 
         class Book:
@@ -138,24 +135,24 @@ class Rules(unittest.TestCase):
         import hashlib
         import pathlib
         k = schemas.KINDS["chain"]
-        self.assertEqual((k.guide, k.subject), ("chain-v4", "story_story"))   # v10.40: v4 (v1-v3 kept, frozen)
+        self.assertEqual((k.guide, k.subject), ("chain-v4", "story_story"))   # v1-v3 kept, frozen
         self.assertEqual(G.CHAIN_GUIDE, k.guide)
         for old in ("chain-v1", "chain-v2", "chain-v3"):
             self.assertIn(old, schemas.answer_guides("chain"))                # its tasks kept and read
         guides = pathlib.Path(G.__file__).parent / "guides"
         v2, v3, v4 = ((guides / f"chain-v{n}.md").read_text() for n in (2, 3, 4))
         for v in (v2, v3, v4):
-            self.assertIn("a result achieved WITH the thing", v)              # the owner's rule (2026-11-21)
+            self.assertIn("a result achieved WITH the thing", v)              # the owner's rule
         for v in (v2, v3):
             self.assertIn("demos of what it can do", v)                       # frozen: any demo stayed its release
-        # v10.40 (owner 2026-11-23): a project someone else built with it is its own story; the maker's launch demos
-        # and people's first impressions stay the release
+        # a project someone else built with it is its own story; the maker's launch demos and first impressions stay
+        # the release
         self.assertNotIn("demos of what it can do", v4)
         self.assertIn("a project someone else built with the thing and presents as their own", v4)
         self.assertIn("the maker's own demos shown with the launch", v4)
         for v in (v3, v4):
             self.assertNotIn("same_launch", v + " ".join(schemas.CHAIN_RELATIONS))   # one path: same_release
-            self.assertIn("One release can launch several sibling things together", v)   # v10.38: one release, one row
+            self.assertIn("One release can launch several sibling things together", v)   # one release, one row
             self.assertIn("its maker's own builds of it", v)                    # the maker's GGUF is its release
         self.assertNotIn("next_version", schemas.CHAIN_RELATIONS)   # a successor is identity's, never the judge's
         self.assertEqual(tuple(schemas.CHAIN_RELATIONS), G.CHAIN_RELATIONS)
@@ -166,17 +163,17 @@ class Rules(unittest.TestCase):
         self.assertIsNotNone(validate.check("chain", {"reason": "  ", "relation": "same_release"}, "x")[1])
         self.assertIsNotNone(validate.check("chain", {"reason": "x", "relation": "next_version"}, "x")[1])
         self.assertIn("chain", tasks.BACKGROUND_PLANNED)
-        # measured (0219): asked and stored; no relation passed its bar on the held-out sets, so none is shown
+        # asked and stored; no relation passed its bar on the held-out sets, so none is shown (0219)
         self.assertEqual(G.chain_config(), {"on": True, "shown": ("same_release",), "one_row": True,
-                                            "siblings": SIBLINGS})   # 0267: same_release shown (98.3% [91.1] on 60 stored edges)   # 0236: one row on (owner 2026-11-19: the maker's Q&A is in the row)
+                                            "siblings": SIBLINGS})   # same_release shown (0267); one row on (0236)
         from insight_core.markx import consumers
         self.assertEqual(consumers.feature_of("chain"), "graph")
 
 
 @base.requires_test_db
 class Chains(TL._Db):
-    """0165's second case: story A (launch, benchmarks, ranking), story B (weights, a week later), story C (a rival's
-    launch that names the model once)."""
+    """Story A (launch, benchmarks, ranking), story B (weights, a week later), story C (a rival's launch that names the
+    model once)."""
     story, read, model, line = TL.OneModelsLine.story, TL.OneModelsLine.read, TL.OneModelsLine.model, TL.OneModelsLine.line
 
     def setUp(self):
@@ -253,15 +250,13 @@ class Chains(TL._Db):
         self.assertEqual(G.plan_chains(self.cur)["opened"], 0)        # nothing changed: nothing opened again
 
     def test_an_earlier_guides_same_release_is_asked_again_under_the_current_guide(self):
-        """v10.34 (the black-hole case): chain-v1 joined a result achieved with a model (two open physics problems it
-        solved) to the model's release; chain-v2 says such a result is its own happening. A chain-v1 same_release pair
-        is asked again under chain-v2 once (a pass under a new guide reads every pair); its edge stands until both of
-        the new task's runs are in, then follows them. A chain-v1 pair that made no release edge is not asked again."""
+        """A chain-v1 same_release pair is asked again under chain-v2 once; its edge stands until both new runs are in,
+        then follows them; a v1 pair that made no release edge is not asked again (v10.34)."""
         x = self.line()
         self.stops_about(x)
         G.plan_chains(self.cur)
         (tid, *_), = self.chain_tasks()
-        self.cur.execute("UPDATE mx_tasks SET guide = 'chain-v1' WHERE id = %s", (tid,))   # asked before v10.34
+        self.cur.execute("UPDATE mx_tasks SET guide = 'chain-v1' WHERE id = %s", (tid,))   # asked under an older guide
         self.answer_chain("same_release", "same_release", task=tid)
         repo.set_setting(self.cur, G.CHAIN_MARK, {"at": (T0 + 12 * D).isoformat()})          # a chain-v1 pass's mark
         out = G.plan_chains(self.cur)
@@ -273,7 +268,7 @@ class Chains(TL._Db):
         self.assertEqual(repo.get_setting(self.cur, G.CHAIN_MARK)["guide"], G.CHAIN_GUIDE)
         self.assertEqual(G.plan_chains(self.cur)["asked"], 0)                 # asked once
         self.assertEqual([r[2] for r in self.edges()], ["same_release"])      # stands while the new runs wait
-        # v10.40: News reads a one-happening edge as the judge's link (two stories join by a name only when judged)
+        # News reads a one-happening edge as the judge's link (two stories join by a name only when judged)
         self.assertEqual(G.chain_connected(self.cur, [x["a"], x["b"], x["c"]]), {frozenset((x["a"], x["b"]))})
         self.answer_chain("unrelated", "unrelated", task=v2)
         G.plan_chains(self.cur)
@@ -292,13 +287,11 @@ class Chains(TL._Db):
         return G.plan_chains(self.cur)["asked"], len(self.chain_tasks())
 
     def test_v4_asks_a_chain_v3_same_release_again(self):
-        """v10.40 (chain-v4: a project someone else built with the thing is its own story, builds_on): every earlier
-        guide's same_release is asked again (which of them filed such a project is not seen without asking)."""
+        """Every earlier guide's same_release is asked again under chain-v4 (v10.40)."""
         self.assertEqual(self.asked_again("chain-v3", "same_release", "same_release"), (1, 2))
 
     def test_v4_asks_a_pair_whose_runs_disagreed_again(self):
-        """v10.40: two runs that disagreed (OpenRouter joining Stripe: follows_up, then same_event) linked nothing and
-        were never asked again; under chain-v4 they are."""
+        """Two runs that disagreed linked nothing and were never asked again; under chain-v4 they are (v10.40)."""
         self.assertEqual(self.asked_again("chain-v3", "follows_up", "same_event"), (1, 2))
 
     def test_v4_keeps_an_earlier_link_that_is_no_release(self):
@@ -340,7 +333,7 @@ class Chains(TL._Db):
         self.assertEqual(G.row_chains(self.cur, {"row": [x["b"]]}), {})     # nor on a News row
 
     def test_a_news_row_shows_its_earlier_and_later_outside_itself(self):
-        """0267: a row's Earlier and Later are the stories one shown edge joins to one of its stories, never its own."""
+        """A row's Earlier and Later are the stories one shown edge joins to one of its stories, never its own (0267)."""
         x = self.line()
         self.stops_about(x)
         G.plan_chains(self.cur)

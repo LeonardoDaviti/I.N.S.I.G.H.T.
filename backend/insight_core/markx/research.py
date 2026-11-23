@@ -1,47 +1,20 @@
-"""Research (issue 0162, Stealth v10.14): start from a pasted post, a link, an entity, a name or a question; INSIGHT
-finds what it already holds, the same announcement elsewhere, the maker and its identity graph, its channels (test-read
-as 0148's scout reads), its papers and who discusses it. Only ever started by the owner's tap ("Research this"); a run
-is a page of its own (`/research/<id>`), kept, re-run any time (what an earlier run of the seed found is not new).
+"""Research: from a pasted post, a link, an entity, a name or a question, find what INSIGHT already holds, the same
+announcement elsewhere, the maker and its identity graph, its channels, its papers and who discusses it. Only ever
+started by the owner's tap (`start`); a run is a page of its own (`/research/<id>`), kept, re-run any time.
 
-**Steps** (`advance`, each recorded in mx_research_runs.steps when done; a step that waits for Haiku goes on later):
-  1. `held` (no request, at `start`): the seed's entity (a name by identity's name key or its aliases, then search's
-     entity cards; a question's entity cards each a seed; a link's or a post's by the entities whose addresses it is),
-     its posts, stories, voices and addresses, the posts linking any version of its addresses (research_web.versions),
-     and the other names that may be one thing with it (offered, never merged here: the owner's review queue does).
-  2. `same_post` (a pasted post or a link): each link resolved (one request, a shortener lands elsewhere); the posts
-     INSIGHT holds that share a unique link with it (held by at most UNIQUE_MAX posts, never a front page); then a
-     near-copy of its text (the shingles Mark X compares copies by, over the posts its rarest words find); later
-     (`around`) the posts of the maker's own channels in the days around. Each hit says why.
-  3. `maker` (requests: platform pages only, at most PAGE_REQUESTS a run with the shorteners): the seed's things (the
-     link itself, a post's project and paper links, an entity's addresses) at hop 0; the owner a platform states for a
-     project page (`<host>/<owner>/<thing>`) and the links a confirmed page declares as its own, hop by hop, at most
-     HOPS from the seed; each page read once (research_web.page_summary), each new address classified
-     (research_web.classify). Same identity by plain rules first (research_web.same_identity: the platform's owner,
-     declared both ways, the same handle, the page names the other); the rest one Haiku `identity` question each (guide
-     identity-v1, at most IDENTITY_MAX a run); a name alone never. Only a confirmed page's links are followed.
-  4. `web` (research_web.web_search): with SearXNG or Brave configured, the maker's name on each platform class INSIGHT
-     reads; else (0171, the default) one `websearch` task asked of the worker (guide websearch-v1: Claude Code with its
-     web search tool only, on the owner's device), the run waiting for its answer (`web_by_worker`); `off` skips it.
-     Each result an address to read and judge as in 3, never an identity by its name. WEB_QUERIES searches a run.
-  5. `channels`: every confirmed account, project and site (not a paper) a candidate of the run's scout run (0148,
-     trigger 'research'): test-read through the add path into the scratch area, its health; judged by a track only
-     once the run has one ("Watch this"). Follow goes through 0148's add path, its provenance kind 'research'.
-  6. `papers` (a paper seed): the paper index (research_web.paper_index: OpenAlex, behind its setting) by the exact
-     DOI or arXiv id: references (held / not held by every version of their address), citing papers, the authors'
-     newer papers (kept only with a shared co-author or field: the index merges namesakes); at most PAPER_CALLS a paper.
-  7. `discussion`: the search feeds of platforms INSIGHT reads (Reddit's, the Hacker News class's, X through the
-     configured bridge) for the exact id, the project's owner/name, or the exact title; a hit must contain it whole or
-     link an address of the seed (research_web.exact_hit). At most DISCUSSION_SEARCHES a run.
+**Steps** (`advance`, each recorded in mx_research_runs.steps; a step waiting for Haiku goes on later): 1. `held` (no
+request): the seed's entities, posts, stories, voices and addresses, and the names that may be one thing with it
+(offered, never merged here); 2. `same_post`: the seed's links resolved, posts sharing a unique link (UNIQUE_MAX),
+near-copies, the maker's channels' posts around it; 3. `maker`: the identity graph, hop by hop within HOPS and
+PAGE_REQUESTS, same identity by plain rules (research_web.same_identity) else one Haiku `identity` question
+(IDENTITY_MAX), a name alone never; only a confirmed page's links are followed; 4. `web`: the configured web search,
+else one `websearch` task asked of the worker (Claude Code's web search on the owner's device), each result an address
+to read and judge as in 3; 5. `channels`: every confirmed account, project and site a candidate of the run's scout
+run (test-read, never followed here); 6. `papers`: the paper index by exact id (PAPER_CALLS a paper); 7. `discussion`:
+the platforms' search feeds, exact hits only (DISCUSSION_SEARCHES).
 
-**Watch this** (`watch`): a track (0145) made from the run: its description from the seed and the maker, its active
-sources the channels followed from the run, the seed's posts in INSIGHT its first ✓ examples.
-
-**Cost guard** (per run): PAGE_REQUESTS page requests, the scout run's 40 test reads and 800 judgements,
-PAPER_CALLS paper-index calls a paper, IDENTITY_MAX `identity` questions, WEB_QUERIES web searches,
-DISCUSSION_SEARCHES search feeds; all counted on the run (and the log).
-
-Only mx_* tables are written, except the owner's own Follow and Watch this (a source added as Add source adds one; a
-track made as Sources makes one).
+Every cost above is capped per run and counted on it. **Watch this** (`watch`) makes a track from the run. Only mx_*
+tables are written, except the owner's own Follow and Watch this (as Add source and Sources make them).
 """
 from __future__ import annotations
 
@@ -62,7 +35,7 @@ from insight_core.markx import pairing
 log = logging.getLogger(__name__)
 
 KIND = "identity"
-WEB_KIND = "websearch"         # 0171: the web search asked of the worker (Claude Code's web search tool)
+WEB_KIND = "websearch"         # the web search asked of the worker (Claude Code's web search tool)
 SEED_KINDS = ("post", "link", "entity", "name", "question")
 PAGE_REQUESTS = 60
 PAPER_CALLS = 4               # a paper: its record, its references, its citing papers, its authors' newer papers
@@ -185,7 +158,7 @@ def _spend(cur: Cursor, run: Dict[str, Any], column: str, n: int = 1) -> None:
 
 def _book(cur: Cursor) -> Any:
     from insight_core.markx import identity
-    return identity.lazy_book(cur)   # v10.17 (0186): the seed's entities, not the whole book
+    return identity.lazy_book(cur)   # the seed's entities, not the whole book
 
 
 def resolve_entities(cur: Cursor, book: Any, kind: str, seed: str, links: Sequence[str]) -> Tuple[List[str], Optional[str]]:
@@ -227,7 +200,7 @@ def _post_rows(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
                            {byline.COLUMNS}
                       FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
                      WHERE p.id = ANY(%s::uuid[])""", (list(ids),))
-    # issue 0185: each row's byline (who wrote it, via whom)
+    # each row's byline (who wrote it, via whom)
     rows = [{"post_id": i, "title": t, "at": _iso(at), "source": s, "url": u, "source_id": sid, "byline": byline.of_row(s, *by)}
             for i, t, at, s, u, sid, *by in cur.fetchall()]
     return sorted(rows, key=lambda r: r["at"] or "", reverse=True)
@@ -674,7 +647,8 @@ async def web(cur_factory: Callable, run: Dict[str, Any], http: Any, provider: A
     return {"queries": len(queries), "found": found}
 
 
-# ---- step 4, by the worker (0171): Claude Code's web search on the owner's device ---------------------------------------
+# ---- step 4, by the worker: Claude Code's web search on the owner's device
+# ---------------------------------------------
 
 def web_budget(run: Dict[str, Any]) -> int:
     """The searches the run may still ask of the web (WEB_QUERIES, within the run's searches with discussion's)."""
@@ -778,7 +752,7 @@ def web_waiting(cur: Cursor, run: Dict[str, Any]) -> bool:
 
 
 def web_view(cur: Cursor, run: Dict[str, Any]) -> Dict[str, Any]:
-    """0171: which web search the run used (or uses), whether it waits for the worker, what was searched."""
+    """Which web search the run used (or uses), whether it waits for the worker, what was searched."""
     stats = (run.get("stats") or {}).get("web") or {}
     by = stats.get("by") or ("worker" if run.get("web_task_id") else getattr(W.web_search(), "name", None))
     return {"by": by, "waiting": web_waiting(cur, run), "asked": stats.get("asked") or []}
@@ -962,7 +936,7 @@ def claim(cur: Cursor, run_id: str, now: datetime) -> bool:
 def settle(cur: Cursor, run: Dict[str, Any], now: datetime) -> str:
     cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_research_pairs p JOIN mx_tasks t ON t.id = p.task_id
                                    WHERE p.run_id = %s AND t.status IN ('open', 'leased'))""", (run["id"],))
-    pairs_open = cur.fetchone()[0] or web_waiting(cur, run)      # 0171: the worker's web search, asked
+    pairs_open = cur.fetchone()[0] or web_waiting(cur, run)      # the worker's web search, asked
     cur.execute("SELECT status FROM mx_scout_runs WHERE id = %s", (run["scout_run_id"],))
     scout_status = (cur.fetchone() or ("done",))[0]
     accounts = _accounts(cur, run["id"])
@@ -1020,7 +994,7 @@ async def advance(db_url: str, run_id: str, *, tools: Optional[Tools] = None,
                     _step_done(cur, run, "same_post", **got)
             out["maker"] = await maker(tx, run, tools.http)
             if "web" not in steps:
-                if getattr(tools.search, "asks_worker", False):       # 0171: the worker's web search, asked
+                if getattr(tools.search, "asks_worker", False):       # the worker's web search, asked
                     with tx() as cur:
                         got = web_by_worker(cur, run)
                     if got is not None and got.get("found"):
@@ -1106,7 +1080,7 @@ def view(cur: Cursor, run_id: str) -> Optional[Dict[str, Any]]:
     not_same = [a for a in accounts if a.get("same") == "no"]
     these = None
     if run.get("entity_id"):
-        book = identity.lazy_book(cur)   # v10.17 (0186): the run's entity and its maker, not the whole book
+        book = identity.lazy_book(cur)   # the run's entity and its maker, not the whole book
         root = book.root(run["entity_id"])
         maker_root = None
         e = book.ents.get(root)
@@ -1157,7 +1131,7 @@ def runs_of(cur: Cursor, limit: int = 20) -> List[Dict[str, Any]]:
 # ---- the owner's taps -----------------------------------------------------------------------------------------------------
 
 def follow(cur: Cursor, run_id: str, candidate_id: str, *, add_source: Optional[scout.AddSource] = None) -> Dict[str, Any]:
-    """Follow a channel of the run through 0148's add path: active into the run's track when it has one ("Watch
+    """Follow a channel of the run through the scout's add path: active into the run's track when it has one ("Watch
     this"), else passive; its provenance kind 'research'."""
     run = get_run(cur, run_id)
     if run is None:
@@ -1170,8 +1144,8 @@ def follow(cur: Cursor, run_id: str, candidate_id: str, *, add_source: Optional[
 
 
 def watch(cur: Cursor, run_id: str) -> Dict[str, Any]:
-    """"Watch this": a track (0145) from the run: named for the seed, described by it and its maker, its active sources
-    the channels followed from the run, the seed's posts in INSIGHT its first ✓."""
+    """"Watch this": a track from the run: named for the seed, described by it and its maker, its active sources the
+    channels followed from the run, the seed's posts in INSIGHT its first ✓."""
     from insight_core.db.repo_folders import FoldersRepository
     from insight_core.markx import tracks
     run = get_run(cur, run_id)

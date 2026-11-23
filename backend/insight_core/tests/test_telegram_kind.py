@@ -1,9 +1,6 @@
-"""Telegram MTProto source kind (spec §B8, §D.2): all fakes, no network, no Telethon session.
-
-The kind is built with a FakeTelegramClient factory, a FakeRunLock session lock,
-FakeHttp(sleep=RecordingSleeper()) and a FixedClock. Runner tests go through the real
-IngestionRunner with the in-memory ports, so the session lifecycle, the unavailable
-reasons and the flood-wait rule are checked where they matter: in a fetch run.
+"""Telegram MTProto source kind: all fakes, no network, no Telethon session. Built with a FakeTelegramClient factory,
+a FakeRunLock session lock, FakeHttp and a FixedClock; runner tests go through the real IngestionRunner with the
+in-memory ports, so the session lifecycle, the unavailable reasons and the flood-wait rule are checked in a fetch run.
 """
 from __future__ import annotations
 
@@ -225,8 +222,7 @@ class _OpenSession:
 # --------------------------------------------------------------------------- synthesize_posts
 
 
-# Captured from the Mark VIII Telegram connector's _synthesize_messages(MESSAGES, "ai_dispatch", "@ai_dispatch")
-# before the connector was deleted (dates as ISO strings).
+# captured from the retired Mark VIII connector's _synthesize_messages(MESSAGES, "ai_dispatch", "@ai_dispatch")
 def _d(hour: int) -> datetime:
     return datetime(2026, 10, 1, hour, 0, tzinfo=timezone.utc)
 
@@ -276,7 +272,7 @@ class SynthesizePostsTests(unittest.TestCase):
         old_keys = list(FIXTURE_POSTS[0])
         self.assertEqual([{**{k: p[k] for k in old_keys}, "date": p["date"].isoformat()} for p in posts],
                          FIXTURE_POSTS)
-        # The one addition: external_id, so (source_id, external_id) dedupe works like telegram_rss.
+        # the one addition: external_id, so (source_id, external_id) dedupe works like telegram_rss
         self.assertEqual([p["external_id"] for p in posts], ["110", "108", "104"])
 
     def test_the_handle_is_normalised(self):

@@ -1,24 +1,11 @@
-"""Questions with citations (issue 0275, Stalker feature 6; 0098's plan): the reader asks in words on the search page
-and gets an answer built only from their own posts, every sentence cited, or "not in your sources".
+"""Questions with citations: the reader asks in words on the search page and gets an answer built only from their own
+posts, every sentence cited, or "not in your sources".
 
-**What it is answered from** (`gather`, no model): the search page's own ranking for the question (the hybrid search,
-words and meaning: db/repo_search with markx/search.meaning_posts, best order, SEARCH_POSTS), then the entities the
-question names (search.entity_cards: up to ENTITIES) with each one's posts (entity_brief.report_posts: its own and its
-maker's first, then the newest; ENTITY_POSTS each) and, when the entity has a shown brief (entity_brief.view), its
-lines as NOTES naming the posts they rest on (those posts join the set). At most MAX_POSTS posts, each its date, its
-source, its title and the first TEXT_CHARS of its text (markx text v1, tasks.load_posts).
-
-**The answer** (`ask`): one `question` task (guide question-v1: nothing from outside the posts, each sentence citing
-the posts that say it, "answerable": false when they don't) asked of the worker like every Haiku question; the API
-returns at once and the page polls (`view`). Latency: the worker's next lease of the kind (the loop leases `question`
-first) plus one Haiku call; measured in the issue. The mx_questions row keeps the posts in their order: an answer's
-cites [n] are read back through it. A question asked again with the same posts is the same task (no second call).
-
-**The check in code** (`kept`): a sentence is shown only with at least one cite inside the posts it was given, and
-only when every figure it gives is in a post it cites (validate.missing_figures, the briefs' rule); the rest are
-dropped and counted. Nothing kept, or `answerable` false: "not in your sources".
-
-Behind entity_bands.json `search.answers` (`on`); off, the API is 404 and the page shows no box.
+`gather` (no model) picks the posts: the search page's best for the question taking turns with the named entities'
+posts and their brief lines as NOTES, at most MAX_POSTS. `ask` adds one `question` task (the worker answers; the page
+polls `view`); the same question with the same posts is the same task. `kept` shows a sentence only with a cite inside
+the given posts and every figure in a post it cites (validate.missing_figures); nothing kept: "not in your sources".
+Behind entity_bands.json `search.answers`; off, the API is 404.
 """
 from __future__ import annotations
 
@@ -89,8 +76,7 @@ def gather(cur: Cursor, q: str, *, now: Optional[datetime] = None) -> Tuple[List
                 notes.append({"entity": c["name"], "text": _clean(text, 300), "posts": ids})
                 own += [i for i in ids if i not in own]
         own += [p for p in entity_brief.report_posts(cur, book, root)[:ENTITY_POSTS] if p not in own]
-    # The search's best first, then the entities' posts and their notes' posts, taking turns so neither crowds out the
-    # other.
+    # the search's posts and the entities' posts take turns so neither crowds out the other
     a, b = list(found), list(own)
     while (a or b) and len(posts) < MAX_POSTS:
         if a:

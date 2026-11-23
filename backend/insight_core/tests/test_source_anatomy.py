@@ -1,7 +1,5 @@
-"""Source anatomy (issue 0054): how each source is read and what it gives.
-
-The kind and full-text rules over the real kind registry; every column end to end against a
-`_test` database (it commits scratch rows); the route over ASGI.
+"""Source anatomy (0054): how each source is read and what it gives. The kind and full-text rules over the real kind
+registry; every column end to end against a `_test` database (it commits scratch rows); the route over ASGI.
 """
 from __future__ import annotations
 

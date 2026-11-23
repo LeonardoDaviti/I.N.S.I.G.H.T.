@@ -1,26 +1,13 @@
-"""News (issue 0051): names in titles, News stories and their score. Pure functions over plain
-data; the story job (services/news_service.py) loads the posts and writes what these return.
-Classics are classic_rules.py (issue 0071 split them out of this file).
+"""News: names in titles, News stories and their score. Pure functions over plain data; the story job
+(services/news_service.py) loads the posts and writes what these return (`news`, `surges`, `lead`, `main_story`).
+Every News threshold is here, in one place.
 
-Ported from the prototype (`plan/research/dedup-prototype/names.py`, `news.py`, `rank.py`,
-`report.py`), the reference the real code reproduces. **Every threshold of 0051 is here, in one
-place**: tuning on the server is a one-line change.
-
-- **News:** 0050's stories, plus the posts that share a surging name in their titles (for News
-  only: a name never folds rows in the Main feed). A story's score is reports + 1/2 shares + 1/2
-  roundup mentions, each voice once, in its strongest role (report, then share, then mention).
-- **A name** is a phrase of 1 to 3 words from a title, every word capitalised or holding a digit,
-  not starting or ending on a small word ("the", "of"); one word only when it mixes letters and
-  digits ("GPT-6"). Pure numbers and lowercase words are not names.
-- **A name surges** when, within 48 hours, 3+ posts of 2+ voices use it, it was said at most once
-  in the 30 days before, and 2+ of the burst's voices didn't say it then. Only the sources followed
-  for those whole 30 days are evidence (issue 0070): a newer source's posts (its archive, a history
-  that starts late) join a burst but never start it, make it or age the name. After a surge the
-  name is judged again: a later burst of 3+ voices new to it surges too, when it holds more voices
-  than the 30 days before (a series a few voices keep saying doesn't). A shorter name whose posts
-  a longer one covers is dropped. Titles are compared as plain letters (NFKC) and with a word glued
-  to the next line's capital in another script split; a word joined by hyphens or dots says its
-  parts' names too (issue 0083). arXiv titles are left out.
+A News row is a group of stories joined by surging names (for News only: a name never folds rows in the Main feed);
+its score is reports + 1/2 shares + 1/2 roundup mentions, each voice once, in its strongest role. A name is a run of
+1 to 3 capitalised or digit-holding words of a title (one word only when it mixes letters and digits, "GPT-6"). A
+name surges when, within NAME_WINDOW, NAME_MIN_POSTS+ posts of NAME_MIN_VOICES+ voices use it and it was rarely said
+in the NAME_BASELINE before; only sources followed for that whole baseline are evidence (a newer source's archive
+joins a burst but never starts it).
 """
 from __future__ import annotations
 
@@ -35,42 +22,29 @@ from insight_core.utils import voice
 from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, background, lead_order, roles, story_start, story_times
 from insight_core.utils.titles import comparable
 
-# ---- the thresholds (issue 0051), tune here -------------------------------------------------
-# Each says whether it was measured (issue 0071). "The prototype's": the value of
-# plan/research/dedup-prototype, checked as a whole (0051: 19 of 20 surges real), not one by one.
+# ---- the thresholds, tune here ("the prototype's": plan/research/dedup-prototype's, checked as a whole) ----------
 
-NEWS_DAYS = 30                      # News shows the stories whose first post is in the last 30 days (the owner,
-                                    # issue 0077) ...
-NEWS_RECENT = timedelta(hours=48)   # ... the API's part "recent" the last 48 hours (the reader splits the rest by
-                                    # week); neither measured
-NEWS_KEEP = timedelta(days=30)      # the story job writes News for the stories begun in the last 30 days (search's
-                                    # "News, last 30 days"); the rows before stay (issue 0077); not measured
-# A row is in the window by its first post (issue 0111): the job reads the posts of NEWS_EDGE before the window too,
-# so a row whose first post just left it is found whole, and left as it was, never re-led by its second post. A
-# name joins posts within NAME_WINDOW, so a post joined to one in the window is at most that much older.
+NEWS_DAYS = 30                      # News shows the stories whose first post is in the last 30 days ...
+NEWS_RECENT = timedelta(hours=48)   # ... the API's part "recent" the last 48 hours; neither measured
+NEWS_KEEP = timedelta(days=30)      # the story job writes News for stories begun this recently; not measured
+# The job reads NEWS_EDGE before the window too, so a row whose first post just left it is found whole and never
+# re-led by its second post (a name joins posts within NAME_WINDOW).
 NEWS_EDGE = timedelta(hours=48)
-SCOPE_ROLES = ("origin", "report", "share", "mention")   # a source's part in a News row, strongest first (0077)
+SCOPE_ROLES = ("origin", "report", "share", "mention")   # a source's part in a News row, strongest first
 NEWS_MIN_VOICES = 2                 # the prototype's, not measured
-# A row grows only by what holds against a story's core (0203, measured on the server's Mark X News of 2026-11-14:
-# one row had chained 57 stories through names their side posts said). A story's core names: its lead's, or those
-# at least CORE_SHARE of its posts say ...
+# A row grows only by what holds against a story's core (0203): its lead's names, or CORE_SHARE of its posts' ...
 CORE_SHARE = 0.5
-# ... and two stories of LARGE_POSTS+ posts each join only by each one's main name (Mark X: two stories of any size
-# only by the judge's link too, v10.40).
+# ... and two stories of LARGE_POSTS+ posts join only by each one's main name.
 LARGE_POSTS = 5
 SHARE_WEIGHT = 0.5                  # the prototype's, not measured
 MENTION_WEIGHT = 0.5                # the prototype's, not measured
 NAME_WINDOW = timedelta(hours=48)   # a name surges within 48 hours ...
 NAME_MIN_POSTS = 3                  # ... in 3+ posts ...
 NAME_MIN_VOICES = 2                 # ... of 2+ voices (these three the prototype's, not measured) ...
-NAME_MAX_USUAL = 1                  # ... said at most once in the 30 days before (measured on the server's data,
-NAME_BASELINE = timedelta(days=30)  # 2026-10-30: never before ~88% real, once ~75%, twice or more ~27%;
-                                    # the 30 days the prototype's) ...
-NAME_MIN_NEW_VOICES = 2             # ... by 2+ voices that didn't say it then (issue 0070, measured on the lab:
-                                    # it drops 19 surges, 3 of them real) ... only sources followed for all of
-                                    # those 30 days counting
-# A later burst of 3+ voices new to the name is judged as a first (issue 0070). Measured, the rule: 16 more
-# surges on the lab, 12 real; 3 not compared.
+NAME_MAX_USUAL = 1                  # ... said at most once in the 30 days before (measured: plan/issues/0070) ...
+NAME_BASELINE = timedelta(days=30)  # (the 30 days the prototype's)
+NAME_MIN_NEW_VOICES = 2             # ... by 2+ voices that didn't say it then (measured: plan/issues/0070)
+# A later burst of NAME_WAVE_VOICES voices new to the name is judged as a first (measured: plan/issues/0070).
 NAME_WAVE_VOICES = 3
 NAME_MAX_WORDS = 3                  # not measured
 NAME_SKIP_KINDS = frozenset({"arxiv"})
@@ -83,9 +57,7 @@ SMALL_WORDS = frozenset("the a an and or of to in on for with is are was be by a
 _TRIM = ".’'"
 
 
-# A word glued to the next line's capital in another script ("Gemini 4 CarbonМодель", a Telegram
-# title the bridge glued from two lines) is two words; within one script a capital is a name's own
-# ("OpenAI"). Measured on the lab (issue 0070): 871 titles, none a word of two scripts.
+# A word glued to the next line's capital in another script ("CarbonМодель") is two words.
 GLUED = re.compile(r"(?<=[A-Za-z0-9])(?=[А-ЯЁ])|(?<=[а-яёА-ЯЁ])(?=[A-Z])")
 
 
@@ -93,9 +65,7 @@ def _words(title: Optional[str]) -> List[str]:
     return TOKEN.findall(GLUED.sub(" ", comparable(title)))
 
 
-# The separators between a name's parts are one (issue 0070, as search's version names, 0042): a
-# hyphen, an underscore or a dot that is no decimal point reads as a space, so "GPT-6.1 Terra",
-# "GPT 6.1 Terra" and "FLUX.3 Image" / "FLUX 3 Image" are one name each (an en dash already splits words).
+# A hyphen, an underscore or a non-decimal dot reads as a space: "GPT-6.1 Terra" is "GPT 6.1 Terra".
 SEPARATOR = re.compile(r"[-_]+|\.(?!\d)|(?<!\d)\.")
 
 
@@ -103,10 +73,7 @@ def _lower(words: Sequence[str]) -> List[str]:
     return [" ".join(SEPARATOR.sub(" ", w.lower().strip(_TRIM)).split()) for w in words]
 
 
-# A date is no name (issue 0111): a month beside a day or a year ("Nov 2026", "02 Nov", "March 20") names a
-# day, not one event. On the server's copy (2026-11-05) the only three date surges ever ("may 2026", "july 2026",
-# "nov 2026") each joined unrelated posts (a column's dated issues, "the best model at <month>?" questions,
-# monthly roundups). English and Russian months, their short forms; a day 1-31 (its 1st, 2nd...); a year.
+# A month beside a day or a year names a day, not one event: no name (0111).
 MONTH = re.compile(r"^(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?"
                    r"|nov(ember)?|dec(ember)?|январ[ьяе]|феврал[ьяе]|марта?|апрел[ьяе]|ма[йяе]|июн[ьяе]|июл[ьяе]"
                    r"|августа?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])$")
@@ -114,13 +81,12 @@ DAY_OR_YEAR = re.compile(r"^(0?[1-9]|[12]\d|3[01])(st|nd|rd|th)?$|^(1\d|2\d)\d\d
 
 
 def dated(words: Sequence[str]) -> bool:
-    """Whether a name's words (lowercase) hold a date: a month beside a day or a year."""
     return any(MONTH.match(w) and any(DAY_OR_YEAR.match(x) for x in words[max(i - 1, 0):i] + words[i + 1:i + 2])
                for i, w in enumerate(words))
 
 
 def names(title: Optional[str]) -> Set[str]:
-    """The names in a title, lowercase, its parts' separators one ("steam frame", "gpt 6", "opus 5.5")."""
+    """The names in a title, lowercase, separators as spaces ("gpt 6", "opus 5.5")."""
     words = _words(title)
     out = set()
     for n in range(1, NAME_MAX_WORDS + 1):
@@ -139,15 +105,13 @@ def names(title: Optional[str]) -> Set[str]:
                 if not (letters and any(c.isdigit() for c in w[0])):
                     continue   # one word is a name only when it mixes letters and digits ...
                 if w[0][0].isdigit():
-                    continue   # ... and doesn't start with one: "30b", "128gb", "2m" are sizes (server data, 2026-10-30)
+                    continue   # ... and doesn't start with one: "30b", "128gb", "2m" are sizes
             out.add(" ".join(_lower(w)))
     return out
 
 
 def phrases(title: Optional[str]) -> Set[str]:
-    """Every run of 1 to 3 words of a title, lowercase: where a name is said, in any case. A word
-    its separators join ("Model-V4.1-Flash-1017", a repo's name) is read as its parts too, so it
-    says "flash 1017" (issue 0083)."""
+    """Every run of 1 to 3 words of a title, lowercase, a joined word ("Model-V4.1-Flash-1017") read as its parts too."""
     words = _lower(_words(title))
     parts = " ".join(words).split()
     return {" ".join(run[i:i + n]) for run in (words, parts)
@@ -155,10 +119,7 @@ def phrases(title: Optional[str]) -> Set[str]:
 
 
 def phrases_among(title: Optional[str], wanted: Any, heads: Optional[Set[str]] = None) -> Set[str]:
-    """`phrases(title) & wanted`, made only from the runs that start with a word some wanted name starts with (a
-    phrase starts with its run's first word, so no other can be wanted): v10.18 (0199), the story job's name surges
-    made every 1-3 word run of ~70k titles each hour to keep the few that are names (10 s of a 60 s job at server
-    scale). `heads`: each wanted name's first word (`heads_of(wanted)`), when the caller asks for many titles."""
+    """`phrases(title) & wanted`, made only from runs starting with a wanted name's first word (`heads`)."""
     heads = heads_of(wanted) if heads is None else heads
     words = _lower(_words(title))
     out: Set[str] = set()
@@ -174,7 +135,6 @@ def phrases_among(title: Optional[str], wanted: Any, heads: Optional[Set[str]] =
 
 
 def heads_of(names_: Iterable[str]) -> Set[str]:
-    """Each name's first word, as `phrases_among` tells a run that may say one."""
     return {name.split(" ", 1)[0] for name in names_}
 
 
@@ -187,23 +147,19 @@ class Surge:
 
 
 def surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime]) -> List[Surge]:
-    """The names that surge among `posts` (their titles), first surge first.
-    `followed_since`: when each source was added."""
+    """The names that surge among `posts`, first first. `followed_since`: when each source was added."""
     return sorted(longest(name_surges(posts, followed_since)), key=lambda s: (s.at, s.name))
 
 
 def name_surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime],
                 only: Optional[Set[str]] = None, named_by: Optional[Dict[str, Set[str]]] = None) -> List[Surge]:
-    """Each name's surges among `posts`, before `longest`: a name's depend only on the titles that name
-    or say it, so the story job judges again only the names a new title says (issue 0072 A). With
-    `only`, those names' alone (`posts` holds every title that names or says them); `named_by`: each of
-    those names -> the posts that name it, as their stored keys say (`names` is read again otherwise)."""
+    """Each name's surges among `posts`, before `longest`; a name's depend only on the titles that name or say it.
+    `only`: those names' alone; `named_by`: name -> the posts that name it (stored keys)."""
     rows = sorted((p for p in posts if p.title and p.kind not in NAME_SKIP_KINDS), key=lambda p: (p.t, p.id))
     named: Dict[str, List[StoryPost]] = defaultdict(list)
     said: Dict[str, List[StoryPost]] = defaultdict(list)
     if named_by is not None:
-        # 0215: each name's posts looked up by id, in `rows`' order (was: every row against every name, ~3x10^8
-        # lookups a rebuild batch at server scale: 60 of its ~110 s)
+        # each name's posts by id, in `rows`' order (0215)
         at = {p.id: i for i, p in enumerate(rows)}
         for name in only or ():
             found_at = sorted(at[pid] for pid in named_by.get(name, ()) if pid in at)
@@ -214,11 +170,9 @@ def name_surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime],
             for name in names(p.title):
                 if only is None or name in only:
                     named[name].append(p)
-    # Only the phrases that are such a name are kept (issue 0072: every title's held 128 MB on the lab).
+    # only the phrases that are such a name are kept (memory)
     named = {name: uses for name, uses in named.items() if len(uses) >= NAME_MIN_POSTS}
-    # The incremental judge's few names: only the runs that may say one are made (phrases_among); the whole rebuild's
-    # every name: every run, as before (measured on the scale copy: 4.4 s against 6.7 for 300 names, 7.9 against 6.8
-    # for all 102k). The same phrases either way.
+    # few names: only the runs that may say one (phrases_among); every name: every run (faster). Same phrases.
     heads = heads_of(named) if only is not None else None
     for p in rows:
         for phrase in (phrases_among(p.title, named, heads) if heads is not None else phrases(p.title) & named.keys()):
@@ -232,8 +186,7 @@ def name_surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime],
             since = start.t - NAME_BASELINE
 
             def heard(p: StoryPost) -> bool:
-                """Evidence: a post of a source followed for the whole 30 days before the burst. A newer
-                source's posts are its archive or a history that starts late (issue 0051, 0070)."""
+                """A post of a source followed for the whole baseline before the burst."""
                 return followed_since.get(p.source_id) is not None and followed_since[p.source_id] <= since
 
             if (after is not None and start.t <= after) or not heard(start):
@@ -256,7 +209,6 @@ def name_surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime],
 
 
 def longest(found: Sequence[Surge]) -> List[Surge]:
-    """Only the longest name is kept when a shorter one covers the same posts."""
     def inside(short: str, long: str) -> bool:
         return len(long) > len(short) and f" {short} " in f" {long} "
 
@@ -295,11 +247,11 @@ def score(reports: int, shares: int, mentions: int) -> float:
 
 def tally(posts: Sequence[StoryPost], post_roles: Dict[str, str], mentioned_by: Iterable[StoryPost]
           ) -> Tuple[int, int, int]:
-    """(reports, shares, mentions): each voice once, in its strongest role (report, share, then a
-    roundup's mention). A source that reposted a tweet is a share, the tweet's author a report (issue 0068)."""
+    """(reports, shares, mentions): each voice once, in its strongest role. A source that reposted a tweet is a share,
+    the tweet's author a report."""
     best: Dict[str, str] = {}
-    posts = [p for p in posts if voice.is_voice(p.kind)]   # a page you saved is no voice (issue 0070)
-    for p in posts:   # each voice as its owner's (issue 0111)
+    posts = [p for p in posts if voice.is_voice(p.kind)]   # a page you saved is no voice
+    for p in posts:   # each voice as its owner's
         role = post_roles[p.id]
         own = voice.voice_of(p, voice.Policy.NEWS_IX)
         if best.get(own) != "report":
@@ -324,29 +276,25 @@ def _said(story: Story, found: Sequence[Surge]) -> Dict[str, Set[str]]:
 
 
 def _first(story: Story) -> Optional[str]:
-    """A story's first post, by its posts' times (a date alone as that day's earliest timed post), never by the order
-    they were handed in (the incremental job reads a story's posts in no time order: 0205)."""
+    """A story's first post by time, never by the order handed in (`lead_order`)."""
     if not story.posts:
         return None
-    return lead_order(story.posts, story_times(story.posts))[0].id   # 0263, v10.39: never a background page nor a non-report
+    return lead_order(story.posts, story_times(story.posts))[0].id   # never a background page nor a non-report
 
 
 def core_names(story: Story, found: Sequence[Surge]) -> Set[str]:
-    """The surging names a story is about (0203): those its first post's title says, or at least CORE_SHARE of its
-    posts' titles say, the most specific of them (a name inside another core name is none). A name one roundup or one
-    reply in it says is no name of the story."""
+    """The surging names a story is about: its first post's, or CORE_SHARE of its posts', the most specific only."""
     first = _first(story)
     if first is None:
         return set()
     said = _said(story, found)
     core = {name for name, ps in said.items() if first in ps or len(ps) >= CORE_SHARE * len(story.posts)}
-    # the most specific only: "gemini 4 carbon", never "gemini" inside it (another release of the family says that)
+    # the most specific only: "gemini 4 carbon", never "gemini" inside it
     return {c for c in core if not any(o != c and f" {c} " in f" {o} " for o in core)}
 
 
 def main_name(story: Story, found: Sequence[Surge]) -> Optional[str]:
-    """The most specific core name most of a story's posts say (then the longest): what a release story is about, not
-    its maker's name its lead also says ("Acme releases Vela 5.2": vela 5.2, not acme), nor its family's."""
+    """The most specific core name most of a story's posts say: "Acme releases Vela 5.2" is vela 5.2, not acme."""
     core = core_names(story, found)
     if not core:
         return None
@@ -355,30 +303,15 @@ def main_name(story: Story, found: Sequence[Surge]) -> Optional[str]:
 
 
 def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge], *,
-         judged: Optional[Iterable[FrozenSet[str]]] = None, grouped: Optional[Any] = None,
-         releases: Optional[Any] = None) -> List[NewsStory]:
-    """0050's stories joined by the surging names, those with 2+ voices, first first.
+         judged: Optional[Iterable[FrozenSet[str]]] = None) -> List[NewsStory]:
+    """The stories joined by the surging names, those with 2+ voices, first first.
 
-    A row grows only by what holds against each story's core (0203: one Mark X row chained 57 stories, 397 posts,
-    through names their side posts said): a surging name joins a story's post only when the name says one of the
-    story's core names (`core_names`), and a post in several stories is in its first story's row only. Two large
-    stories (LARGE_POSTS+ posts each) are joined only by a name that says each one's main name (`main_name`). With
-    `judged` (Mark X: the story pairs its judge connected, as development, follow-up or the same event, and the story
-    chain's one-happening edges) two stories of any size are joined by a name only when the judge connected them too
-    (v10.40: a name alone joined whole small stories into a release row, the GTA VI city built with GPT-6.2 and a
-    pricing change into GPT-6.2's launch; a post of no story still joins by its name alone); None (Mark IX: no judge),
-    small stories by a name, large ones by their main names alone.
-
-    `grouped` (0217, a grouping.Evidence): which stories are one row is decided by utils/grouping.py, every join
-    checked against each story's core, the judge's verdicts building and blocking, one release of one exact thing one
-    row; the name guards above are then grouping's admission, not this function's. None: the guards above.
-
-    `releases` (0217's narrow arm, a grouping.Evidence): the guards above, and the owner's release rule on top: the
-    stories and posts of no story about one release of one exact thing (grouping.releases: its stages within the
-    policy's span, its other lines near a stage) are one row."""
+    A surging name joins a story's post only when it says one of the story's core names, and a post in several
+    stories is in its lowest story id's row only. Two large stories join only by each one's main name. With `judged`
+    (Mark X: the story pairs its judge connected) two stories of any size join by a name only when also judged; a
+    post of no story still joins by its name alone."""
     by_id = {p.id: p for p in posts}
-    # 0205: the rows depend on the inputs only, never on their order or on which stories a pass hands in first (the
-    # incremental job reads its stories by id and their posts in no time order; the full job in its own order)
+    # the rows must not depend on input order: the incremental and full jobs read in different orders (0205)
     stories = sorted(stories, key=lambda s: s.id)
     found = sorted(found, key=lambda s: (s.at, s.name, tuple(s.posts)))
     uf = _UnionFind()
@@ -391,7 +324,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     for story in stories:
         for p in story.posts:
             if p.id in story_of:
-                continue                       # a post in several stories: the lowest story id's (0203, 0205)
+                continue                       # a post in several stories: the lowest story id's
             uf.union(p.id, story.id)
             story_of[p.id] = story
     _held(stories, uf, large, held)
@@ -422,9 +355,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
                 d[root] = got
     joined_by: Dict[str, str] = {}
     held_by: Dict[Tuple[str, datetime], List[str]] = {}
-    # A post two surging names say joins the one it says first, with the names inside that one or
-    # around it, never another (issue 0070): "Вышел Grok-4.7… как будто чуть лучше Sol" is Grok 4.7's,
-    # not GPT-6 Sol's too; a post naming two releases no longer makes them one News row.
+    # a post two surging names say joins the one it says first (with names nested in it), never the other
     surges_of: Dict[str, List[Surge]] = defaultdict(list)
     for surge in found:
         for pid in surge.posts:
@@ -442,49 +373,27 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         return f" {a} " in f" {b} " or f" {b} " in f" {a} "
 
     def holds(pid: str, name: str) -> bool:
-        """Whether the name may join this post: a post of no story always; a story's post when the name says one of
-        the story's core names ("claude vela 5" holds for "vela 5"; "gemini" never for "gemini 4 carbon")."""
+        """A post of no story always; a story's post when the name says one of its core names."""
         story = story_of.get(pid)
         return story is None or any(f" {c} " in f" {name} " for c in cores.get(story.id, ()))
 
-    if grouped is not None:
-        root = _grouped(posts, stories, found, story_of, cores, mains, grouped, first_said, nested)
-        find = root.__getitem__
-    else:
-        find = uf.find
-    if releases is not None and grouped is None:
-        from insight_core.utils import grouping
-        items, _ = _items(posts, stories, found, story_of, cores, mains, releases, first_said, nested)
-        for a, b in grouping.releases(items, releases.policy):
-            uf.union(a[4:] if a.startswith("one:") else a, b[4:] if b.startswith("one:") else b)
-        large.clear(), held.clear()   # the guards read their groups by root: by the roots after the release joins
-        _held(stories, uf, large, held)
-    for surge in (found if grouped is None else ()):
+    find = uf.find
+    for surge in found:
         members = sorted((pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)
                           and holds(pid, surge.name)), key=lambda pid: (by_id[pid].t, pid))
         held_by[surge.name, surge.at] = members
-        # each post tries every group the surge has reached so far, not only its first post's (0205: when the first
-        # post's story refuses, a star at it left the stories that agree with each other apart: one IPO in 4 rows)
+        # each post tries every group the surge reached, not only its first post's (0205)
         reached: List[str] = []
         for pid in members:
             for other in reached:
                 join(pid, other, surge.name)
             if uf.find(pid) not in {uf.find(r) for r in reached}:
                 reached.append(pid)
-    # The name each post says (0205), once every join is made: a post saying a surge's name in a row the name reached
-    # is named by it, whether the name joined it or its own story did ("Вышла Kimi K3.1" in the K3.1 Pro story is
-    # k3.1's, as before 0203): main_story reads these names, and a row's lead says the row's own name.
+    # the name each post says, once every join is made: main_story reads it, and a row's lead says the row's name
     for surge in found:
         said = sorted((pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)),
                       key=lambda pid: (by_id[pid].t, pid))
-        if grouped is None:
-            reached_rows = {find(pid) for pid in held_by[surge.name, surge.at]}
-        else:   # the rows where the name says two or more of its posts' core (grouping admitted it there)
-            seen = defaultdict(int)
-            for pid in said:
-                if holds(pid, surge.name):
-                    seen[find(pid)] += 1
-            reached_rows = {r for r, n in seen.items() if n >= 2}
+        reached_rows = {find(pid) for pid in held_by[surge.name, surge.at]}
         for pid in said:
             if find(pid) in reached_rows:
                 joined_by.setdefault(pid, surge.name)
@@ -493,14 +402,12 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         groups[find(p.id)].append(p)
     out = []
     for group in groups.values():
-        # A date alone counts as that day's earliest timed post (issue 0072 D): its start, its order, the window.
-        # 0263: a background page (story_rules.background) is never its first post, nor its start
-        # v10.39: its lead (`lead_order`) the earliest report, its start still its earliest post
+        # its lead (`lead_order`) is the earliest report, never a background page; its start its earliest post
         times = story_times(group)
         group = lead_order(group, times)
-        if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
+        if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one
             continue
-        voices = voice.count(group, voice.Policy.NEWS_IX)   # one owner's channels one voice (issue 0111)
+        voices = voice.count(group, voice.Policy.NEWS_IX)   # one owner's channels one voice
         if voices < NEWS_MIN_VOICES:
             continue
         ids = {p.id for p in group}
@@ -517,7 +424,6 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
 
 
 def _held(stories: Sequence[Story], uf: _UnionFind, large: Dict[str, Set[str]], held: Dict[str, Set[str]]) -> None:
-    """Each group's large stories and its stories, by the group's root (news' guards)."""
     for story in stories:
         root = uf.find(story.id)
         held.setdefault(root, set()).add(story.id)
@@ -525,71 +431,11 @@ def _held(stories: Sequence[Story], uf: _UnionFind, large: Dict[str, Set[str]], 
             large.setdefault(root, set()).add(story.id)
 
 
-def _grouped(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
-             story_of: Dict[str, Story], cores: Dict[str, Set[str]], mains: Dict[str, Optional[str]], evidence: Any,
-             first_said: Any, nested: Any) -> Dict[str, str]:
-    """{post: its row's key} by utils/grouping.py (0217): the stories (sorted by id) and each post of no story as an
-    item; each surge's name an edge between every two items whose posts say it first; a post in two stories a rule
-    edge (an attachment, never a bridge); the judge's story verdicts as given. A post in several stories is in its
-    first story's row (as the guards')."""
-    from insight_core.utils import grouping
-    items, by_id = _items(posts, stories, found, story_of, cores, mains, evidence, first_said, nested)
-    ids = {s.id for s in stories}
-
-    def item_of(pid: str) -> str:
-        return story_of[pid].id if pid in story_of else f"one:{pid}"
-    edges: List[grouping.Edge] = []
-    for surge in found:
-        reached = sorted({item_of(pid) for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)})
-        edges += [grouping.Edge(a, b, "name", name=surge.name) for n, a in enumerate(reached) for b in reached[n + 1:]]
-    in_stories: Dict[str, List[str]] = defaultdict(list)
-    for s in stories:
-        for p in s.posts:
-            in_stories[p.id].append(s.id)
-    for pid, sids in sorted(in_stories.items()):
-        sids = sorted(set(sids))
-        edges += [grouping.Edge(a, b, "rule", "post") for n, a in enumerate(sids) for b in sids[n + 1:]]
-    edges += [e for e in evidence.judged if e.a in ids and e.b in ids]
-    got = grouping.group(items, edges, policy=evidence.policy)
-    return {p.id: got.group_of[item_of(p.id)] for p in posts}
-
-
-def _items(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],
-           story_of: Dict[str, Story], cores: Dict[str, Set[str]], mains: Dict[str, Optional[str]], evidence: Any,
-           first_said: Any, nested: Any) -> Tuple[List[Any], Dict[str, StoryPost]]:
-    """grouping's items: each story, and each post of no story as "one:<post>" (its core names the surges it says)."""
-    from insight_core.utils import grouping
-    facts = evidence.posts
-    by_id = {p.id: p for p in posts}
-
-    def fact(p: StoryPost) -> "grouping.Post":
-        got = facts.get(p.id)
-        return got if got is not None else grouping.Post(p.id, p.t)
-    items: List[grouping.Item] = []
-    for s in stories:
-        items.append(grouping.Item(s.id, tuple(fact(p) for p in s.posts), voice.count(s.posts, voice.Policy.NEWS_IX),
-                                   frozenset(cores.get(s.id, ())), evidence.stories.get(s.id), mains.get(s.id)))
-    names_of: Dict[str, Set[str]] = defaultdict(set)
-    for surge in found:
-        for pid in surge.posts:
-            if pid in by_id and pid not in story_of and nested(surge.name, first_said(pid).name):
-                names_of[pid].add(surge.name)
-    for p in posts:
-        if p.id not in story_of:
-            items.append(grouping.Item(f"one:{p.id}", (fact(p),), 1, frozenset(names_of[p.id])))
-    return items, by_id
-
-
 def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = (), roundups: Iterable[str] = (),
          sharers: Iterable[str] = ()) -> Optional[str]:
-    """A story's lead, as 0050's: its origin (issue 0064: the first of `origins`, the posts no
-    other post of their 0050 story came from), else its first report or, when one came before it, the
-    first share of a 0050 story's origin page (`sharers`: posts hanging from their story's outside
-    origin by a link to it, issue 0103), else its first share. Measured on the lab: a share after the
-    first report leading too changed 2 more leads of 90, both wrong (a later short post over the first,
-    one on another subject). Without an origin, a post the stories list as a roundup
-    (`roundups`: 0050's story_mentions, issue 0083) is passed over while a report or share that is none
-    exists. `posts`: (id, role), first posted first."""
+    """A story's lead: its first origin (`origins`), else its first report, or an earlier share of the story's
+    origin page (`sharers`), else its first share; a roundup (`roundups`) is passed over while another report or
+    share exists. `posts`: (id, role), oldest first."""
     origins, roundups, sharers = set(origins), set(roundups), set(sharers)
     for pid, _ in posts:
         if pid in origins:
@@ -607,11 +453,9 @@ def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = (), roundups
 
 
 def main_story(posts: Sequence[Tuple[str, Optional[str], int, Optional[str]]]) -> Optional[Set[str]]:
-    """The posts a row's lead may come from (issue 0111), of `posts` ((id, its 0050 story or None, that
-    story's voices, the surging name that joined it), first posted first): its main story's (the most
-    voices, then the most posts, then the first), and the stories and posts joined to it by the name its
-    posts say most (the first said at a tie). A story joined only by another name (a thread naming the
-    row's model in a comparison) never leads. None: the row holds no 0050 story, every post may lead."""
+    """The posts a row's lead may come from: its main story's (most voices, then posts, then first) and what joined it
+    by the name its posts say most; another name's stories never lead. `posts`: (id, story, its voices, the name that
+    joined it), oldest first. None: the row holds no story."""
     stories: Dict[str, List[Tuple[str, Optional[str]]]] = defaultdict(list)
     voices: Dict[str, int] = {}
     for pid, story, n, name in posts:

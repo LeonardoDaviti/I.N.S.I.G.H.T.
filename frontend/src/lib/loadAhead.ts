@@ -1,9 +1,6 @@
 /**
- * Load ahead (issue 0061): once the feed is on screen and the network is quiet,
- * the chunks a reader opens next (the post page with its renderer, News,
- * Classics) load while the browser is idle, one after another, so they never
- * compete with the feed. Skipped when the connection asks to save data.
- * Returns true when there is nothing left to wait for (scheduled or skipped).
+ * Load ahead: once the feed is on screen and the network is quiet, the chunks a reader opens next load one after
+ * another while the browser is idle; skipped under save-data. True when nothing is left to wait for.
  */
 export function loadAhead({ ready, saveData, whenIdle, loaders }: {
   ready: boolean;

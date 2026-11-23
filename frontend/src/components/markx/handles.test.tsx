@@ -13,8 +13,7 @@ const now = new Date().toISOString();
 const entity: MarkxEntityRef = { id: 'e1', name: 'Ivo Kestrel', type: 'person', maker: null, level: 'thing', version: null, variant: null,
   size: null, build: null, status: 'provisional', family: null };
 
-// Issue 0168: a person's handles on the page (with an old one's months), the replies to them hidden until asked, and
-// the owner's handle question in the review queue.
+// A person's handles (0168): an old one's months, replies to them hidden until asked, the queue's handle question.
 const page: MarkxEntityPage = {
   entity, asked: 'e1', redirected: false, aliases: ['Ivo Kestrel'], maker: null, family: null, versions: [], posts: 3,
   voices: 3, accuracy: { merges: 'm', surges: 's', collisions: 'c' }, queue: [], surges: [], current: true, stories: [],

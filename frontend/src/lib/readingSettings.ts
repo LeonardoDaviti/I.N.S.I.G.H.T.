@@ -1,11 +1,7 @@
 /**
- * Reading settings (issue 0045): the post text's font, size and column width,
- * per device. They scale the column and never pack it tighter: line height and
- * spacing stay as decided (one density, issue 0034), since the post body sets
- * them in `em` and unitless leading.
- *
- * Applied as CSS variables on the post page's frame. The default sets none, so
- * the page reads exactly as before: each use falls back to today's value.
+ * Reading settings: the post text's font, size and column width, per device, applied as CSS variables on the
+ * post page's frame. They scale the column, never pack it tighter (the body sets leading in `em`/unitless); the
+ * default sets no variable.
  */
 
 export type ReadingFont = 'sans' | 'serif';
@@ -46,8 +42,8 @@ export const READING_WIDTHS: ReadonlyArray<{ value: ReadingWidth; label: string 
 /** No webfont is shipped (system/typography.md): the serif is the system's, 0 bytes. */
 export const SERIF_STACK = 'ui-serif, "Iowan Old Style", Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, "Noto Serif", "Times New Roman", serif';
 
-/** The post text's classes: the reading size scales it (its tables, figures and code are in em),
- *  the font and measure apply; with no variable set it is today's 1.0625rem (1.125rem from sm), 68ch. */
+/** The post text's classes: size scales it (tables, figures and code are in em), font and measure apply;
+ *  unset, 1.0625rem (1.125rem from sm), 68ch. */
 export const READING_TEXT_CLASS = 'max-w-[var(--reading-measure,68ch)] text-[length:calc(1.0625rem*var(--reading-scale,1))] leading-[1.7] text-fg [font-family:var(--reading-font)] sm:text-[length:calc(1.125rem*var(--reading-scale,1))]';
 
 /** The CSS variables for `settings`; only the ones that differ from today, none for the default. */

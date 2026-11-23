@@ -261,7 +261,7 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
 
 @requires_test_db
 class ImportOnceDbTests(unittest.TestCase):
-    """The containers' start imports a file once per database (issue 0071)."""
+    """The containers' start imports a file once per database."""
 
     def setUp(self):
         self.url = db_url()
@@ -307,9 +307,8 @@ class ImportOnceDbTests(unittest.TestCase):
 
 @requires_test_db
 class RemovedSourcesDbTests(unittest.TestCase):
-    """Imports only add, and removed sources stay removed (issue 0072, the owner): an old file
-    naming a removed source, and a source the app switched off, changes nothing; adding the
-    source again in the app forgets its removal."""
+    """Imports only add, and removed sources stay removed: an old file naming a removed source, or a source switched
+    off, changes nothing; adding the source again in the app forgets its removal."""
 
     def setUp(self):
         self.url = db_url()
@@ -393,7 +392,7 @@ class YouTubeServiceTests(unittest.TestCase):
         self.assertIn("/channel/UCHkYOD-3fZbuGhwsADBd9ZQ", result["channel_url"])
 
     def test_an_archive_lists_from_its_start_to_the_channels_end_on_the_scan_budget(self):
-        """Issue 0015: an archive runs until the channel ends, so its listing is a channel scan."""
+        """An archive runs until the channel ends, so its listing is a channel scan (0015)."""
         runs = []
         self.service._run_ytdlp_json = lambda args, timeout: runs.append((args, timeout)) or {"entries": []}
         self.service.archive_channel_posts("https://www.youtube.com/@chan", start=106)

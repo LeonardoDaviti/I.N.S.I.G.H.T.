@@ -1,6 +1,5 @@
-"""A Telegram album is one post (issue 0069, B4): migration 0051's fold_telegram_albums, the feed,
-its counts, search, read state, the post page and the media proxy. Commits scratch rows, so it runs
-only against a *_test database."""
+"""A Telegram album is one post (0069): migration 0051's fold_telegram_albums, the feed, its counts, search, read
+state, the post page and the media proxy. Commits scratch rows, so it runs only against a *_test database."""
 from __future__ import annotations
 
 import sys
@@ -81,7 +80,7 @@ class TelegramAlbumTests(unittest.TestCase):
             self.assertEqual(cur.fetchone()[0], 0, "folding again changes nothing")
 
     def test_pictures_before_their_caption_are_that_post(self):
-        # Issue 0070 (migration 0053): the album's caption came on its last item.
+        # the album's caption came on its last item (migration 0053)
         drafts = [self._draft(22, timedelta(seconds=40), "Собственно, это было известно еще в 1977 году."),
                   self._draft(21, timedelta(0)), self._draft(20, timedelta(0)),
                   self._draft(19, timedelta(minutes=-30), "An earlier post.")]

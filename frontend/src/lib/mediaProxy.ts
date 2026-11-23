@@ -1,10 +1,7 @@
 /**
- * Post images load through our API (issue 0006): GET /api/media fetches one when it is first
- * shown and the frontend nginx keeps it for 24 hours. So an image from a LAN bridge
- * (telegram.local) shows on any device, and an origin sees one request a day, not one per
- * view. Relative on purpose: it goes through nginx, where the cache is, even when
- * VITE_API_URL points the API calls elsewhere. Anything that is not http(s) (a design
- * fixture's data: URL) is left as it is.
+ * Post images load through GET /api/media, kept 24 hours by the frontend nginx: a LAN bridge's image shows on any
+ * device and an origin sees one request a day. Relative on purpose (through nginx's cache, even when VITE_API_URL
+ * points elsewhere). Anything not http(s) is left as it is.
  */
 export function proxiedImage(postId: string | null | undefined, url: string | null | undefined): string | undefined {
   if (!url) return undefined;

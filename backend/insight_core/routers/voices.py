@@ -1,4 +1,4 @@
-"""Voices' routes (issue 0132 A): an APIRouter, included by main.py in one line. The app's own (no bearer).
+"""Voices' routes: an APIRouter included by main.py. The app's own (no bearer).
 
 GET    /api/voices                         {voices: [voice]}: every voice the owner keeps
 GET    /api/voices/suggestions             {computed_at, computing, voices: [{key, sources, edges [{a, b, verdict,
@@ -7,7 +7,7 @@ POST   /api/voices/suggestions/refresh     {started}: judge every pair again, in
 POST   /api/voices                         {source_ids, voice_id?, name?, kind?, evidence?, by_hand?} -> {voice,
                                            queued_sources}: Join (a suggestion) or Make a voice (by_hand)
 GET    /api/voices/{voice_id}              {voice, not_followed [{key, url, label, platform, of, why}]}
-GET    /api/voices/profiles/setting        {on}: channel profiles fetched monthly (0132 C2; on by default)
+GET    /api/voices/profiles/setting        {on}: channel profiles fetched monthly (on by default)
 PUT    /api/voices/profiles/setting        {on} -> {on}
                                            (suggestions also carry not_followed [{subject {kind, id, name}, channels}]
                                            and profiles: how many current profiles they read)

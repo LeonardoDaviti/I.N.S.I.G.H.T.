@@ -1,4 +1,4 @@
-"""A test read (issues 0148 §3, 0162 §4): one candidate source read the way the Add source path would follow it, its
+"""A test read (issues 0148, 0162, 0240): one candidate source read the way the Add source path would follow it, its
 newest items kept in a scratch area, and its health. Nothing is followed, nothing is stored as a post.
 
     reader = Reader(http, registry)
@@ -8,29 +8,10 @@ newest items kept in a scratch area, and its health. Nothing is followed, nothin
     got.reason     # "" when read; else why not (the finder's reason: blocked, gone, NOTHING: no feed and no dated list)
     health(got.items, now)   # {items, dated, median_chars, lang, per_week, newest_days, reads_well, reason, labels}
 
-**How it reads (the add path, no other):** an account INSIGHT reads by a source kind (an X account through the bridge,
-a Telegram channel, a subreddit, a YouTube channel: discover_reads.kind_source) through that kind; anything else through
-where_linked.follow (the feed finder, then page watching): its first feed that is the page's own (not flagged as the
-site's), else its first page to watch. A feed is parsed with the fetcher's own parser (parsing.parse_feed_posts); a
-watched page's articles are read one by one as page watching reads them (page_watch.post_from), never dated "now":
-an article with no date of its own stays undated, so an undated source shows as one.
-
-**Scrape regardless of a feed** (issue 0240, owner 2026-11-19): this is the one test read of the scout, the daily judge,
-a tap's judgement and the official channels (through source_judge), and Discover's follow test takes the same
-where_linked.follow. When the finder finds no feed and no page, follow previews the pages that list the site's
-announcements (page_watch.list_offers: the page itself, its section, its sitemap's news sections, /news, /newsroom,
-/press, /blog) and offers the first dated one; only when that fails too is the source unreadable (NOTHING). A feed
-whose items are undated or titles only is read from its items' own pages (`_from_pages`, at most DATE_PAGES): the date
-each page states (page_watch.page_dating: markup, address, then body), the article text; so a titles-only feed dated
-by its article pages is a dated stream. Still reading badly, the page offered beside it is read instead when better.
-
-**Health** (0135's silent failures, 0149's classes, measured on the item list alone): no items; undated (fewer than half
-the items carry a date); titles only (the median text under NO_TEXT_CHARS); stopped (the newest item older than
-STOPPED_DAYS). Any of them: "can't read well: <why>", never suggested as working. Labels that don't stop a suggestion:
-summaries only (median under SUMMARY_CHARS), its language when not English, no transcripts (videos without one).
-
-The requests a read makes are counted (`requests`): every request through the read's own client, and one for a source
-kind's read (its client is the kind's). The caller budgets them.
+It reads by the add path only: a source kind's own reader, else where_linked.follow (the feed finder, then page
+watching, then the site's announcement pages); an article with no date stays undated. A feed whose items are undated
+or titles only is read from its items' own pages (`_from_pages`). The requests a read makes are counted (`requests`)
+for the caller to budget.
 """
 from __future__ import annotations
 
@@ -53,8 +34,8 @@ STOPPED_DAYS = 120               # the newest item older than this: stopped
 DATED_SHARE = 0.5                # fewer than this share dated: undated
 PAGE_GAP_S = 1.0                 # between two article pages of one watched page
 PAGE_SKIPS = 5                   # article pages that are no post, read at most besides the items
-DATE_PAGES = 10                  # 0240: a feed's undated or titles-only items read from their own pages, at most
-# Every way in failed (0240): the feed finder, page watching on the page, its section and the site's list pages.
+DATE_PAGES = 10                  # a feed's undated or titles-only items read from their own pages, at most
+# every way in failed: the feed finder, page watching on the page, its section and the site's list pages
 NOTHING = "no feed, and no page that lists dated articles: the page, its section, its news, blog and press pages"
 
 
@@ -122,8 +103,9 @@ def item_of(post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def health(items: Sequence[Dict[str, Any]], now: Optional[datetime] = None) -> Dict[str, Any]:
-    """What a test read's items say about the source (see the module docstring): {items, dated, median_chars, lang,
-    per_week, newest_days, reads_well, reason, labels}."""
+    """What a test read's items say about the source: {items, dated, median_chars, lang, per_week, newest_days,
+    reads_well, reason, labels}. Not read well: no items, undated, titles only or stopped; labels (summaries only, a
+    language, no transcripts) don't stop a suggestion."""
     now = now or datetime.now(timezone.utc)
     n = len(items)
     dates = sorted((i["published_at"] for i in items if isinstance(i.get("published_at"), datetime)), reverse=True)
@@ -160,7 +142,7 @@ def health(items: Sequence[Dict[str, Any]], now: Optional[datetime] = None) -> D
 
 
 def _better(a: Sequence[Dict[str, Any]], b: Sequence[Dict[str, Any]]) -> bool:
-    """Whether items a read better than items b (0240): reads well first, then the more dated items."""
+    """Whether items a read better than items b: reads well first, then the more dated items."""
     ha, hb = health(a), health(b)
     return (ha["reads_well"], ha["dated"]) > (hb["reads_well"], hb["dated"])
 
@@ -241,7 +223,7 @@ class Reader:
                                        "title": feed.get("title") or ""}, items=items)
             await self._from_pages(client, got)
             if pages and not health(got.items)["reads_well"]:
-                # The feed reads badly even from its pages (0240): the page offered beside it, when it reads better.
+                # the feed reads badly even from its pages: the page offered beside it, when it reads better
                 other = await self._page(client, pages[0], limit)
                 if _better(other.items, got.items):
                     return other
@@ -253,11 +235,10 @@ class Reader:
         return ReadResult(reason=NOTHING if reason == NONE_FOUND else reason)
 
     async def _from_pages(self, client: Counting, got: ReadResult) -> None:
-        """Issue 0240: a feed read whose items are undated or titles only (health) is read from its items' own pages,
-        at most DATE_PAGES of them, the newest first: each undated item takes the date its page states
-        (page_watch.page_dating: its markup, then its address's day, only then its byline or one written date; one
-        the address contradicts is held), each titles-only item the page's article text. `got.resolved["from_pages"]`:
-        how many items a page dated or filled. A page that can't be read is skipped."""
+        """A feed read whose items are undated or titles only is read from its items' own pages, at most DATE_PAGES,
+        newest first: each undated item takes the date its page states (page_watch.page_dating; one the address
+        contradicts is held), each titles-only item the page's article text. `got.resolved["from_pages"]`: how many a
+        page dated or filled. A page that can't be read is skipped."""
         from insight_core.ingestion.kinds import page_watch
         why = health(got.items)["reason"]
         if not got.items or not why.startswith(("undated", "titles only")):

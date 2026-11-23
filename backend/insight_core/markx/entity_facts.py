@@ -1,25 +1,18 @@
-"""Identity facts (issue 0184, Stealth v10.18): what an entity is, owned by one module.
+"""Identity facts: what an entity is, owned by one module.
 
-An entity's **facts** are its kind, its maker (an entity, and the maker as the posts state it), a one-line `what`, up
-to four words that tell it from another thing of the same name (`context`), and whether the name is a common word
-(`generic`). A name key may hold several **senses** (one entity each: the key's own entity and the ones a split made,
-"Vexa (terminal app)"); each sense's facts row carries the bare key it is a sense of (`sense_key`).
-
-Two entry points, everything else inside:
+An entity's **facts** are its kind, its maker, a one-line `what`, up to four words that tell it from another thing of
+the same name (`context`), and whether the name is a common word (`generic`). A name key may hold several **senses**
+(one entity each); each sense's facts row carries the bare key it is a sense of (`sense_key`).
 
   - `place(cur, book, mentions, run_id)`: the entities stage, for the mentions it just linked: a bare name's mention
-    is placed in one of its senses by rule (1. its stated maker names one sense's maker; 2. its post shares a source
-    or a co-named entity with posts already in exactly one sense), a pin by `facts` that the next linking honours;
-    otherwise it is marked `wait` and its entity is asked (identity.collisions widens its trigger with `to_ask`).
-    The answers are applied by `apply` (called by identity.collisions on a settled answer): facts rows, and when the
-    split bar is met, new sense entities with their mentions pinned (entity_answers.split, by `facts`).
-  - `read(cur, roots, senses=False)`: every reader: {root: Facts} in one query by id (never the book); `senses`: the
-    other senses of the root's name key with their `what` and post counts (search's grouping).
+    is placed in one of its senses by rule (its stated maker, or a source or co-named entity shared with exactly one
+    sense's posts), a facts pin the next linking honours; else marked `wait` and its entity asked (`to_ask`).
+    Settled answers are applied by `apply` (facts rows, and past the split bar new sense entities, mentions pinned).
+  - `read(cur, roots, senses=False)`: every reader: {root: Facts} in one query by id (never the book).
 
-Behind a switch (entity_bands.json `facts`): off, `read` returns nothing, `place` places nothing and the answers are
-queued as before (identity's collision items), so a deploy changes no page. Keep everything: a new fact supersedes
-the current row, never updates it; an owner's fact is never superseded by a rule or Haiku; a facts pin is undone by
-`undone_at`, and an owner's undo of one is final.
+Behind a switch (entity_bands.json `facts`): off, nothing is read or placed. Keep everything: a new fact supersedes
+the current row, never updates it; an owner's fact is never superseded by a rule or Haiku; an owner's undo of a facts
+pin is final.
 """
 from __future__ import annotations
 
@@ -180,7 +173,7 @@ def place(cur: Any, book: I.Book, mentions: Sequence[Any], *, run_id: Any = None
             if len(hit) == 1:
                 to, how = hit[0].entity_id, "rule:maker"
         if to is None and config().get("rule_context"):
-            # off: a shared source meant the same sense 140/171 (81.9%) on the server's collision names (v10.18)
+            # off: a shared source meant the same sense ~82% of the time (measured: plan/issues/0184)
             src, named = ctx["post"].get(m.post_id, (None, set()))
             hit = [s for s in options if src in ctx["sources"].get(s.entity_id, set())
                    or (named & ctx["named"].get(s.entity_id, set()))]
@@ -198,9 +191,8 @@ def place(cur: Any, book: I.Book, mentions: Sequence[Any], *, run_id: Any = None
 
 
 def place_by_handle(cur: Any, book: I.Book, mentions: Sequence[Any]) -> Dict[str, int]:
-    """0168's learned handles: a bare first name ("Kip") in a post by an account whose handle the owner confirmed as a
-    person's ("Kip Marlow" = @kipm) is that person (a facts pin, placed `rule:handle`). Off until measured
-    (`rule_handle`)."""
+    """Learned handles: a bare first name ("Kip") in a post by an account whose handle the owner confirmed as a person's
+    is that person (a facts pin, placed `rule:handle`). Off until measured (`rule_handle`)."""
     if not on() or not config().get("rule_handle"):
         return {}
     ms = [m for m in mentions if m.entity_id and bare(m.name) and (m.type or "") in ("person", "other", None)]
@@ -432,18 +424,17 @@ def makers(cur: Any, book: I.Book, roots: Iterable[str], guide: Sequence[str], *
     return n
 
 
-# ---- a maker found on the web (0196) ---------------------------------------------------------------------
+# ---- a maker found on the web -----------------------------------------------------------------------------------
 
 def set_maker(cur: Any, book: Any, thing: str, maker: str, *, by: str = "web",
               evidence: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    """Issue 0196: the maker of a thing the official channels' web search found, written once through identity's one
-    owner: a facts row `by` (web) only when the thing has no maker yet (its entity's stated maker, a current facts
-    maker of any `by`); the maker's entity when its name names one. Returns the new row's id, or None (it had one, or
-    the name names the thing itself). Never on mx_entities.maker, never another table."""
+    """The maker of a thing the official channels' web search found, written once through identity's one owner: a facts
+    row `by` (web) only when the thing has no maker yet; the maker's entity when its name names one. Returns the new
+    row's id, or None. Never on mx_entities.maker, never another table."""
     root = book.root(thing) if thing else None
     if not root or root not in book.ents or not (maker or "").strip():
         return None
-    if I.cluster_maker(book, root):   # v10.35: a merged name's stated maker counts
+    if I.cluster_maker(book, root):   # a merged name's stated maker counts
         return None
     cur.execute("SELECT maker_id, maker_name FROM mx_entity_facts WHERE entity_id = %s AND superseded_at IS NULL",
                 (root,))

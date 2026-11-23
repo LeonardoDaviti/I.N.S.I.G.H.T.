@@ -8,10 +8,9 @@ import { postBylineTime } from '../../lib/dates';
 import { bylineText } from '../../lib/byline';
 
 /**
- * The post page's "Related reading" (v10.36): the posts nearest this one by its stored vector, guides and explainers
- * on its subject as well as its news, each line title · source · date opening its post page. Folded, and asked only
- * when opened: the list is a scan of every stored vector (~1.5 s), so the page never waits for it. v10.37: the page a
- * short report is about first ("the page it reports"); when few are close, the nearest under "loosely related".
+ * The post page's "Related reading": the posts nearest this one by its stored vector, each line title · source ·
+ * date. Folded and asked only when opened (a scan of every stored vector, ~1.5 s). The page a short report is about
+ * comes first; when few are close, the nearest show under "loosely related".
  */
 export default function MarkXRelated({ postId }: { postId: string }) {
   const api = useApi();

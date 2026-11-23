@@ -3,17 +3,14 @@ import { Link } from 'react-router-dom';
 import type { SearchEntity } from '../../services/api';
 import { plural } from '../../lib/format';
 
-/**
- * The entities the search's words name (issue 0139), above the results while Mark X is on: up to 3
- * hairline rows, each the entity's name (a merged one shows the entity it was merged into), its type
- * and maker, and its posts and voices; the row opens the entity's page (`/markx/entities/:id`).
- */
+/** The entities the search's words name, above the results while Mark X is on: up to 3 rows (name, or the entity it
+ *  was merged into; type and maker; posts and voices), each opening `/markx/entities/:id`. */
 export default function SearchEntities({ entities }: { entities: SearchEntity[] }) {
   return (
     <ul aria-label="Entities" data-search-entities className="mb-3 flex flex-col gap-2">
       {entities.map((entity) => {
         const kind = [entity.type, entity.maker ? `by ${entity.maker}` : null].filter(Boolean).join(' · ');
-        // 0184: "terminal app (3) · voice mode of a chat app (1)": the name's senses, else what it is
+        // "terminal app (3) · voice mode of a chat app (1)": the name's senses, else what it is
         const what = entity.senses && entity.senses.length > 1
           ? entity.senses.map((s) => `${s.what ?? '?'} (${s.posts})`).join(' · ')
           : entity.what ?? null;

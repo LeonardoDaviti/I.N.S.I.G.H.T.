@@ -1,6 +1,5 @@
-"""Issue 0185 (1): Byline, who wrote a post and via whom, one module every view reads (utils/byline.py). Display only:
-the voice a post counts as (Pairing's rule: a repost or forward counts as its author's voice only when a source follows
-that author) is unchanged, proved here on a seeded world. Synthetic names only."""
+"""Byline (0185): who wrote a post and via whom, one module every view reads (utils/byline.py). Display only: the
+voice a post counts as (Pairing's rule) is unchanged, proved on a seeded world. Synthetic names only."""
 from __future__ import annotations
 
 import json
@@ -51,7 +50,7 @@ class Pure(unittest.TestCase):
         self.assertIs(tasks.original_author, B.original_author, "one rule, re-exported, never copied")
 
     def test_repost_of_is_unchanged(self):
-        """The reader's repost field reads Byline's author rule now: the same answer as before on every case."""
+        """The reader's repost field reads Byline's author rule: the same answer as before on every case."""
         def before(platform, handle, author, reposted_by):
             account = source_account(platform, handle) or ""
             own = account[len("x.com/"):] if account.startswith("x.com/") else ""

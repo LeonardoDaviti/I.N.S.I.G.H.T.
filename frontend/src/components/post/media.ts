@@ -31,11 +31,8 @@ function inBody(body: string, url: string) {
   return Boolean(body) && (body.includes(url) || body.includes(url.replace(/&/g, '&amp;')));
 }
 
-/**
- * The post's images and video, tolerant of an older backend (no fields) and of
- * junk. Images the body already shows inline are dropped, so a picture never
- * appears twice: the body places them where the author did.
- */
+/** The post's images and video, tolerant of an older backend and of junk. Images the body already shows inline are
+ *  dropped, so a picture never appears twice. */
 export function postMedia(post: Post, body = ''): PostMedia {
   const raw = post as PostWithMedia;
   const seen = new Set<string>();

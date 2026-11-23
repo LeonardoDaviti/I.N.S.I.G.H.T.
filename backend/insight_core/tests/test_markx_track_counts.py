@@ -1,6 +1,6 @@
-"""v10.12.1: a topic track's sidebar count (GET /api/markx/tracks/counts): its unread track items plus its Discover
-suggestions not yet labelled; a plain folder has no entry; the path is not read as a track id; read-only. Synthetic
-data only; the DB tests run on a database whose name ends in _test."""
+"""A topic track's sidebar count (GET /api/markx/tracks/counts): its unread track items plus its unlabelled Discover
+suggestions; a plain folder has no entry; the path is not read as a track id; read-only. Synthetic data; a _test
+database."""
 from __future__ import annotations
 
 import uuid
@@ -55,7 +55,7 @@ class TopicCounts(_Tracks):
         self.assertIn(self.folder, self.counts())
 
     def test_the_counts_read_places_as_the_full_items_do(self):
-        """v10.14: the counts read only what a place needs; every item's place and rank are the full read's."""
+        """The counts read only what a place needs; every item's place and rank are the full read's."""
         from insight_core.markx import tracks
         self.describe()
         self.desc_vector(unit((0, 1)))

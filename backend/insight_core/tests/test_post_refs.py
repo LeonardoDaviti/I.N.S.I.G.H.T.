@@ -1,11 +1,7 @@
-"""Connected on every post (issue 0125): Earlier, Later and Outside INSIGHT, read from the author's own links, no model.
-
-- the Reddit fix: `extract_links` decodes escaped HTML as `body_hrefs` does;
-- the reason line (utils/post_refs.py, the lab's measured rule): each of its steps, and the Outside restriction;
-- `post_refs` written on insert and update, the backfill resumable, the signature pass marking it;
-- the Connected read: Later through both address forms, a target stored after its linker, the caps and `more`.
-
-On the database, one transaction per test, rolled back, unless a class says it commits.
+"""Connected on every post (0125): Earlier, Later and Outside INSIGHT, read from the author's own links, no model: the
+escaped-HTML link fix, the reason line's steps (utils/post_refs.py), `post_refs` written on insert and update with a
+resumable backfill, and the Connected read. On the database, one transaction per test, rolled back, unless a class
+says it commits.
 """
 from __future__ import annotations
 
@@ -35,7 +31,7 @@ from insight_core.utils.post_refs import PostRef, refs_of, shown_reason
 
 
 class EscapedHtmlTests(unittest.TestCase):
-    """Reddit's feed stores its HTML escaped: no raw `<a href`, `&lt;a` instead. Its links were never kept."""
+    """A feed that stores its HTML escaped (`&lt;a`, no raw `<a href`) still has its links kept."""
 
     ESCAPED = ('&lt;!-- SC_OFF --&gt;&lt;div class=&quot;md&quot;&gt;&lt;p&gt;A long read on the topic: '
                '&lt;a href=&quot;https://news.example/2026/10/the-story?x=1&amp;amp;y=2&quot;&gt;The Story Of The Day&lt;/a&gt;'
@@ -90,7 +86,7 @@ class RefsTests(unittest.TestCase):
 
 
 class ReasonRuleTests(unittest.TestCase):
-    """Each step of the rule, on fixed texts (0125 "The reason line")."""
+    """Each step of the rule, on fixed texts."""
 
     def test_1_the_words_the_post_quotes_from_the_page(self):
         page = "https://news.example/2026/11/the-launch"
@@ -190,8 +186,8 @@ class WrittenOnSaveTests(unittest.TestCase):
         return (result.inserted_ids or result.updated_ids)[0]
 
     def test_the_invariant_in_worker_processes_reads_what_one_process_reads(self):
-        # 0243: refs.every_link reads the posts in shares, one worker process each, when the run's connection is in no
-        # transaction (the check's); in one (a test's), in it. Both find the same posts.
+        # refs.every_link reads the posts in shares, one worker process each, outside a transaction; inside one, in
+        # it. Both find the same posts.
         from insight_core.checks import invariants
         check, = [i for i in invariants.INVARIANTS if i.name == "refs.every_link"]
         post = self._save(f'<p><a href="https://refs-{self.tag}.test/linked">a link</a></p>')
@@ -317,7 +313,7 @@ class BackfillTests(unittest.TestCase):
 
 @requires_db
 class ConnectedTests(unittest.TestCase):
-    """The Connected read (0125 "The rows"): resolved by address at read time, capped, with `more`."""
+    """The Connected read: resolved by address at read time, capped, with `more`."""
 
     def setUp(self):
         self.conn = psycopg.connect(db_url())

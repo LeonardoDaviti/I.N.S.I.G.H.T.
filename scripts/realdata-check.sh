@@ -64,9 +64,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "${DB:-}" ] || { echo "usage: scripts/realdata-check.sh [options] <db>" >&2; exit 2; }
 
-# <db> is read on insight-db (PG_SRC); the scratch copies are made and checked on the scratch Postgres (PG, v10.17:
-# scripts/scratch-db.sh, started when not running), where a CREATE/DROP DATABASE never waits on the durable server's
-# checkpoints. SCRATCH_DB=0: the copies on insight-db, as before.
+# <db> is read on insight-db (PG_SRC); the copies live on the scratch Postgres (PG, scripts/scratch-db.sh), where a
+# CREATE/DROP DATABASE never waits on the durable server's checkpoints. SCRATCH_DB=0: the copies on insight-db.
 PG_SRC="${PG_SRC:-postgresql://insight:insight@postgres:5432}"
 if [ "${SCRATCH_DB:-1}" = "1" ] && [ -z "${PG:-}" ]; then
   PG="$("$ROOT/scripts/scratch-db.sh" up)"; PGCONTAINER="${PGCONTAINER:-${SCRATCH_CONTAINER:-insight-scratch-db}}"
@@ -76,7 +75,7 @@ NETWORK="${NETWORK:-insight_insight-network}"
 # plan/research/ is private and lives in the main checkout only (a worktree has none): read it there.
 MAIN_ROOT="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")"
 CASES="${CASES:-$MAIN_ROOT/plan/research/lab/cases.json}"
-JOURNEYS="${JOURNEYS:-$MAIN_ROOT/plan/research/lab/journeys.json}"   # 0250: the journeys' hard set (private)
+JOURNEYS="${JOURNEYS:-$MAIN_ROOT/plan/research/lab/journeys.json}"   # the journeys' hard set (private)
 OUT="${OUT:-$MAIN_ROOT/plan/research/lab/checks}"
 # Each run has its own copies (its process id), so runs at the same time never share or drop each other's.
 SCRATCH_A="${SCRATCH_A:-${DB}_check_$$_a}"
@@ -100,7 +99,7 @@ REPORT="$OUT/${HEAD_LABEL//\//-}-$STAMP.md"
 RUN_ID="rdc-$$"
 started=$(date +%s)
 say() { echo "==> $(date +%H:%M:%S) $*"; }
-# psql in the database container (docker exec, 0.1 s) when it is there; a container of the image (16 s a call on a busy disk) else
+# psql in the database container when it is there (much faster); else a container of the image
 if docker exec "${PGCONTAINER:-insight-db}" true >/dev/null 2>&1; then
   psql_admin() { docker exec -i "${PGCONTAINER:-insight-db}" psql -q -At -U insight -d postgres -c "$1"; }
 else
@@ -147,7 +146,7 @@ run_side() {   # run_side <side> <db> [env…]
     "$IMAGE" sh /app/insight_core/checks/side.sh "$PG/$db" "$side" "$NOW"
 }
 
-# ---- the sides' cache (one for both modes, 0253) -----------------------------------------------
+# ---- the sides' cache (one for both modes) -----------------------------------------------------
 CACHE_DIR="$OUT/base-cache"
 CASES_SHA="$( [ -f "$WORK/cases.json" ] && sha256sum < "$WORK/cases.json" | cut -c1-64 || echo none)"
 JOURNEYS_SHA="$( [ -f "$WORK/journeys-set.json" ] && sha256sum < "$WORK/journeys-set.json" | cut -c1-64 || echo none)"
@@ -244,12 +243,8 @@ else
   wait $pid_hash || { echo "hashing the dump failed" >&2; exit 2; }
   grep -v -e transaction_timeout -e "errors ignored" -e "^Command was" "$WORK/restore.log" | grep -i error \
     && { echo "restore failed" >&2; exit 2; } || true
-  # Planner statistics before any copy is taken or checked (v10.16.2, 9fcd09a): pg_restore writes none, and the
-  # template copy takes the catalog but not the activity counters, so autovacuum analyzed one copy and never the
-  # other's untouched tables (post_parts, sources): that side's API planned /api/feed blind, every request slow, and
-  # markx.api_during_run / _rebuild were "not measured" or rose on it whatever its code. Analyzed once here, on the
-  # scratch server, the head's copy has them on a cached run too, and the base's copy (a template copy of this one)
-  # starts with the same ones.
+  # planner statistics before any copy is taken: pg_restore writes none and a template copy takes no activity
+  # counters, so autovacuum would analyze one side's tables and not the other's, skewing its API timings
   say "analyze $SCRATCH_B"
   docker run --rm --name "$RUN_ID-analyze" --network "$NETWORK" "$IMAGE" vacuumdb --analyze-only -q -j 4 -d "$PG/$SCRATCH_B"
   rm -f "$WORK/copy.dump"
@@ -262,8 +257,7 @@ else
     cat "$WORK/base.log" "$WORK/head.log"
   else
     say "copy $SCRATCH_B to $SCRATCH_A (a template copy)"
-    # WAL_LOG, not FILE_COPY (v10.17): a FILE_COPY waits for a checkpoint first, and with several agents writing a
-    # checkpoint took over 20 minutes (measured 2026-11-13: this copy waited 23 min behind it)
+    # WAL_LOG, not FILE_COPY: a FILE_COPY waits for a checkpoint, which takes many minutes behind other writers
     psql_admin "CREATE DATABASE $SCRATCH_A TEMPLATE $SCRATCH_B STRATEGY WAL_LOG"
     say "both versions at once: migrate, full story job, snapshot, invariants, cases, job checks"
     run_side base "$SCRATCH_A" > "$WORK/base.log" 2>&1 &

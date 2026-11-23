@@ -54,8 +54,7 @@ test('uses the async clipboard API when it is available', async () => {
 });
 
 test('falls back to execCommand when navigator.clipboard is undefined', async () => {
-  // This is the deployed instance: plain HTTP on a LAN address is not a secure context,
-  // so the whole clipboard object is missing and reading .writeText off it throws.
+  // The deployed instance: plain HTTP on a LAN address is not a secure context, so `navigator.clipboard` is missing.
   const doc = makeDocument(true);
 
   await writeToClipboard('hello', {}, doc as unknown as Document);

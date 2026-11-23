@@ -1,23 +1,7 @@
-"""The entity page's person parts (issue 0144 B, C): a person's (or org's) own posts, every story of the entity's posts
-with its original first, the loose posts by role, and the sample of old stories to label.
-
-  - **By** (B1): an entity of type person or org is linked to the sources that *are* it:
-      - `voice`: a source whose confirmed voice (0132, voices.entity_id) is the entity, no question asked;
-      - `handle`: a source whose handle, profile name or site label is one of the entity's names by identity's key
-        (its squashed key, or a person's surname of 5+ letters), offered once on the page ("These sources are <name>:
-        yes / no"); only a `yes` (mx_entity_sources, the newest answer counts) makes it `by`. A platform of many voices
-        (Reddit, HN) or a saved page is never one.
-    Their posts are on the page with role `by`, counted in its posts and voices, never in surges (surges read the
-    mentions alone).
-  - **Stories** (B2): each Mark X story holding one of the entity's posts and, for a post in no Mark X story, its Mark IX
-    story (marked "Mark IX"); both list **all** their posts, not only those naming the entity.
-  - **Original first** (B3): the entity's own original (its release page) when the story holds it, else the story's
-    earliest post by the entity itself, else its root (Mark IX: the outside page it hangs from, `origin_url`, stored or
-    not, else its first post; Mark X: its earliest member that is not background, story_rules.background).
-  - **Loose posts by role** (B4): subject and actor first, then by, then venue / source / recommended, then mentions
-    (the page collapses them: "158 mentions").
-  - **The sample** (C): the page offers up to SAMPLE_PAGE of the entity's Mark X stories older than 30 days (oldest
-    unlabelled first, a stable order), at most SAMPLE_DAY offered a day over every page; right / wrong / missed.
+"""The entity page's person parts: a person's or org's own sources and posts (`by`: a confirmed voice, or a matching
+handle the owner said yes to; never a many-voice platform), every story of the entity's posts (Mark X, else Mark IX)
+with its original first (`original_of`), the loose posts by role (`loose_order`) and the sample of old stories to
+label (`offer`, at most SAMPLE_PAGE a page and SAMPLE_DAY a day). `by` posts never count in surges.
 """
 from __future__ import annotations
 
@@ -192,11 +176,9 @@ def mark_ix_stories(cur: Any, post_ids: Iterable[str]) -> Tuple[Dict[str, str], 
 def original_of(posts: List[str], at: Callable[[str], Any], by: Set[str], root: Optional[str] = None,
                 origin_url: Optional[str] = None, release: Optional[str] = None,
                 background: Iterable[str] = ()) -> Dict[str, Any]:
-    """B3: a story's original: {"post": id or None, "url": the outside page or None, "why": release | by | origin |
-    root}. v10.35: the entity's own original (`release`: entity_views.original's stored post, its release page) when
-    the story holds it; else the earliest post by the entity itself; else the root: Mark IX's outside page
-    (origin_url) or first post, a Mark X story's earliest member. A `background` post (story_rules.background, 0263:
-    a Saved page dated long before the story's first voice) is never the root, as it never leads a News row."""
+    """A story's original: {"post", "url", "why": release | by | origin | root}: the entity's own release page when
+    the story holds it, else its earliest post by the entity, else the root (Mark IX's outside page or first post, a
+    Mark X story's earliest member). A `background` post is never the root, as it never leads a News row."""
     if release and release in posts:
         return {"post": release, "url": None, "why": "release"}
     mine = sorted((p for p in posts if p in by), key=lambda p: (at(p), p))
@@ -212,20 +194,19 @@ def original_of(posts: List[str], at: Callable[[str], Any], by: Set[str], root: 
 
 
 def loose_order(roles: Set[str]) -> int:
-    """B4: subject and actor first, then by, then venue / source / recommended, then mentions."""
+    """Subject and actor first, then by, then venue / source / recommended, then mentions."""
     return min((ROLE_ORDER.get(r, 3) for r in roles), default=3)
 
 
-# ---- the sample of old stories (C) ----------------------------------------------------------------------
+# ---- the sample of old stories --------------------------------------------------------------------------
 
 def _rank(sid: str) -> str:
     return hashlib.sha256(("0144:" + sid).encode()).hexdigest()
 
 
 def offer(cur: Any, root: str, stories: Dict[str, Any], now: datetime) -> List[Dict[str, Any]]:
-    """C: the old stories this page offers to label: those already offered for the entity (unlabelled first), then
-    new ones (a stable order) while the page has fewer than SAMPLE_PAGE and the day fewer than SAMPLE_DAY. `stories`:
-    {Mark X story: its first post's time}. [{story, first_at, answer}]."""
+    """The old stories this page offers to label: those already offered (unlabelled first), then new ones in a stable
+    order within SAMPLE_PAGE and SAMPLE_DAY. `stories`: {story: first post's time}. [{story, first_at, answer}]."""
     from insight_core.markx.story_window import RECENT
     edge = now - timedelta(days=RECENT)
     old = {s: at for s, at in stories.items() if at is not None and at < edge}

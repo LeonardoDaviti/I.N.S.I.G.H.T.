@@ -1,8 +1,5 @@
-"""The ingestion runner over its real DB ports (spec §A.2, B4 acceptance).
-
-The fetch itself is a FakeKind (no network); the catalog, fetch state store, save batch and
-run lock are the real Postgres adapters. Scratch-source pattern: commits, so every class is
-@requires_test_db.
+"""The ingestion runner over its real DB ports: the fetch is a FakeKind (no network); the catalog, fetch state store,
+save batch and run lock are the real Postgres adapters. Commits, so every class is @requires_test_db.
 """
 from __future__ import annotations
 
@@ -114,8 +111,7 @@ class IngestionRunnerDbTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(ops.get_job(job_id))
 
     def test_retired_analysis_jobs_leave_the_job_list(self):
-        # Issue 0027: rows of retired job types (analysis, kept by 0027_drop_analysis) are not
-        # what ingestion did; the list and the overview show only the jobs INSIGHT still runs.
+        # rows of retired job types are not what ingestion did: only the jobs INSIGHT still runs are listed
         ops = OperationsService(self.url)
         retired = ops.start_job("analyst_inbox_rebuild", trigger="scheduler")
         live = ops.start_job("ingestion_run", trigger="scheduler")

@@ -1,10 +1,7 @@
-"""The ingestion runner's ports (Protocols) and their real adapters (spec §A.1, §3).
+"""The ingestion runner's ports (Protocols) and their real adapters.
 
-The runner sees only the Protocols. Each Db* adapter takes a pooled connection
-(insight_core.db.database) per method call, does its work and commits, so the runner makes
-one store call per phase (through asyncio.to_thread) rather than holding a connection across
-a fetch. The test adapters live
-in tests/_ingestion_fakes.py.
+The runner sees only the Protocols. Each Db* adapter takes a pooled connection per method call and commits, so no
+connection is held across a fetch. Test adapters: tests/_ingestion_fakes.py.
 """
 from __future__ import annotations
 
@@ -70,7 +67,7 @@ class PostSaver(Protocol):
 
 
 class PageWatchStore(Protocol):
-    """Watched pages (issue 0039): which of a source's are due a check, and what each check found."""
+    """Watched pages: which of a source's are due a check, and what each check found."""
 
     def due(self, source_id: str, *, now: datetime, limit: int) -> List[WatchedPage]: ...
 
@@ -104,13 +101,9 @@ class _NullProgress:
 NULL_PROGRESS: ProgressSink = _NullProgress()
 
 class JobProgressSink:
-    """Appends an event per source fetched and per slow-down to a job_runs row. Never raises:
-    progress is not worth a run. The "decided" and "saved" phases add none: they repeat the
-    run's summary, which the job already shows.
-
-    A "source" event (one source fetched and saved) also sets the payload's live counters,
-    `sources: {done, total}` and `new_posts`, which the top bar's activity sign reads. A
-    "doctor" event is the source doctor's switch (issue 0036), its line as it wrote it.
+    """Appends an event per source fetched and per slow-down to a job_runs row. Never raises. A "source" event also
+    sets the live counters (`sources: {done, total}`, `new_posts`) the top bar reads; a "doctor" event is the source
+    doctor's switch line.
     """
 
     def __init__(self, operations_service: Any, job_id: Optional[str]) -> None:
@@ -152,10 +145,8 @@ def slowed_line(data: dict) -> str:
 
 
 def _source_line(data: dict) -> str:
-    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", "Simon Willison: unchanged
-    · 3 of 81 sources" (its feed answered 304, issue 0044), or why it failed; with
-    "· 2 of 3 pages lost most of their images" when pages read for it did (issue 0032), and
-    "· 50 pages checked for changes, 2 updated" when it watches its pages (issue 0039)."""
+    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", "...: unchanged" (304), or why it failed;
+    with lost-image and page-change counts when they apply."""
     name, sources = data["display_name"], data["sources"]
     of_run = f"{sources['done']} of {sources['total']} source{'' if sources['total'] == 1 else 's'}"
     status = data.get("status")
@@ -169,7 +160,7 @@ def _source_line(data: dict) -> str:
     checked = data.get("checked") or 0
     changes = (f" · {checked} page{'' if checked == 1 else 's'} checked for changes, {data.get('updated') or 0} updated"
                if checked else "")
-    # Over half its items skipped (issue 0135): "· warning: 12 of 15 videos skipped: 12 the bot check".
+    # over half its items skipped: "· warning: 12 of 15 videos skipped: 12 the bot check"
     warned = f" · warning: {data['warning'][:160]}" if data.get("warning") else ""
     if data.get("unchanged"):
         return f"{name}: unchanged{changes}{warned} · {of_run}"
@@ -263,7 +254,7 @@ class DbFetchStateStore:
             conn.commit()
 
     def refresh_post_stats(self) -> Optional[int]:
-        """Keep the post statistics of the sources whose posts changed (issue 0195, db/repo_post_stats.py)."""
+        """Keep the post statistics of the sources whose posts changed (db/repo_post_stats.py)."""
         from insight_core.db import repo_post_stats
 
         with db.connection(self.db_url) as conn:
@@ -273,9 +264,8 @@ class DbFetchStateStore:
         return kept
 
     def keep_derived(self) -> Dict[str, Any]:
-        """What the API reads kept instead of counting per request (issue 0195), brought up to date: each source's post
-        statistics, Mark X's totals folded, the topic tracks' placements. Each in its own transaction; one that fails
-        is logged and the others still run (a read of a stale one is live, never wrong)."""
+        """The API's kept reads brought up to date: source post statistics, Mark X's totals, topic track placements.
+        Each in its own transaction; one that fails is logged (a read of a stale one is live, never wrong)."""
         from insight_core.markx import kept_counts, track_kept
 
         done: Dict[str, Any] = {}
@@ -336,9 +326,8 @@ class DbHostBudgetStore:
 
 
 class DbLiveFetchDue:
-    """Is a live fetch of this host due now? (issue 0107) A run has decided to fetch a source of
-    the host in the last PENDING_WINDOW and not tried it yet. The host is the kind's host key, as
-    the gates key it. Never raises: an archive does not stop for a failed look."""
+    """Is a live fetch of this host (its gates host key) due now: a run decided to fetch one of its sources in the
+    last PENDING_WINDOW and has not tried it yet. Never raises."""
 
     PENDING_WINDOW = timedelta(hours=2)   # a run that died leaves decisions nobody will try
 
@@ -376,7 +365,7 @@ class DbPostSaver:
 
 
 class DbPageWatchStore:
-    """PageWatchRepository with connection handling (issue 0039)."""
+    """PageWatchRepository with connection handling."""
 
     def __init__(self, db_url: str, repo: Any = None) -> None:
         self.db_url = db_url
@@ -414,10 +403,8 @@ RUN_LOCK_KEY = "insight.ingestion_run"
 
 
 class PgAdvisoryRunLock:
-    """pg_try_advisory_lock on a dedicated connection held for the whole run.
-
-    A session-level lock, so it is released when the connection closes even if the unlock
-    is never reached (a killed process frees it with its backend).
+    """pg_try_advisory_lock on a dedicated connection held for the whole run; session-level, so a killed process
+    frees it with its connection.
     """
 
     def __init__(self, db_url: str, key: str = RUN_LOCK_KEY) -> None:

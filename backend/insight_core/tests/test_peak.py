@@ -1,7 +1,5 @@
-"""0215: a job's own peak memory (utils/peak), not the scheduler's carried into it across the spawn.
-
-On the server every job (the kept views, the rebuild's slices, official) recorded ~1,366-1,395 MB: getrusage's
-ru_maxrss of a spawned child starts at its parent's resident size (exec folds the fork's high-water into it)."""
+"""A job's own peak memory (utils/peak, 0215), not the scheduler's carried into it across the spawn: a spawned child's
+ru_maxrss starts at its parent's resident size."""
 from __future__ import annotations
 
 import multiprocessing

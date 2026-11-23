@@ -1,23 +1,10 @@
-"""
-Contract tests for PostsRepository.upsert_post.
+"""Contract tests for PostsRepository.upsert_post.
 
-These exist because of a real incident: on 2026-07-22 two scheduler cycles each
-discarded a full 30-minute fetch. `upsert_post` declared `ON CONFLICT (url)`, but
-posts carries a SECOND unique index - posts_source_external_unique on
-(source_id, external_id) WHERE external_id IS NOT NULL (0002_posts.sql:24). A source
-republishing an item at a new URL under the same external_id skipped the url conflict,
-hit the uncovered index, and raised. safe_ingest saves every post of a cycle in one
-transaction, so the raise put the backend in aborted-transaction state and the terminal
-commit was never reached. Nothing in the suite covered that path.
-
-Everything here runs inside ONE transaction that tearDown rolls back, so the tests are
-safe against the live DATABASE_URL and leave no rows behind.
-
-The assertions deliberately test the CONTRACT, not the implementation:
-  - upsert_post never raises UniqueViolation for posts_source_external_unique
-  - the caller's transaction stays usable afterwards
-  - (post_id, was_inserted) stays truthful
-so they survive any refactor of how the collision is resolved.
+The 2026-07-22 incident: `ON CONFLICT (url)` left the second unique index, posts_source_external_unique on
+(source_id, external_id), uncovered; an item republished at a new URL raised and aborted the whole cycle's batch
+transaction. The tests pin the contract, not the implementation: no UniqueViolation on that index, the caller's
+transaction stays usable, (post_id, was_inserted) stays truthful. Everything runs in ONE transaction rolled back in
+tearDown, so they are safe against the live DATABASE_URL.
 """
 from __future__ import annotations
 
@@ -58,8 +45,7 @@ class UpsertPostCollisionTests(unittest.TestCase):
         self.repo = PostsRepository(_db_url())
         self.conn = psycopg.connect(_db_url())
         self.cur = self.conn.cursor()
-        # Two scratch sources. The suffix keeps them unique against
-        # sources_platform_handle_or_url_key even if a previous run died mid-transaction.
+        # the suffix keeps them unique against sources_platform_handle_or_url_key if a previous run died mid-transaction
         suffix = uuid.uuid4().hex[:12]
         self.source_a = self._make_source(f"https://test.invalid/a/{suffix}")
         self.source_b = self._make_source(f"https://test.invalid/b/{suffix}")
@@ -141,8 +127,8 @@ class UpsertPostCollisionTests(unittest.TestCase):
         return self.cur.fetchone()[0]
 
     def test_daring_fireball_posts_under_one_address_stay_apart(self):
-        """The server's data: different posts at one normalized_url, told apart only by a
-        footnote fragment, a text fragment or utm_campaign. Their titles differ."""
+        """Different posts at one normalized_url, told apart only by a footnote fragment, a text fragment or
+        utm_campaign; their titles differ."""
         shapes = [
             [("https://df.test/2026/08/what_is_the_point_of_the_dma", "★ What Is the Point of the DMA?"),
              ("https://df.test/2026/08/what_is_the_point_of_the_dma#fn1-2026-08-24",
@@ -229,7 +215,7 @@ class UpsertPostCollisionTests(unittest.TestCase):
             self.cur, self._post("https://x.test/original", external_id="XLSWRFPdgPTjLtaj5"), self.source_a
         )
 
-        # Previously raised UniqueViolation on posts_source_external_unique.
+        # this raised UniqueViolation on posts_source_external_unique
         second_id, inserted = self.repo.upsert_post(
             self.cur, self._post("https://x.test/republished", external_id="XLSWRFPdgPTjLtaj5"), self.source_a
         )
@@ -247,7 +233,7 @@ class UpsertPostCollisionTests(unittest.TestCase):
             self.cur, self._post("https://x.test/b", external_id="dupe"), self.source_a
         )
 
-        # In the incident this statement never ran - the transaction was already aborted.
+        # in the incident this statement never ran: the transaction was already aborted
         post_id, inserted = self.repo.upsert_post(
             self.cur, self._post("https://x.test/unrelated", external_id="fresh"), self.source_a
         )
@@ -287,11 +273,8 @@ class UpsertPostCollisionTests(unittest.TestCase):
         self.assertTrue(self._transaction_is_usable())
 
     def test_conflicting_row_belongs_to_a_different_source(self):
-        """The url row may belong to another source than the incoming post.
-
-        The collision is then on (that row's source, external_id) - not on the incoming
-        source_id - so a resolver scoped to the incoming source cannot see the blocking
-        row and will retry the identical failing UPDATE.
+        """The url row may belong to another source: the collision is then on (that row's source, external_id), so a
+        resolver scoped to the incoming source cannot see the blocking row and would retry the failing UPDATE.
         """
         self.repo.upsert_post(
             self.cur, self._post("https://x.test/owned-by-a", external_id="E1"), self.source_a
@@ -311,11 +294,8 @@ class UpsertPostCollisionTests(unittest.TestCase):
     # ---- regressions ----
 
     def test_post_with_no_text_does_not_raise(self):
-        """_build_content_hash calls hashlib.sha256; the module did not import hashlib.
-
-        Reached whenever title, content and content_html are all empty - image-only
-        Telegram/Reddit/Nitter items - and the resulting NameError discarded the same
-        full batch as the duplicate-key crash.
+        """_build_content_hash needs hashlib: reached when title, content and content_html are all empty (image-only
+        items), a NameError there discarded the whole batch.
         """
         post_id, inserted = self.repo.upsert_post(
             self.cur,

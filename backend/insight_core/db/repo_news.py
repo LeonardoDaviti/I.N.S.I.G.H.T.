@@ -1,8 +1,6 @@
-"""News and Classics storage (issue 0051): News stories and their posts, classics and the ones you
-hid. Every method takes the caller's cursor and never commits.
-
-The rules live in utils/news_rules.py; this file reads what they need, writes what they return
-(only the rows that differ), and reads News and Classics back for the reader.
+"""News and Classics storage: News stories and their posts, surges, classics and the ones you hid. Every method
+takes the caller's cursor and never commits. The rules live in utils/news_rules.py; this file reads what they
+need, writes what they return (only the rows that differ), and reads News and Classics back for the reader.
 """
 from __future__ import annotations
 
@@ -25,7 +23,7 @@ from insight_core.utils.url_normalization import normalize_url
 from insight_core.markx import pairing
 
 LIKE_SPECIAL = re.compile(r"[\\%_]")   # what LIKE reads as more than a letter
-OWNERS_KEY = "news_owners"   # system_settings: the voices News counts by owner (issue 0111, SourceFacts.owners)
+OWNERS_KEY = "news_owners"   # system_settings: the voices News counts by owner (SourceFacts.owners)
 # A post's date as the story rules read it (published, else fetched).
 POST_TIME = pairing.ix_date("p")
 
@@ -36,21 +34,17 @@ def _scope_sql(scope: FeedScope) -> Tuple[str, List[Any]]:
         return "s.in_main_digest", []
     if scope.kind == "folder":
         return "s.id IN (SELECT sf.source_id FROM source_folders sf WHERE sf.folder_id = %s)", [scope.id]
-    if scope.kind == "voice":   # every channel of one voice (issue 0132 A)
+    if scope.kind == "voice":   # every channel of one voice
         return "s.voice_id = %s", [scope.id]
     return "s.id = %s", [scope.id]
 
 
 class NewsRepository:
-    # ---- the job: names ---------------------------------------------------------------
-
     @staticmethod
     def load_titles(cur: Cursor, since: Optional[datetime]) -> Iterator[Dict[str, Any]]:
-        """The titles the name rule reads: every titled post posted since `since` (every one when None), each
-        as every page shows it, or its opening when its stored title said more (post_parts, issue 0076).
-        v10.25 (0231): one row at a time off the cursor, for the caller to keep what it needs (NewsService._titled:
-        a rule change's names step held every post's tuple, its dict and its StoryPost at once: 100 -> 314 MB on the
-        server-shaped copy's 148k posts); read it before the cursor runs another query."""
+        """The titles the name rule reads: every titled post posted since `since` (every one when None), as every
+        page shows it, or its opening when its stored title said more. One row at a time off the cursor, to bound
+        memory (0231): read it before the cursor runs another query."""
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.opening, pp.title, p.title) AS title) t
@@ -66,12 +60,10 @@ class NewsRepository:
         cur.execute("SELECT id, created_at FROM sources")
         return {str(r[0]): r[1] for r in cur.fetchall()}
 
-    # ---- the job: News ----------------------------------------------------------------
-
     @staticmethod
     def write_owners(cur: Cursor, owners: Dict[str, str]) -> int:
-        """Keep the owners the job counted News voices by (issue 0111), so reading News names them alike.
-        Returns 1 when they changed."""
+        """Keep the owners the job counted News voices by, so reading News names them alike. Returns 1 when they
+        changed."""
         from insight_core.db.repo_operations import SystemSettingsRepository
         if NewsRepository.owners(cur) == owners:
             return 0
@@ -88,11 +80,9 @@ class NewsRepository:
     @staticmethod
     def write_news(cur: Cursor, stories: Sequence[NewsStory], *, since: datetime,
                    post_ids: Optional[Sequence[str]] = None) -> Tuple[int, int]:
-        """Write `stories`, the News of the window begun at `since`, for `post_ids` (every post when
-        None): the News stories holding them before and now, and their rows. Nothing before the window
-        is deleted (issue 0077): inside it a row the run no longer finds goes; a row begun before it
-        stays as it is, unless no post of it is left (they all moved to rows of the window). Returns
-        (rows changed, News rows removed)."""
+        """Write `stories`, the News of the window begun at `since`, for `post_ids` (every post when None). Nothing
+        before the window is deleted: inside it a row the run no longer finds goes; a row begun before it stays,
+        unless no post of it is left. Returns (rows changed, News rows removed)."""
         changed = removed = 0
         want = {s.id: (s.first_at, s.voices, s.reports, s.shares, s.mentions, round(s.score, 2)) for s in stories}
         want_posts = {p.id: (s.id, s.roles[p.id], p.voice, s.names.get(p.id), position)
@@ -124,8 +114,8 @@ class NewsRepository:
                 rows,
             )
             changed += len(rows)
-        # The run's posts: those it places, and those of the rows it made or of its window; a post of a
-        # row begun before the window, placed nowhere now, stays in that row.
+        # the run's posts: those it places, and those of the rows it made or of its window; a post of a row begun
+        # before the window, placed nowhere now, stays in that row
         cur.execute("SELECT np.post_id, np.news_id, np.role, np.voice, np.name, np.position, "
                     "ns.first_at >= %(since)s OR np.news_id = ANY(%(want)s::uuid[]) "
                     "FROM news_posts np JOIN news_stories ns ON ns.id = np.news_id "
@@ -157,7 +147,7 @@ class NewsRepository:
 
     @staticmethod
     def stored_surges(cur: Cursor) -> List[Surge]:
-        """Every name's surges as the job keeps them (news_rules.name_surges, issue 0072 A)."""
+        """Every name's surges as the job keeps them (news_rules.name_surges)."""
         cur.execute("SELECT name, at, posts, usual FROM news_surges")
         return [Surge(name, at, [str(p) for p in posts], usual) for name, at, posts, usual in cur.fetchall()]
 
@@ -179,9 +169,9 @@ class NewsRepository:
 
     @staticmethod
     def titles_saying(cur: Cursor, words: Sequence[str]) -> List[Dict[str, Any]]:
-        """The titled posts whose title may say one of these: a name's words, lowercase, joined by "%"
-        (in this order, anything between). Its plain letters (NFKC), lowercase, hold them, or it has an
-        entity (decoded only in Python). More than say them, never fewer."""
+        """The titled posts whose title may say one of these: a name's words, lowercase, joined by "%" (in order,
+        anything between), matched on its NFKC lowercase letters, or holding an HTML entity (decoded only in
+        Python). More than say them, never fewer."""
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.opening, pp.title, p.title) AS title) t
@@ -201,9 +191,8 @@ class NewsRepository:
     @staticmethod
     def window_posts(cur: Cursor, since: datetime, until: Optional[datetime] = None,
                      ids: Optional[Sequence[str]] = None) -> List[str]:
-        """The posts News reads (issue 0072 A): those of the stories begun since `since`, and those in no
-        story posted since; with `until`, only those of the stories begun, or posted, before it; with
-        `ids`, only these."""
+        """The posts News reads: those of the stories begun since `since`, and those in no story posted since; with
+        `until`, only those begun or posted before it; with `ids`, only these."""
         cur.execute(
             f"""
             SELECT sp.post_id FROM story_posts sp JOIN stories st ON st.id = sp.story_id
@@ -262,14 +251,11 @@ class NewsRepository:
         )
         return {str(r[0]): {"posts": [str(p) for p in r[1]], "mentions": {str(p) for p in r[2]}} for r in cur.fetchall()}
 
-    # ---- the job: Classics ------------------------------------------------------------
-
     @staticmethod
     def citations(cur: Cursor, *, reddit: Sequence[str], saved: Sequence[str],
                   targets: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
-        """Every kept link (to `targets`, when given), with the stored post it is, if any; a Reddit
-        post's author (post_parts: its footer's). Not the links of the pages you saved (`saved`: the Saved source): a
-        saved page is no voice."""
+        """Every kept link (to `targets`, when given), with the stored post it is, if any, and a Reddit post's
+        author. Not the links of `saved` (the Saved source): a saved page is no voice."""
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {POST_TIME}, pl.target_url, pl.link_text, t.id,
@@ -322,16 +308,13 @@ class NewsRepository:
             changed += len(rows)
         return changed
 
-    # ---- reading News -----------------------------------------------------------------
-
     @staticmethod
     def news_posts(cur: Cursor, scope: FeedScope, since: datetime, news_id: Optional[str] = None,
                    mx_run: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Every post of the News stories begun since `since` that have a post in `scope`, as feed
-        items, with its story's numbers and its role. Each story's posts first posted first. On one
-        source (issue 0077) also the stories a roundup of it mentions (0050's story_mentions).
-        `news_id`: that story's only (a post page's row, issue 0083). `mx_run` (0205): Mark X's rows of that run
-        (mx_news, the same shape: its news_posts rows in `posts`) instead of Mark IX's news_stories and news_posts."""
+        """Every post of the News stories begun since `since` that have a post in `scope`, as feed items with its
+        story's numbers and its role, each story's posts first posted first. On one source also the stories a
+        roundup of it mentions. `news_id`: that story only. `mx_run`: Mark X's rows of that run (mx_news, same
+        shape) instead of news_stories and news_posts."""
         scope_sql, params = _scope_sql(scope)
         one = "AND ns.id = %s" if news_id else ""
         rows_with, rows_params, ns_table, np_table = "", [], "news_stories", "news_posts"
@@ -381,11 +364,11 @@ class NewsRepository:
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
                          "_in_scope": bool(in_scope), "_origin": bool(origin),
-                         "_quotes": row[21],   # issue 0072: a post that only quotes a tweet (post_parts)
+                         "_quotes": row[21],   # a post that only quotes a tweet
                          "_voiced": voiced(row, voice, content_hash), "_subject": subject,
-                         "_roundup": bool(roundup),   # issue 0083: without an origin, a roundup gives way
-                         "_shares_origin": bool(shares_origin),   # issue 0103: it links its story's outside origin
-                         # issue 0111: its 0050 story, that story's voices and the name that joined it to the row
+                         "_roundup": bool(roundup),   # without an origin, a roundup gives way
+                         "_shares_origin": bool(shares_origin),   # it links its story's outside origin
+                         # its story, that story's voices and the name that joined it to the row
                          "_story": str(story_id) if story_id else None, "_story_voices": int(story_voices_ or 0),
                          "_name": name})
             out.append(item)
@@ -393,31 +376,27 @@ class NewsRepository:
 
     @staticmethod
     def lines(posts: Sequence[Dict[str, Any]], lead_id: str) -> List[Dict[str, Any]]:
-        """A News story's lines under its row, as News and search's News filter show them (issue 0072 D1):
-        its posts (news_posts' items) but the lead, each its feed row's title. A post that only quotes a
-        post of the story is no line (issue 0072): it was read there."""
+        """A News story's lines under its row (News and search's News filter): its posts but the lead, each its
+        feed row's title. A post that only quotes a post of the story is no line."""
         addresses = {normalize_url(p["url"]) for p in posts} - {None}
         return [{
             "id": p["id"], "title": p["title"], "url": p["url"], "source_id": p["source_id"],
             "source_display_name": p["source_display_name"], "platform": p["platform"],
             "sort_at": p["sort_at"], "published_at": p["published_at"], "read_at": p["read_at"],
-            "role": p["role"], "repost": p["repost"],   # issue 0070: its line names the author
-            "reposted_by": (p["repost"] or {}).get("by") or None,   # issue 0068
+            "role": p["role"], "repost": p["repost"],
+            "reposted_by": (p["repost"] or {}).get("by") or None,
         } for p in posts if p["id"] != lead_id and p["_quotes"] not in addresses]
-
-    # ---- reading Classics -------------------------------------------------------------
 
     @staticmethod
     def classics(cur: Cursor, scope: FeedScope) -> List[Dict[str, Any]]:
-        """The classics you did not hide that a source in `scope` cited, with the stored post each
-        is now (a page you saved since counts as that post: read, in Later). On one source (issue
-        0077) also those that are a post of its own (`own`)."""
+        """The classics you did not hide that a source in `scope` cited, with the stored post each is now (a page
+        you saved since counts as that post). On one source also those that are its own post (`own`)."""
         scope_sql, params = _scope_sql(scope)
         own_sql, own_params = "FALSE", []
         if scope.kind == "source":
             own_sql = "EXISTS (SELECT 1 FROM posts op WHERE op.normalized_url = c.target_url AND op.source_id = %s)"
             own_params = [scope.id]
-        elif scope.kind == "voice":   # a voice's own posts that are classics, any channel's (issue 0132 A)
+        elif scope.kind == "voice":   # a voice's own posts that are classics, any channel's
             own_sql = ("EXISTS (SELECT 1 FROM posts op JOIN sources os ON os.id = op.source_id "
                        "WHERE op.normalized_url = c.target_url AND os.voice_id = %s)")
             own_params = [scope.id]
@@ -481,8 +460,8 @@ class NewsRepository:
 
     @staticmethod
     def untitled_classics(cur: Cursor) -> List[str]:
-        """The classics you did not hide that no stored post is at and the stored data leaves untitled (issue
-        0106: their page's own title is read once)."""
+        """The classics you did not hide that no stored post is at and the stored data leaves untitled (their
+        page's own title is read once)."""
         cur.execute("SELECT c.target_url FROM classics c WHERE c.title IS NULL "
                     "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.normalized_url = c.target_url) "
                     "AND NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url) ORDER BY 1")
@@ -490,9 +469,8 @@ class NewsRepository:
 
     @staticmethod
     def unlinked_classics(cur: Cursor) -> List[str]:
-        """The classics at an address no kept link points to and no stored post is at (issue 0109 B1): their
-        links were read again into another address (a tracker's query dropped), so no batch's links name
-        them; a full run has none of them."""
+        """The classics at an address no kept link points to and no stored post is at: their links were read again
+        into another address, so no batch's links name them; a full run has none."""
         cur.execute("SELECT c.target_url FROM classics c "
                     "WHERE NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = c.target_url AND NOT pl.boilerplate) "
                     "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.normalized_url = c.target_url) ORDER BY 1")
@@ -500,13 +478,12 @@ class NewsRepository:
 
     @staticmethod
     def paper_paths(cur: Cursor, urls: Sequence[str]) -> List[str]:
-        """`urls` and every other kept link target of the papers among them (issue 0106: a paper's paths
-        are one classic), found by the page key every post linking one of its paths holds (story_keys)."""
+        """`urls` and every other kept link target of the papers among them (a paper's paths are one classic),
+        found by the page key the linking posts hold (story_keys)."""
         wanted = {page_key(url) for url in urls if paper_id(url)}
         if not wanted:
             return list(urls)
-        # v10.22: only the links a paper's id can be in (PAPER_SHAPE, a superset of addresses.paper_id's); every link of
-        # every post holding the key was read (92k rows a story batch on the server, 1.8 s) for the few that are papers
+        # only the links a paper's id can be in (PAPER_SHAPE, a superset of addresses.paper_id's)
         cur.execute("SELECT DISTINCT pl.target_url FROM story_keys k JOIN post_links pl ON pl.post_id = k.post_id "
                     "WHERE k.key = ANY(%s) AND NOT pl.boilerplate AND pl.target_url ~ %s",
                     (sorted(key[:KEY_CHARS] for key in wanted), PAPER_SHAPE))
@@ -515,8 +492,8 @@ class NewsRepository:
 
     @staticmethod
     def moved_pages(cur: Cursor, urls: Optional[Sequence[str]] = None) -> Dict[str, Tuple[str, Optional[str]]]:
-        """The stored pages (at `urls`, when given) that moved (issue 0108, metadata.moved_to): address ->
-        (where it moved, the post stored there, if any)."""
+        """The stored pages (at `urls`, when given) that moved (metadata.moved_to): address -> (where it moved, the
+        post stored there, if any)."""
         cur.execute(
             f"""
             SELECT p.normalized_url, p.metadata ->> '{MOVED_KEY}',
@@ -532,8 +509,8 @@ class NewsRepository:
 
     @staticmethod
     def moved_paths(cur: Cursor, urls: Sequence[str]) -> List[str]:
-        """`urls`, where the pages among them moved, and the pages that moved to them (issue 0108: one
-        classic), so an incremental batch rewrites both."""
+        """`urls`, where the pages among them moved, and the pages that moved to them (one classic), so an
+        incremental batch rewrites both."""
         if not urls:
             return list(urls)
         cur.execute(

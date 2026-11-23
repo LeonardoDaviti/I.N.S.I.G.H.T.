@@ -5,10 +5,7 @@ import { Button, Dialog, DialogContent, DialogFooter, Input, Switch } from '../u
 
 const fieldLabel = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
 
-/**
- * The scheduler's settings under Sources → ingestion: the tick interval. The number is edited
- * as text and clamped on save, so clearing the field to type a new value works.
- */
+/** The scheduler's settings: the tick interval, edited as text and clamped on save (so clearing the field works). */
 export default function SchedulerDialog({
   open,
   config,
@@ -21,11 +18,11 @@ export default function SchedulerDialog({
   onSave: (next: SchedulerConfig) => Promise<boolean>;
 }) {
   const [tick, setTick] = useState(String(config.ingest_tick_minutes ?? 60));
-  // On unless you switched it off (issue 0126): the API sends the stored choice.
+  // on unless you switched it off: the API sends the stored choice
   const [collect, setCollect] = useState(config.collect_originals ?? true);
-  // Off unless you switch it on (issue 0138 C).
+  // off unless you switch it on
   const [lookup, setLookup] = useState(config.lookup_originals ?? false);
-  // On unless you switch it off (issue 0138 E1).
+  // on unless you switch it off
   const [classics, setClassics] = useState(config.store_classics ?? true);
   const [saving, setSaving] = useState(false);
 

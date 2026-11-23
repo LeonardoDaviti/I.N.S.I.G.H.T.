@@ -1,9 +1,7 @@
-"""0236 (Stealth v10.25): one release, one News row. Two Mark X stories a current same_release chain edge joins (0219,
-rule chain_stops) are one row when `chains.one_row` is on: its posts in date order (the leaks first), named by the
-launch (the maker's own story, else the newest story of a news type, never a leak story); a story that only mentions
-the thing has no edge and stays out; joins never chain across two things. A row still untitled whose lead is a leak
-takes the maker's own post's title. Invented names ("Orbit 4 Nova" by Acme); the DB tests run on a database whose
-name ends in _test, each in one transaction rolled back."""
+"""One release, one News row (0236): Mark X stories joined by a current same_release chain edge are one row when
+`chains.one_row` is on, its posts in date order, named by the launch (the maker's own story, else the newest of a news
+type, never a leak story); a story that only mentions the thing stays out; joins never chain across two things.
+Invented names; the DB tests run on a _test database, each rolled back."""
 from __future__ import annotations
 
 import json
@@ -56,8 +54,8 @@ class Rules(unittest.TestCase):
         self.assertEqual(N.launch_order({"leak": {"maker": True, "type": "leak_rumour", "at": T}}), [])
 
     def test_a_result_the_maker_announced_alongside_never_names_the_release(self):
-        # 0268: the maker's release, then the same day its result on a hard problem (its own post, a newer maker story
-        # of a news type) and a day later its Q&A: the release names the row, however new the others are
+        # the maker's release, then the same day its result (a newer maker story of a news type) and a day later its
+        # Q&A: the release names the row, however new the others are (0268)
         f = {"launch": {"maker": True, "type": "model_release", "at": T},
              "result": {"maker": True, "type": "research_result", "at": T + 1 * H},
              "qa": {"maker": True, "type": "public_statement", "at": T + 30 * H},
@@ -115,8 +113,8 @@ class Row(unittest.TestCase):
                          (later, earlier, relation, G.CHAIN_RULE, json.dumps({"reason": "r", "thing": thing})))
 
     def case(self):
-        """A rumour account's teasers (the leak story, first), the maker's launch hours later with its coverage and a
-        third party's benchmark, and a rival's launch story that names Nova once (no edge: it only mentions it)."""
+        """A rumour account's teasers (the leak story, first), the maker's launch with its coverage and a third party's
+        benchmark, and a rival's launch story that names Nova once (no edge)."""
         leak = [self.post(0, "Orbit 4 Nova leaks: coming today"), self.post(1, "Nova spotted in the app ahead of launch"),
                 self.post(2, "Orbit 4 Nova teaser: benchmarks leaked"), self.post(3, "Nova is coming, says a tipster")]
         launch = [self.post(4, "Acme launches Orbit 4 Nova"), self.post(5, "Orbit 4 Nova is rolling out now"),
@@ -139,39 +137,38 @@ class Row(unittest.TestCase):
         self.assertEqual([p["story"] for p in one["posts"]], [sl] * 4 + [sm] * 3)  # each post names its own story
         other = next(r for r in rows if r["id"] != leak[0])
         self.assertEqual([p["post_id"] for p in other["posts"]], rival)             # the rival's story stays out
-        # off: two rows, as before
+        # off: two rows
         self.switch = dict(OFF)
         self.assertEqual(len(self.rows(stories)), 3)
 
     def test_a_leak_begun_before_the_window_never_takes_its_launch_out_of_it(self):
-        # v10.39: the window starts between the leak (hour 0) and the launch (hour 4): the leak story is a row of an
-        # earlier window, the launch story is this window's row (a row begun by the leak was no row of it, and the
-        # launch went with it: Gemini 4 Carbon, Mistral Large 4 out of News)
+        # the window starts between the leak (hour 0) and the launch (hour 4): the leak story is an earlier window's
+        # row, the launch story this window's
         stories, (sl, sm, sr), (leak, launch, rival) = self.case()
         first = {}
         rows = N.rows_of(self.cur, stories, T + 3.5 * H, window=set(), first=first)
         self.assertEqual([[p["post_id"] for p in r["posts"]] for r in rows if r["id"] == launch[0]], [launch])
         self.assertFalse(any(p["post_id"] in leak for r in rows for p in r["posts"]))
         self.assertEqual(first[sm], T + 4 * H)
-        # the window before the leak: one row, as before
+        # the window before the leak: one row
         self.assertEqual(len(N.rows_of(self.cur, stories, T - 24 * H, window=set())), 2)
 
     def test_the_joined_row_is_named_by_the_launch(self):
         stories, (sl, sm, sr), (leak, launch, rival) = self.case()
         row = next(r for r in self.rows(stories) if r["id"] == leak[0])
-        # the leak story holds the most voices (its main story); built's facts (read-v3 types, the maker by identity) say which is which
+        # the leak story holds the most voices; built's facts (read-v3 types, the maker by identity) say which is which
         facts = {sl: {"maker": False, "post": None, "type": "leak_rumour", "at": T},
                  sm: {"maker": True, "post": launch[0], "type": "model_release", "at": T + 4 * H}}
         with mock.patch.object(N, "_story_facts", return_value=facts):
             self.assertEqual(N.headlines(self.cur, [row])[leak[0]], {"text": "Acme launches Orbit 4 Nova", "from": "haiku"})
         self.assertEqual(N.main_story(row), sl)
-        self.switch = dict(OFF)   # off: no release row; its main story (the leaks) names it, as before
+        self.switch = dict(OFF)   # off: no release row; its main story (the leaks) names it
         with mock.patch.object(N, "_story_facts", return_value=facts):
             self.assertEqual(N.headlines(self.cur, [row])[leak[0]]["text"], "Orbit 4 Nova leaks ahead of launch")
 
     def test_a_release_row_is_never_named_by_a_result_merged_into_it(self):
-        # 0268: the maker's launch story and its result announced the same day (the maker's own post, newer, of a
-        # news type), joined into one row by a same_release edge: the launch's headline names it
+        # the maker's launch story and its same-day result, joined by a same_release edge: the launch's headline
+        # names the row (0268)
         launch = [self.post(4, "Acme launches Orbit 4 Nova"), self.post(5, "Orbit 4 Nova is rolling out now"),
                   self.post(6, "Orbit 4 Nova, first look"), self.post(7, "Orbit 4 Nova pricing")]
         result = [self.post(5.5, "Orbit 4 Nova settles an open question in number theory"),
@@ -193,9 +190,8 @@ class Row(unittest.TestCase):
         self.assertEqual(len(self.rows(stories)), 3)
 
     def test_a_sibling_release_edge_joins_two_things_into_one_row_only_while_siblings_are_on(self):
-        """v10.38 (one release, one row): a release launching two sibling things (a model and its Mini) is one
-        same_release edge between their stories (evidence `things`); it joins the row only while chains.siblings is
-        on (its bar), and a story's own-thing release group is unchanged either way."""
+        """Sibling things launched together are one same_release edge (evidence `things`); it joins the row only while
+        chains.siblings is on, and a story's own-thing release group is unchanged either way (v10.38)."""
         stories, (sl, sm, sr), _ = self.case()
         s2 = self.story("Acme launches Orbit 4 Nova Mini")
         self.cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, p, rule, evidence)

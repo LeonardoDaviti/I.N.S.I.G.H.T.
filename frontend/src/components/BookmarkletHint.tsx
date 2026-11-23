@@ -1,10 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { bookmarkletCode } from '../lib/savePage';
 
-/**
- * The bookmarklet, to drag to the bookmarks bar. React blocks a `javascript:` href
- * it renders, so the href is set on the element itself.
- */
+/** The bookmarklet, to drag to the bookmarks bar; React blocks a rendered `javascript:` href, so it is set on the
+ *  element itself. */
 function BookmarkletLink() {
   const ref = useRef<HTMLAnchorElement>(null);
   useEffect(() => {

@@ -1,40 +1,14 @@
-"""Research's rules and outside services (issue 0162): what an address is, a page's declared links, when two accounts
-are one maker by plain rules, every version of an address, the paper index, the web search, and the exact match of a
-discussion hit. Pure where it can be; the services take the caller's http client (the server's fetcher), so every
-request is the caller's to budget and the tests stub them all.
+"""Research's rules and outside services (issue 0162). Pure where it can be; the services take the caller's http
+client, so every request is the caller's to budget and the tests stub them all.
 
-**What an address is** (`classify`, platform classes only, never a site list of its own): a paper (an id on its host,
-utils/addresses.paper_id); an account on a platform INSIGHT reads (X, YouTube, a Reddit user, Telegram: PLATFORM_SITES)
-or a community (a subreddit); a code host's, a model hub's or a package index's account or project
-(entity_originals' vocabularies: CODE_SITES, MODEL_HUBS, PACKAGE_SITES); else a site (a front page) or a site's section
-(one path segment: a blog platform's account, a docs site). A page deeper than that on a site is someone's article:
-never an identity, never followed as one.
-
-**A page's declared links** (`declared_links`): the links a profile or a project page shows as its own (rel=me first),
-classified, on another site or under the page's own owner on its platform; never the platform's own menus, a share or
-login link, nor another site's article.
-
-**Same maker by plain rules** (`same_identity`): the platform states it (an account that owns a project page on its
-platform, `<host>/<owner>/<thing>`); declared both ways (each links the other); the same handle on two platforms (handles
-from addresses, 3+ characters, never a display name); the page names the other's handle or address. A name alone never
-suffices (a namesake): anything else is unclear and goes to Haiku's `identity` question (research.py).
-
-**Versions of an address** (`versions`): a paper under every page of it (abstract, PDF, HTML, each vN, its arXiv DOI);
-a project's page and its releases, tags and files under it (a prefix).
-
-**The paper index** (`paper_index`): a free open one first, OpenAlex, behind the setting `research_paper_index`
-(mx_settings: "openalex", the default, or "off"; a keyed index is a new class here later). Matched by DOI or arXiv id
-exactly; an author's newer papers are kept only when they share a co-author or the field with the seed (the index
-merges namesakes into one author: test 1 of the spec).
-
-**Web search** (`web_search`): a pluggable provider (INSIGHT_WEB_SEARCH = searxng | brave, with
-INSIGHT_WEB_SEARCH_URL for a SearXNG instance or INSIGHT_WEB_SEARCH_KEY for Brave's API; the key is read from the
-environment only, never stored or logged). Unconfigured, the worker's (0171, `worker`: Claude Code's web search on the
-owner's device, asked as a `websearch` task); `off` turns it off. Its results are candidates only: a result is an
-identity after the plain rules or Haiku say so.
-
-**A discussion hit is exact** (`exact_hit`): the item contains the paper's id or the project's owner/name as a whole token
-(2606.13843 is not 2406.13843), links an address of the seed, or carries its exact title. No fuzzy match.
+`classify` says what an address is by platform classes only (a paper, an account or community, a project, a site or
+section; a deeper page is an article, never an identity). `declared_links`: a page's own identity links (rel=me
+first). `same_identity`: two accounts are one maker by plain rules only (the platform states it, declared both ways,
+the same handle, the page names the other); a name alone never suffices, anything else goes to Haiku. `versions`:
+every version of an address. `paper_index`: OpenAlex behind `research_paper_index`, matched by exact id only.
+`web_search`: SearXNG, Brave, or the worker's (the default; a key is read from the environment only, never stored or
+logged); results are candidates only. `exact_hit`: a discussion hit contains an exact id, address or title; no fuzzy
+match.
 """
 from __future__ import annotations
 
@@ -501,9 +475,8 @@ class BraveSearch:
 
 
 class WorkerSearch:
-    """0171: the Mark X worker's web search (Claude Code on the owner's device, its web search tool only). Not a call
-    the server makes: research asks one `websearch` task a run (guide websearch-v1) and goes on when the worker has
-    answered it (research.web_by_worker / after_websearch). Its answers are candidates, judged like any other."""
+    """The Mark X worker's web search (Claude Code on the owner's device). Not a call the server makes: research asks
+    one `websearch` task a run and goes on once the worker answered it. Its answers are candidates, judged as any."""
     name = "worker"
     asks_worker = True
 
@@ -513,8 +486,8 @@ OFF_WORDS = ("off", "none", "no", "0", "false")
 
 def web_search() -> Optional[Any]:
     """The web search provider: SearXNG or Brave when configured (INSIGHT_WEB_SEARCH = searxng | brave with its address
-    or key); else the worker's (0171, the default: the owner's Claude has web search); None only when the setting says
-    off (INSIGHT_WEB_SEARCH=off). A named provider without its address or key falls back to the worker's."""
+    key); else the worker's (the default); None only when INSIGHT_WEB_SEARCH=off. A named provider without its address
+    or key falls back to the worker's."""
     provider = os.getenv(WEB_SEARCH_ENV, "").strip().lower()
     if provider in OFF_WORDS:
         return None

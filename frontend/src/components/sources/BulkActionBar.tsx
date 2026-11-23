@@ -9,13 +9,8 @@ const PICKER =
   'h-8 max-w-[11rem] cursor-pointer rounded-md border border-transparent bg-transparent px-2 text-[0.8125rem] font-medium text-fg-2 '
   + 'hover:bg-raised hover:text-fg disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11';
 
-/**
- * Appears while sources are selected: a small floating bar at the bottom
- * centre (translucent, one short ease-out in; none under reduced motion).
- * Enable, disable, add to / remove from a track, Show in Main feed on/off, delete;
- * Esc or × clears the selection. The pickers are native selects that act on
- * change and reset, so each is one gesture.
- */
+/** While sources are selected, a floating bar at the bottom centre: enable, disable, add to / remove from a track,
+ *  Show in Main feed, delete; Esc or × clears. The pickers are native selects that act on change and reset. */
 export default function BulkActionBar({
   count,
   folders,

@@ -1,31 +1,13 @@
-"""Series (issue 0134): a source's multi-part works ("Part 3 of 4") and its recurring numbered columns ("Issue #136"),
-told apart, no model. A port of the lab's frozen rule (series_v1, measured on the 2026-11-05 server copy: membership
-95.8%, series vs column 95.1%) with the spec's five fixes. Pure: the caller hands one source's posts and their
-navigation links (services/series_service.py reads and stores them).
+"""Series: a source's multi-part works ("Part 3 of 4") and its recurring numbered columns ("Issue #136"), told apart,
+no model (`build`). Pure: the caller hands one source's posts and their navigation links (services/series_service.py
+reads and stores them). A port of the lab's measured rule (plan/issues/0134) with its fixes.
 
-Edges between posts of ONE source, within WINDOW days:
-  E1 numbered titles: both carry a numbered marker in label position (the title's start or end, or next to a
-     separator), distinct numbers, similar stems (the title without the marker). Part-style ("part N", "часть N",
-     "N/M", "pt. N", "Part two"), issue-style ("#N", "No. N", "выпуск N"), and runs of S_RUN+ "stem N:" titles.
-  E2 navigation: a post links another of its source with navigation link words (NAV: previous / part N / начало /
-     продолжение / "start of this series" ...).
-  E3 shared navigation: posts of one source link the same page (stored or not) with navigation link words, its start.
-Groups are the connected components; a group needs a marker, an E2 or an E3 edge (a weak "previous post" alone is no
-group).
-
-The five fixes (0134, from the lab's wrong and missed rows):
-  1. no E4: an X self-reply joins nothing (it joined threads to series groups);
-  2. on X a marker counts only at the start of the title (a promoted book's "Part II" is the subject's, not the post's);
-  3. a post titled exactly with the group's stem, before its part 2, joins as part 1;
-  4. WINDOW is 60 days (was 45);
-  5. no cap on part numbers, and a number may carry a letter ("32a").
-
-Kind, no model: a column when its markers are mostly issue-style and it runs long (max number >= COL_NUM, or
-COL_SPAN+ days with COL_MIN+ members) or its issue-style stem recurs in two groups of the source; otherwise a series
-(part-style, and the lab's rule-only default for the unclear ones: its Haiku call added nothing).
-
-The lab's pairwise meaning check (BGE-M3 cosine for a looser stem) is not ported: Mark IX reads no Mark X vectors, so
-a looser stem takes the lab's other sign, NEAR_DAYS, as the lab did for a post with no vector.
+Edges between posts of ONE source, within WINDOW days: E1 numbered titles (both carry a numbered marker in label
+position, distinct numbers, similar stems; part-style, issue-style and runs of "stem N:" / "Name N" titles); E2 a
+link to another of its posts with navigation link words (NAV); E3 posts linking the same page as their start with
+navigation words. Groups are the connected components; a group needs a marker, an E2 or an E3 edge. An X self-reply
+joins nothing, and on X a marker counts only at the title's start. A group is a column when its markers are mostly
+issue-style and it runs long, or its stem recurs in two groups; otherwise a series.
 """
 from __future__ import annotations
 
@@ -37,8 +19,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils.byline import RT_BY_TAG
 
-VERSION = 2                   # a bump recomputes every source's series (series_service); 2: 0137's shapes
-WINDOW = 60                   # fix 4: days between two parts (was 45)
+VERSION = 2                   # a bump recomputes every source's series (series_service)
+WINDOW = 60                   # days between two parts
 K_WINDOW = 120                # issue-style numbers: days between two issues
 K_STEP = 3                    # ... at most this many numbers apart
 COL_NUM, COL_SPAN, COL_MIN = 10, 60, 3
@@ -52,23 +34,23 @@ SERIES, COLUMN = "series", "column"
 ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10}
 WORDN = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "первая": 1, "вторая": 2, "третья": 3, "четвертая": 4,
          "четвёртая": 4, "пятая": 5, "first": 1, "second": 2, "third": 3, "final": None}
-# fix 5: any number of digits, and a letter after it ("32a")
+# any number of digits, and a letter after it ("32a")
 NUMTOK = r"(\d+[a-zа-я]?|[IVX]{1,4}|one|two|three|four|five|первая|вторая|третья|четв[её]ртая|пятая)"
 PART = re.compile(r"(?i)(?<![\w])(?:част[ьиеюя]|part|pt\.?|глава|chapter|серия|эпизод)\s*#?\s*" + NUMTOK + r"(?![\w])"
                   r"(?:\s*(?:/|of|из)\s*(\d{1,4}))?")
 FRAC = re.compile(r"(?<![\w/.,:$€£])\(?(\d{1,2})\s?(?:/|of|из)\s?(\d{1,2})\)?(?![\w/.,:%])")
 ISSUE = re.compile(r"(?i)(?:(?<![\w&])#\s?|№\s?|(?<![\w])(?:no\.|issue|выпуск|episode|ep\.?|vol\.?|week|неделя)\s?#?\s?)"
-                   r"(\d{1,4})(?![\w,]|\.\d)")      # "#34." ends a sentence (0137); "#3.5" is no issue
+                   r"(\d{1,4})(?![\w,]|\.\d)")      # "#34." ends a sentence; "#3.5" is no issue
 SHORT = re.compile(r"^([A-Za-zА-Яа-яЁё][\w\-]{0,15}(?: [\w\-]{1,15}){0,2}) (\d{1,2})[:.]\s")   # "PPA 7: ..."
-# 0137: "Name N Title" ("Newsletter 483 The jobs report"): a short stem at the title's start, a bare number, no colon.
+# "Name N Title" ("Newsletter 483 The jobs report"): a short stem at the title's start, a bare number, no colon.
 # Only a run makes it a marker (N_RUN+ posts, numbers rising with the dates), never a pair; not a year, not a date.
 NAMED = re.compile(r"^([A-Za-zА-Яа-яЁё][\w\-]{0,15}(?: [\w\-]{1,15}){0,2}) (\d{1,5})(?=\s|$)(?![\s]*[:./%,])")
 MONTHS = re.compile(r"(?i)^\s*(?:(?:jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.?\b|january|february|march|april|may\b|"
                     r"june|july|august|september|october|november|december|(?:январ|феврал|март|апрел|июн|июл|август|"
                     r"сентябр|октябр|ноябр|декабр)\w*|ма[яй]\b)")
 N_RUN, N_STEP = 3, 20         # a "Name N" run: this many posts, each at most this many numbers after the one before
-# the stem of "#N" (0137; "week N", "No. N" keep the whole prefix) is the title segment next to it: a guest's name before it or after it is not part of the stem
-# ("Musk v. Altman", "Dr. Who" are one segment: a full stop ends one after a word of 3+ letters)
+# the stem of "#N" ("week N", "No. N" keep the whole prefix) is the title segment next to it: a guest's name before
+# or after it is not part of the stem ("Musk v. Altman" is one segment: a full stop ends one after a 3+ letter word)
 SEGMENT = re.compile(r"(?<=\w{3})\.\s|[:!?]\s|\s-\s|[|—–]")
 SEP = set(",:;()[]—–-|.!?«»\"'/")
 # a bare "previous post" / "first post" is weak: a follow-up says it too; it makes no group alone
@@ -161,7 +143,7 @@ def _num(s: str) -> Optional[Tuple[int, str]]:
 
 
 def marker(p: Post) -> Optional[Marker]:
-    """The title's numbered marker, or None. On X (fix 2) only one at the title's start."""
+    """The title's numbered marker, or None. On X only one at the title's start."""
     t = clean_title(p)
     x = p.kind == "x"
     for style, rx in (("P", PART), ("F", FRAC), ("K", ISSUE)):
@@ -190,8 +172,8 @@ def marker(p: Post) -> Optional[Marker]:
 
 
 def named_marker(p: Post) -> Optional[Marker]:
-    """0137: a "Name N Title" title's marker, a candidate only: build() keeps it when its stem runs (N_RUN+, rising).
-    Never on X: "Question 1", "Question 2" replies are a thread's tweets (fix 1), not a series."""
+    """A "Name N Title" title's marker, a candidate only: build() keeps it when its stem runs (N_RUN+, rising).
+    Never on X: "Question 1", "Question 2" replies are a thread's tweets, not a series."""
     if p.kind == "x":
         return None
     t = clean_title(p)
@@ -274,7 +256,7 @@ def build(posts: Sequence[Post], links: Iterable[NavLink] = ()) -> List[Group]:
             if _days(min(ats), max(ats)) <= WINDOW:
                 for x in mem[1:]:
                     join(mem[0], x, "E1")
-    # N (0137): "Name N Title" runs, N_RUN+ posts whose numbers rise with their dates, each within K_WINDOW days and
+    # N: "Name N Title" runs, N_RUN+ posts whose numbers rise with their dates, each within K_WINDOW days and
     # N_STEP numbers of the one before (a repost of a number is left out of the run, not breaking it)
     named: Dict[str, List[str]] = defaultdict(list)
     candidates = {p.id: m for p in posts if p.id not in mk and (m := named_marker(p))}
@@ -378,7 +360,7 @@ def _group(g: List[str], by_id: Dict[str, Post], mk: Dict[str, Marker], ev: Dict
 
 
 def _part_one(groups: List[Group], posts: Sequence[Post], mk: Dict[str, Marker]) -> None:
-    """Fix 3: a post titled exactly with a series' stem, unmarked, in no group, posted before its part 2 (and within
+    """A post titled exactly with a series' stem, unmarked, in no group, posted before its part 2 (and within
     WINDOW of it), joins it as part 1."""
     taken = {m for g in groups for m in g.members}
     at = {p.id: p.at for p in posts}
@@ -430,10 +412,9 @@ def link_words(content_html: Optional[str], content: Optional[str], url: Optiona
 def navigation_links(content_html: Optional[str], content: Optional[str], url: Optional[str]
                      ) -> List[Tuple[str, str, str]]:
     """`link_words`' entries whose words are navigation (`is_navigation`): what the series pass reads of a post.
-    v10.18 (0199): a post none of whose links' words is navigation (most of what NAV_PREFILTER lets through) is told
-    from its marked text alone, every link's words in one pass, before any address is made; the pass made every
-    link's address and searched the text once per link for the few it kept (23 s of a 60 s story job at server
-    scale). A text holding a marker character of its own is read the long way, so the answer is link_words' always."""
+    A post none of whose links' words is navigation is told from its marked text alone, before any address is made
+    (a speed path, 0199); a text holding a marker character of its own is read the long way, so the answer is
+    link_words' always."""
     from insight_core.utils.post_refs import _OPEN, MARK, marked_text
     text, hrefs = marked_text(content_html, content)
     if text.count(_OPEN) == len(hrefs) and not any(is_navigation(" ".join(m.group(2).split()))

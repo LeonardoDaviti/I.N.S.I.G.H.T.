@@ -1,12 +1,7 @@
-"""ArchiveMetadataWriter: persists settings.archive for a source (moved from SourceFetchService).
+"""ArchiveMetadataWriter: persists settings.archive for a source.
 
-Every number it derives - backlog, estimated pages and seconds, whether a checkpoint can be
-resumed - depends on the source's kind, so the kind is an explicit
-argument rather than a strategy string looked up in a ladder.
-
-The writer takes its stores by duck type (posts: get_source_post_stats; sources:
-get_source_by_id / get_source_with_settings / merge_source_settings) so ingestion/ does
-not import services/, and tests pass in-memory stand-ins.
+Every derived number (backlog, estimated pages and seconds, resumability) depends on the kind, an explicit argument.
+Stores are taken by duck type so ingestion/ does not import services/.
 """
 from __future__ import annotations
 
@@ -31,9 +26,8 @@ def resumable(kind: SourceKind, checkpoint: Any) -> Optional[Dict[str, Any]]:
 
 def archive_estimate(kind: SourceKind, source: Source, available_posts: Any, stored: int,
                      page_size: Optional[int], rate: RateLimit) -> tuple[Optional[int], Optional[int], Optional[int]]:
-    """(older posts, pages, seconds) for an archive of the posts older than the stored ones;
-    all None when the source reports no size (E1). Each wait between pages is max(the host's
-    starting gap, the kind's pause), as the archive loop's gate slot waits it."""
+    """(older posts, pages, seconds) for an archive of the posts older than the stored ones; all None when the
+    source reports no size. Each wait between pages is max(host gap, the kind's pause), as the gate slot waits."""
     if isinstance(available_posts, bool) or not isinstance(available_posts, int) or available_posts < 0:
         return None, None, None
     older = max(0, available_posts - stored)
@@ -64,10 +58,7 @@ class ArchiveMetadataWriter:
         now = self.clock().isoformat()
         stored = int(stats["post_count"])
 
-        # What is left to archive, and how long it would take: derived on every path rather
-        # than remembered from the last plan, so the figure falls as posts come in. E1: the
-        # backlog is known only when the source reports its size; unknown stays None (the UI
-        # says "unknown").
+        # what is left to archive, derived on every path so it falls as posts come in; None when the size is unknown
         available_posts = data.get("available_posts", current.get("available_posts"))
         backlog_posts, estimated_pages, estimated_seconds = archive_estimate(
             kind, source or {}, available_posts, stored, data.get("page_size", current.get("page_size")) or 1,
@@ -76,8 +67,7 @@ class ArchiveMetadataWriter:
         smart = self._smart(kind, current, data, mode)
         status = current.get("status", "not_archived")
         if smart is not None:
-            # A feed's coverage (issue 0143): archived only when the stored posts reach the site's estimate, or
-            # every strategy was tried and none finds more; a plan that found more makes it partial at once.
+            # a feed's coverage (archive_ladder.coverage_status); a plan that found more makes it partial at once
             status = coverage_status(stored, smart)
         elif mode in {"archive", "archive_progress"}:
             status = derive_archive_status(stored, data.get("available_posts"))
@@ -107,19 +97,17 @@ class ArchiveMetadataWriter:
             "rate_limit": data.get("rate_limit", current.get("rate_limit")),
             "checkpoint": checkpoint,
             "resume_ready": resumable(kind, checkpoint) is not None,
-            # {host, until} while the archive waits out a host's limit (issue 0107); a page
-            # fetched, a pause or the archive's end clears it.
+            # {host, until} while the archive waits out a host's limit; a page, a pause or the end clears it
             "waiting": (data.get("waiting") if mode in {"archive", "archive_progress"}
                         else current.get("waiting")),
             "history": history[-HISTORY_LIMIT:],
-            # Why the last archive added no more (issue 0130 B4): its pages' skipped counts and the posts stored
-            # already; and the date it stopped at (issue 0130 C).
+            # why the last archive added no more (its skipped counts), and the date it stopped at
             "unreached": data.get("unreached", current.get("unreached")) if mode == "archive" else current.get("unreached"),
             "until": (data.get("until_reached") if mode == "archive" else current.get("until")),
         }
         if smart is not None:
             archive["smart"] = smart
-        # What a feed's plan measured besides (issue 0108's sitemap posts): kept for archive_support.
+        # what a feed's plan measured besides (its sitemap posts): kept for archive_support
         for key in ("sitemap_posts", "sitemap_prefix"):
             if mode == "plan" and key in data:
                 archive[key] = data[key]
@@ -129,8 +117,8 @@ class ArchiveMetadataWriter:
 
     @staticmethod
     def _smart(kind: SourceKind, current: Dict[str, Any], data: Dict[str, Any], mode: Mode) -> Optional[Dict[str, Any]]:
-        """The smart archiver's record (issue 0143): the plan's (data["smart"]), else the one kept; an archive that
-        ended with no strategy left to resume has tried them all (exhausted). None for a kind without one."""
+        """The smart archiver's record: the plan's (data["smart"]), else the one kept; exhausted when an archive ended
+        with no strategy left. None for a kind without one."""
         smart = data.get("smart") if isinstance(data.get("smart"), dict) else current.get("smart")
         if not isinstance(smart, dict):
             return None
@@ -156,7 +144,7 @@ class ArchiveMetadataWriter:
             if not isinstance(checkpoint, dict):
                 return None
             if data.get("until_reached") and data.get("pages_fetched"):
-                # Stopped at its date (issue 0130 C), not at the source's end: a later archive goes on from here.
+                # stopped at its date, not at the source's end: a later archive goes on from here
                 return dict(checkpoint)
             finished = dict(checkpoint)
             finished["completed_at"] = now

@@ -11,26 +11,18 @@ interface MarkdownRendererProps {
   className?: string;
   /** Rewrites each image's src (a post body loads its images through /api/media). */
   imageSrc?: (src: string) => string | undefined;
-  /**
-   * False for stored plain text (a post with no HTML body): it is read as markdown only, so
-   * a literal "<details>" or "&lt;p&gt;" in it shows as text, never as an element.
-   */
+  /** False for stored plain text: read as markdown only, so a literal "<details>" in it shows as text. */
   html?: boolean;
-  /** Links that are stored posts, href as written -> post id (issue 0057): each opens that post
-   *  in INSIGHT, with a small ↗ beside it for the original. */
+  /** Links that are stored posts, href as written -> post id: each opens that post in INSIGHT, with a ↗ beside it. */
   internalLinks?: Record<string, string>;
 }
 
-/**
- * Feed HTML often arrives indented ("\n    <p>On Friday…"). Markdown reads four
- * leading spaces as a code block, so the whole article rendered as one
- * monospaced line of raw tags. Strip the indentation in front of tags.
- */
+/** Strips the indentation in front of tags: feed HTML often arrives indented, and markdown reads four leading
+ *  spaces as a code block. */
 function dedentHtml(content: string): string {
   return /^\s*</.test(content) ? content.replace(/^[ \t]+(?=<)/gm, '') : content;
 }
 
-// Exported for tests.
 // eslint-disable-next-line react-refresh/only-export-components
 export function normalizeRendererContent(content: string): string {
   const looksLikeEscapedHtml = /&lt;(?:!--|\/?(?:p|div|span|a|img|ul|ol|li|blockquote|code|pre|h[1-6]|table|thead|tbody|tr|td|th))/i.test(content);
@@ -50,8 +42,7 @@ const HTML_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]['rehypePlugi
     rehypeSanitize,
     {
       ...defaultSchema,
-      // The reader keeps an article's figures and a table's caption (issue 0042); GitHub's
-      // schema would unwrap them into loose text.
+      // keep figures and a table's caption; GitHub's schema would unwrap them into loose text
       tagNames: [...(defaultSchema.tagNames || []), 'figure', 'figcaption', 'caption'],
       ancestors: { ...defaultSchema.ancestors, caption: ['table'] },
       attributes: {
@@ -78,23 +69,20 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
   if (!content) return null;
 
   const normalizedContent = html ? normalizeRendererContent(content) : content;
-  // Plain text keeps its line breaks; HTML's own breaks are its tags, and a source's newlines
-  // inside a <p> (hard-wrapped feeds, X's "<br>\n<br>") are only spaces (issue 0069).
+  // Plain text keeps its line breaks; in HTML a source's newlines inside a <p> (hard-wrapped feeds, X's
+  // "<br>\n<br>") are only spaces.
   const plainText = !html || !HTML_TAG_RE.test(normalizedContent);
 
   return (
     <div className={`markdown-content min-w-0 break-words ${className}`}>
       <ReactMarkdown
-        // Enable GFM and treat single newlines as breaks
         remarkPlugins={[remarkGfm]}
-        // Without rehype-raw, react-markdown shows any HTML in the text as text.
+        // without rehype-raw, react-markdown shows any HTML in the text as text
         rehypePlugins={html ? HTML_PLUGINS : []}
         skipHtml={false}
-        // Monochrome reading styles (design docs system/typography.md): sizes and spacing are in em so
-        // the same renderer reads well in the 1.125rem post column and in a small
-        // chat bubble. Hierarchy is weight and size, never hue.
+        // monochrome reading styles in em, so the same renderer fits the post column and a chat bubble;
+        // hierarchy is weight and size, never hue
         components={{
-          // A paragraph of plain text keeps its single line breaks; one of HTML wraps normally.
           p: ({ children }) => (
             <p dir="auto" className={`mb-[1em] text-fg last:mb-0 ${plainText ? 'whitespace-pre-wrap' : ''}`}>
               {children}
@@ -115,9 +103,7 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
               {children}
             </h3>
           ),
-          // Feeds often mark sections with h4–h6 ("Codex voice mode"). Tailwind's reset
-          // would leave them as body text; keep them on the same scale, by size, weight
-          // and spacing only.
+          // feeds often mark sections with h4–h6; Tailwind's reset would leave them as body text
           h4: ({ children }) => (
             <h4 dir="auto" className="text-pretty mb-[0.35em] mt-[1.2em] text-[1em] font-semibold leading-[1.4] tracking-[-0.01em] text-fg first:mt-0">
               {children}
@@ -163,16 +149,14 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
               {children}
             </blockquote>
           ),
-          // react-markdown 10 has no `inline` flag: `code` is always the inline style and
-          // a fenced block is `pre > code`, which the `pre` override resets.
+          // react-markdown 10 has no `inline` flag: `code` is the inline style, a fenced block is `pre > code`
           code: ({ children, className: codeClass }) => (
             <code className={`rounded-sm bg-raised px-[0.3em] py-[0.1em] font-mono text-[0.875em] text-fg [overflow-wrap:anywhere] ${codeClass ?? ''}`}>
               {children}
             </code>
           ),
-          // Only real code (a fence, `pre > code`) keeps its lines and scrolls sideways.
-          // A <pre> of bare text is prose (GitHub commit bodies): it wraps, or a 390px
-          // screen would cut it off.
+          // only real code (`pre > code`) keeps its lines and scrolls sideways; a <pre> of bare text is prose
+          // (GitHub commit bodies) and wraps, or a 390px screen would cut it off
           pre: ({ children, node }) => {
             const isCode = Boolean(node?.children.some((child) => child.type === 'element' && child.tagName === 'code'));
             const flow = isCode
@@ -197,8 +181,7 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
                 height={sized ? h : undefined}
                 loading="lazy"
                 decoding="async"
-                // Feed images rarely carry a size: until one loads it holds a 16:10
-                // frame, so the text below does not jump down when it arrives.
+                // until a size-less feed image loads it holds a 16:10 frame, so the text does not jump
                 onLoad={(event) => { event.currentTarget.dataset.loaded = ''; }}
                 // A dead image link would leave a broken-image frame in the text.
                 onError={(event) => { event.currentTarget.hidden = true; }}
@@ -206,8 +189,7 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
               />
             );
           },
-          // A figure keeps its image and caption together; the caption sits under it, small
-          // and muted like a byline (issue 0042).
+          // a figure keeps its image and caption together, the caption small and muted under it
           figure: ({ children }) => (
             <figure className="my-[1.25em] [&_img]:my-0">
               {children}
@@ -223,7 +205,6 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
               {children}
             </caption>
           ),
-          // A wide table scrolls sideways inside the column; the page never does.
           table: ({ children }) => (
             <div className="my-[1.25em] max-w-full overflow-x-auto rounded-md border border-line">
               <table className="min-w-full border-collapse text-[0.875em] tabular-nums">
@@ -246,7 +227,7 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
               {children}
             </tr>
           ),
-          // A cell keeps its span, so a row of a kept table lines up with its header.
+          // a cell keeps its span, so a row of a kept table lines up with its header
           th: ({ children, colSpan, rowSpan }) => (
             <th colSpan={colSpan} rowSpan={rowSpan} className="border-b border-line-strong px-[0.85em] py-[0.6em] text-left font-semibold text-fg">
               {children}

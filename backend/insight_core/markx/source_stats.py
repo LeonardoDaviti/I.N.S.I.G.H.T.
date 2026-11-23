@@ -1,41 +1,12 @@
-"""0132 B (Stealth v10.6): the source analysis page's numbers, computed by one stats job and stored in source_stats.
+"""The source analysis page's numbers (0132 B), computed by one stats job and stored in source_stats.
 
-    rows = compute(load(cur, now))         # every card's signal, per source and per voice
-    write(cur, rows, now)                  # one row per subject and signal (migration 0081)
-    list_view(cur), subject_view(cur, id)  # what /markx/sources and /markx/sources/<id> show: rows only
-
-**No single score** (the owner's decision 5): each signal is its own number with its formula, its n and its evidence,
-and the list sorts by any column. A composite ranked English sites first and Russian Telegram channels last, because
-nobody links t.me posts (the lab's report, 2026-11-08).
-
-**Subjects.** Every source (but saved pages) has its rows; a voice (0132 A's `voices`, `sources.voice_id`) has rows
-over all its channels' posts, once that table exists (until then: per source only). Who "another voice" is: a
-source's voice when it has one, else the source itself, so a voice's own channels never count as each other's
-citers, followers or co-reporters.
-
-**Windows.** Posts, shares, links and News: the last WINDOW_DAYS (90) days. First to report and story roots: every
-stored story (they need 10 stories). Reading kinds and the role: every read post (Mark X reads few; Part C1 reads more).
-
-**The signals** (SIGNALS: card, formula, the threshold below which the page says "too few to tell", and what n counts)
-are the lab's (plan/research/lab/markx/proto/sv1_signals.py, sv1_table.py), measured for stability between periods
-(Spearman 0.56-0.92). The role rule is markx/source_role.py.
-
-**The job** (`Runner`, started by insight-ingestion's scheduler only while Mark X is on): nightly (between 02:00 and
-06:00 UTC, once a day; and at most 36 hours apart) and after a regroup (Mark IX's story job finished a full run or a
-rule change's rebuild since the last stats run), never while Mark IX's story job holds its lock or rebuilds. Each run
-in a child process of its own (its memory goes back to the OS), HARD_LIMIT seconds at most; its time, rows and peak
-memory are kept in mx_settings `source_stats_job`.
-
-**The track record** (0266, Stalker features 4 and 7: the reader's own record of a source over the last RECORD_DAYS
-days; card "record"): how often it is first on a story of 2+ voices and by how many hours before your next source
-(firsts, first_share, first_lead), how much of what it posts ends in a News row, a story of 2+ voices or a topic track
-(signal_share) or in none (noise_share), and how much of it you opened (opened_share). The stories are those News is
-made from (Mark X's when Mark X News has a written run, else Mark IX's); a member of no source of yours (a saved page)
-is no voice and never first (0263). `switch_off` reads the rows and suggests switching off an enabled source with a
-high noise share and no first (a suggestion only: nothing is switched). Computed in this job, not per request: it reads
-every recent story member and track place (seconds at server scale, 0266).
-
-Only source_stats (and the job's state in mx_settings) is written; every other table is read.
+`compute(load(cur, now))` makes every signal (SIGNALS: card, formula, "too few" threshold, what n counts) per source
+and per voice; `write` stores one row per subject and signal; `list_view` / `subject_view` read rows only. No single
+score: each signal is its own number with its n and evidence. "Another voice" is a source's voice, else the source,
+so a voice's own channels never count as each other's citers or co-reporters. The track record (0266, RECORD_DAYS)
+and `switch_off` (a suggestion only: nothing is switched) come from the same job. `Runner` runs it nightly, after a
+regroup, never while Mark IX's story job is busy, in a child process of its own. Writes source_stats and the job's
+state in mx_settings only.
 """
 from __future__ import annotations
 
@@ -71,9 +42,9 @@ PLATFORM_YEARS = {"x": 2006, "youtube": 2005, "telegram": 2013, "reddit": 2005, 
 ACCOUNT_SITES = frozenset({"x.com", "twitter.com", "t.me", "telegram.me", "youtube.com", "reddit.com", "github.com",
                            "medium.com"})
 NOT_SUBJECTS = ("saved",)
-RECORD_DAYS = 30                          # 0266: the track record's window
+RECORD_DAYS = 30                          # the track record's window
 OPENED = ("opened", "reading_session")    # an open the reader made (read_at is also set by "mark all read")
-NOISE_OFF = 0.9                           # 0266: "switch off?" at this noise share or more, with no first
+NOISE_OFF = 0.9                           # "switch off?" at this noise share or more, with no first
 OPENED_KEEP = 0.1                         # ... never for a source you open 10% of
 CITED_KEEP = 3                            # ... nor one 3+ other voices link (cited_by, 90 days)
 FIRST_WITHIN = timedelta(minutes=1)       # first: within a minute of the earliest other voice
@@ -178,7 +149,7 @@ class Src:
     kind: str
     enabled: bool
     created_at: Optional[datetime]
-    voice: Optional[str] = None           # 0132 A's voice id, when voices exist
+    voice: Optional[str] = None           # its voice id, when voices exist
     keys: Set[str] = field(default_factory=set)
     own_account: Optional[str] = None
 
@@ -226,10 +197,10 @@ class Data:
     authors: Dict[str, int]                                 # source -> distinct authors (sites)
     long_posts: Dict[str, int] = field(default_factory=dict)   # source -> own posts of 250+ characters (the window)
     post_titles: Dict[str, Tuple[str, Optional[datetime], str]] = field(default_factory=dict)   # any post -> (title, at, source)
-    profiles: Dict[str, Dict[str, Any]] = field(default_factory=dict)   # 0132 C2: source -> its current profile
-    record_stories: List[Dict[str, Any]] = field(default_factory=list)  # 0266: News's stories' members
-    tracked: Set[str] = field(default_factory=set)          # 0266: window posts placed in a topic track
-    opened: Set[str] = field(default_factory=set)           # 0266: window posts the reader opened
+    profiles: Dict[str, Dict[str, Any]] = field(default_factory=dict)   # source -> its current profile
+    record_stories: List[Dict[str, Any]] = field(default_factory=list)  # News's stories' members
+    tracked: Set[str] = field(default_factory=set)          # window posts placed in a topic track
+    opened: Set[str] = field(default_factory=set)           # window posts the reader opened
 
     def voice_of(self, source_id: str) -> str:
         s = self.sources.get(source_id)
@@ -247,7 +218,7 @@ def _exists(cur: Any, table: str, column: Optional[str] = None) -> bool:
 
 
 def voices_exist(cur: Any) -> bool:
-    """0132 A's voices: the table and sources.voice_id (another slice's migration 0080); absent: per source only."""
+    """Whether the voices table and sources.voice_id exist; absent: per source only."""
     return _exists(cur, "voices") and _exists(cur, "sources", "voice_id")
 
 
@@ -303,7 +274,6 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
             links_between = [dict(zip(cols, [str(x) if hasattr(x, "hex") else x for x in r])) for r in cur.fetchall()]
 
     ids = list(srcs)
-    # the window's posts
     cur.execute(f"""SELECT p.id::text, p.source_id::text, {AT}, COALESCE(p.title, ''), left(COALESCE(p.content, ''), 1500),
                            p.author, p.reposted_by, p.normalized_url, p.url, p.language_code, p.published_precision,
                            {byline.forwarded_sql("p")}, p.metadata->>'view_count'
@@ -350,7 +320,7 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
     # links out of the window's posts
     cur.execute(f"""SELECT l.post_id::text, l.target_url, l.boilerplate FROM post_links l JOIN posts p ON p.id = l.post_id
                      WHERE p.source_id = ANY(%s::uuid[]) AND {AT} >= %s
-                       AND l.kind <> 'mention'""", (ids, since))   # 0235: a mention is no link of the post's
+                       AND l.kind <> 'mention'""", (ids, since))   # a mention is no link of the post's
     links: Dict[str, List[Tuple[str, bool]]] = defaultdict(list)
     for pid, target, bp in cur.fetchall():
         links[pid].append((target, bool(bp)))
@@ -403,7 +373,7 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
     mentions: Dict[str, List[R.Mention]] = defaultdict(list)
     if _exists(cur, "mx_readings"):
         from insight_core.markx import reading5
-        RANK = reading5.rank_sql("r.guide", ("read-v2", "read-v3"))   # 0212: read-v2 first, as before
+        RANK = reading5.rank_sql("r.guide", ("read-v2", "read-v3"))
         cur.execute(f"""SELECT DISTINCT ON (r.post_id) r.post_id::text, r.kind, p.source_id::text, p.title, p.author,
                               p.reposted_by, {byline.forwarded_sql("p")}
                          FROM mx_readings r JOIN posts p ON p.id = r.post_id
@@ -415,10 +385,8 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
             read_sources[pid] = sid
             if is_repost(s, title, author, reposted_by, fwd):
                 read_reposts.add(pid)
-        # v10.9.1: the current set (each post's newest valid entities answer, whatever the guide). v10.38: only the
-        # roles the role rule reads (R.official: SELF_ROLES; R.top_maker: MAKER_ROLES), each distinct mention one
-        # object, the rows read one at a time: every mention of every read post (1.75M on the server copy, 24% of them
-        # in those roles) as a list of tuples and an object each made the nightly run's 1.6 GB peak
+        # only the roles the role rule reads, each distinct mention one shared object, rows streamed: all mentions
+        # as objects made the nightly run's memory peak (v10.38)
         roles = sorted(set(R.SELF_ROLES) | set(R.MAKER_ROLES))
         cur.execute("""SELECT m.post_id::text, m.name, m.maker, m.role, m.type FROM mx_mentions_now m
                         WHERE m.post_id = ANY(%s::uuid[]) AND m.role = ANY(%s)""", (list(read_kinds), roles))
@@ -463,9 +431,8 @@ def load(cur: Any, now: Optional[datetime] = None, *, window_days: int = WINDOW_
 
 
 def record_inputs(cur: Any, d: Data) -> None:
-    """0266: the track record's inputs. The stories News is made from: Mark X's current members (of unmerged stories
-    with a member in the last 2 x RECORD_DAYS days) when Mark X News has a written run, else Mark IX's (already read);
-    the window's posts placed in a topic track (the kept placement, issue 0195); and those the reader opened."""
+    """The track record's inputs: the stories News is made from (Mark X's when Mark X News has a written run, else
+    Mark IX's), the window's posts placed in a topic track, and those the reader opened."""
     since = d.now - timedelta(days=RECORD_DAYS)
     if d.news_kind == "markx":
         cur.execute(f"""WITH live AS (
@@ -546,8 +513,7 @@ def _share(a: int, b: int) -> Optional[float]:
 
 
 def _story_voice(d: Data, m: Dict[str, Any]) -> str:
-    """A story member's voice as these signals count it: its source's voice (0132 A), or Mark IX's voice key when the
-    post speaks for someone else (a Reddit author, a page's site)."""
+    """A story member's voice: its source's voice, or Mark IX's voice key when the post speaks for someone else."""
     s = d.sources.get(m["source"])
     return voice.story_channel_key(m["voice"], m["source"], s.voice if s else None)
 
@@ -598,13 +564,10 @@ class Copies:
 
 
 class RecordIndex:
-    """0266: the track record's stories, indexed once per run: each story's members of your sources (a member of no
-    source of yours is no voice), the stories of 2+ voices' posts, and the stories of each source.
-
-    A member's time is the stories' own (story_rules.story_times, issue 0072 D): a date alone (a day's precision, or
-    00:00:00 UTC) counts as that day's earliest timed member of its story, else its date. A post dated by a date alone
-    is first only on an earlier day than every other voice; a first where either side is a date alone is not in the
-    lead (its hour is unknown)."""
+    """The track record's stories, indexed once per run: each story's members of your sources (a member of no source
+    of yours is no voice), the posts of stories of 2+ voices, and each source's stories. A date alone counts as that
+    day's earliest timed member of its story; it is first only on an earlier day than every other voice, and never
+    counts toward the lead in hours."""
 
     def __init__(self, d: Data) -> None:
         from insight_core.utils.story_rules import date_alone
@@ -964,7 +927,7 @@ def _subject(d: Data, kind: str, sid: str, sids: List[str], by_source, stories, 
 
 def _stance_post_ids(d: Data, st: Dict[str, Any]) -> Dict[int, Optional[str]]:
     """The stance question's numbered posts, found back among the source's posts by their text (the input holds no
-    ids, so a question is the same question however it was planned)."""
+    ids)."""
     from insight_core.markx.validate import stance_posts
 
     def head(text: str) -> str:
@@ -1008,10 +971,9 @@ def _too_few(signal: str, n: int) -> bool:
 
 
 def switch_off(stats: Dict[str, Dict[str, Any]], enabled: bool) -> Optional[Dict[str, Any]]:
-    """0266: "switch off?" for an enabled source whose last 30 days are counted (not too few), with a noise share of
-    NOISE_OFF or more, no first, under OPENED_KEEP of it opened and linked by fewer than CITED_KEEP other voices (a
-    source others link is an origin: what it adds reaches you through them): {line, noise, posts, opened, cited_by};
-    else None. A suggestion only: nothing is switched."""
+    """"switch off?" for an enabled source with enough posts, a noise share of NOISE_OFF or more, no first, under
+    OPENED_KEEP opened and linked by fewer than CITED_KEEP other voices (a source others link is an origin):
+    {line, noise, posts, opened, cited_by}; else None. A suggestion only: nothing is switched."""
     noise, firsts, opened = stats.get("noise_share") or {}, stats.get("firsts") or {}, stats.get("opened_share") or {}
     cited = (stats.get("cited_by") or {}).get("value") or 0
     if not enabled or noise.get("too_few", True) or noise.get("value") is None or noise["value"] < NOISE_OFF:
@@ -1184,8 +1146,8 @@ def job_state(cur: Any) -> Dict[str, Any]:
 
 
 def due(state: Dict[str, Any], stories: Dict[str, Any], now: datetime, *, busy: Optional[str] = None) -> Optional[str]:
-    """Why a stats run is due now, or None: never while Mark IX's story job is busy; after a regroup (the story job's
-    full run or rebuild finished since the last stats run); nightly; at most AT_MOST apart; never run."""
+    """Why a stats run is due now, or None: never while Mark IX's story job is busy; after a regroup; nightly; at
+    most AT_MOST apart; never run."""
     if busy:
         return None
     last = datetime.fromisoformat(state["last_at"]) if state.get("last_at") else None
@@ -1219,8 +1181,8 @@ def run_job(db_url: str) -> Dict[str, Any]:
         log.exception("Source stats: the run failed")
         out = {"ok": False, "error": str(exc)[:500]}
     out["seconds"] = round(time.monotonic() - t0, 2)
-    out["peak_mb"] = peak.mb()   # 0215: its own (ru_maxrss carried the scheduler's across the spawn)
-    out["cpu_s"] = peak.cpu_s()  # 0216: its CPU seconds (its own process; GET /metrics)
+    out["peak_mb"] = peak.mb()   # its own process's peak
+    out["cpu_s"] = peak.cpu_s()
     with database.transaction(db_url) as cur:
         prev = job_state(cur)
         state = dict(prev, last=out)
@@ -1240,8 +1202,8 @@ def _job_main(db_url: str) -> None:
 
 
 class Runner:
-    """insight-ingestion's stats loop (run_scheduler.py): every POLL seconds, a run when one is due, in a process of
-    its own (or inline: `spawn=False`). Only while Mark X is on; never raises into the scheduler."""
+    """The scheduler's stats loop: every POLL seconds, a run when one is due, in a process of its own (or inline:
+    `spawn=False`). Only while Mark X is on; never raises into the scheduler."""
 
     def __init__(self, db_url: str, *, spawn: bool = True, on: Any = None) -> None:
         from insight_core.markx.jobs import enabled

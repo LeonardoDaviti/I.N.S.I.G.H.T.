@@ -5,11 +5,11 @@ step whose rows are already done costs one query: `refresh` runs them all again 
     python /prep/backfills.py [--only a,b] [--skip a,b]
 
 Steps (each skipped when the version has no such code):
-  post_refs   the refs of every post (backfill_post_refs, issue 0125)
+  post_refs   the refs of every post (backfill_post_refs)
   search      the search vectors of posts stored before search or by an older rule; Mark X's English layer
-  handles     the 0168 handle scan of every pending post
-  happenings  the stored happening keys of every read post (0175)
-  units       the round-up split of every post (0181), its recheck once
+  handles     the handle scan of every pending post
+  happenings  the stored happening keys of every read post
+  units       the round-up split of every post, its recheck once
   stories     the start's story job (stored bodies to the reader's rules, then the incremental story job)
 
 Prints one JSON object on its last line: {step: {"seconds", "result"} | {"skipped": why} | {"error"}}.

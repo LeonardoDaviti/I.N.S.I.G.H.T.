@@ -1,10 +1,7 @@
-"""Stealth v10.41: track verdicts and Discover. (FIX 4) a verdict must agree with its own stated fit (track-v3,
-track-check-v2: `subject`, `fits`, `matches` quoting `Belongs:`, `excluded` quoting `Not:`, then `in`); a contradiction
-is no verdict (asked again, then invalid, never counted); the reader's ✓ examples the judge, asked against the
-description alone, says do not fit are flagged on the page, never removed; a join an older check guide let in is
-checked again. (FIX 7) Discover keeps each week's DISCOVER_PER_WEEK best, the rest is the blind check's (`checking`,
-`checked_out`); the Tools panel counts only posts placed in the track. Invented tracks and posts only; the DB tests run
-on a database whose name ends in _test."""
+"""Track verdicts and Discover: a verdict must agree with its own stated fit (`subject`, `fits`, `matches` quoting
+`Belongs:`, `excluded` quoting `Not:`, then `in`), a contradiction is no verdict; the reader's ✓ examples the judge
+says do not fit are flagged, never removed; Discover keeps each week's DISCOVER_PER_WEEK best, the rest is the blind
+check's; the Tools panel counts only placed posts. Invented tracks and posts; the DB tests run on a _test database."""
 from __future__ import annotations
 
 import unittest
@@ -45,7 +42,7 @@ class Fit(unittest.TestCase):
         self.assertIsNone(self.check(answer()))
 
     def test_an_in_whose_fit_is_false_is_no_verdict(self):
-        """87a9fdda's kind: `in` at 0.9 with "nothing to do with printing"."""
+        """`in` at 0.9 with "nothing to do with printing": a contradiction."""
         for guide in (None, tracks.CHECK_GUIDE):
             err = self.check(answer(**{"in": True, "subtopic": "tools"}), guide)
             self.assertIn("fits is false", err)

@@ -43,12 +43,9 @@ function AddField({ kind, onAdd }: { kind: string; onAdd: (f: ThingFieldDef) => 
   );
 }
 
-/**
- * The track's kinds and fields (0245 "what the reader controls"), in the track sheet: Haiku proposed them from the
- * description; the owner renames, adds or removes a field and saves a new version (PUT .../schema), which reads the
- * track's posts again. The kind code adds to every track (practices and claims) is shown, not edited. Hidden while
- * the briefer is off or before a schema exists.
- */
+/** The track's kinds and fields, in the track sheet: Haiku proposed them; the owner edits fields and saves a new
+ *  version (which reads the track's posts again). The code's own kind is shown, not edited. Hidden while the briefer
+ *  is off or before a schema exists. */
 export default function TrackSchemaEditor({ trackId }: { trackId: string }) {
   const client = useQueryClient();
   const query = useQuery({ queryKey: schemaKey(trackId), queryFn: () => briefApi.schema(trackId), staleTime: 60_000, retry: false });

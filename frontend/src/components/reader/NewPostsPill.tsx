@@ -3,11 +3,8 @@ import { ArrowUp } from 'lucide-react';
 import { plural } from '../../lib/format';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 
-/**
- * "N new posts, show" (spec §F.3). New posts never land on top of a list that is
- * being read; this pill appears instead, and clicking it reloads the feed and
- * scrolls to the top. A short fade in (it appears a few times a day at most).
- */
+/** "N new posts, show": new posts never land on top of a list being read; clicking reloads the feed and scrolls to
+ *  the top. */
 export default function NewPostsPill({ count, onShow }: { count: number; onShow: () => void }) {
   if (count <= 0) return null;
   return (

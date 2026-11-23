@@ -22,17 +22,13 @@ import IngestionLogs from './IngestionLogs';
 import BackgroundWork from './BackgroundWork';
 import { LoadingState, Notice } from '../states';
 
-// Source anatomy (issue 0054): its own chunk, loaded when the view opens.
+// source anatomy: its own chunk, loaded when the view opens
 const SourceAnatomy = lazy(() => import('./SourceAnatomy'));
 
 const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
 
-/**
- * Sources → ingestion (reading-finish R3, S4): the useful parts of the old
- * ingestion page, under the sources it fetches. Views as `?sub=`: overview,
- * sources (how each is read and what it gives, issue 0054; a row opens its sheet
- * through `onOpenSource`), archive (backfill, issue 0005 slice 3), jobs and logs.
- */
+/** Sources → ingestion: views as `?sub=`: overview, sources (how each is read and what it gives; a row opens its
+ *  sheet through `onOpenSource`), archive (backfill), jobs and logs. */
 export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: string) => void }) {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -44,15 +40,15 @@ export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: st
 
   const overview = useOperationsOverview();
   const jobs = overview.data?.jobs ?? [];
-  // Each host's budget, learned from the limits archives met (issue 0107).
+  // each host's budget, learned from the limits archives met
   const hostLimits = overview.data?.source_health?.host_limits ?? [];
   const scheduler = useSchedulerConfig();
-  // Every 30 seconds: enough for a minute countdown.
+  // every 30 seconds: enough for a minute countdown
   const nowMs = useNow(30_000).getTime();
-  // The API's build, once per page load: the line at the bottom (issue 0020).
+  // the API's build, once per page load: the line at the bottom
   const apiVersion = useQuery({ queryKey: ['version'], queryFn: () => api.getVersion(), staleTime: Infinity, retry: false });
 
-  // The newest stored ingestion run, so the report survives a reload.
+  // the newest stored ingestion run, so the report survives a reload
   const storedReport = (() => {
     for (const job of jobs) {
       if (job.job_type !== 'ingestion_run') continue;
