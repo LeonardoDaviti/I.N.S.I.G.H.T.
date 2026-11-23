@@ -64,6 +64,7 @@ class Stub:
         self.fail_posts = 0         # answer this many posts with 503 first
         self.slow_kinds = set()     # /work for these kinds answers after 2 s (v10.13.2)
         self.unknown_kinds = set()  # /work for these kinds answers 400 unknown kind (a server older than the worker)
+        self.serve_ready = False    # v10.42: GET /ready answered (False: 404, a server older than it)
         self.guides = dict(GUIDES)
         self.lock = threading.Lock()
         stub = self
@@ -97,6 +98,11 @@ class Stub:
                     if q.get("kinds") in stub.unknown_kinds:
                         return self._send(400, {"detail": f"unknown kind: {q.get('kinds')}"})
                     self._send(200, stub.work(q))
+                elif u.path == "/api/markx/ready" and stub.serve_ready:
+                    kinds = parse_qs(u.query)["kinds"][0].split(",")
+                    with stub.lock:
+                        have = {t["kind"] for t in stub.tasks.values() if t["status"] == "open"}
+                    self._send(200, {"ready": [k for k in kinds if k in have], "planned": []})
                 elif u.path == "/api/markx/status":
                     self._send(200, stub.status())
                 else:
@@ -714,6 +720,21 @@ class TestServer(Base):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(self.stub.by_status("answered")), 20)
         self.assertEqual([e["kind"] for e in self.events("kind-unknown")], ["rename"])
+
+    def test_only_the_kinds_with_work_are_leased(self):
+        """v10.42: GET /ready names the kinds with work; the others are not leased. A server without it (404): every
+        kind, as before."""
+        self.stub.add("read", 5)
+        p = self.run_worker("--kinds", "rename,read,merge")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(sorted({q["kinds"] for q in self.stub.works}), ["merge", "read", "rename"], "an older server")
+        self.stub.works.clear()
+        self.stub.serve_ready = True
+        self.stub.add("read", 5, start=100)
+        p = self.run_worker("--kinds", "rename,read,merge")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual({q["kinds"] for q in self.stub.works}, {"read"})
+        self.assertEqual(len(self.stub.by_status("answered")), 10)
 
     def test_slow_leases_in_a_row_count_as_unreachable(self):
         self.stub.add("read", 5)

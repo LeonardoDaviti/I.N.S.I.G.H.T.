@@ -37,6 +37,10 @@ POST /api/markx/answers
     task whose lease ended, or that another worker now holds, is taken like any other. A task id that names
     no task is listed in "invalid" ("no such task") and not stored.
 
+GET /api/markx/ready?kinds=<k1,k2>[&days=<N|all>]   (v10.42, additive)
+    200 {"ready": [kinds with a task a lease takes now], "planned": [kinds a lease would plan first]}: the worker
+    leases only these. An older worker never asks it; an older server answers 404 and the worker leases every kind.
+
 POST /api/markx/release
     {"worker": "<name>", "task_ids"?: ["<uuid>", ..]}
     200 {"released": int}
@@ -333,6 +337,36 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
                            **({"post": str(t[POST_KINDS[t["kind"]]])} if t.get(POST_KINDS.get(t["kind"], "")) else {}),
                            **_model(t["kind"]))
                       for t in leased]}
+
+
+@router.get("/ready", dependencies=[Depends(_worker_auth)])
+def ready(kinds: str = Query(...), days: Optional[str] = Query(None)):
+    """v10.42: which of `kinds` a lease would give work now: {"ready": [kinds with a leasable task],
+    "planned": [kinds a lease would plan first (as /work decides: a fresh lane, or a planner the lease runs and that
+    is not resting)]}. Cheap (an EXISTS a kind on the queue index), so the worker leases only these instead of every
+    kind each cycle; no lease, no plan, no write. An unknown kind: 400."""
+    wanted = [k.strip() for k in kinds.split(",") if k.strip()]
+    unknown = [k for k in wanted if k not in schemas.KINDS]
+    if not wanted or unknown:
+        raise HTTPException(status_code=400, detail=f"unknown kind: {unknown[0] if unknown else '(none)'}")
+    with transaction() as cur:
+        ready_ = set(repo.leasable_kinds(cur, wanted))
+        setting = tasks.reading_window(cur)
+        planned = set()
+        for kind in wanted:
+            if kind in tasks.FRESH_PLANNERS and kind in tasks.PLANNERS and not _plan_resting(FRESH + kind):
+                planned.add(kind)
+            elif kind not in tasks.PLANNERS or not consumers.wanted(cur, kind) or tasks.planned_in_background(cur, kind):
+                continue
+            elif kind in PLANNED_BY_RUNS and jobs.decision_running(cur):
+                continue
+            elif days is not None and kind in tasks.WINDOWED:
+                planned.add(kind)
+            elif kind in tasks.WINDOWED and tasks.planned_window(cur, kind) != setting:
+                planned.add(kind)
+            elif not _plan_resting(kind):
+                planned.add(kind)
+    return {"ready": [k for k in wanted if k in ready_], "planned": [k for k in wanted if k in planned and k not in ready_]}
 
 
 def _model(kind: str) -> Dict[str, str]:

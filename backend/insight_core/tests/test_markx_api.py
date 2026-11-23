@@ -328,6 +328,26 @@ class Leases(_Api):
         self.assertEqual(self.lease(limit=0)[0], 422)
         self.assertEqual(self.lease(limit=101)[0], 422)
 
+    def test_v1042_ready_names_the_kinds_a_lease_would_give(self):
+        """v10.42: GET /ready: the kinds with a leasable task (open, or leased past its lease), and the kinds a lease
+        would plan; it leases and plans nothing."""
+        judged, anchor = self.post(), self.post(title="Initech")
+        with self.conn.transaction():
+            join = tasks.add(self.cur, "join", "STORY\njoin question", a=judged)[0]
+            pair = tasks.add(self.cur, "pair", "STORY\npair question", a=anchor, b=judged)[0]
+        self.cur.execute("UPDATE mx_tasks SET status = 'leased', lease_until = now() + interval '1 hour' WHERE id = %s",
+                         (pair,))
+        status, body = call("GET", "/api/markx/ready", query={"kinds": "join,pair,merge,track_same"}, token=self.token)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["ready"], ["join"])
+        self.assertNotIn("track_same", body["planned"], "planned by the jobs process, never a lease")
+        self.assertEqual(self.row(join)["status"], "open", "nothing leased")
+        self.cur.execute("UPDATE mx_tasks SET lease_until = now() - interval '1 minute' WHERE id = %s", (pair,))
+        self.assertEqual(call("GET", "/api/markx/ready", query={"kinds": "join,pair"}, token=self.token)[1]["ready"],
+                         ["join", "pair"])
+        self.assertEqual(call("GET", "/api/markx/ready", query={"kinds": "nope"}, token=self.token)[0], 400)
+        self.assertEqual(call("GET", "/api/markx/ready", query={"kinds": "join"}, token="wrong")[0], 401)
+
     def test_an_expired_lease_is_leased_again(self):
         t = self.task()
         self.lease(worker="device-1")

@@ -257,6 +257,17 @@ def open_counts(cur: Cursor, kinds: Sequence[str]) -> Dict[str, int]:
     return {kind: n for kind, n in cur.fetchall()}
 
 
+def leasable_kinds(cur: Cursor, kinds: Sequence[str]) -> List[str]:
+    """v10.42: those of `kinds` with a task a lease would take now (open, or leased past its lease; not of a stopped
+    hold): one EXISTS a kind on the queue index (GET /api/markx/ready)."""
+    cur.execute("""SELECT k FROM unnest(%s::text[]) AS k
+                    WHERE EXISTS (SELECT 1 FROM mx_tasks t LEFT JOIN mx_holds h ON t.hold IS NOT NULL AND h.key = t.hold
+                                   WHERE t.kind = k AND t.status IN ('open', 'leased')
+                                     AND (t.status = 'open' OR t.lease_until < now())
+                                     AND (t.hold IS NULL OR COALESCE(h.state, 'low') <> 'stopped'))""", (list(kinds),))
+    return [r[0] for r in cur.fetchall()]
+
+
 def queue_counts(cur: Cursor) -> Dict[str, Dict[str, int]]:
     """{kind: {status: tasks}} (GET /api/markx/status): the kept totals (issue 0195, markx/kept_counts.py), equal to
     the GROUP BY over every task they replace."""
