@@ -359,7 +359,7 @@ def main_story(row: Dict[str, Any]) -> Optional[str]:
 
 def row_headline_input(row: Dict[str, Any], posts: Dict[str, Any]) -> Optional[str]:
     """A row's own headline question (0121 Decided 2), from its posts as the headline guide reads a story's members
-    (tasks.headline_input: the first 6, earliest first). The page finds the answer again by this input."""
+    (tasks.headline_input: its core members, earliest first). The page finds the answer again by this input."""
     from insight_core.markx import tasks
     ps = [posts[p["post_id"]] for p in row.get("posts") or [] if p["post_id"] in posts]
     return tasks.headline_input(ps) if ps else None

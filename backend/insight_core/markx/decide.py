@@ -1488,7 +1488,8 @@ def holds(c: Dict[str, Any], members: Dict[str, Set[str]]) -> bool:
 
 
 def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: Ask, news_keys: Sequence[str]) -> int:
-    """Haiku's headline (F4) for every News story, from its first 6 members: asked once, stored when answered."""
+    """Haiku's headline (F4) for every News story, from its core members (tasks.headline_members): asked again when
+    the core changes, stored when answered."""
     from insight_core.markx import repo, tasks
     changed = 0
     cur.execute("SELECT id::text, headline, headline_call::text FROM mx_stories WHERE id = ANY(%s::uuid[])",
@@ -1499,7 +1500,7 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
         ps = world.earliest(p for p in out.about[key] if p in world.text)
         if not ps:
             continue
-        shown = ps[:tasks.HEADLINE_MEMBERS]   # all headline_input shows (tasks._earliest(...)[:HEADLINE_MEMBERS])
+        shown = [p.id for p in tasks.headline_members([world.text[p] for p in ps])]   # all headline_input shows
         text = incremental.rendered(world.memo, "headline", shown,
                                     lambda: tasks.headline_input([world.text[p] for p in shown]),
                                     texts=world.text if world.memo is not None else None)
