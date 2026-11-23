@@ -252,11 +252,10 @@ def _cites_left(cur: Any, track_id: str, week: date, rows: Sequence[Dict[str, An
 # ---- shapes ----------------------------------------------------------------------------------------------------
 
 def _posts(cur: Any, track_id: str, ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
-    """{post: {id, title, url, at, why}} (the why: the track judge's newest line)."""
-    from insight_core.markx import tracks
+    """{post: {id, title, url, at (its publication), why}} (the why: the track judge's newest line)."""
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, {shown_title()}, p.url, {tracks._date()}, p.source_id::text,
+    cur.execute(f"""SELECT p.id::text, {shown_title()}, p.url, {TT.post_date()}, p.source_id::text,
                            (SELECT i.why FROM mx_track_items i WHERE i.track_id = %s AND i.post_id = p.id
                              AND i.verdict IS NOT NULL ORDER BY i.version DESC LIMIT 1)
                       FROM posts p WHERE p.id = ANY(%s::uuid[])""", (track_id, list(ids)))
@@ -385,23 +384,32 @@ def _hosts(sections: Sequence[Dict[str, Any]]) -> Dict[str, str]:
 
 
 def _also(cur: Any, track: Dict[str, Any], start: Optional[datetime], end: Optional[datetime], *,
-          joined: bool = False) -> List[str]:
-    """The posts in the track dated (`joined`: joined) in [start, end) that gave no row (no report of any thing)."""
+          joined: bool = False, fresh: Optional[datetime] = None) -> List[str]:
+    """The posts in the track published in [start, end) that gave no row (no report of any thing); `joined`: joined
+    in [start, end) and published since `fresh` (v10.41: by the post's publication, as the things are: a feed that
+    surfaces a 2015 post this week does not make it this week's), newest published first."""
     from insight_core.markx import track_subtopics
     items = track_subtopics.in_track(cur, track)
+    ids = [it["post_id"] for it in items]
+    if not ids:
+        return []
+    cur.execute(f"SELECT p.id::text, {TT.post_date()} FROM posts p WHERE p.id = ANY(%s::uuid[])", (ids,))
+    pub = dict(cur.fetchall())
 
-    def when(it: Dict[str, Any]) -> Optional[datetime]:
-        return track_subtopics.joined_at(it) if joined else it.get("at")
-    ids = [it["post_id"] for it in items if when(it) is not None and (start is None or when(it) >= start)
-           and (end is None or when(it) < end)]
+    def inside(t: Optional[datetime], lo: Optional[datetime], hi: Optional[datetime]) -> bool:
+        return t is not None and (lo is None or t >= lo) and (hi is None or t < hi)
+    if joined:
+        ids = [it["post_id"] for it in items if inside(track_subtopics.joined_at(it), start, end)
+               and inside(pub.get(it["post_id"]), fresh, None)]
+    else:
+        ids = [p for p in ids if inside(pub.get(p), start, end)]
     if not ids:
         return []
     cur.execute("""SELECT DISTINCT r.post_id::text FROM mx_track_thing_reports r JOIN mx_track_things t ON t.id = r.thing_id
                     WHERE t.track_id = %s AND r.post_id = ANY(%s::uuid[])""", (track["folder_id"], ids))
     gave = {p for (p,) in cur.fetchall()}
     epoch = datetime.min.replace(tzinfo=timezone.utc)
-    at = {it["post_id"]: when(it) or epoch for it in items}
-    return sorted((p for p in ids if p not in gave), key=lambda p: (at[p], p), reverse=True)
+    return sorted((p for p in dict.fromkeys(ids) if p not in gave), key=lambda p: (pub.get(p) or epoch, p), reverse=True)
 
 
 def _point_views(got: Optional[Dict[str, Any]], shown: Sequence[str], host: Optional[Dict[str, str]] = None
@@ -485,7 +493,7 @@ def inputs(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = No
                                                                    ORDER BY x.id)))
                               FROM mx_track_thing_reports r JOIN mx_track_things x ON x.id = r.thing_id
                               JOIN posts p ON p.id = r.post_id
-                             WHERE x.track_id = %(t)s::uuid AND {tracks._date()} >= %(s)s AND {tracks._date()} < %(e)s),
+                             WHERE x.track_id = %(t)s::uuid AND {TT.post_date()} >= %(s)s AND {TT.post_date()} < %(e)s),
                            (SELECT md5(string_agg(concat_ws(':', id, status, merged_into, updated_at), ',' ORDER BY id))
                               FROM mx_track_things WHERE track_id = %(t)s::uuid AND status = 'merged'),
                            (SELECT json_build_array(count(*), max(c.created_at)) FROM mx_track_brief_asks a
@@ -582,7 +590,7 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
     rows = [dict(x, new=True) for x in TT.current(cur, tid)
             if x["found_at"] > since and x["kind"] in kinds and x["first_at"] is not None and x["first_at"] >= fresh]
     rs = TT.reports(cur, tid, [x["id"] for x in rows])
-    also = _also(cur, t, since, None, joined=True)
+    also = _also(cur, t, since, None, joined=True, fresh=fresh)
     posts = _posts(cur, tid, sorted({r["post"] for x in rows for r in rs.get(x["id"], [])} | set(also)))
     order = _order(kinds)
     rows.sort(key=lambda x: (order.get(x["kind"], 99), -x["found_at"].timestamp(), x["id"]))

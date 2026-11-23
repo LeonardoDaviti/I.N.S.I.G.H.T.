@@ -35,12 +35,21 @@ address, title and WINDOW_CHARS of its text (from the words the link's anchor na
 stores (a post at that address); nothing is fetched here. A quote may come from the page (the same checks: it is in
 what the question showed); a value quoted only from it names it (`page`, kept in the report's values and the row).
 
-**Joins** (never by vector similarity): a report joins a current thing of its kind that shares a key value (the
-schema's key fields and every link field, normalised: a name, a link, a repo); a practice joins only within its own
-post. In the jobs process (`refresh`), two things of one kind whose key value names the same entity (the posts'
-current mentions, through identity's redirects and pins) become one; two practices whose quotes name a shared entity
-are asked once (`plan_same`, kind `track_same`, guide track-same-v1, "same claim?"), and joined on `same`. A join is a
-status (`merged`, `merged_into`, `merged_by`), never a delete; a thing's reports are its own and its merged things'.
+**Joins** (never by vector similarity; v10.41: one row a thing): a report joins a current thing of its kind only on a
+strong identity with one of that thing's own reports (`same_identity`): the same name (its first field, as a key
+text, a plural s folded), or a shared link (a link field, or the address of a post that gave only that thing) and
+names that agree (a word of both that few of the kind's names use, `rare_words`). A shared link alone (a features
+page, a code host's account, the model a setup runs) or another key field (the hardware) never joins, so nothing
+chains through a weak key. A practice joins only within its own post. In the jobs process (`refresh`), two things of
+one kind whose name names the same entity (the posts' current mentions, through identity's redirects and pins) become
+one; two rows of one kind that may be one thing (`same_pairs`: practices naming a shared entity; other kinds naming
+one, sharing a link, or whose names share a rare word; a pair one post gave too) are asked once (`plan_same`, kind
+`track_same`, guide track-same-v2, "same thing?"), and joined on `same`. A join is a status (`merged`, `merged_into`,
+`merged_by`), never a delete; a thing's reports are its own and its merged things'. A row's fields (`merged_fields`):
+each the value most of its posts give (a tie: the earliest post's), value and quote one post's. Its dates, the issue's
+week, the quick look and its "also" read the post's publication (`post_date`), not the day a feed surfaced it.
+`repair` (scripts/repair_track_rows.py, --dry-run) splits a row joined before v10.41 that is not one thing and asks
+a catalog post again under track-things-v3 (a catalog or roundup is one row), whose answer folds its item rows.
 
 Behind entity_bands.json `tracks.briefs` (`on`, default off until measured: 0249): while off nothing is planned or
 built and the tables stay empty. Only mx_* tables are written.
@@ -57,8 +66,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 log = logging.getLogger(__name__)
 
 SCHEMA_KIND, SCHEMA_GUIDE = "track_schema", "track-schema-v1"
-THINGS_KIND, THINGS_GUIDE = "track_things", "track-things-v2"   # 0261: v2; a post asked under v1 is not asked again
-SAME_KIND, SAME_GUIDE = "track_same", "track-same-v1"
+THINGS_KIND, THINGS_GUIDE = "track_things", "track-things-v3"   # v10.41: v3 (a catalog is one row); 0261: v2
+SAME_KIND, SAME_GUIDE = "track_same", "track-same-v2"   # v10.41: every kind (v1: practices)
 PRACTICE_KIND = "practice_or_claim"
 PRACTICE = {"kind": PRACTICE_KIND, "about": "a method, habit, finding or opinion a post states",
             "fields": [{"name": "what", "type": "text", "key": True, "about": "the method or claim, in a few words"},
@@ -72,6 +81,9 @@ MAX_WINDOWS = 6         # windows a long post is read in at most
 LINKS_MAX = 25          # links a question lists
 THINGS_OPEN = 60        # things questions a track has waiting at most
 SAME_OPEN = 30          # same-claim questions waiting at most, across tracks
+SAME_PAIRS = 200        # v10.41: same-thing pairs one track's plan considers at most (closest names first)
+RARE_MIN, RARE_SHARE = 3, 0.02   # v10.41: a word of at most this many of a kind's names (or this share) is rare
+AGREE = 0.5             # v10.41: two names agree when their shared words are this Dice share of their words at least
 OWN = "[this post's own address]"
 SWITCH = ("tracks", "briefs")
 LINKED_SWITCH = "linked_docs"   # entity_bands.json tracks.linked_docs (0257, default on)
@@ -662,13 +674,14 @@ def plan_things(cur: Any, **_kw: Any) -> int:
     return added
 
 
-def ask_posts(cur: Any, track: Dict[str, Any], s: Dict[str, Any], ids: Sequence[str], *, room: int) -> int:
+def ask_posts(cur: Any, track: Dict[str, Any], s: Dict[str, Any], ids: Sequence[str], *, room: int,
+              again: bool = False) -> int:
     """The things questions of `ids` (in their order) not yet asked under schema `s`'s version, `room` posts at most,
     every window of each (and its maker's linked pages): how many were added. A question already answered is applied
     again (its reports, once). A track's posts (plan_things) and an entity's (entity_brief: the entity as the track)
     are asked by this one path."""
     from insight_core.markx import repo, tasks
-    done = _asked(cur, track["folder_id"], s["version"], ids) if ids else set()
+    done = _asked(cur, track["folder_id"], s["version"], ids) if ids and not again else set()   # again: repair
     todo = [i for i in ids if i not in done][:max(0, room)]
     posts = tasks.load_posts(cur, todo)
     own = _own(cur, todo)
@@ -731,9 +744,16 @@ def own_address(cur: Any, post: str, things: Sequence[Dict[str, Any]], kinds: Di
     return got[0] if got else None
 
 
+def post_date(alias: str = "p") -> str:
+    """v10.41: a thing's post date as SQL: the post's publication (pairing.published_date: published, else surfaced,
+    else fetched), never the day a feed surfaced an old post: a thing's first and last dates, the weekly issue's
+    week, the quick look and its "also" read it."""
+    from insight_core.markx import pairing
+    return pairing.published_date(alias)
+
+
 def _post_at(cur: Any, post_id: str) -> Optional[datetime]:
-    from insight_core.markx import tracks
-    cur.execute(f"SELECT {tracks._date()} FROM posts p WHERE p.id = %s", (post_id,))
+    cur.execute(f"SELECT {post_date()} FROM posts p WHERE p.id = %s", (post_id,))
     r = cur.fetchone()
     return r[0] if r else None
 
@@ -798,15 +818,102 @@ def apply_things(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str,
                     (call_id, n, thing, post, task["id"], version, win, json.dumps(th["fields"], ensure_ascii=False)))
         n_added += cur.rowcount
         remerge(cur, tid, thing)
+    if n_added and task.get("guide") == THINGS_GUIDE:
+        fold_catalog(cur, tid, post, call_id, kinds)
     return n_added
+
+
+def fold_catalog(cur: Any, track_id: str, post: str, call_id: Any, kinds: Dict[str, Dict[str, Any]]) -> int:
+    """v10.41: a post asked again under track-things-v3 (`repair`: a catalog read one row an item under v2) gave one
+    row of a kind: the rows of that kind only this post's answers under an earlier guide gave join it (merged_by
+    haiku: its answer said they are one). How many joins."""
+    cur.execute("""SELECT t.kind, array_agg(DISTINCT r.thing_id::text) FROM mx_track_thing_reports r
+                     JOIN mx_track_things t ON t.id = r.thing_id
+                    WHERE r.call_id = %s AND t.track_id = %s GROUP BY 1""", (call_id, track_id))
+    got, root = cur.fetchall(), roots(cur, track_id)
+    joined = 0
+    for kind, things in got:
+        heads = {root.get(t, t) for t in things}
+        if kind == PRACTICE_KIND or kind not in kinds or len(heads) != 1:
+            continue
+        head, = heads
+        cur.execute("""SELECT t.id::text FROM mx_track_things t
+                        WHERE t.track_id = %s AND t.kind = %s AND t.status = 'current' AND t.id <> %s
+                          AND EXISTS (SELECT 1 FROM mx_track_thing_reports r WHERE r.thing_id = t.id)
+                          AND NOT EXISTS (SELECT 1 FROM mx_track_thing_reports r JOIN mx_tasks k ON k.id = r.task_id
+                                           WHERE r.thing_id = t.id AND (r.post_id <> %s OR k.guide = %s))""",
+                    (track_id, kind, head, post, THINGS_GUIDE))
+        for (gone,) in cur.fetchall():
+            joined += merge(cur, track_id, head, gone, "haiku")
+    return joined
+
+
+def name_of(kind: Dict[str, Any], values: Dict[str, Any]) -> str:
+    """v10.41: a report's (or a thing's) name as two are compared: its kind's first field (a practice's `what`), as a
+    key text, a word's plural `s` folded ("Private spaces" is "Private Space")."""
+    first = kind["fields"][0]["name"]
+    v = values.get(first)
+    v = v.get("value") if isinstance(v, dict) and "value" in v else v
+    if not isinstance(v, str):
+        return ""
+    return " ".join(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+                    for w in key_text(v).split())
+
+
+def links_of(kind: Dict[str, Any], values: Dict[str, Any], own: Optional[str] = None) -> Set[str]:
+    """A report's links (every link field, and `own`, the address of the post it is the one thing of), normalised;
+    `own` also as "own:<address>" (the thing's own page: a link to it names the thing)."""
+    out = {s for s in sigs(kind, values, own) if s.startswith("link:")}
+    return out | ({f"own:{norm_url(own)}"} if own and norm_url(own) else set())
+
+
+def name_words(name: str) -> Set[str]:
+    """The words of a name two may share: 3+ characters, or holding a digit."""
+    return {w for w in name.split() if len(w) >= 3 or any(c.isdigit() for c in w)}
+
+
+def rare_words(names: Iterable[str]) -> Set[str]:
+    """v10.41: the words of a kind's names that few of its rows use (RARE_SHARE of them at most, RARE_MIN rows at
+    least): a word most rows share ("model", "setup", "app") names no one of them. Read from the track's own names,
+    in any language."""
+    df: Dict[str, int] = defaultdict(int)
+    n = 0
+    for name in names:
+        n += 1
+        for w in name_words(name):
+            df[w] += 1
+    cap = max(RARE_MIN, RARE_SHARE * n)
+    return {w for w, c in df.items() if c <= cap}
+
+
+def same_identity(a_name: str, a_links: Set[str], b_name: str, b_links: Set[str], rare: Set[str]) -> bool:
+    """v10.41: two reports are one thing only on a strong identity: the same name, or a shared link and names that
+    agree: a rare word of the kind's names in both, and their shared words half of their words at least (AGREE, the
+    Dice share: "Tiel-Coder" and "Tiel-Coder 35B-A3B" agree, "Test PC" and "Palit RTX 5060 Ti 16GB test stand" do
+    not); a link to the other's own page (the post that gave only that thing) needs the rare word only. A shared link
+    alone (a site's features page, a code host's account, the model a setup runs), or any other key (the hardware),
+    is not the thing's identity."""
+    if not a_name or not b_name:
+        return False
+    if a_name == b_name:
+        return True
+    if not a_links & b_links:
+        return False
+    a, b = name_words(a_name), name_words(b_name)
+    shared = a & b
+    if not shared & rare:
+        return False
+    page = any(f"link:{x[4:]}" in b_links for x in a_links if x.startswith("own:")) or \
+        any(f"link:{x[4:]}" in a_links for x in b_links if x.startswith("own:"))
+    return page or 2 * len(shared) >= AGREE * (len(a) + len(b))
 
 
 def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any], post: str,
            own: Optional[str] = None) -> Optional[str]:
-    """The current thing a report joins (its root): same kind and a shared key value (a link: also the address of a
-    post that gave only that thing, `own_address`); a practice only among the things its own post already reported
-    (its exact `what`)."""
-    mine = sigs(kind, values, own)
+    """The current thing a report joins (its root): same kind and a strong identity with one of that thing's own
+    reports (`same_identity`; v10.41: never by a shared link or another key alone, so no chain through weak keys); a
+    practice only among the things its own post already reported (its exact `what`)."""
+    mine = name_of(kind, values)
     if not mine:
         return None
     if kind["kind"] == PRACTICE_KIND:
@@ -824,11 +931,19 @@ def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any]
                          JOIN posts p ON p.id = r.post_id
                         WHERE t.track_id = %s AND t.kind = %s""", (PRACTICE_KIND, track_id, kind["kind"]))
         rows = cur.fetchall()
+    if not rows:
+        return None
     root = roots(cur, track_id)
-    for row in rows:
-        thing, vals = row[0], row[1]
-        theirs = row[2] if len(row) > 2 else None
-        if mine & sigs(kind, vals, theirs):
+    if kind["kind"] == PRACTICE_KIND:
+        for row in rows:
+            if name_of(kind, row[1]) == mine:
+                return root.get(row[0], row[0])
+        return None
+    named = [(row[0], name_of(kind, row[1]), links_of(kind, row[1], row[2] if len(row) > 2 else None)) for row in rows]
+    rare = rare_words([n for _t, n, _l in named] + [mine])
+    links = links_of(kind, values, own)
+    for thing, name, theirs in named:
+        if same_identity(mine, links, name, theirs, rare):
             return root.get(thing, thing)
     return None
 
@@ -836,13 +951,12 @@ def _match(cur: Any, track_id: str, kind: Dict[str, Any], values: Dict[str, Any]
 def reports(cur: Any, track_id: str, thing_ids: Optional[Sequence[str]] = None) -> Dict[str, List[Dict[str, Any]]]:
     """{root thing: its reports and its merged things' [{post, at, call, values, version, found_at}]}, oldest post
     first; `thing_ids`: only these roots'."""
-    from insight_core.markx import tracks
     root = roots(cur, track_id)
     wanted = None if thing_ids is None else set(thing_ids)
     members = [t for t, r in root.items() if wanted is None or r in wanted]
     if not members:
         return {}
-    cur.execute(f"""SELECT r.thing_id::text, r.post_id::text, {tracks._date()}, r.call_id::text, r.field_values,
+    cur.execute(f"""SELECT r.thing_id::text, r.post_id::text, {post_date()}, r.call_id::text, r.field_values,
                            r.schema_version, r.created_at
                       FROM mx_track_thing_reports r JOIN posts p ON p.id = r.post_id
                      WHERE r.thing_id = ANY(%s::uuid[])
@@ -854,17 +968,48 @@ def reports(cur: Any, track_id: str, thing_ids: Optional[Sequence[str]] = None) 
     return out
 
 
+def value_key(v: Any) -> str:
+    """A value as two posts' values are compared (text folded as a key text, numbers and links as given)."""
+    v = v.get("value") if isinstance(v, dict) and "value" in v else v
+    if isinstance(v, str):
+        return "link:" + norm_url(v) if re.match(r"^https?://", v) else key_text(v)
+    return json.dumps(v, sort_keys=True)
+
+
+def merged_fields(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """v10.41: a thing's fields from its own reports (oldest post first): each field the value most of its posts give
+    (a tie: the earliest post's; within one post its latest answer's: a post asked again answers for it), with that
+    report's quote; a value and its quote always one post's. Before, the newest post's value replaced each field, so a
+    row read one field from one post and the next from another."""
+    order: Dict[str, int] = {}
+    for r in rs:
+        order.setdefault(r["post"], len(order))
+    posts: Dict[str, Dict[str, Set[str]]] = defaultdict(lambda: defaultdict(set))
+    best: Dict[Tuple[str, str], Tuple[int, int, Dict[str, Any], str]] = {}
+    for i, r in enumerate(rs):
+        for name, v in (r["values"] or {}).items():
+            if not isinstance(v, dict):
+                continue
+            k = value_key(v)
+            posts[name][k].add(r["post"])
+            rank = (order[r["post"]], -i)
+            if (name, k) not in best or rank < best[(name, k)][:2]:
+                best[(name, k)] = (*rank, v, r["post"])
+    fields: Dict[str, Any] = {}
+    for name, by in posts.items():
+        k = min(by, key=lambda k: (-len(by[k]), best[(name, k)][:2]))
+        _o, _i, v, post = best[(name, k)]
+        fields[name] = {"value": v.get("value"), "quote": v.get("quote"), "post": post,
+                        **({"page": v["page"]} if v.get("page") else {})}
+    return fields
+
+
 def remerge(cur: Any, track_id: str, thing: str) -> None:
-    """A thing's fields again from its reports (each field the newest post's value, with that post and quote), its
-    first and last post dates."""
+    """A thing's fields again from its reports (`merged_fields`), its first and last post dates (publication)."""
     rs = reports(cur, track_id, [thing]).get(thing, [])
     if not rs:
         return
-    fields: Dict[str, Any] = {}
-    for r in rs:   # oldest first: a newer post's value replaces an older one's
-        for name, v in (r["values"] or {}).items():
-            fields[name] = {"value": v.get("value"), "quote": v.get("quote"), "post": r["post"],
-                            **({"page": v["page"]} if v.get("page") else {})}
+    fields = merged_fields(rs)
     ats = [r["at"] for r in rs if r["at"] is not None]
     cur.execute("""UPDATE mx_track_things SET fields = %s::jsonb, first_at = %s, last_at = %s, updated_at = now()
                     WHERE id = %s""",
@@ -920,8 +1065,8 @@ def _mentions(cur: Any, post_ids: Sequence[str]) -> Dict[str, List[Tuple[str, st
 
 def named_entities(kind: Dict[str, Any], rs: Sequence[Dict[str, Any]], ments: Dict[str, List[Tuple[str, str, str]]]
                    ) -> Set[str]:
-    """The entities a thing names: a mention of a reporting post whose name (or span) is the thing's own key text; a
-    practice: every mention whose span is inside one of its quotes."""
+    """The entities a thing names: a mention of a reporting post whose name (or span) is the thing's own name (its
+    first field; v10.41: not another key field); a practice: every mention whose span is inside one of its quotes."""
     out: Set[str] = set()
     for r in rs:
         vals = r["values"] or {}
@@ -929,8 +1074,8 @@ def named_entities(kind: Dict[str, Any], rs: Sequence[Dict[str, Any]], ments: Di
             quotes = [f" {key_text(v.get('quote'))} " for v in vals.values() if isinstance(v, dict)]
             out |= {root for root, _nk, span in ments.get(r["post"], []) if span and any(f" {span} " in q for q in quotes)}
             continue
-        keys = {key_text(vals[f].get("value")) for f in key_fields(kind)
-                if f in vals and isinstance(vals[f].get("value"), str)}
+        first = kind["fields"][0]["name"]   # v10.41: its name only (a shared hardware or maker is not the thing)
+        keys = {key_text(vals[first].get("value"))} if isinstance((vals.get(first) or {}).get("value"), str) else set()
         keys.discard("")
         out |= {root for root, nk, span in ments.get(r["post"], []) if nk in keys or key_text(span) in keys}
     return out
@@ -974,16 +1119,54 @@ def refresh(cur: Any) -> Dict[str, Any]:
     return {t["folder_id"]: n for t in tracks.described(cur) if (n := entity_join(cur, t))}
 
 
-def same_input(track: Dict[str, Any], a: Dict[str, Any], b: Dict[str, Any]) -> str:
+def same_input(track: Dict[str, Any], a: Dict[str, Any], b: Dict[str, Any],
+               kind: Optional[Dict[str, Any]] = None, *, same_post: bool = False) -> str:
+    """A same-thing question (track-same-v2): the track, the kind, rows A and B (each filled field), and whether one
+    post gave both."""
+    kind = kind or PRACTICE
+
     def line(tag: str, t: Dict[str, Any]) -> str:
         f = t["fields"] or {}
-        return f"{tag}: " + " | ".join(f"{n}: {f[n]['value']}" for n in ("what", "result", "evidence") if n in f)
-    return "\n".join(header(track)[:2] + ["", line("A", a), line("B", b)])
+        return f"{tag}: " + " | ".join(f"{x['name']}: {shown_value(x, f[x['name']]['value'])}" for x in kind["fields"]
+                                       if x["name"] in f)
+    return "\n".join(header(track)[:2] + [f"KIND: {kind['kind']}: {kind.get('about') or ''}",
+                                          "FROM: " + ("one post gave both" if same_post else "two posts"),
+                                          "", line("A", a), line("B", b)])
+
+
+def same_pairs(kind: Dict[str, Any], things: Sequence[Dict[str, Any]], rs: Dict[str, List[Dict[str, Any]]],
+               ments: Dict[str, List[Tuple[str, str, str]]]) -> List[Tuple[str, str, bool]]:
+    """v10.41: the pairs of one kind's current rows worth a same-thing question, closest names first, SAME_PAIRS at
+    most: [(a, b, one post gave both)]. Practices: their quotes name a shared entity. Other kinds: they name a shared
+    entity, share a link, or their names share a rare word of the kind (`rare_words`). A pair from one post is asked
+    too (a post read in windows gives its thing twice)."""
+    named = {t["id"]: named_entities(kind, rs.get(t["id"], []), ments) for t in things}
+    posts = {t["id"]: {r["post"] for r in rs.get(t["id"], [])} for t in things}
+    names = {t["id"]: name_of(kind, t["fields"] or {}) for t in things}
+    links = {t["id"]: set().union(*[links_of(kind, r["values"] or {}) for r in rs.get(t["id"], [])] or [set()])
+             for t in things}
+    rare = rare_words(names.values())
+    words = {t: name_words(n) & rare for t, n in names.items()}
+    out = []
+    ids = sorted(names)
+    for i, x in enumerate(ids):
+        for y in ids[i + 1:]:
+            if kind["kind"] == PRACTICE_KIND:
+                close = 1.0 if named[x] & named[y] else 0.0
+            else:
+                shared = words[x] & words[y]
+                close = (len(shared) / max(1, len(words[x] | words[y])) + bool(named[x] & named[y])
+                         + bool(links[x] & links[y] and shared))
+            if close > 0:
+                out.append((close, x, y, bool(posts[x] & posts[y])))
+    out.sort(key=lambda c: (-c[0], c[1], c[2]))
+    return [(x, y, one) for _c, x, y, one in out[:SAME_PAIRS]]
 
 
 def plan_same(cur: Any, **_kw: Any) -> int:
-    """A `track_same` question for each pair of current practices of a track whose quotes name a shared entity and
-    that were never asked (by the pair), SAME_OPEN waiting at most: how many were added."""
+    """A `track_same` question for each pair of current rows of one kind of a track that `same_pairs` finds and that
+    was never asked (by the pair, under any guide of the kind), SAME_OPEN waiting at most: how many were added.
+    v10.41: every kind, not only practices, and a pair one post gave too."""
     from insight_core.markx import repo, schemas, tracks
     if not on():
         return 0
@@ -994,25 +1177,29 @@ def plan_same(cur: Any, **_kw: Any) -> int:
     for t in tracks.described(cur):
         if room <= 0:
             break
-        ps = current(cur, t["folder_id"], PRACTICE_KIND)
-        if len(ps) < 2:
+        kinds = _kinds(cur, t["folder_id"])
+        rows = [x for x in current(cur, t["folder_id"]) if x["kind"] in kinds]
+        if len(rows) < 2:
             continue
-        rs = reports(cur, t["folder_id"], [p["id"] for p in ps])
+        rs = reports(cur, t["folder_id"], [x["id"] for x in rows])
         ments = _mentions(cur, sorted({r["post"] for v in rs.values() for r in v}))
-        named = {p["id"]: named_entities(PRACTICE, rs.get(p["id"], []), ments) for p in ps}
-        posts = {p["id"]: {r["post"] for r in rs.get(p["id"], [])} for p in ps}
-        cur.execute("""SELECT a::text, b::text FROM mx_tasks WHERE kind = %s AND guide = %s
+        ids = [x["id"] for x in rows]
+        cur.execute("""SELECT a::text, b::text FROM mx_tasks WHERE kind = %s AND guide = ANY(%s)
                           AND (a = ANY(%s::uuid[]) OR b = ANY(%s::uuid[]))""",
-                    (SAME_KIND, SAME_GUIDE, list(named), list(named)))
+                    (SAME_KIND, list(schemas.answer_guides(SAME_KIND)), ids, ids))
         asked = {tuple(sorted(r)) for r in cur.fetchall()}
-        by = {p["id"]: p for p in ps}
-        ids = sorted(named)
-        for i, x in enumerate(ids):
-            for y in ids[i + 1:]:
-                if room <= 0 or (x, y) in asked or not (named[x] & named[y]) or posts[x] == posts[y]:
+        by = {x["id"]: x for x in rows}
+        for kname, kind in kinds.items():
+            mine = [x for x in rows if x["kind"] == kname]
+            if len(mine) < 2:
+                continue
+            for x, y, one in same_pairs(kind, mine, rs, ments):
+                if room <= 0:
+                    break
+                if (x, y) in asked:
                     continue
                 _tid, new = repo.add_task(cur, kind=SAME_KIND, guide=SAME_GUIDE, subject_kind="thing_thing",
-                                          input=same_input(t, by[x], by[y]), a=x, b=y)
+                                          input=same_input(t, by[x], by[y], kind, same_post=one), a=x, b=y)
                 asked.add((x, y))
                 added += new
                 room -= new
@@ -1020,7 +1207,7 @@ def plan_same(cur: Any, **_kw: Any) -> int:
 
 
 def apply_same(cur: Any, task: Dict[str, Any], answer: Dict[str, Any]) -> bool:
-    """A same-claim answer: `same` joins the newer practice into the older (both still current)."""
+    """A same-thing answer: `same` joins the newer row into the older (both still current, of one kind)."""
     if not answer.get("same"):
         return False
     cur.execute("SELECT id::text, track_id::text, created_at FROM mx_track_things WHERE id = ANY(%s::uuid[])",
@@ -1029,6 +1216,158 @@ def apply_same(cur: Any, task: Dict[str, Any], answer: Dict[str, Any]) -> bool:
     if len(rows) != 2 or rows[0][1] != rows[1][1]:
         return False
     return merge(cur, rows[0][1], rows[0][0], rows[1][0], "haiku")
+
+
+# ---- repair (v10.41): rows joined by a weak key split, catalogs asked again ---------------------------------------
+
+CATALOG_ROWS = 5   # rows of one kind that one post alone gave: the post is a catalog read one row an item (v2)
+
+
+def _member_reports(cur: Any, track_id: str, things: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """{root: its reports and its members' [{call, n, thing (its own), post, at, values, url (the post's own address
+    when that post gave one thing of the track's kinds)}]}, oldest post first."""
+    root = roots(cur, track_id)
+    wanted = set(things)
+    members = [t for t, r in root.items() if r in wanted]
+    if not members:
+        return {}
+    cur.execute(f"""SELECT r.call_id::text, r.n, r.thing_id::text, r.post_id::text, {post_date()}, r.field_values,
+                           CASE WHEN (SELECT count(DISTINCT r2.thing_id) FROM mx_track_thing_reports r2
+                                        JOIN mx_track_things t2 ON t2.id = r2.thing_id
+                                       WHERE r2.post_id = r.post_id AND t2.track_id = %s AND t2.kind <> %s) = 1
+                                THEN p.url END
+                      FROM mx_track_thing_reports r JOIN posts p ON p.id = r.post_id
+                     WHERE r.thing_id = ANY(%s::uuid[])
+                     ORDER BY 5 NULLS FIRST, r.created_at, r.call_id, r.n""", (track_id, PRACTICE_KIND, members))
+    out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for call, n, thing, post, at, vals, url in cur.fetchall():
+        out[root[thing]].append({"call": call, "n": n, "thing": thing, "post": post, "at": at, "values": vals,
+                                 "url": url})
+    return out
+
+
+def regroup(kind: Dict[str, Any], rs: Sequence[Dict[str, Any]], rare: Set[str]) -> List[List[Dict[str, Any]]]:
+    """A row's reports in the groups a strong identity makes (`same_identity` with a report already in the group;
+    oldest first): one group is one thing."""
+    groups: List[List[Tuple[str, Set[str], Dict[str, Any]]]] = []
+    for r in rs:
+        name, links = name_of(kind, r["values"] or {}), links_of(kind, r["values"] or {}, r.get("url"))
+        for g in groups:
+            if any(same_identity(name, links, n, ls, rare) for n, ls, _r in g):
+                g.append((name, links, r))
+                break
+        else:
+            groups.append([(name, links, r)])
+    return [[r for _n, _l, r in g] for g in groups]
+
+
+def repair_plan(cur: Any, track_id: str) -> Dict[str, Any]:
+    """What `repair` would do to a track (read only): {splits: [{thing, kind, name, posts, groups: [{name, posts,
+    members (member things wholly in the group), moved (the group's other reports)}]}], catalogs: [{post, kind,
+    rows}]}. The group holding a row's earliest report stays the row; every other group becomes a thing of its own."""
+    kinds = _kinds(cur, track_id)
+    by_kind: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for t in current(cur, track_id):
+        if t["kind"] in kinds and t["kind"] != PRACTICE_KIND:
+            by_kind[t["kind"]].append(t)
+    splits = []
+    for kname, rows in sorted(by_kind.items()):
+        kind = kinds[kname]
+        rs = _member_reports(cur, track_id, [t["id"] for t in rows])
+        rare = rare_words(name_of(kind, r["values"] or {}) for v in rs.values() for r in v)
+        for t in rows:
+            mine = rs.get(t["id"], [])
+            groups = regroup(kind, mine, rare)
+            if len(groups) < 2:
+                continue
+            of: Dict[str, Set[int]] = defaultdict(set)
+            for i, g in enumerate(groups):
+                for r in g:
+                    of[r["thing"]].add(i)
+            out = []
+            for i, g in enumerate(groups[1:], 1):
+                whole = sorted({r["thing"] for r in g if r["thing"] != t["id"] and of[r["thing"]] == {i}})
+                out.append({"name": name_of(kind, g[0]["values"] or {}), "posts": sorted({r["post"] for r in g}),
+                            "members": whole,
+                            "moved": [(r["call"], r["n"], r["thing"]) for r in g if r["thing"] not in whole]})
+            splits.append({"thing": t["id"], "kind": kname, "name": name_of(kind, t["fields"] or {}),
+                           "posts": len({r["post"] for r in mine}), "groups": out})
+    cur.execute("""SELECT r.post_id::text, t.kind, count(DISTINCT t.id) FROM mx_track_things t
+                     JOIN mx_track_thing_reports r ON r.thing_id = t.id
+                    WHERE t.track_id = %s AND t.status = 'current' AND t.kind <> %s
+                      AND NOT EXISTS (SELECT 1 FROM mx_track_thing_reports o WHERE o.thing_id = t.id
+                                         AND o.post_id <> r.post_id)
+                    GROUP BY 1, 2 HAVING count(DISTINCT t.id) >= %s ORDER BY 3 DESC, 1""",
+                (track_id, PRACTICE_KIND, CATALOG_ROWS))
+    catalogs = [{"post": p, "kind": k, "rows": n} for p, k, n in cur.fetchall()]
+    return {"splits": splits, "catalogs": catalogs}
+
+
+def repair(cur: Any, track_id: str, *, dry_run: bool = True, ask: bool = True) -> Dict[str, Any]:
+    """v10.41: a track's rows made one a thing again, never deleting (keep everything). Each row whose reports are
+    not one thing (`repair_plan`) is split: a member thing wholly in another group is current again (split_from the
+    row), the group's other reports move to that thing or a new one (moved_from: the thing they were joined to); a
+    split-off thing then joins an older current thing of its identity (merged_by key), and every touched row's fields
+    are merged again. A catalog post (CATALOG_ROWS rows of one kind only it gave) is asked again under the current
+    guide (`ask`; its answer folds the rows: fold_catalog). `dry_run`: the plan only. The plan, with what was done."""
+    plan = repair_plan(cur, track_id)
+    if dry_run:
+        return dict(plan, done=False)
+    cur.execute("SELECT id::text, kind, schema_version FROM mx_track_things WHERE track_id = %s", (track_id,))
+    meta = {i: (k, v) for i, k, v in cur.fetchall()}
+    kinds = _kinds(cur, track_id)
+    heads: List[str] = []
+    for sp in plan["splits"]:
+        for g in sp["groups"]:
+            if g["members"]:
+                head = g["members"][0]
+                cur.execute("""UPDATE mx_track_things SET status = 'current', merged_into = NULL, merged_by = NULL,
+                                      split_from = %s, updated_at = now() WHERE id = %s""", (sp["thing"], head))
+                for m in g["members"][1:]:
+                    cur.execute("UPDATE mx_track_things SET merged_into = %s, updated_at = now() WHERE id = %s",
+                                (head, m))
+            else:
+                kind, version = meta[sp["thing"]]
+                cur.execute("""INSERT INTO mx_track_things (track_id, kind, key, schema_version, split_from)
+                               VALUES (%s, %s, %s, %s, %s) RETURNING id::text""",
+                            (track_id, kind, f"{kinds[kind]['fields'][0]['name']}={g['name']}", version, sp["thing"]))
+                head = cur.fetchone()[0]
+            for call, n, thing in g["moved"]:
+                cur.execute("""UPDATE mx_track_thing_reports SET thing_id = %s, moved_from = COALESCE(moved_from, %s)
+                                WHERE call_id = %s AND n = %s""", (head, thing, call, n))
+            heads.append(head)
+        remerge(cur, track_id, sp["thing"])
+    for h in heads:
+        remerge(cur, track_id, h)
+    rejoined = 0
+    epoch_max = datetime.max.replace(tzinfo=timezone.utc)
+    for h in heads:   # a split-off thing of an older current thing's identity joins it
+        cur.execute("SELECT kind, status FROM mx_track_things WHERE id = %s", (h,))
+        kname, status = cur.fetchone()
+        if status != "current":
+            continue
+        kind = kinds[kname]
+        rs = _member_reports(cur, track_id, [t["id"] for t in current(cur, track_id, kname)])
+        rare = rare_words(name_of(kind, r["values"] or {}) for v in rs.values() for r in v)
+        mine = [(name_of(kind, r["values"] or {}), links_of(kind, r["values"] or {}, r["url"])) for r in rs.get(h, [])]
+        first = min((r["at"] for r in rs.get(h, []) if r["at"]), default=epoch_max)
+        older = sorted(((min((r["at"] for r in v if r["at"]), default=epoch_max), o) for o, v in rs.items() if o != h))
+        for at, other in older:
+            if at > first:
+                break
+            if any(same_identity(n, ls, name_of(kind, r["values"] or {}), links_of(kind, r["values"] or {}, r["url"]),
+                                 rare) for n, ls in mine for r in rs[other]):
+                rejoined += merge(cur, track_id, other, h, "key")
+                break
+    asked = 0
+    if ask and plan["catalogs"]:
+        from insight_core.markx import tracks
+        t = tracks.get(cur, track_id)
+        s = current_schema(cur, track_id)
+        if t is not None and s is not None:
+            asked = ask_posts(cur, t, s, sorted({c["post"] for c in plan["catalogs"]}), room=len(plan["catalogs"]),
+                              again=True)
+    return dict(plan, done=True, rejoined=rejoined, asked=asked)
 
 
 def after_answer(cur: Any, task: Dict[str, Any], call_id: Any, answer: Dict[str, Any]) -> None:

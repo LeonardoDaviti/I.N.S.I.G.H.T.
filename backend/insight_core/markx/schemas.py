@@ -754,8 +754,8 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
                                                                                 # its breakdowns (v2; v1 rows kept)
     Kind("reading", "ent-v5", "post", READING_V5_SCHEMA),           # 0212: read, read3 and entities in one reading
     Kind("track_schema", "track-schema-v1", "track", TRACK_SCHEMA_SCHEMA),   # 0245: a track's kinds and fields
-    Kind("track_things", "track-things-v2", "post_track", TRACK_THINGS_SCHEMA),   # 0245: the things of a post; 0261: v2
-    Kind("track_same", "track-same-v1", "thing_thing", TRACK_SAME_SCHEMA),   # 0245: two practices, one claim?
+    Kind("track_things", "track-things-v3", "post_track", TRACK_THINGS_SCHEMA),   # 0245; 0261: v2; v10.41: v3 (a catalog one row)
+    Kind("track_same", "track-same-v2", "thing_thing", TRACK_SAME_SCHEMA),   # 0245: two rows, one thing? (v10.41: every kind)
     Kind("question", "question-v1", "question", QUESTION_SCHEMA),   # 0275: the reader's question, from their posts
 )}
 
@@ -858,6 +858,9 @@ GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
 EARLIER_GUIDES: Dict[str, Tuple[Tuple[str, ...], Dict[str, Any]]] = {
     "judge-read-v1": (("join", "pair"), JUDGE_SCHEMA),   # before 0258's post quote
     "track-things-v1": (("track_things",), TRACK_THINGS_SCHEMA),   # 0261: before v2 (values only from their quote, the subject's own results)
+    "track-things-v2": (("track_things",), TRACK_THINGS_SCHEMA),   # v10.41: before v3 (a catalog or roundup is one row);
+                                                                   # its catalog posts are asked again (track_things.repair)
+    "track-same-v1": (("track_same",), TRACK_SAME_SCHEMA),   # v10.41: before v2 (practices only); its pairs are not asked again
     "chain-v1": (("chain",), CHAIN_SCHEMA),   # v10.34: before v2's clause (a result achieved with the thing is not
                                                  # its release); its same_release pairs are asked again (graph.plan_chains)
     "chain-v2": (("chain",), CHAIN_SCHEMA),   # v10.38: before v3's sibling things of one release; its sibling pairs
