@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import schemas
 
@@ -235,7 +235,8 @@ def answered(cur: Any, *, stories: Optional[Iterable[str]] = None, since: Option
 
 def plan(cur: Any, *, now: Optional[datetime] = None, limit: int = PLAN_MAX) -> Dict[str, int]:
     """The jobs process: the candidate (thing, story) pairs of the Mark X stories whose newest member is within
-    WINDOW_DAYS and joined since the last pass (mx_settings `stops_planned`), each asked once; at most `limit` new
+    WINDOW_DAYS and joined since the last pass (mx_settings `stops_planned`), or whose members were read since (v10.40:
+    its pairs never asked), each asked once; at most `limit` new
     questions a pass (the newest stories first; the rest wait for the next pass). {stories, pairs, asked, again}."""
     from insight_core.markx import identity as I, repo, tasks
     now = now or datetime.now(timezone.utc)
@@ -250,6 +251,24 @@ def plan(cur: Any, *, now: Optional[datetime] = None, limit: int = PLAN_MAX) -> 
                       AND story_id IN (SELECT story_id FROM mx_story_posts WHERE valid_to IS NULL AND valid_from >= %s)
                     GROUP BY story_id HAVING count(*) >= 2 ORDER BY max(valid_from) DESC, story_id""", (since,))
     sids = [r[0] for r in cur.fetchall()]
+    # v10.40: a story whose members' readings came (or changed) since the last pass, its membership not: the pass
+    # that saw it join read no roles yet, so it asked nothing, and no later member came to plan it again (GPT-6.2's
+    # benchmark and personality stories, Gemini 4 Neon's launch, Hy4 flash's open weights: never a stop, so never in
+    # a chain, so never in their release's row). Its pairs never asked are asked (one asked stays as it was).
+    cur.execute("""SELECT sp.story_id::text FROM mx_story_posts sp
+                    WHERE sp.valid_to IS NULL AND sp.role = 'member'
+                      AND sp.story_id IN (SELECT x.story_id FROM mx_story_posts x JOIN mx_mention_sets m ON m.post_id = x.post_id
+                                           WHERE x.valid_to IS NULL AND x.role = 'member' AND m.at >= %s)
+                    GROUP BY sp.story_id HAVING count(*) >= 2 AND max(sp.valid_from) >= %s
+                    ORDER BY max(sp.valid_from) DESC, sp.story_id""", (since, now - timedelta(days=WINDOW_DAYS)))
+    have = set(sids)
+    read = [s for s, in cur.fetchall() if s not in have]
+    sids += read
+    asked: Set[Tuple[str, str]] = set()
+    if read:
+        cur.execute("SELECT a::text, b::text FROM mx_tasks WHERE kind = %s AND a = ANY(%s::uuid[])", (KIND, read))
+        asked = set(cur.fetchall())
+    read_only = set(read)
     out["stories"] = len(sids)
     if not sids:
         repo.set_setting(cur, "stops_planned", {"at": now.isoformat()})
@@ -263,7 +282,7 @@ def plan(cur: Any, *, now: Optional[datetime] = None, limit: int = PLAN_MAX) -> 
             if r not in book.ents or book.shown_type(r) not in I.PRODUCT_TYPES or book.ents[r].status == "not_entity":
                 continue
             sh = share([(at, p) for at, p, _, _ in ps], [p for _, p, _, _ in ps if (roles.get(p) or {}).get(r) in ABOUT])
-            if not candidate(sh):
+            if not candidate(sh) or (sid in read_only and (sid, r) in asked):
                 continue
             out["pairs"] += 1
             if out["asked"] >= limit:

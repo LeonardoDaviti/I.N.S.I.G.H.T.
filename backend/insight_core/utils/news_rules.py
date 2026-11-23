@@ -55,7 +55,8 @@ NEWS_MIN_VOICES = 2                 # the prototype's, not measured
 # one row had chained 57 stories through names their side posts said). A story's core names: its lead's, or those
 # at least CORE_SHARE of its posts say ...
 CORE_SHARE = 0.5
-# ... and two stories of LARGE_POSTS+ posts each join only by each one's main name (Mark X: and the judge's link).
+# ... and two stories of LARGE_POSTS+ posts each join only by each one's main name (Mark X: two stories of any size
+# only by the judge's link too, v10.40).
 LARGE_POSTS = 5
 SHARE_WEIGHT = 0.5                  # the prototype's, not measured
 MENTION_WEIGHT = 0.5                # the prototype's, not measured
@@ -363,9 +364,12 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     A row grows only by what holds against each story's core (0203: one Mark X row chained 57 stories, 397 posts,
     through names their side posts said): a surging name joins a story's post only when the name says one of the
     story's core names (`core_names`), and a post in several stories is in its first story's row only. Two large
-    stories (LARGE_POSTS+ posts each) are joined only by a name that says each one's main name (`main_name`), and with
-    `judged` (Mark X: the story pairs its judge connected, as development, follow-up or the same event) only when the
-    judge connected them too; None (Mark IX: no judge), by their main names alone.
+    stories (LARGE_POSTS+ posts each) are joined only by a name that says each one's main name (`main_name`). With
+    `judged` (Mark X: the story pairs its judge connected, as development, follow-up or the same event, and the story
+    chain's one-happening edges) two stories of any size are joined by a name only when the judge connected them too
+    (v10.40: a name alone joined whole small stories into a release row, the GTA VI city built with GPT-6.2 and a
+    pricing change into GPT-6.2's launch; a post of no story still joins by its name alone); None (Mark IX: no judge),
+    small stories by a name, large ones by their main names alone.
 
     `grouped` (0217, a grouping.Evidence): which stories are one row is decided by utils/grouping.py, every join
     checked against each story's core, the judge's verdicts building and blocking, one release of one exact thing one
@@ -384,6 +388,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         uf.find(p.id)
     story_of: Dict[str, Story] = {}
     large: Dict[str, Set[str]] = {}            # a group's root -> its large stories
+    held: Dict[str, Set[str]] = {}             # a group's root -> its stories (Mark X: two join only when judged)
     pairs = None if judged is None else {frozenset(x) for x in judged}
     for story in stories:
         for p in story.posts:
@@ -391,9 +396,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
                 continue                       # a post in several stories: the lowest story id's (0203, 0205)
             uf.union(p.id, story.id)
             story_of[p.id] = story
-        if len(story.posts) >= LARGE_POSTS:
-            root = uf.find(story.id)
-            large[root] = large.get(root, set()) | {story.id}
+    _held(stories, uf, large, held)
     cores = {story.id: core_names(story, found) for story in stories}
     mains = {story.id: main_name(story, found) for story in stories}
 
@@ -405,17 +408,20 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         if ra == rb:
             return
         la, lb = large.get(ra, set()), large.get(rb, set())
-        if la and lb:
-            # two large stories: the name must be each one's main name, and (Mark X) the judge must have connected them
-            if not (says_main(name, la) and says_main(name, lb)):
-                return
-            if pairs is not None and not any(frozenset((x, y)) in pairs for x in la for y in lb):
-                return
+        # two large stories: the name must be each one's main name
+        if la and lb and not (says_main(name, la) and says_main(name, lb)):
+            return
+        ha, hb = held.get(ra, set()), held.get(rb, set())
+        # Mark X: two stories of any size only when the judge connected them too (two large ones: those two)
+        if pairs is not None and ((ha and hb and not any(frozenset((x, y)) in pairs for x in ha for y in hb))
+                                  or (la and lb and not any(frozenset((x, y)) in pairs for x in la for y in lb))):
+            return
         uf.union(a, b)
-        both = la | lb
-        large.pop(ra, None), large.pop(rb, None)
-        if both:
-            large[uf.find(a)] = both
+        root = uf.find(a)
+        for d, got in ((large, la | lb), (held, ha | hb)):
+            d.pop(ra, None), d.pop(rb, None)
+            if got:
+                d[root] = got
     joined_by: Dict[str, str] = {}
     held_by: Dict[Tuple[str, datetime], List[str]] = {}
     # A post two surging names say joins the one it says first, with the names inside that one or
@@ -453,11 +459,8 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         items, _ = _items(posts, stories, found, story_of, cores, mains, releases, first_said, nested)
         for a, b in grouping.releases(items, releases.policy):
             uf.union(a[4:] if a.startswith("one:") else a, b[4:] if b.startswith("one:") else b)
-        large.clear()   # the large-story guard reads its groups by root: by the roots after the release joins
-        for story in stories:
-            if len(story.posts) >= LARGE_POSTS:
-                root = uf.find(story.id)
-                large[root] = large.get(root, set()) | {story.id}
+        large.clear(), held.clear()   # the guards read their groups by root: by the roots after the release joins
+        _held(stories, uf, large, held)
     for surge in (found if grouped is None else ()):
         members = sorted((pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)
                           and holds(pid, surge.name)), key=lambda pid: (by_id[pid].t, pid))
@@ -513,6 +516,15 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
             reports=reports, shares=shares, mentions=mentions,
         ))
     return sorted(out, key=lambda s: (s.first_at, s.id))
+
+
+def _held(stories: Sequence[Story], uf: _UnionFind, large: Dict[str, Set[str]], held: Dict[str, Set[str]]) -> None:
+    """Each group's large stories and its stories, by the group's root (news' guards)."""
+    for story in stories:
+        root = uf.find(story.id)
+        held.setdefault(root, set()).add(story.id)
+        if len(story.posts) >= LARGE_POSTS:
+            large.setdefault(root, set()).add(story.id)
 
 
 def _grouped(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[Surge],

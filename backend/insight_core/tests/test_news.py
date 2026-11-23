@@ -322,7 +322,16 @@ class NewsStoriesTests(unittest.TestCase):
                          "... and join once the judge connected them")
         small = stories[:1] + [Story(id="B", first_at=b[0].t, posts=b[:2], voices=0, roles={}, reasons={},
                                      mentions=set())]
-        self.assertEqual(len(news(a + b[:2], small, found, judged=set())), 1, "a small one joins by its core")
+        self.assertEqual(len(news(a + b[:2], small, found)), 1, "Mark IX: a small one joins by its core")
+        # v10.40: Mark X joins two stories of any size only through the judge (a name alone joined the GTA VI city
+        # built with GPT-6.2 and a pricing change into GPT-6.2's release row)
+        self.assertEqual(len(news(a + b[:2], small, found, judged=set())), 2, "Mark X: a small story stays apart")
+        self.assertEqual(len(news(a + b[:2], small, found, judged={frozenset(("A", "B"))})), 1, "... unless judged")
+        loose = [post("l1", "ls1", hours=30, title="Nimbus 4 first look"),
+                 post("l2", "ls2", hours=31, title="Nimbus 4 so far")]
+        named = [Surge("nimbus 4", a[0].t, [p.id for p in a + loose], 0)]
+        [row] = [r for r in news(a + loose, stories[:1], named, judged=set()) if "a0" in {p.id for p in r.posts}]
+        self.assertTrue({"l1", "l2"} <= {p.id for p in row.posts}, "a post of no story still joins by its name")
 
     def test_the_rows_depend_on_the_inputs_never_on_their_order(self):
         """0205: the incremental job hands its stories in by id and their posts in no time order (array_agg DISTINCT),

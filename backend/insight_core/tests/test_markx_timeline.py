@@ -605,6 +605,29 @@ class OneModelsLine(_Db):
         got = TL.before_post(self.cur, x["breakdown"])
         self.assertEqual([i["stop"] for g in got for i in g["items"] if i["kind"] == "story"], [None])
 
+    def test_a_story_read_after_the_pass_that_saw_it_join_is_asked(self):
+        """v10.40: the pass that saw a story join read no roles yet (its posts were read later) and asked nothing; no
+        later member came, so it was never planned again, never a stop, never in a chain, never in its release's row
+        (GPT-6.2's benchmark story, Gemini 4 Neon's launch). A story whose members' readings came since the last pass
+        is planned; its pairs already asked are not asked again."""
+        from insight_core.markx import stops as ST
+        x = self.line()
+        late = [self.post_at(3, T0 + 9 * D, "Orbit 2 Small, hands on"),
+                self.post_at(4, T0 + 9 * D + H, "Orbit 2 Small tried")]
+        d = self.story("Orbit 2 Small, tried", *late)
+        first = ST.plan(self.cur, now=T0 + 12 * D)
+        self.cur.execute("SELECT count(*) FROM mx_tasks WHERE kind = 'stop' AND a = %s", (d,))
+        self.assertEqual(self.cur.fetchone()[0], 0)                                # no roles yet: nothing asked
+        self.model(*((p, "subject") for p in late))
+        self.stage()
+        self.cur.execute("UPDATE mx_mention_sets SET at = %s WHERE post_id = ANY(%s::uuid[])", (T0 + 12 * D + H, late))
+        out = ST.plan(self.cur, now=T0 + 13 * D)
+        self.cur.execute("SELECT a::text, b::text FROM mx_tasks WHERE kind = 'stop' AND a = %s", (d,))
+        self.assertEqual(self.cur.fetchall(), [(d, self.book().root(x["thing"]))])
+        self.assertEqual(out["asked"], 1, first)                                    # a and b, asked before: not again
+        self.cur.execute("UPDATE mx_mention_sets SET at = %s WHERE post_id = ANY(%s::uuid[])", (T0 + 13 * D + H, late))
+        self.assertEqual(ST.plan(self.cur, now=T0 + 14 * D)["asked"], 0)            # read again, asked once
+
     def test_an_answer_saying_not_about_it_makes_a_named_story(self):
         x = self.line()
         from insight_core.markx import stops as ST

@@ -245,7 +245,10 @@ def rows_of(cur: Any, stories: Dict[str, Tuple[List[str], Set[str]]], since: dat
     found = incremental.surges(cur, memo)
     from insight_core.markx import built as mx_built   # 0203: the judge's story connections guard two large stories
     # a joined story's connections are its group's (a pair inside one group is no pair)
-    judged = {frozenset(key_of.get(s, s) for s in pair) for pair in mx_built._connected(cur, stored)}
+    # v10.40: and the chain's one-happening edges (graph.chain_connected): two stories join by a name only when judged
+    from insight_core.markx import graph
+    judged = {frozenset(key_of.get(s, s) for s in pair)
+              for pair in mx_built._connected(cur, stored) | graph.chain_connected(cur, stored)}
     judged = {pair for pair in judged if len(pair) == 2}
     made = NewsService.rows(posts=list(sp.values()), stories=built, found=found, since=since, judged=judged)
     out = []

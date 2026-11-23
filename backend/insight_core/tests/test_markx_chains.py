@@ -138,18 +138,25 @@ class Rules(unittest.TestCase):
         import hashlib
         import pathlib
         k = schemas.KINDS["chain"]
-        self.assertEqual((k.guide, k.subject), ("chain-v3", "story_story"))   # v10.38: v3 (v1, v2 kept, frozen)
+        self.assertEqual((k.guide, k.subject), ("chain-v4", "story_story"))   # v10.40: v4 (v1-v3 kept, frozen)
         self.assertEqual(G.CHAIN_GUIDE, k.guide)
-        self.assertIn("chain-v1", schemas.answer_guides("chain"))             # its tasks kept and read
-        self.assertIn("chain-v2", schemas.answer_guides("chain"))
-        v3 = (pathlib.Path(G.__file__).parent / "guides" / "chain-v3.md").read_text()
-        v2 = (pathlib.Path(G.__file__).parent / "guides" / "chain-v2.md").read_text()
-        for v in (v2, v3):
+        for old in ("chain-v1", "chain-v2", "chain-v3"):
+            self.assertIn(old, schemas.answer_guides("chain"))                # its tasks kept and read
+        guides = pathlib.Path(G.__file__).parent / "guides"
+        v2, v3, v4 = ((guides / f"chain-v{n}.md").read_text() for n in (2, 3, 4))
+        for v in (v2, v3, v4):
             self.assertIn("a result achieved WITH the thing", v)              # the owner's rule (2026-11-21)
-            self.assertIn("demos of what it can do", v)                       # demos and benchmarks stay its release
-        self.assertNotIn("same_launch", v3 + " ".join(schemas.CHAIN_RELATIONS))   # one path: same_release
-        self.assertIn("One release can launch several sibling things together", v3)   # v10.38: one release, one row
-        self.assertIn("its maker's own builds of it", v3)                      # the maker's GGUF is its release
+        for v in (v2, v3):
+            self.assertIn("demos of what it can do", v)                       # frozen: any demo stayed its release
+        # v10.40 (owner 2026-11-23): a project someone else built with it is its own story; the maker's launch demos
+        # and people's first impressions stay the release
+        self.assertNotIn("demos of what it can do", v4)
+        self.assertIn("a project someone else built with the thing and presents as their own", v4)
+        self.assertIn("the maker's own demos shown with the launch", v4)
+        for v in (v3, v4):
+            self.assertNotIn("same_launch", v + " ".join(schemas.CHAIN_RELATIONS))   # one path: same_release
+            self.assertIn("One release can launch several sibling things together", v)   # v10.38: one release, one row
+            self.assertIn("its maker's own builds of it", v)                    # the maker's GGUF is its release
         self.assertNotIn("next_version", schemas.CHAIN_RELATIONS)   # a successor is identity's, never the judge's
         self.assertEqual(tuple(schemas.CHAIN_RELATIONS), G.CHAIN_RELATIONS)
         path = pathlib.Path(G.__file__).parent / "guides" / "chain-v1.md"
@@ -266,10 +273,36 @@ class Chains(TL._Db):
         self.assertEqual(repo.get_setting(self.cur, G.CHAIN_MARK)["guide"], G.CHAIN_GUIDE)
         self.assertEqual(G.plan_chains(self.cur)["asked"], 0)                 # asked once
         self.assertEqual([r[2] for r in self.edges()], ["same_release"])      # stands while the new runs wait
+        # v10.40: News reads a one-happening edge as the judge's link (two stories join by a name only when judged)
+        self.assertEqual(G.chain_connected(self.cur, [x["a"], x["b"], x["c"]]), {frozenset((x["a"], x["b"]))})
         self.answer_chain("unrelated", "unrelated", task=v2)
         G.plan_chains(self.cur)
         self.assertEqual(self.edges(), [])                                    # the new guide's verdict decides
+        self.assertEqual(G.chain_connected(self.cur, [x["a"], x["b"]]), set())
         self.assertEqual([r[2] for r in self.edges(current=False)], ["same_release"])   # closed, kept
+
+    def asked_again(self, old, *runs):
+        x = self.line()
+        self.stops_about(x)
+        G.plan_chains(self.cur)
+        (tid, *_), = self.chain_tasks()
+        self.cur.execute("UPDATE mx_tasks SET guide = %s WHERE id = %s", (old, tid))
+        self.answer_chain(*runs, task=tid)
+        repo.set_setting(self.cur, G.CHAIN_MARK, {"at": (T0 + 12 * D).isoformat(), "guide": old})
+        return G.plan_chains(self.cur)["asked"], len(self.chain_tasks())
+
+    def test_v4_asks_a_chain_v3_same_release_again(self):
+        """v10.40 (chain-v4: a project someone else built with the thing is its own story, builds_on): every earlier
+        guide's same_release is asked again (which of them filed such a project is not seen without asking)."""
+        self.assertEqual(self.asked_again("chain-v3", "same_release", "same_release"), (1, 2))
+
+    def test_v4_asks_a_pair_whose_runs_disagreed_again(self):
+        """v10.40: two runs that disagreed (OpenRouter joining Stripe: follows_up, then same_event) linked nothing and
+        were never asked again; under chain-v4 they are."""
+        self.assertEqual(self.asked_again("chain-v3", "follows_up", "same_event"), (1, 2))
+
+    def test_v4_keeps_an_earlier_link_that_is_no_release(self):
+        self.assertEqual(self.asked_again("chain-v3", "builds_on", "builds_on"), (0, 1))
 
     def test_an_earlier_guides_pair_with_no_release_edge_is_not_asked_again(self):
         x = self.line()

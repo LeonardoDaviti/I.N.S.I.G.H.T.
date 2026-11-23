@@ -42,7 +42,7 @@ import re
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urljoin
 
 from psycopg import errors as psycopg_errors
@@ -1493,9 +1493,11 @@ def label(cur: Any, *, newer: str, older: str, answer: str, note: Optional[str] 
 # edge: a = the later story, b = the earlier, a_kind = b_kind = 'story', rule CHAIN_RULE (the candidate rule that
 # proposed them) and call_id the judge's call. decide's story connections never read or close them (their rule).
 
-CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v3"   # v10.34: v2 (chain-v1's same_release pairs asked again); v10.38: v3
+CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v4"   # v10.34: v2 (chain-v1's same_release pairs asked again); v10.38: v3
                                                 # (one release may launch sibling things together; chain-v2's sibling
-                                                # pairs that linked nothing asked again)
+                                                # pairs that linked nothing asked again); v10.40: v4 (a project someone
+                                                # built with the thing is builds_on, the maker's launch demos and first
+                                                # impressions stay the release: every earlier same_release asked again)
 CHAIN_RULE = "chain_stops"            # both stories are stops of one thing (stored stop answers saying about)
 CHAIN_DAYS = 30                       # the later story's first post at most this many days after the earlier's
 CHAIN_PREV = 3                        # a stop is paired with at most this many stops before it (and after it)
@@ -1511,6 +1513,10 @@ CHAIN_LINKS = CHAIN_RELATIONS[:-1]    # what makes an edge (unrelated makes none
 # v10.38: an earlier guide's sibling pair is asked again under chain-v3 when its verdict linked nothing (that guide never
 # saw two things as one release); a pair it linked otherwise (a release, an event) stands
 CHAIN_REASK_SIBLINGS = ("unrelated", "builds_on", UNKNOWN)
+# v10.40: an earlier guide's verdict asked again under chain-v4, any pair: same_release (an earlier guide filed a project
+# someone built with the thing in its release; which pairs did is not seen without asking) and unknown (its two runs
+# disagreed: OpenRouter joining Stripe, follows_up then same_event, linked nothing)
+CHAIN_REASK = ("same_release", UNKNOWN)
 
 
 def chain_question(thing: Dict[str, Any], earlier: Tuple[Optional[str], Sequence[Any]],
@@ -1778,7 +1784,8 @@ def chain_asked(cur: Any, keys: Sequence[Tuple[str, str]], siblings: Iterable[Tu
     under CHAIN_GUIDE (chain-v2: a result achieved with the thing is no part of its release); its edge stands until
     the new task's runs are in (sync_chains reads the newest answered task). v10.38: a pair two sibling things propose
     (`siblings`) whose earlier guide's verdict is in CHAIN_REASK_SIBLINGS is asked again (chain-v3: an earlier guide
-    never saw two things as one release); every other earlier answer stands."""
+    never saw two things as one release). v10.40: any earlier guide's same_release or unknown (CHAIN_REASK) is asked
+    again under chain-v4; every other earlier answer stands."""
     if not keys:
         return set()
     cur.execute("""SELECT t.a::text, t.b::text, t.guide, t.id::text FROM mx_tasks t WHERE t.kind = %s
@@ -1795,11 +1802,10 @@ def chain_asked(cur: Any, keys: Sequence[Tuple[str, str]], siblings: Iterable[Tu
         for tid, cid, ans in cur.fetchall():
             calls[tid].append((cid, ans or {}))
     sib = set(siblings)
-    guide = {t: g for _a, _b, g, t in rows}
     again = set()
     for t, k in earlier.items():
         rel = (chain_verdict(calls.get(t) or []) or {}).get("relation")
-        if (rel == "same_release" and guide.get(t) == "chain-v1") or (k in sib and rel in CHAIN_REASK_SIBLINGS):
+        if rel in CHAIN_REASK or (k in sib and rel in CHAIN_REASK_SIBLINGS):
             again.add(k)
     return current | ({k for k in earlier.values()} - again)
 
@@ -1994,6 +2000,25 @@ def release_groups(cur: Any, story_ids: Iterable[str]) -> List[List[str]]:
                        AND relation = 'same_release' AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])
                        AND (%(sib)s OR evidence->'things' IS NULL)""", {"s": ids, "sib": bool(cfg.get("siblings"))})
     return release_components(cur.fetchall())
+
+
+CHAIN_ONE_HAPPENING = ("same_release", "same_event")   # v10.40: the chain edges News reads as the judge's link
+
+
+def chain_connected(cur: Any, story_ids: Iterable[str]) -> Set[FrozenSet[str]]:
+    """v10.40: the story pairs of `story_ids` a current chain edge calls one happening (CHAIN_ONE_HAPPENING), for
+    News's judged pairs (news_rules.news: two stories join by a name only when judged); none while chain_config's `on`
+    is off, a sibling pair's edge only while `siblings` is on (release_groups' reading)."""
+    ids = sorted({str(s) for s in story_ids if s})
+    cfg = chain_config()
+    if not ids or not cfg.get("on"):
+        return set()
+    cur.execute(f"""SELECT a::text, b::text FROM mx_connections
+                     WHERE valid_to IS NULL AND a_kind = 'story' AND b_kind = 'story' AND rule = '{CHAIN_RULE}'
+                       AND relation = ANY(%(rels)s) AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])
+                       AND (%(sib)s OR evidence->'things' IS NULL)""",
+                {"s": ids, "rels": list(CHAIN_ONE_HAPPENING), "sib": bool(cfg.get("siblings"))})
+    return {frozenset(r) for r in cur.fetchall()}
 
 
 # the rule written as a literal, so the planner proves migration 0154's partial indexes even from a prepared plan
