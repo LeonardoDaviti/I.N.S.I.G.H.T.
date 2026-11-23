@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""markx-worker: Mark X Shadow's worker, Claude Code mode (issue 0086 part D).
+"""markx-worker: Mark X's worker on the owner's device: leases tasks from INSIGHT, asks Haiku through `claude -p`.
 
-Runs on the owner's device. It leases Mark X tasks from INSIGHT, asks Haiku through Claude Code headless
-(`claude -p`), and posts the answers back. Standard library only; one file.
+Standard library only; one file. Answers are posted back to the server; an `embed` task is answered by a local
+llama.cpp embedder instead.
 
     markx-worker cycle  --server http://<server>:5173 --token-file ~/.config/insight/markx-token \\
                         --kinds read,entities --batch 20 --batches 5 --parallel 20
@@ -11,129 +11,48 @@ Runs on the owner's device. It leases Mark X tasks from INSIGHT, asks Haiku thro
 
 A cycle
 -------
-1. Posts any answers a previous cycle could not deliver (the spool), so an answer is never paid for twice.
-2. Leases up to --parallel batches, each one kind (`GET /work?kinds=<one kind>&limit=<batch>`), kinds in
-   --kinds order; a kind is done when the server returns fewer tasks than asked. At most --batches leases.
-   With --days <N|all> each lease carries `days`: the server plans the read, entities and embed tasks of that
-   window first (newest first), whatever the page's reading window; without it, the page's window holds.
-3. Each batch is one call (a merge: one task a call, --per-call; 0112 Decided 8):
-       claude -p --model haiku --tools "" --system-prompt <the guide's body> --output-format json
-              --no-session-persistence --strict-mcp-config
-   (0171: a `websearch` call, research's web search, has --tools WebSearch and, last, --allowedTools WebSearch
-   --max-turns 8: the web search tool only, no fetch, no other tool; one question a call; 0191: a kind with an
-   --effort level gets `--effort <level>` last, and Claude Code's prompt cache is set by kind, --prompt-cache)
-   with the prompt on stdin: an instruction, then each task as "### ITEM id: <task id>\\n<input>". Haiku
-   answers one JSON line per task, `{"id": <task id>, <the guide's answer fields>}` (the prototype's measured
-   form; `{"task_id": .., "answer": {..}}` lines are accepted too).
-4. Each line is checked against the guide's JSON schema (a subset: type, enum, const, required, properties,
-   additionalProperties, items, min/maxItems, min/maxLength, minimum/maximum, pattern, anyOf/oneOf), then
-   (0191) against the server's own input checks, validate.CHECKS, imported from the checkout's backend (a span or
-   a version not in the post); --no-server-rules: the schema alone. The valid answers are posted at once.
-5. One retry: the tasks whose line was missing or failed a check are asked again, in batches of their
-   own (one kind each, at most --batch). After it, valid and still-invalid answers are posted (an invalid
-   one is stored by the server as a call with its error and counts as a try); tasks still without an answer
-   are released at the end of the cycle. A call refused by the usage policy is halved, from its first refusal
-   (0191), until the refused task stands alone; that one is posted as an empty answer (a failed try) and
-   remembered in refused.json beside the spool: its later leases ask it alone, never in a batch again.
-   0214: the same halving takes a call that answered without some of its lines (or with no line it could read):
-   its answers are kept and the tasks left without one are asked again at once, in calls of at most half the
-   call (rounded up), never with the call's answered tasks, halving down to one task a call; a task still
-   without an answer after its call alone is released. Such a call's log line keeps its output's first 4,000
-   characters (`missing_text`). A call that failed (an error, a timeout) is asked once more in calls of
-   --per-call, as before. Besides lines, an output that is one JSON array of answers, or one object keyed by
-   task id, is read.
-   0214: a call that could not reach Claude's API ("Can't reach the API server", a connection error) is asked
-   again as it was after 30, 60 and 120 s (--unreachable-wait), not as a new attempt and not halved; three such
-   results in a row, across calls (--unreachable-stop), stop the cycle: no new call, leases released, exit 3.
-6. Tokens and cost come from Claude Code's JSON (`usage`: input + cache read + cache creation tokens in,
-   output tokens out; `total_cost_usd`; the model from `modelUsage`). Every call is logged with them; each
-   posted answer carries its share of its batch (an even split; a retried task carries its share of both
-   calls), so the posted totals add up to the spend on answered tasks.
-7. It stops cleanly. On a usage-limit or auth error from Claude Code it starts no new call, lets the calls
-   already running finish (their answers are posted), releases all its leases, logs why and exits 4 (usage)
-   or 5 (auth). A timer reruns it later.
-8. Leases: a call is not started when less than --lease-margin seconds are left on its lease (the tasks
-   go back at the end of the cycle). A running call is not killed when its lease ends (its tokens are
-   spent either way; only --timeout kills it): answers that come back after the lease ended are still
-   posted (they are paid for; the server keeps a second answer as a call and changes nothing) and are
-   never retried.
-9. The server unreachable: leasing stops and it exits 3. A lease that times out (one kind's planner slow on the
-   server) skips that kind for the cycle; SLOW_LEASES such leases in a row count as unreachable (v10.13.2). Answers whose post fails (after --post-tries
-   tries) are written to the spool and posted first by the next cycle. The leases it could not release
-   expire on the server after 30 minutes.
+1. Posts the spool first (answers a previous cycle could not deliver), so an answer is never paid for twice.
+2. A leaser thread leases one kind at a time (kinds take turns; --drain: each until dry), at most --batches leases;
+   --parallel callers take the batches as they come. --days asks the server to plan that window first.
+3. Each batch is one `claude -p --model haiku --tools "" --system-prompt <guide> --output-format json` call (a
+   `websearch` kind gets the WebSearch tool only); the prompt is HEAD plus "### ITEM id: <id>\\n<input>" per task,
+   and Haiku answers one JSON line per task, `{"id": <task id>, <answer fields>}`.
+4. Each answer is checked against the guide's JSON schema (a subset) and, when run from INSIGHT's checkout, the
+   server's own validate.py checks (--no-server-rules: the schema alone). Valid answers are posted at once.
+5. Invalid or missing answers are asked again once, halving the call down to one task; a usage-policy refusal is
+   halved until the refused task stands alone, posted as an empty answer and remembered in refused.json. A call that
+   could not reach Claude's API is retried after --unreachable-wait; --unreachable-stop in a row stop the cycle.
+6. Tokens and cost come from Claude Code's JSON; each posted answer carries an even share of its call's.
+7. On a usage-limit or auth error no new call starts, running calls finish and post, leases are released.
+8. No call starts with less than --lease-margin left on its lease; answers that arrive after it ended are still
+   posted and never retried.
+9. A post that fails --post-tries times goes to the spool. Unreleased leases expire on the server after 30 minutes.
 
-Exit codes: 0 done (also: nothing to do); 2 bad arguments, token file or `claude` not found, or the
-embedder unreachable; 3 server unreachable or a server error, or (0214) Claude's API unreachable
---unreachable-stop times in a row (its leases released); 4 Claude usage limit (the weekly limit too); 5 Claude auth error;
-6 the server refused the token (401/403); 7 the server refused the embedder's build or model (409/400);
-1 a bug: a batch or the leaser raised (v10.13.3: the pipeline logs it as "bug" and stops, never exits 0).
+Exit codes: 0 done; 1 a bug (a batch or the leaser raised, never 0); 2 setup (arguments, token file, `claude`, the
+embedder); 3 the server unreachable or erroring, or Claude's API unreachable; 4 Claude usage limit; 5 Claude auth;
+6 the server refused the token; 7 the server refused the embedder's build or model.
 
-Embeddings (the `embed` kind, issue 0086 B, the build plan's corrections 6)
--------------------------------------------------------------------------
+Embeddings
+----------
     markx-worker cycle --server ... --token-file ... --kinds embed --embedder http://127.0.0.1:8096 \\
                        --embedder-gguf ~/Documents/models/markx/bge-m3-q8_0.gguf --batch 100 --batches 50
-An `embed` task is answered by a local llama.cpp server, not by `claude`. Start it as
     llama-server -m bge-m3-q8_0.gguf --embedding --pooling cls -c 8192 -b 8192 -ub 8192 --port 8096
-Each leased batch is one POST <embedder>/embedding {"content": [inputs]}; each vector is scaled to length 1,
-packed as 1,024 little-endian float16, base64, and posted with the model (`bge-m3`) and the GGUF's sha256:
-    POST /api/markx/embeddings {"worker", "model", "model_sha256", "vectors": [{"task_id", "vector", "ms"}]}
-    200 {"stored": int, "invalid": [{"task_id", "error"}], "repeated": int}; 409: another build is stored.
-The sha256 is the file's (--embedder-gguf, or the model_path the embedder's /props names), hashed once and
-remembered in the state directory by path, size and modification time. No retry round (a vector is the same
-vector twice); a batch the embedder refuses is embedded one text at a time, and a text it still refuses is
-released. The embedder unreachable: exit 2, leases released. A 409 or 400: exit 7, leases released, nothing
-spooled (the same vectors would be refused again).
+Each vector is scaled to length 1, packed as 1,024 little-endian float16 (base64) and posted with the model and the
+GGUF's sha256 (hashed once, cached in the state directory). No retry round; a refused batch is embedded one text at
+a time.
 
-The contract (what S3's `markx/api.py` must match; built from 0086 C)
---------------------------------------------------------------------
-Every request carries `Authorization: Bearer <token>` (the token file's content, stripped). JSON bodies,
-UTF-8. 401 or 403 means the token is wrong. Paths are under --server (which includes no /api).
-
-GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>[&days=<N|all>]
-    Leases up to n open tasks of those kinds for 30 minutes, by priority then age. The worker always
-    sends one kind.
-    200 {"lease_until": "<ISO 8601 with offset, e.g. 2026-11-05T12:30:00+00:00>",
-         "guides": {"<guide id>": {"sha256": "<hex of body>", "body": "<text>", "schema": {..} | null}},
-         "tasks": [{"id": <int or str>, "kind": "<kind>", "guide": "<guide id>", "input": "<text>"}]}
-    Every task's guide is in "guides". No open task: 200 with "tasks": [].
-
-POST /api/markx/answers
-    {"worker": "<name>", "executor": "claude-code", "model": "<model id Claude Code reported>",
-     "answers": [{"task_id": <id as leased>, "answer": {..}, "tokens_in": int, "tokens_out": int,
-                  "ms": int, "cost_usd": float}]}
-    200 {"stored": int, "valid": int, "invalid": [{"task_id": <id>, "error": "<why>"}]}
-    The server checks each answer (0086 C's table) and stores it in mx_calls, valid or not. Valid closes
-    the task; invalid puts it back to open with its error (failed after 3 tries). The worker does not
-    retry the server's invalid ones: the server re-queues them.
-
-POST /api/markx/release
-    {"worker": "<name>", "task_ids": [<id>, ..]}   (task_ids absent: every task this worker holds)
-    200 {"released": int}
-    Leased tasks go back to open; no try is counted.
-
-GET /api/markx/status
-    200 any JSON object (the queue by kind and status, answers per day, tokens, each worker's last
-    contact, the last decision run). The worker prints it.
-
-Where 0086 C is ambiguous (decided here; S3 should confirm or say otherwise)
---------------------------------------------------------------------------
-- The answer line's shape. 0086 D says `{"task_id", "answer"}`; the prototype measured flat lines,
-  `{"id": .., <answer fields>}`. The worker asks for the measured form and posts `{"task_id", "answer"}`.
-- The id type of a task: int or str both work; it is posted back exactly as leased.
-- `valid` in the answers' response: a count, or a list of ids (both read).
-- `release`'s body: 0086 C names no field. The worker sends `worker` and, for specific tasks, `task_ids`.
-  A server that ignores `task_ids` and releases all of the worker's leases is still correct: the worker
-  only releases specific tasks at the end of a cycle, when nothing else is in flight.
-- An answer to a task whose lease ended (or that another worker now holds): the worker posts it anyway;
-  0086 C's "a second answer is kept as a call and changes nothing" is assumed to cover it, and an answer
-  to an expired but still open task is assumed to be accepted like any other.
-- The schema: 0086 C gives `schema` per guide, no dialect. The worker reads it as JSON Schema and checks
-  the subset above; a missing or null schema checks only that the answer is an object. The server's own
-  checks (spans, versions, figures) stay the server's (0191: the worker runs the same validate.py's checks first, so
-  a refused answer is asked again in its own cycle; the server still checks every answer).
-- Tokens: per answer only, as an even share of its batch; the spend on tasks never answered is in the
-  worker's log, not on the server.
-- `lease_until` without an offset is read as UTC.
+The server contract (markx/api.py; every request has `Authorization: Bearer <token>`, JSON bodies)
+------------------------------------------------------------------------------------------------
+GET  /api/markx/work?kinds=<kind>&limit=<n>&worker=<name>[&days=<N|all>]
+     200 {"lease_until", "guides": {id: {"sha256", "body", "schema"}}, "tasks": [{"id", "kind", "guide", "input"}]}
+POST /api/markx/answers {"worker", "executor", "model", "answers": [{"task_id", "answer", "tokens_in",
+     "tokens_out", "ms", "cost_usd"}]} -> 200 {"stored", "valid", "invalid": [{"task_id", "error"}]};
+     the server re-queues its invalid ones, the worker does not retry them.
+POST /api/markx/embeddings {"worker", "model", "model_sha256", "vectors": [{"task_id", "vector", "ms"}]}
+     -> 200 {"stored", "invalid", "repeated"}; 409: another build is stored.
+POST /api/markx/release {"worker", "task_ids"?} -> 200 {"released"} (no task_ids: every lease of the worker)
+GET  /api/markx/status -> any JSON object, printed.
+Task ids are posted back exactly as leased; `lease_until` without an offset is read as UTC.
 """
 import argparse
 import base64
@@ -157,27 +76,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 EXECUTOR = "claude-code"
-# The 0086 D order: readings and entities, the questions, cards, headlines and the briefing. 0173: the source judge first
-# (the owner tapped "Is this worth it?" and waits for it); 0275: the reader's question before it (the page waits). 0174: News' sections after the headlines, 0197: the
-# new rows placed into them right after (a worker newer than its server skips an unknown kind: v10.14).
+# the order kinds are leased in: what a reader waits for first (question, source_judge); a kind the server
+# does not know yet is skipped
 DEFAULT_KINDS = "question,source_judge,read,read3,entities,reading,cite,alias,alias2,alias3,alias4,collide,rename,stop,check,join,pair,merge,perspective,sheet,dispute,connect,relate,chain,derive,back,card,headline,news_sections,news_place,significance,unit_types,briefing,translate,stance,probes,scout,identity,websearch,track,subtopics,subtopic_place,digest,track_schema,track_things,track_same"
-# Tasks per call by kind, under --batch (0112 Decided 8): a merge is asked alone (313 of 313 answered live, 0 errors);
-# a lease takes --lease of them (v10.13.3), at most --parallel calls' worth. --per-call overrides it.
-PER_CALL = "question=1,track_schema=1,track_things=1,track_same=5,reading=20,merge=1,collide=6,rename=5,stop=10,chain=10,derive=10,perspective=1,sheet=1,dispute=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,subtopic_place=1,digest=1,probes=1,scout=1,identity=5,websearch=1,source_judge=1,news_sections=1,news_place=1,unit_types=1,significance=5"   # 0208: a News row's significance 5 rows a call (the measure's 109 rows: 22 calls, all answered); 0197: a placement question one a call (the new rows and the sections in it); 0174: News' sections one question a call (every row of the page in it); 0173: "Is this worth it?" one candidate a call (the owner waits: its kind leased first); 0148: a track scout one a call; 0162: 5 identity pairs a call; 0171: one web search question a call; 0119: the collision judge 6 a call, as the lab asked it; a story's
-# perspectives (one group of at most 5 members a task) and its sheet one a call (0119 B3-B4); 0127: read-v3 5 a call (rv3d);
-# 0165 B: the rename judge 5 a call (each item shows two names with two posts each)
-# v10.17 (0191): Claude Code's thinking effort a kind's calls are asked at (`claude --effort`); a kind not named keeps
-# Claude Code's default. Chosen per kind on the lab's labelled sets (plan/issues/0191-worker-cost.md): a level is set
-# only where its answers stayed within the noise of two default runs. --effort overrides it.
-EFFORT = "entities=medium,cite=low,alias=low,alias2=low,reading=low,stop=low,chain=low,derive=low"   # 0212: ent-v5 measured at low (d7); 0165 C: stop-v1 measured at low; 0219: chain-v1 measured at low; 0234: derive-v1 measured at low
+# tasks per call by kind, under --batch (measured per kind: 0112, 0119, 0127, 0165, 0174, 0208); --per-call overrides
+PER_CALL = "question=1,track_schema=1,track_things=1,track_same=5,reading=20,merge=1,collide=6,rename=5,stop=10,chain=10,derive=10,perspective=1,sheet=1,dispute=1,read3=5,stance=1,back=8,cite=10,track=10,subtopics=1,subtopic_place=1,digest=1,probes=1,scout=1,identity=5,websearch=1,source_judge=1,news_sections=1,news_place=1,unit_types=1,significance=5"
+# Claude Code's thinking effort by kind, set only where answers stayed within the noise of default runs
+# (plan/issues/0191-worker-cost.md); a kind not named keeps Claude Code's default; --effort overrides
+EFFORT = "entities=medium,cite=low,alias=low,alias2=low,reading=low,stop=low,chain=low,derive=low"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-# v10.17 (0191): Claude Code's prompt cache, by kind. On a subscription it writes every prompt to the 1-hour cache
-# (billed at 2x input) and calls of distinct items almost never read it back: "off" sends the input once at 1x. The
-# kinds whose input the week's logs billed at about 1x or less (relate, back: the majority's runs ask the same prompt
-# again; read3) read it back, so they keep "default", and so does websearch (its turns re-send the conversation). A
-# kind asked one item a call, whose guide is a large share of its prompt, takes "5m": its first call of a cycle goes
-# alone and writes the guide at 1.25x, the others read it at 0.1x (measured: 0.75x of list, against 1.0x off).
-# "mode[,kind=mode]": the first a mode alone, for every kind not named.
+# Claude Code's prompt cache by kind (0191): "off" for distinct items (the 1-hour cache bills writes at 2x and
+# they are never read back); "default" where the same prompt is asked again; "5m" for one-item kinds whose guide
+# is most of the prompt (the first call writes it, the others read it). "mode[,kind=mode]": a lone mode for the rest.
 PROMPT_CACHE = {"default": {}, "off": {"DISABLE_PROMPT_CACHING": "1"}, "5m": {"CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}}
 DEFAULT_PROMPT_CACHE = ("off,relate=default,back=default,read3=default,websearch=default,merge=5m,sheet=5m,stance=5m,"
                         "subtopics=5m,probes=5m,scout=5m,source_judge=5m,news_sections=5m,unit_types=5m")
@@ -185,28 +95,27 @@ HEAD = ("Answer EVERY item below exactly as the system guide says. Output ONLY J
         "items' order, each a single-line JSON object that starts with \"id\" (the item's id) followed by the guide's "
         "answer fields. No prose, no code fences, nothing else.\n\n")
 
-REFUSED_KEEP = 5000   # 0191: refused tasks (and posts) remembered at most, the newest
-LEASE_MAX = 100   # v10.13.3: the server's MAX_LIMIT, tasks a lease may ask
-SLOW_LEASES = 3   # v10.13.2: this many slow leases in a row (no answer within the timeout) end the cycle as exit 3
+REFUSED_KEEP = 5000   # refused tasks (and posts) remembered, the newest
+LEASE_MAX = 100   # the server's MAX_LIMIT, tasks a lease may ask
+SLOW_LEASES = 3   # this many lease timeouts in a row end the cycle as exit 3
 EXIT_OK, EXIT_SETUP, EXIT_SERVER, EXIT_USAGE, EXIT_AUTH, EXIT_TOKEN, EXIT_BUILD = 0, 2, 3, 4, 5, 6, 7
 EXIT_BUG = 1
-REFUSAL = re.compile(r"can.t help with this|usage polic", re.I)   # a usage-policy refusal (2026-11-08)
+REFUSAL = re.compile(r"can.t help with this|usage polic", re.I)   # a usage-policy refusal
 EMBED_KIND, EMBED_DIMENSIONS = "embed", 1024
-EMBED_KINDS = (EMBED_KIND, "embed_name")   # 0119 A1: a name's vector is embedded as a post's is
-# 0171: research's web search is asked of this worker: its kind's calls get Claude Code's web search tool, and only
-# it (no fetch: the server reads every page itself), allowed without a prompt; at most WEB_MAX_TURNS turns (the
-# guide's 5 searches, one answer, slack). Every other kind keeps --tools "".
+EMBED_KINDS = (EMBED_KIND, "embed_name")   # a name's vector is embedded as a post's is
+# research's web search: these kinds get the WebSearch tool only (no fetch: the server reads every page itself),
+# at most WEB_MAX_TURNS turns; every other kind runs with --tools ""
 WEB_KINDS, WEB_TOOL, WEB_MAX_TURNS = ("websearch",), "WebSearch", 8
 
 USAGE_RE = re.compile(r"usage limit|limit reached|hit your (?:\w+ )?limit|(?:weekly|daily|session|monthly) limit|"
                       r"rate.?limit|out of extra usage|credit balance|quota|limit will reset|resets? at|resets \w", re.I)
 AUTH_RE = re.compile(r"/login|invalid api key|not logged in|authentication|oauth token|unauthori[sz]ed|"
                      r"token has expired|expired token|invalid x-api-key|\b401\b|\b403\b", re.I)
-# 0214: Claude's API out of reach (the device's network or the API): the same call is asked again after a wait
+# Claude's API out of reach: the same call is asked again after a wait
 UNREACHABLE_RE = re.compile(r"can.t reach the api server|connection error|unable to connect|ECONNREFUSED|ECONNRESET|"
                             r"ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|socket hang up", re.I)
-UNREACHABLE_WAIT, UNREACHABLE_STOP = "30,60,120", 3   # 0214: the waits before asking again; this many in a row stop
-MISSING_TEXT = 4000   # 0214: characters of a call's output kept in its log line when some of its lines are missing
+UNREACHABLE_WAIT, UNREACHABLE_STOP = "30,60,120", 3   # waits before asking again; this many in a row stop
+MISSING_TEXT = 4000   # output characters logged for a call that left some tasks unanswered
 
 
 # ---------------------------------------------------------------------------------------------- errors
@@ -216,7 +125,7 @@ class ServerUnreachable(Exception):
 
 
 class ServerSlow(ServerUnreachable):
-    """The server answered nothing within the timeout (v10.13.2): a lease of one kind is skipped for the cycle."""
+    """The server answered nothing within the timeout: a lease of that kind is skipped for the cycle."""
 
 
 class ServerError(Exception):
@@ -232,10 +141,8 @@ class ServerAuth(Exception):
 # ---------------------------------------------------------------------------------------------- the log
 
 class Log:
-    """The JSON-lines log (--log). v10.17: rotated by size, so a worker run by a timer for months never fills the
-    disk: past `max_bytes` the file becomes log.jsonl.1 (.1 -> .2 ...), and the `keep` newest old files stay. Two
-    worker processes may share the file (an embed cycle beside a read cycle): each write and rotation holds an
-    exclusive flock on log.jsonl.lock, so a line is never written to a file another process is renaming."""
+    """The JSON-lines log (--log), rotated past `max_bytes` (log.jsonl.1, .2 ...; the `keep` newest stay). Two
+    worker processes may share it: each write and rotation holds an flock on log.jsonl.lock."""
     MAX_BYTES = 10 * 1024 * 1024
     KEEP = 4
 
@@ -436,7 +343,7 @@ class Embedder:
 # ---------------------------------------------------------------------------------------------- claude -p
 
 def days_arg(value):
-    """--days: "all" or a whole number of days, 1 to 36500 (0112 Decided 9)."""
+    """--days: "all" or a whole number of days, 1 to 36500."""
     v = value.strip().lower()
     if v == "all" or (v.isdigit() and 1 <= int(v) <= 36500):
         return v
@@ -455,7 +362,7 @@ def per_call_arg(value):
 
 
 def cache_arg(value):
-    """--prompt-cache: "mode[,kind=mode]" (0191), a mode one of PROMPT_CACHE: {"*": every kind's, kind: its own}."""
+    """--prompt-cache: "mode[,kind=mode]", a mode one of PROMPT_CACHE: {"*": every kind's, kind: its own}."""
     out = {"*": "default"}
     for part in [x.strip() for x in value.split(",") if x.strip()]:
         kind, eq, mode = part.rpartition("=") if "=" in part else ("*", "=", part)
@@ -466,7 +373,7 @@ def cache_arg(value):
 
 
 def effort_arg(value):
-    """--effort: "kind=level[,kind=level]" (0191), a level one of EFFORTS or "default" (Claude Code's own): {kind: level}."""
+    """--effort: "kind=level[,kind=level]", a level one of EFFORTS or "default" (Claude Code's own): {kind: level}."""
     out = {}
     for part in [x.strip() for x in value.split(",") if x.strip()]:
         kind, eq, level = part.partition("=")
@@ -478,7 +385,7 @@ def effort_arg(value):
 
 
 def waits_arg(value):
-    """--unreachable-wait (0214): seconds, comma-separated, e.g. "30,60,120"."""
+    """--unreachable-wait: seconds, comma-separated, e.g. "30,60,120"."""
     try:
         out = [float(x) for x in value.split(",") if x.strip()]
     except ValueError:
@@ -494,9 +401,8 @@ _RULES = []   # [module or None]: the server's validate.py, loaded once
 
 
 def server_rules():
-    """0191: the server's own answer checks (backend/insight_core/markx/validate.py, standard library only) when this
-    worker runs from INSIGHT's checkout, so an answer the server would refuse (a span or a version not in the post) is
-    asked again in the same cycle; None elsewhere (the schema alone is checked, as before)."""
+    """The server's own answer checks (backend/insight_core/markx/validate.py, standard library only) when run from
+    INSIGHT's checkout, so an answer the server would refuse is asked again in the same cycle; None elsewhere."""
     if not _RULES:
         mod = None
         backend = Path(__file__).resolve().parent.parent / "backend"
@@ -513,9 +419,8 @@ def server_rules():
 
 
 def salvage(kind, answer, input, guide=None):
-    """v10.20: the server's own salvage (validate.salvage: an entity list's bad entries dropped, each kept under
-    "dropped"), so the worker neither asks again nor refuses an answer the server stores. (answer, entries dropped
-    now); the answer unchanged without the server's checks."""
+    """The server's salvage (validate.salvage: bad entries moved under "dropped"), so the worker keeps what the
+    server would store. (answer, entries dropped now); the answer unchanged without the server's checks."""
     rules = server_rules()
     fn = getattr(rules, "salvage", None) if rules else None
     if fn is None or not isinstance(answer, dict):
@@ -528,8 +433,7 @@ def salvage(kind, answer, input, guide=None):
 
 
 def salvage_refused(kind, answer):
-    """v10.20: the server's rule for a salvaged answer that is still asked again (validate.salvage_refused: every
-    entity or every subject dropped), or None."""
+    """The server's error for a salvaged answer that is still asked again (validate.salvage_refused), or None."""
     rules = server_rules()
     fn = getattr(rules, "salvage_refused", None) if rules else None
     try:
@@ -539,12 +443,11 @@ def salvage_refused(kind, answer):
 
 
 def rule_error(kind, answer, input, guide=None):
-    """The server's input checks on an answer the schema passed (validate.CHECKS[kind]: spans and versions in the post,
-    numbered items that exist ...), or None. A check that needs more than the standard library (back, subtopics) or
-    that cannot read the answer is no opinion: the server still checks it."""
+    """The server's input checks on an answer the schema passed (a guide's GUIDE_CHECKS, else CHECKS[kind]), or None.
+    A check that raises is no opinion: the server still checks every answer."""
     rules = server_rules()
     check = ((getattr(rules, "GUIDE_CHECKS", {}).get(guide or "") or getattr(rules, "CHECKS", {}).get(kind))
-             if rules else None)   # 0196: a guide variant's own checks first
+             if rules else None)
     if check is None or kind in EMBED_KINDS:
         return None
     try:
@@ -554,8 +457,8 @@ def rule_error(kind, answer, input, guide=None):
 
 
 def system_for(guide):
-    """The guide's body, then its answer schema when it has one (v10.0.1): a guide's prose can leave a field's
-    key unnamed (read-v2's mentions never say `name`), and the server refuses an answer without it."""
+    """The guide's body, then its answer schema when it has one: the prose can leave a field's key unnamed, and the
+    server refuses an answer without it."""
     schema = guide.get("schema")
     if not schema:
         return guide["body"]
@@ -564,8 +467,8 @@ def system_for(guide):
 
 
 def claude_argv(claude, model, system, kind=None, effort=None):
-    """No tools, except for a kind in WEB_KINDS (0171): Claude Code's web search tool only (allowed without a prompt,
-    no fetch, no other tool), at most WEB_MAX_TURNS turns. `effort` (0191): --effort, last; None or "default": none."""
+    """No tools, except WebSearch alone for WEB_KINDS (at most WEB_MAX_TURNS turns). `effort`: --effort, last;
+    None or "default": none."""
     tail = ["--effort", effort] if effort and effort != "default" else []
     if kind in WEB_KINDS:
         return [claude, "-p", "--model", model, "--tools", WEB_TOOL, "--system-prompt", system,
@@ -585,14 +488,13 @@ def classify(text):
 
 
 def unreachable(text):
-    """0214: True when a failed call's text says Claude's API could not be reached (and it is no usage or auth stop)."""
+    """True when a failed call's text says Claude's API could not be reached (and it is no usage or auth stop)."""
     return classify(text) is None and bool(UNREACHABLE_RE.search(text or ""))
 
 
 def call(claude, model, system, prompt, timeout, kind=None, effort=None, env=None):
-    """One `claude -p` call. Returns {text, ms, cost, tin, tout, model, cread, cwrite, think} or {error, fatal, ms}
-    (0214: and "unreachable": True when Claude's API could not be reached).
-    `env` (0191): variables for Claude Code (its prompt cache), over this process's."""
+    """One `claude -p` call: {text, ms, cost, tin, tout, model, cread, cwrite, think} or {error, fatal, ms} (plus
+    "unreachable": True when Claude's API could not be reached). `env`: Claude Code's variables over this process's."""
     t0 = time.time()
     try:
         p = subprocess.run(claude_argv(claude, model, system, kind, effort), input=prompt, capture_output=True,
@@ -614,7 +516,7 @@ def call(claude, model, system, prompt, timeout, kind=None, effort=None, env=Non
                 **({"unreachable": True} if unreachable(out) else {})}
     said = str(r.get("result"))
     if (r.get("is_error") or r.get("subtype") != "success"
-            or (said.lstrip().startswith("API Error") and unreachable(said))):   # 0214: an API error given as the answer
+            or (said.lstrip().startswith("API Error") and unreachable(said))):   # an API error given as the answer
         why = said + " " + (p.stderr or "")
         return {"error": f"{r.get('subtype')}: {said[:300]}", "fatal": classify(why), "ms": ms,
                 **({"unreachable": True} if unreachable(why) else {})}
@@ -625,7 +527,7 @@ def call(claude, model, system, prompt, timeout, kind=None, effort=None, env=Non
             "tin": (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0)
                    + (u.get("cache_creation_input_tokens") or 0),
             "tout": u.get("output_tokens") or 0, "model": used,
-            # 0191: the parts the price differs by (a cache read is 0.1x input, a 1-hour cache write 2x; thinking is output)
+            # priced differently: a cache read 0.1x input, a 1-hour cache write 2x; thinking is output
             "cread": u.get("cache_read_input_tokens") or 0, "cwrite": u.get("cache_creation_input_tokens") or 0,
             "think": (u.get("output_tokens_details") or {}).get("thinking_tokens") or 0}
 
@@ -648,8 +550,8 @@ def _answer_line(o):
 
 
 def _whole(text):
-    """0214: the answers of an output that is one JSON value: an array of answer objects, or one object keyed by
-    task id whose values are answers (a fenced block, or the text from its first bracket to its last)."""
+    """The answers of an output that is one JSON value: an array of answer objects, or one object keyed by task id
+    (a fenced block, or the text from its first bracket to its last)."""
     blocks = re.findall(r"```(?:json)?\s*\n(.*?)```", text, re.S) or [text]
     out = {}
     for b in blocks:
@@ -680,8 +582,7 @@ def _whole(text):
 
 
 def parse_lines(text):
-    """{str(task id): answer} from the model's JSON lines (the prototype's parser). 0214: also an output that is one
-    JSON array of answer objects, or one object keyed by task id (fenced or not); a line read wins over them."""
+    """{str(task id): answer} from the model's JSON lines, or from one JSON array/object (`_whole`); a line wins."""
     out = {}
     for line in (text or "").replace("```json", "").replace("```", "").split("\n"):
         line = line.strip()
@@ -795,8 +696,8 @@ def shares(total, n):
 
 
 def split_calls(tasks, n):
-    """0176 (0150 B): a lease's tasks of one kind and guide in calls of at most n, in order, never two tasks of the
-    same post (the server's "post": a long post's windows) in one call: windows asked together answer from each other."""
+    """Tasks in calls of at most n, in order, never two of the same post (a long post's windows) in one call:
+    windows asked together answer from each other (0176)."""
     calls = []
     for t in tasks:
         post = t.get("post")
@@ -835,14 +736,14 @@ def state_dir():
 class Batch:
     def __init__(self, kind, guide_id, guide, tasks, lease_until, model=None):
         self.kind, self.guide_id, self.guide, self.tasks, self.lease_until = kind, guide_id, guide, tasks, lease_until
-        self.model = model   # v10.18: the server's model for this kind (its config), else --model
+        self.model = model   # the server's model for this kind, else --model
 
 
 class Worker:
     def __init__(self, args, server, log):
         self.a, self.server, self.log = args, server, log
         self.stop = threading.Event()
-        self.fatal = None            # 'usage', 'auth', 'setup', 'server', 'token', 'api' (0214: Claude's API unreachable)
+        self.fatal = None            # 'usage', 'auth', 'setup', 'server', 'token', 'build', 'bug', 'api'
         self.fatal_why = None
         self.held = {}               # str(task id) -> task id as leased, for tasks not yet answered or released
         self.spent = {}              # str(task id) -> {tokens_in, tokens_out, ms, cost_usd}
@@ -853,9 +754,9 @@ class Worker:
                        "vectors": 0, "embed_ms": 0, "rule_invalid": 0,
                        "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
         self.model_seen = None
-        self.refused = self.load_refused()   # 0191: tasks and posts a refusal was isolated to before
-        self.warm = {}                       # 0191: kind -> set once its first call under the 5-minute cache returned
-        self.unreachable_run = 0             # 0214: calls in a row (across calls) that could not reach Claude's API
+        self.refused = self.load_refused()   # tasks and posts a refusal was isolated to before
+        self.warm = {}                       # kind -> Event set once its first call under the 5-minute cache returned
+        self.unreachable_run = 0             # calls in a row that could not reach Claude's API
 
     # -- fatal ------------------------------------------------------------------------------------------
     def set_fatal(self, kind, why):
@@ -942,21 +843,20 @@ class Worker:
 
     # -- one call ---------------------------------------------------------------------------------------
     def cache_mode(self, kind):
-        """0191: the kind's prompt-cache mode (--prompt-cache's)."""
+        """The kind's prompt-cache mode (--prompt-cache's)."""
         modes = self.a.prompt_cache or {"*": "default"}
         return modes.get(kind, modes.get("*", "default"))
 
     def effort(self, kind):
-        """0191: the kind's --effort level (--effort's, else EFFORT's), or None (Claude Code's default)."""
+        """The kind's --effort level, or None (Claude Code's default)."""
         level = (self.a.effort or {}).get(kind)
         return None if level in (None, "default") else level
 
     def ask(self, batch, tasks, attempt):
         """Asks one call. Returns (ok [(task, answer)], invalid [(task, answer, error)], missing [task], late,
-        model, refused, answered) or None when no call was made. `answered`: the call gave an output (0214: its
-        missing tasks are asked again halved; a failed call's are not). 0214: a call that could not reach Claude's
-        API is asked again as it was after each of --unreachable-wait's waits (the same attempt, not halved);
-        --unreachable-stop such results in a row, across calls, stop the cycle (its leases released, exit 3)."""
+        model, refused, answered) or None when no call was made; `answered`: the call gave an output. A call that
+        could not reach Claude's API is asked again as it was after each --unreachable-wait wait;
+        --unreachable-stop such results in a row, across calls, stop the cycle."""
         waits = list(self.a.unreachable_wait)
         while True:
             r, res = self.ask_once(batch, tasks, attempt)
@@ -1006,7 +906,7 @@ class Worker:
                 if a is None:
                     missing.append(t)
                     continue
-                if not self.a.no_server_rules:   # v10.20: bad entries dropped (kept under "dropped"), the rest kept
+                if not self.a.no_server_rules:
                     a, n_dropped = salvage(batch.kind, a, t.get("input"), batch.guide_id)
                     dropped += n_dropped
                 err = check_answer(batch.guide.get("schema"), a)
@@ -1014,7 +914,7 @@ class Worker:
                     err = salvage_refused(batch.kind, a)
                     ruled += err is not None
                 if err is None and not self.a.no_server_rules:
-                    err = rule_error(batch.kind, a, t.get("input"), batch.guide_id)   # 0191: what the server would refuse
+                    err = rule_error(batch.kind, a, t.get("input"), batch.guide_id)
                     ruled += err is not None
                 (invalid.append((t, a, err)) if err else ok.append((t, a)))
             with self.lock:
@@ -1037,13 +937,12 @@ class Worker:
                  refused=refused or None, unreachable=res.get("unreachable"),
                  late=late or None, error=res.get("error"),
                  invalid_errors=[e for _, _, e in invalid][:5] or None,
-                 # 0214: what a call that answered without some of its lines wrote, to count why
                  missing_text=res["text"][:MISSING_TEXT] if missing and "text" in res else None)
         if res.get("fatal"):
             self.set_fatal(res["fatal"], res["error"])
         return (ok, invalid, missing, late, res.get("model"), refused, "text" in res), res
 
-    # -- refusals (0191) ----------------------------------------------------------------------------------
+    # -- refusals -----------------------------------------------------------------------------------------
     def refused_path(self):
         return self.spool_path().with_name("refused.json")
 
@@ -1061,8 +960,8 @@ class Worker:
                     or (task.get("post") is not None and str(task["post"]) in self.refused["posts"]))
 
     def remember_refused(self, kind, task):
-        """A task a refusal stood alone on: never batched again (its later leases ask it alone), kept across cycles in
-        refused.json beside the spool (the newest REFUSED_KEEP)."""
+        """A task a refusal stood alone on: never batched again, kept in refused.json beside the spool (the newest
+        REFUSED_KEEP)."""
         with self.lock:
             self.refused["tasks"][str(task["id"])] = kind
             if task.get("post") is not None:
@@ -1079,9 +978,8 @@ class Worker:
                 pass
 
     def isolate(self, batch, attempt):
-        """A refused call answers no task of it: halves it until the refused task stands alone (2026-11-08), from the
-        first refusal on (0191: before, the first refused call was asked once more whole). A task refused alone is
-        posted as an empty answer (the server stores a failed try; three and the task fails) and remembered."""
+        """A refused call answers none of its tasks: halves it until the refused task stands alone, which is posted
+        as an empty answer (a failed try on the server) and remembered."""
         if len(batch.tasks) > 1:
             self.halve(batch, batch.tasks, attempt)
             return
@@ -1094,9 +992,8 @@ class Worker:
         self.post([self.answer_row(t, {})], None)
 
     def halve(self, batch, tasks, attempt, size=None):
-        """Asks `tasks` (all or some of `batch`'s) again, in calls of at most half of `batch` (rounded up; `size`
-        instead when given), each through second(): a refused call's tasks (0191) and, 0214, the tasks an answered
-        call left without a line, down to one task a call. Never with the tasks of `batch` that were answered."""
+        """Asks `tasks` (some of `batch`'s) again through second(), in calls of at most half of `batch` (rounded up;
+        or `size`), never with the tasks of `batch` that were answered."""
         size = size or max(1, -(-len(batch.tasks) // 2))
         for part in split_calls(tasks, size):
             if self.stop.is_set():
@@ -1123,9 +1020,8 @@ class Worker:
         return [t for t, _, _ in invalid] + missing, answered
 
     def second(self, batch, attempt=2):
-        """A retry: posts every answer, valid or not. 0214: tasks the call answered without (a call of more than one
-        task that answered) are halved again at once; a task still without an answer after its call alone (or after a
-        call that failed) is left to be released at the end of the cycle."""
+        """A retry: posts every answer, valid or not. The tasks an answered call left out are halved again; a task
+        still unanswered alone (or after a failed call) is released at the end of the cycle."""
         r = self.ask(batch, batch.tasks, attempt)
         if r is None:
             return
@@ -1230,15 +1126,14 @@ class Worker:
         return max(1, min(self.a.batch, (self.a.per_call or {}).get(kind, self.a.batch)))
 
     def lease_size(self, kind):
-        """Tasks per lease of `kind` (v10.13.3): --lease, else --batch (the server takes LEASE_MAX at most), and no
-        more than --parallel calls of the kind, so a lease of one-a-call tasks (merge) never queues more calls than
-        the callers start at once while its 30 minutes run."""
+        """Tasks per lease of `kind`: --lease, else --batch, at most LEASE_MAX and --parallel calls' worth, so a lease
+        never queues more calls than the callers can start before it expires."""
         return max(1, min(LEASE_MAX, self.a.lease or self.a.batch, self.per_call(kind) * self.a.parallel))
 
     def lease(self, kind):
         t0 = time.monotonic()
         w = self.server.work(kind, self.lease_size(kind), self.a.worker, self.a.days) or {}
-        ms = int((time.monotonic() - t0) * 1000)   # v10.13.4: the server's time for this lease (planning included)
+        ms = int((time.monotonic() - t0) * 1000)   # the server's time for this lease (planning included)
         tasks = w.get("tasks") or []
         if not tasks:
             self.log("leased", kind=kind, tasks=0, ms=ms)
@@ -1262,10 +1157,10 @@ class Worker:
                 self.log("guide-sha256-mismatch", kind=k, guide=gid, tasks=len(ts))
                 continue
             n = self.per_call(k)
-            alone = [t for t in ts if self.known_refused(t)]   # 0191: a task a refusal was isolated to: asked alone
+            alone = [t for t in ts if self.known_refused(t)]   # a task a refusal was isolated to: asked alone
             ts = [t for t in ts if not self.known_refused(t)]
-            model = next((t.get("model") for t in ts if t.get("model")), None)   # v10.18: a kind's model
-            out += [Batch(k, gid, g, c, until, model) for c in split_calls(ts, n)]   # 0176: one window of a post a call
+            model = next((t.get("model") for t in ts if t.get("model")), None)
+            out += [Batch(k, gid, g, c, until, model) for c in split_calls(ts, n)]
             out += [Batch(k, gid, g, [t], until, model) for t in alone]
         self.log("leased", kind=kind, tasks=len(tasks), ms=ms, lease_until=until.isoformat(timespec="seconds"))
         return out, len(tasks)
@@ -1278,9 +1173,8 @@ class Worker:
         except (ServerUnreachable, ServerError) as e:
             return self.finish("server", str(e))
         kinds = [k.strip() for k in self.a.kinds.split(",") if k.strip()]
-        # v10.13.3: a pipeline, not rounds. One thread leases (kinds in turn, as before) into a short queue, and
-        # --parallel callers each take the next batch as soon as they are free: Haiku no longer waits for the leases
-        # of a round, nor a round for its slowest call. The queue holds --parallel batches; the leaser waits on it.
+        # a pipeline: one thread leases into a queue of --parallel batches, and each caller takes the next batch as
+        # soon as it is free, so no call waits for a round's slowest one
         ready = queue.Queue(maxsize=max(1, self.a.parallel))
         callers = [threading.Thread(target=self.call_loop, args=(ready,), name=f"caller-{i}", daemon=True)
                    for i in range(self.a.parallel)]
@@ -1292,8 +1186,8 @@ class Worker:
         return self.finish(self.fatal, self.fatal_why)
 
     def call_loop(self, ready):
-        """A caller (v10.13.3): batches from `ready` until None; after a stop the rest are only taken off (their
-        tasks are released by finish, or left to expire when the server or the token failed)."""
+        """A caller: batches from `ready` until None; after a stop the rest are only taken off (finish releases
+        their tasks, or they expire when the server or the token failed)."""
         while True:
             b = ready.get()
             if b is None:
@@ -1302,8 +1196,8 @@ class Worker:
                 self.run_batch(b)
 
     def lease_all(self, kinds, ready, callers):
-        """The leaser (v10.13.3): --batches leases, kinds taking turns (v10.12.1; --drain: each until dry), each
-        lease's batches put on `ready`; a None for each caller at the end."""
+        """The leaser: --batches leases, kinds taking turns (--drain: each until dry), each lease's batches put on
+        `ready`; a None for each caller at the end."""
         done, leased, turn, slow = set(), 0, 0, 0
         try:
             while leased < self.a.batches and not self.stop.is_set():
@@ -1325,8 +1219,7 @@ class Worker:
                     self.set_fatal("token", str(e))
                     break
                 except ServerSlow as e:
-                    # v10.13.2: one kind's lease took longer than the timeout (its planner is slow on the server):
-                    # that kind sits out this cycle, the others go on (its tasks, if leased, come back at the lease's end)
+                    # one kind's planner is slow on the server: that kind sits out this cycle, the others go on
                     self.log("lease-slow", kind=kind, error=str(e)[:300])
                     done.add(kind)
                     slow += 1
@@ -1336,8 +1229,7 @@ class Worker:
                     continue
                 except ServerError as e:
                     if e.code == 400 and "unknown kind" in str(e):
-                        # v10.14: a worker newer than its server (a kind added before the deploy): that kind sits
-                        # out, the others go on; never a stop, which would hold every kind until the server updates
+                        # a worker newer than its server: that kind sits out; a stop would hold every kind
                         self.log("kind-unknown", kind=kind, error=str(e)[:300])
                         done.add(kind)
                         continue
@@ -1364,8 +1256,8 @@ class Worker:
                 ready.put(None)
 
     def warmed(self, b):
-        """first(b); 0191: under the 5-minute cache, a kind's first call of the cycle goes alone and the kind's other
-        calls wait for it (at most --timeout), so they read its guide from the cache instead of each writing it."""
+        """first(b); under the 5-minute cache a kind's first call goes alone and its other calls wait for it (at most
+        --timeout), so they read the guide from the cache instead of each writing it."""
         if self.cache_mode(b.kind) != "5m":
             return self.first(b)
         with self.lock:
@@ -1382,10 +1274,8 @@ class Worker:
             ready.set()
 
     def run_batch(self, b):
-        """One batch, start to end: embedded, or asked, then its invalid and missing tasks asked again: 0214, after a
-        call that answered, in calls of at most half the batch, the missing ones halved again down to one task a call
-        (halve); after a call that failed, once more in calls of per_call(kind) (as a round's retry did before
-        v10.13.3)."""
+        """One batch, start to end: embedded, or asked, then its invalid and missing tasks asked again (halved after
+        a call that answered; in calls of per_call(kind) after one that failed)."""
         try:
             if b.kind in EMBED_KINDS:
                 self.embed(b)
