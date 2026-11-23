@@ -712,7 +712,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("merge", "judge-story-v1", "story_story", JUDGE_SCHEMA),
     Kind("connect", "connect-v1", "story_story", JUDGE_SCHEMA),
     Kind("card", "card-v1", "story", CARD_SCHEMA),
-    Kind("headline", "headline-v1", "story", HEADLINE_SCHEMA),
+    Kind("headline", "headline-v2", "story", HEADLINE_SCHEMA),     # v10.39: core members; who acted, its date
     Kind("briefing", "briefing-v1", "day", BRIEFING_SCHEMA),
     Kind("translate", "translate-v1", "post", TRANSLATE_SCHEMA),
     Kind("embed", "embed-v1", "post", EMBED_SCHEMA),   # S2: answered by an embedder, at POST /api/markx/embeddings

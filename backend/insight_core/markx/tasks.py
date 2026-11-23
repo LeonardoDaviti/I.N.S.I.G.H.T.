@@ -62,6 +62,7 @@ TRANSLATE_CHARS = 2500       # the prototype's F5
 READ_LINKS, ENTITY_LINKS, JUDGE_LINKS = 12, 6, 6
 STORY_MEMBERS = 3            # members a judge question shows (judge.render_story; 0086 C says "up to 5")
 CARD_MEMBERS, HEADLINE_MEMBERS, CONNECT_MEMBERS, BRIEFING_POSTS = 8, 6, 5, 4
+HEADLINE_CHARS = 400          # a headline member's text shown
 PUBLISHER_KINDS = {"site", "arxiv", "hn", "youtube", "saved"}
 CERTAIN = {"thread", "quote", "address"}   # a tree reason that is not a guess: no check (unless a roundup)
 MIN_WORDS = 20                             # rule A: a shorter post is never judged, never removed
@@ -523,10 +524,47 @@ def card_input(members: Sequence[Post], rd: Dict[str, dict]) -> str:
     return "MEMBERS:\n" + "\n".join(lines)
 
 
+_CORE_WORD = re.compile(r"\w*\d\w*|\w{5,}")   # a word a member's core is told by: a name, a version, a number
+
+
+def _core_words(p: Post) -> set:
+    return set(_CORE_WORD.findall(fold(p.title + " " + p.text[:HEADLINE_CHARS])))
+
+
+def headline_members(members: Sequence[Post]) -> List[Post]:
+    """v10.39: the members a headline reads, the story's core, earliest first. A story of HEADLINE_MEMBERS posts or
+    fewer shows them all; a larger one its posts whose words most other voices share (each word counted once per
+    other voice whose posts hold it: the event most of the story's sources report), ties by time, a post whose title
+    and text start another shown post of its voice already has (a feed's copies) left out. The earliest 6 regardless (before
+    v10.39) let a teaser, a side post or a wrongly joined member that came first write a big story's headline."""
+    ps = _earliest(members)
+    if len(ps) <= HEADLINE_MEMBERS:
+        return ps
+    words = {p.id: _core_words(p) for p in ps}
+    voices: Dict[str, set] = {}
+    for p in ps:
+        for w in words[p.id]:
+            voices.setdefault(w, set()).add(p.voice)
+    shared = {p.id: sum(len(voices[w] - {p.voice}) for w in words[p.id]) for p in ps}
+    shown: List[Post] = []
+    seen = set()
+    for p in sorted(ps, key=lambda p: (-shared[p.id], p.at, p.id)):
+        same = (p.voice, fold(p.title + " " + p.text[:HEADLINE_CHARS]))
+        if same in seen:
+            continue
+        seen.add(same)
+        shown.append(p)
+        if len(shown) == HEADLINE_MEMBERS:
+            break
+    return _earliest(shown)
+
+
 def headline_input(members: Sequence[Post]) -> str:
-    """exp_f4.story_text: up to 6 members, earliest first (the prototype took the 6 nearest the centroid)."""
-    return "Members (earliest first):\n" + "\n".join(_member_line(p, 400, p.iso[:10], shared=True)
-                                                     for p in _earliest(members)[:HEADLINE_MEMBERS])
+    """The story's core members (headline_members), earliest first, each as whose post it is, its platform, date,
+    title and text start. Its words change only when the core does: a headline is asked again (a new task) when a
+    member joins the core or leaves it, not for every later post."""
+    return "Members (the story's core, earliest first):\n" + "\n".join(
+        _member_line(p, HEADLINE_CHARS, p.iso[:10], shared=True) for p in headline_members(members))
 
 
 def briefing_input(day: date, stories: Sequence[Tuple[str, Sequence[Post]]]) -> str:

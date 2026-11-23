@@ -475,5 +475,29 @@ class JudgeQuotes0258(unittest.TestCase):
         self.assertIn("shorter than", check("pair", judge(post_quote="Widget"), text, "judge-read-v2")[1])
 
 
+class HeadlineMembers(unittest.TestCase):
+    """v10.39: a headline reads the story's core, not its earliest 6 posts regardless."""
+
+    def post(self, i, source, title, hours):
+        from datetime import datetime, timedelta, timezone
+        from insight_core.markx import tasks
+        return tasks.Post(id=f"p{i}", kind="x", source=source, source_id=source, title=title, text=title + " today",
+                          at=datetime(2026, 11, 1, tzinfo=timezone.utc) + timedelta(hours=hours))
+
+    def test_a_big_storys_first_side_post_is_left_out_for_what_most_voices_report(self):
+        from insight_core.markx import tasks
+        side = self.post(0, "early", "Fine tune a harness for agents", 0)
+        core = [self.post(i, f"s{i}", "Acme ships Nimbus 5.1", i) for i in range(1, 9)]
+        copy = self.post(9, "s1", "Acme ships Nimbus 5.1", 10)            # s1's own copy: one line of s1 is enough
+        shown = tasks.headline_members([side, *core, copy])
+        self.assertEqual([p.id for p in shown], [f"p{i}" for i in range(1, 7)])
+        self.assertNotIn("Fine tune a harness", tasks.headline_input([side, *core, copy]))
+
+    def test_a_small_story_shows_every_post_earliest_first(self):
+        from insight_core.markx import tasks
+        ps = [self.post(i, f"s{i % 2}", f"Acme ships Nimbus {i}", -i) for i in range(5)]
+        self.assertEqual([p.id for p in tasks.headline_members(ps)], ["p4", "p3", "p2", "p1", "p0"])
+
+
 if __name__ == "__main__":
     unittest.main()
