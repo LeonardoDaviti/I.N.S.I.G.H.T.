@@ -1,16 +1,9 @@
-"""The Mark X story view with its perspectives and sheet (issue 0119 B6), and the owner's label buttons on them (B7).
+"""The Mark X story view with its perspectives and sheet (`story_view`, /markx/stories/<id>), and the owner's label
+buttons on them. The header states the lab's accuracy until the owner has LAB_UNTIL labels, then the owner's own.
 
-`story_view` is what `/markx/stories/<id>` reads: the story, its sheet, each member's line (label, sign, new facts,
-copies folded) and the owner's labels; the header states the measured accuracy: the lab's (2026-11-05, unseen
-stories) until the owner has LAB_UNTIL labels, then the owner's own, with Wilson intervals.
-
-Labels (mx_labels, keep everything: a changed answer is a new row, the newest counts):
-  - item_kind `perspective`, a = story, b = post; answer `right`, `wrong`, or the right label (one of the five);
-    note: JSON {"shown": the label shown, "row": the mx_perspectives row}, so a label keeps what it was about;
-  - item_kind `fact`, a = story, b = post; answer `right`, `not_new`, `not_true` (not true to the post) or
-    `not_about` (not about this story); note: "<index>: <the fact's text>".
-labeller 'owner', split 'test': perspectives are unseen by construction and nothing is tuned on these labels
-(0119 B7). `accuracy` reports them per label and for new facts against the lab's numbers.
+Labels (mx_labels, labeller 'owner', split 'test'; a changed answer is a new row, the newest counts):
+  - `perspective`, a = story, b = post: `right`, `wrong` or the right label; note JSON {"shown", "row"};
+  - `fact`, a = story, b = post: `right`, `not_new`, `not_true`, `not_about`; note "<index>: <the fact's text>".
 """
 from __future__ import annotations
 
@@ -140,7 +133,7 @@ def story_view(cur: Any, story_id: str) -> Optional[Dict[str, Any]]:
     folded = {c: p for p, r in rows.items() for c in r["copies"]}
     ids = sorted(set(members) | set(rows) | copies)
     from insight_core.markx import built
-    posts = built.in_published_order(cur, load_members(cur, ids))   # 0128: the page's order, never an input
+    posts = built.in_published_order(cur, load_members(cur, ids))
     persp, facts = owner_labels(cur, sid)
     lines = []
     for pid in sorted((p for p in set(members) | set(rows) if p not in folded and p in posts),
@@ -158,11 +151,11 @@ def story_view(cur: Any, story_id: str) -> Optional[Dict[str, Any]]:
     cur.execute("SELECT id::text, url FROM posts WHERE id = ANY(%s::uuid[])", (ids,))
     urls = dict(cur.fetchall())
     from insight_core.utils.byline import bylines
-    bys = bylines(cur, posts)   # issue 0185: who wrote each, via whom
+    bys = bylines(cur, posts)   # who wrote each, via whom
     from insight_core.markx import entity_views
-    return {   # 0128's `built`: event type, the original first, leaks and "came true"
+    return {
         "story": {"id": sid, "headline": st.get("headline"), "first_at": st.get("first_at")},
-        "things": entity_views.story_things(cur, members),   # 0250: its things, each a link to its entity page
+        "things": entity_views.story_things(cur, members),
         "built": built.build(cur, [sid]).get(sid),
         "judged": bool(rows), "sheet": sheet,
         "header": {"text": acc["text"], "source": acc["source"], "labels": acc["labels"]},

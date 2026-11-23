@@ -1,23 +1,10 @@
-"""A thing's stops (issue 0165 C, the second case): what happened to a thing in each story about it.
+"""A thing's stops: whether a story is about a thing (a stop on its timeline) or only names it, and what happened to
+the thing in it (launch -> benchmark -> weights ...).
 
-A thing's timeline (markx/timeline.py) shows the stories it is in by time. Two stories about one model at different
-times (its launch with its benchmarks; its weights a week later) are each correct, and the line should read as one:
-launch -> benchmark -> ranking -> weights -> analysis. This module owns the stop: whether a story is about the thing
-(a stop on its line) or only names it, and what happened to the thing in it.
-
-The interface:
-  - `share(posts, about) -> Share`, `candidate(share) -> bool` (pure): a story is a candidate stop when the thing is
-    the subject or an actor of at least CANDIDATE_SHARE of its members or of its first post; the rest are stories that
-    only name it.
-  - `question(thing, story) -> str` (pure): one item of the `stop` kind (guide stop-v1): the thing (name, type, maker),
-    the story's headline and dates, its earliest posts (date, source, title, how each treats the thing).
-  - `plan(cur, now=)`: the jobs process (jobs.Jobs.plan_background): the candidate (thing, story) pairs of the
-    stories with new members since the last pass, asked once each, at most PLAN_MAX a pass.
-  - `of(cur, book, root, story_ids) -> {story: Stop}`: the stored answers for a thing's stories (by any name of its
-    cluster: a merge after the ask keeps the answer).
-  - `coarse(event_type) -> str`: the stop a story's event type gives when no answer is stored (the event-type seam's
-    story type: release, research, incident...).
-Nothing is fetched; a view reads only stored rows.
+`share`/`candidate` (pure) pick candidate stories: the thing is subject or actor of CANDIDATE_SHARE of its members or
+of its first post. `question` builds one `stop` item; `plan` (jobs process) asks each candidate pair once, at most
+PLAN_MAX a pass; `of` reads the stored answers by any name of the thing's cluster (a later merge keeps them);
+`coarse` gives the stop a story's event type implies when nothing is stored. Nothing is fetched.
 """
 from __future__ import annotations
 
@@ -37,7 +24,7 @@ TITLE_CHARS = 200
 PLAN_MAX = 300                # questions a pass, at most
 WINDOW_DAYS = 30              # stories whose newest member is this recent are planned
 PRIORITY = 0
-# The stop a story's event type gives when nothing was asked (the event-type seam's closed types).
+# the stop a story's event type gives when nothing was asked
 COARSE = {"model_release": "release", "product_release": "release", "research_result": "research",
           "business_event": "deal", "policy_legal": "incident", "incident": "incident",
           "public_statement": "statement", "promotion_event": "promotion", "leak_rumour": "teaser",
@@ -45,11 +32,8 @@ COARSE = {"model_release": "release", "product_release": "release", "research_re
 
 
 def config() -> Dict[str, bool]:
-    """entity_bands.json `timeline`: `stops` (the stop / only-named split on the line), `stop_types` (each stop's word
-    shown), `analysis` (breakdowns hung on the line), `by_reading` (0220: a post whose reading is a round-up or
-    never names the thing only names it, timeline.named_only), `version_line` (0220: the family's versions on one
-    line on the entity page, timeline.version_line) and `outside_roles` (0250: an outside month counts only posts
-    whose role says it is about the thing, timeline.OUTSIDE_ROLES)."""
+    """entity_bands.json `timeline` switches: stops, stop_types, analysis, by_reading (timeline.named_only),
+    version_line (timeline.version_line), outside_roles (timeline.OUTSIDE_ROLES)."""
     from insight_core.markx import identity as I
     got = I.bands().get("timeline") or {}
     return {"stops": bool(got.get("stops", True)), "stop_types": bool(got.get("stop_types", False)),
@@ -106,8 +90,8 @@ def thing_line(thing: Mapping[str, Any]) -> str:
 
 
 def story_lines(headline: Optional[str], lines: Sequence[Line], label: str = "STORY", shown: int = SHOWN) -> List[str]:
-    """A story as a question shows it: its headline, dates and post count, then its earliest `shown` posts (date,
-    source, how the post treats the thing, title). Pure; the stop and the chain questions both show stories so."""
+    """A story as the stop and chain questions show it: headline, dates, post count, then its earliest `shown` posts
+    (date, source, how the post treats the thing, title). Pure."""
     order = sorted(lines, key=lambda x: (x.at, x.source, x.title))
     span = (f"{order[0].at:%Y-%m-%d} to {order[-1].at:%Y-%m-%d}, {len(order)} posts" if order else "no posts")
     out = [f'{label}: "{_clip(headline, TITLE_CHARS) or "(no headline)"}" ({span})']
@@ -174,9 +158,9 @@ def _thing(book: Any, root: str) -> Dict[str, Any]:
 
 def stories_shown(cur: Any, book: Any, sids: Sequence[str]
                   ) -> Tuple[Dict[str, List[Tuple[datetime, str, str, str]]], Dict[str, Dict[str, str]], Dict[str, Optional[str]]]:
-    """What a question shows of these stories: ({story: [(at, post, source, title)] of its current members},
-    {post: {root: its strongest role}}, {story: headline}). The stop and the chain questions read them so."""
-    from insight_core.markx.news import _posts   # the post lines every page shows (title, source, published)
+    """What the stop and chain questions show of these stories: ({story: [(at, post, source, title)] of its current
+    members}, {post: {root: its strongest role}}, {story: headline})."""
+    from insight_core.markx.news import _posts
     cur.execute("""SELECT story_id::text, post_id::text FROM mx_story_posts
                     WHERE valid_to IS NULL AND role = 'member' AND story_id = ANY(%s::uuid[])""", (list(sids),))
     pairs = cur.fetchall()
@@ -208,9 +192,8 @@ def stories_shown(cur: Any, book: Any, sids: Sequence[str]
 
 def answered(cur: Any, *, stories: Optional[Iterable[str]] = None, since: Optional[datetime] = None
              ) -> List[Tuple[str, str, bool, datetime]]:
-    """Every stored stop answer, the newest task's first valid call a (story, entity) pair: [(story, entity as asked,
-    about, answered at)], in SQL (no task or call table read whole into Python). `stories`: only these; `since`: only
-    the pairs answered since then."""
+    """Every stored stop answer (the newest task's first valid call per (story, entity)): [(story, entity as asked,
+    about, answered at)], filtered in SQL. `stories`: only these; `since`: only pairs answered since then."""
     where, params = ["t.kind = %s", "t.status = 'answered'"], [KIND]
     if stories is not None:
         where.append("t.a = ANY(%s::uuid[])")
@@ -229,10 +212,9 @@ def answered(cur: Any, *, stories: Optional[Iterable[str]] = None, since: Option
 
 
 def plan(cur: Any, *, now: Optional[datetime] = None, limit: int = PLAN_MAX) -> Dict[str, int]:
-    """The jobs process: the candidate (thing, story) pairs of the Mark X stories whose newest member is within
-    WINDOW_DAYS and joined since the last pass (mx_settings `stops_planned`), or whose members were read since (v10.40:
-    its pairs never asked), each asked once; at most `limit` new
-    questions a pass (the newest stories first; the rest wait for the next pass). {stories, pairs, asked, again}."""
+    """Ask the candidate (thing, story) pairs of stories whose newest member is within WINDOW_DAYS and joined since
+    the last pass (mx_settings `stops_planned`), or whose members were read since (pairs never asked only); each once,
+    at most `limit` a pass, newest stories first. {stories, pairs, asked, again}."""
     from insight_core.markx import identity as I, repo, tasks
     now = now or datetime.now(timezone.utc)
     out = {"stories": 0, "pairs": 0, "asked": 0, "again": 0}
@@ -246,10 +228,8 @@ def plan(cur: Any, *, now: Optional[datetime] = None, limit: int = PLAN_MAX) -> 
                       AND story_id IN (SELECT story_id FROM mx_story_posts WHERE valid_to IS NULL AND valid_from >= %s)
                     GROUP BY story_id HAVING count(*) >= 2 ORDER BY max(valid_from) DESC, story_id""", (since,))
     sids = [r[0] for r in cur.fetchall()]
-    # v10.40: a story whose members' readings came (or changed) since the last pass, its membership not: the pass
-    # that saw it join read no roles yet, so it asked nothing, and no later member came to plan it again (GPT-6.2's
-    # benchmark and personality stories, Gemini 4 Neon's launch, Hy4 flash's open weights: never a stop, so never in
-    # a chain, so never in their release's row). Its pairs never asked are asked (one asked stays as it was).
+    # stories whose members' readings came since, membership unchanged: the pass that saw them join read no roles
+    # yet and asked nothing; their pairs never asked are asked now
     cur.execute("""SELECT sp.story_id::text FROM mx_story_posts sp
                     WHERE sp.valid_to IS NULL AND sp.role = 'member'
                       AND sp.story_id IN (SELECT x.story_id FROM mx_story_posts x JOIN mx_mention_sets m ON m.post_id = x.post_id
@@ -268,7 +248,7 @@ def plan(cur: Any, *, now: Optional[datetime] = None, limit: int = PLAN_MAX) -> 
     if not sids:
         repo.set_setting(cur, "stops_planned", {"at": now.isoformat()})
         return out
-    book = I.lazy_book(cur)   # what the stories' mentions ask of the book (asked before the reads below)
+    book = I.lazy_book(cur)
     posts, roles, heads = stories_shown(cur, book, sids)
     for sid in sids:
         ps = sorted(posts.get(sid, []))

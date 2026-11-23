@@ -1,8 +1,6 @@
-"""0136 (Stealth v10.8)'s routes: back in the news on /markx (Shadow; no bearer: the app's own; 404 when Mark X is off,
-as every /api/markx path). Included into markx/api.py's router.
+"""Routes for back in the news on /markx (the app's own; 404 when Mark X is off). Included into markx/api.py's router.
 
-GET  /api/markx/back           {items [the candidates judged development], counts, precision (the owner's labels),
-                               measured (the lab's)} (markx/back.page)
+GET  /api/markx/back           {items, counts, precision, measured} (markx/back.page)
 POST /api/markx/labels/back    {row, answer: development | retold | related | unrelated | undo} -> {id, answer, label,
                                precision}
 """

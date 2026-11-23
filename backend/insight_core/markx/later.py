@@ -1,18 +1,10 @@
-"""Long-lived stories (issue 0163 A): a story whose MAIN subject is one specific entity (a paper, document, dataset,
-method, or one model or software release). Back in the news (back.py: a long-lived story may fire again AGAIN after
-its last window) and the anchors engine (anchors.py: an anchor's subject) read it here.
+"""Long-lived stories: a story whose main subject is one specific entity (a paper, document, dataset, method, or one
+model or software release). back.py (a long-lived story may fire again AGAIN after its last window) and anchors.py
+read them here (`long_lived`, `mains`).
 
-  - main: the entity (its root through the merges, a pin first) is the subject mention (role `subject`, the current
-    set) of at least MAIN_SHARE of the story's read members, of 2+ when 2+ were read, and no other subject of the
-    story (any type; an unlinked name counts by its name key) is the subject of more members;
-  - specific (`specific`): a paper, document, dataset (or method) always; a model or software only when the entity is
-    one release (level version / variant / checkpoint, or a version, variant or build named); a family, an
-    unversioned name and a `product` never.
-The owner's "Stop following this story" rows (mx_later_stops) still stop a story (`stopped`).
-
-Later developments (0163 B-D: the follow-up trigger, its back-judge questions, the Later rows on the story and entity
-pages, their labels and the follow switch, and the anchors engine's Later half) were dropped in v10.18 (0203: 4 of 7
-shown rows right, 6 of 167 candidates a development). mx_later keeps every row it ever wrote (keep everything).
+Main: the entity (root through the merges, a pin first) is the subject of at least MAIN_SHARE of the story's read
+members (2+ when 2+ were read) and no other subject is the subject of more; `specific` decides the type. The owner's
+"Stop following" rows (mx_later_stops) still stop a story (`stopped`). mx_later keeps every row it wrote.
 """
 from __future__ import annotations
 
@@ -23,10 +15,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from insight_core.markx import back, pairing
 from insight_core.markx.back import _date
 
-# 0180: the gates are Pairing's `develops` row (back.DEVELOPS); named here as before.
-ALWAYS_TYPES = back.DEVELOPS.always_types       # specific by their type (method: once 0151's types add it)
+# the gates are Pairing's `develops` row (back.DEVELOPS)
+ALWAYS_TYPES = back.DEVELOPS.always_types       # specific by their type
 RELEASE_TYPES = back.DEVELOPS.release_types     # specific only as one release (see `specific`)
-MAIN_SHARE = back.DEVELOPS.main_share   # provisional: the main subject is the subject of at least this share of members
+MAIN_SHARE = back.DEVELOPS.main_share   # the main subject is the subject of at least this share of members
 AGAIN = back.DEVELOPS.again       # a long-lived story's back trigger may fire again this long after its last window
 
 
@@ -87,15 +79,13 @@ def _ents(cur: Any, ids: Iterable[str]) -> Dict[str, _Ent]:
 
 
 def specific(e: Optional[_Ent], mention_type: Optional[str] = None) -> bool:
-    """Whether an entity is specific enough to keep a story listening (v10.13.12): a paper, a document, a dataset or
-    a method always; a model or software only as one release: level version, variant or checkpoint, or a version, a
-    variant or a build named (a family, an unversioned product or family name: never); any other type (product, org,
-    person, event, ...) never. An entity marked not one is none. `mention_type`: the type its mentions give it, when
-    the entity row has none."""
+    """Whether an entity is specific enough to keep a story listening: a paper, document, dataset or method always;
+    a model or software only as one release (a version, variant, checkpoint or build); a family, any other type or a
+    not_entity never. `mention_type`: the type its mentions give it, when the entity row has none."""
     if e is None:
         return False
     return pairing.specific(back.DEVELOPS, e.type or mention_type, level=e.level, version=e.version,
-                            variant=e.variant, build=e.build, status=e.status)   # 0180: the develops row's gate
+                            variant=e.variant, build=e.build, status=e.status)
 
 
 # ---- the stories that keep listening ------------------------------------------------------------------------
@@ -122,7 +112,7 @@ class Long:
         return {self.subject} if self.subject else set()
 
 
-page_key = pairing.page_key      # 'paper <ref>' for a paper's page, else back.norm: Pairing's page key (0166)
+page_key = pairing.page_key      # 'paper <ref>' for a paper's page, else back.norm
 
 
 def _subject_rows(cur: Any, ids: Sequence[str]) -> List[Tuple]:
@@ -147,8 +137,8 @@ def stopped(cur: Any, story_ids: Optional[Sequence[str]] = None) -> Set[str]:
 
 def long_lived(cur: Any, *, story_ids: Optional[Sequence[str]] = None, ids: Optional[_Ids] = None
                ) -> Dict[str, Long]:
-    """{story: Long} of Mark IX's stories of 2+ sources whose main subject is one specific entity (the module's A; of
-    `story_ids`, else all; stopped ones too: the caller drops them)."""
+    """{story: Long} of Mark IX's stories of 2+ sources whose main subject is one specific entity (of `story_ids`,
+    else all; stopped ones too: the caller drops them)."""
     where, params = ("WHERE sp.story_id = ANY(%s::uuid[])", (list(story_ids),)) if story_ids is not None else ("", ())
     if story_ids is not None and not story_ids:
         return {}
@@ -161,7 +151,7 @@ def long_lived(cur: Any, *, story_ids: Optional[Sequence[str]] = None, ids: Opti
     origin: Dict[str, Optional[str]] = {}
     for sid, pid, src, at, url, o, saved in cur.fetchall():
         if at is not None:
-            by[sid].append(back._P(pid, src, at, url, bool(saved)))   # 0189: a saved page is no voice of the story
+            by[sid].append(back._P(pid, src, at, url, bool(saved)))   # a saved page is no voice of the story
             origin[sid] = o
     by = {sid: ms for sid, ms in by.items() if back.sources(ms) >= back.MIN_SOURCES}
     return mains(cur, by, origin, ids=ids)
@@ -169,8 +159,8 @@ def long_lived(cur: Any, *, story_ids: Optional[Sequence[str]] = None, ids: Opti
 
 def mains(cur: Any, by: Dict[str, List[Any]], origin: Dict[str, Optional[str]], *, ids: Optional[_Ids] = None
           ) -> Dict[str, Long]:
-    """{story: Long} of the stories `by` ({id: its members, back._P}) whose main subject is one specific entity (the
-    module's A, whatever the story is: 0180's anchors give Mark X stories too). `origin`: {id: its origin page}."""
+    """{story: Long} of the stories `by` ({id: its members, back._P}, Mark IX or Mark X) whose main subject is one
+    specific entity. `origin`: {id: its origin page}."""
     if not by:
         return {}
     mids = sorted({m.id for ms in by.values() for m in ms})
