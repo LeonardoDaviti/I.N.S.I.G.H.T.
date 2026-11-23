@@ -15,6 +15,7 @@ from insight_core.tests import test_markx_timeline as TL
 from insight_core.tests.test_markx_api import _Api, call
 
 T0, H, D = base.T0, base.H, base.D
+SIBLINGS = False   # v10.38: entity_bands.json chains.siblings (its measure there)
 GUIDE_SHA256 = "be24941d7e58424f6561ed1866cd5d13ccccebdc8b20e527d88ccf36aa598771"   # frozen before held-out round 2
 
 
@@ -100,13 +101,6 @@ class Rules(unittest.TestCase):
         self.assertEqual(G.chain_builds(Book(ents), ents)["snap"], "piv")    # a dated snapshot on its variant's line
         self.assertEqual(G.chain_kin(Book(ents), ["oc", "pi", "fam"]), {"oc": "fam", "pi": "fam"})
 
-    def test_a_launch_joins_its_things_release_groups(self):
-        """v10.38: one launch, one row: the same_release groups of two sibling things joined by a same_launch edge."""
-        self.assertEqual(G.launch_components([["a", "b"], ["c", "d"], ["x", "y"]], [("c", "b"), ("e", "d")]),
-                         [["a", "b", "c", "d", "e"], ["x", "y"]])
-        self.assertEqual(G.launch_components([], [("b", "a")]), [["a", "b"]])
-        self.assertEqual(G.launch_components([["a", "b"]], []), [["a", "b"]])
-
     def test_a_sibling_question_shows_both_things(self):
         text = G.chain_question({"name": "Orbit 2 Small", "type": "model", "maker": "Vantor Labs"},
                                 ("Vantor releases Orbit 2 Small", [line(T0, "Introducing Orbit 2 Small and Large")]),
@@ -148,15 +142,14 @@ class Rules(unittest.TestCase):
         self.assertEqual(G.CHAIN_GUIDE, k.guide)
         self.assertIn("chain-v1", schemas.answer_guides("chain"))             # its tasks kept and read
         self.assertIn("chain-v2", schemas.answer_guides("chain"))
-        self.assertNotIn("same_launch", schemas.schema_for("chain", "chain-v2")["properties"]["relation"]["enum"])
         v3 = (pathlib.Path(G.__file__).parent / "guides" / "chain-v3.md").read_text()
         v2 = (pathlib.Path(G.__file__).parent / "guides" / "chain-v2.md").read_text()
         for v in (v2, v3):
             self.assertIn("a result achieved WITH the thing", v)              # the owner's rule (2026-11-21)
             self.assertIn("demos of what it can do", v)                       # demos and benchmarks stay its release
-        self.assertIn("`same_launch`", v3)                                     # v10.38: one launch, one row
+        self.assertNotIn("same_launch", v3 + " ".join(schemas.CHAIN_RELATIONS))   # one path: same_release
+        self.assertIn("One release can launch several sibling things together", v3)   # v10.38: one release, one row
         self.assertIn("its maker's own builds of it", v3)                      # the maker's GGUF is its release
-        self.assertNotIn("same_launch", v2)
         self.assertNotIn("next_version", schemas.CHAIN_RELATIONS)   # a successor is identity's, never the judge's
         self.assertEqual(tuple(schemas.CHAIN_RELATIONS), G.CHAIN_RELATIONS)
         path = pathlib.Path(G.__file__).parent / "guides" / "chain-v1.md"
@@ -167,7 +160,8 @@ class Rules(unittest.TestCase):
         self.assertIsNotNone(validate.check("chain", {"reason": "x", "relation": "next_version"}, "x")[1])
         self.assertIn("chain", tasks.BACKGROUND_PLANNED)
         # measured (0219): asked and stored; no relation passed its bar on the held-out sets, so none is shown
-        self.assertEqual(G.chain_config(), {"on": True, "shown": ("same_release",), "one_row": True})   # 0267: same_release shown (98.3% [91.1] on 60 stored edges)   # 0236: one row on (owner 2026-11-19: the maker's Q&A is in the row)
+        self.assertEqual(G.chain_config(), {"on": True, "shown": ("same_release",), "one_row": True,
+                                            "siblings": SIBLINGS})   # 0267: same_release shown (98.3% [91.1] on 60 stored edges)   # 0236: one row on (owner 2026-11-19: the maker's Q&A is in the row)
         from insight_core.markx import consumers
         self.assertEqual(consumers.feature_of("chain"), "graph")
 

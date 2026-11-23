@@ -1494,8 +1494,8 @@ def label(cur: Any, *, newer: str, older: str, answer: str, note: Optional[str] 
 # proposed them) and call_id the judge's call. decide's story connections never read or close them (their rule).
 
 CHAIN_KIND, CHAIN_GUIDE = "chain", "chain-v3"   # v10.34: v2 (chain-v1's same_release pairs asked again); v10.38: v3
-                                                # (same_launch: sibling things' one launch; chain-v2's sibling pairs
-                                                # that linked nothing asked again)
+                                                # (one release may launch sibling things together; chain-v2's sibling
+                                                # pairs that linked nothing asked again)
 CHAIN_RULE = "chain_stops"            # both stories are stops of one thing (stored stop answers saying about)
 CHAIN_DAYS = 30                       # the later story's first post at most this many days after the earlier's
 CHAIN_PREV = 3                        # a stop is paired with at most this many stops before it (and after it)
@@ -1506,12 +1506,10 @@ CHAIN_MARK = "chains_planned"         # mx_settings: the last pass's clock (the 
 CHAIN_SYNCED = "chains_synced"        # mx_settings: the last sync's clock (the pairs answered since are read again)
 CHAIN_DEPTH = 3                       # links followed from a story, each way
 CHAIN_SHOWN = 12                      # links shown each way, at most
-CHAIN_RELATIONS = ("same_release", "same_launch", "same_event", "follows_up", "development", "reaction", "builds_on",
-                   "unrelated")
+CHAIN_RELATIONS = ("same_release", "same_event", "follows_up", "development", "reaction", "builds_on", "unrelated")
 CHAIN_LINKS = CHAIN_RELATIONS[:-1]    # what makes an edge (unrelated makes none)
-ONE_ROW = ("same_release", "same_launch")   # v10.38: the relations a News row may fold (release_groups)
-# v10.38: an earlier guide's sibling pair is asked again under chain-v3 when its verdict linked nothing that same_launch
-# could replace (that guide could not answer same_launch); a pair it linked otherwise (a release, an event) stands
+# v10.38: an earlier guide's sibling pair is asked again under chain-v3 when its verdict linked nothing (that guide never
+# saw two things as one release); a pair it linked otherwise (a release, an event) stands
 CHAIN_REASK_SIBLINGS = ("unrelated", "builds_on", UNKNOWN)
 
 
@@ -1537,13 +1535,14 @@ def chain_question(thing: Dict[str, Any], earlier: Tuple[Optional[str], Sequence
 
 def chain_config() -> Dict[str, Any]:
     """entity_bands.json `chains`: `on` (the planner asks and syncs; the story page shows), `shown` (the relations a
-    reader sees; the others are stored, not shown: they failed their bar) and `one_row` (0236: News makes the stories
-    a current same_release edge joins one row: `release_groups`)."""
+    reader sees; the others are stored, not shown: they failed their bar), `one_row` (0236: News makes the stories
+    a current same_release edge joins one row: `release_groups`) and `siblings` (v10.38: a sibling pair's edge, two
+    things of one release, is read like any other: siblings_shown)."""
     from insight_core.markx import identity as I
     got = I.bands().get("chains") or {}
     return {"on": bool(got.get("on", False)),
             "shown": tuple(r for r in got.get("shown") or () if r in CHAIN_LINKS),
-            "one_row": bool(got.get("one_row", False))}
+            "one_row": bool(got.get("one_row", False)), "siblings": bool(got.get("siblings", False))}
 
 
 def chain_builds(book: Any, roots: Iterable[str]) -> Dict[str, str]:
@@ -1593,7 +1592,7 @@ def chain_kin(book: Any, roots: Iterable[str]) -> Dict[str, str]:
 def chain_siblings(stops: Dict[str, Sequence[Tuple[datetime, str]]], kin: Dict[str, str],
                    fresh: Optional[Set[str]] = None, *, days: int = CHAIN_DAYS, prev: int = CHAIN_PREV
                    ) -> Dict[Tuple[str, str], Tuple[str, str]]:
-    """v10.38 (one launch, one row): the candidate pairs {(later, earlier): (the later's thing, the earlier's thing)}
+    """v10.38 (one release, one row): the candidate pairs {(later, earlier): (the later's thing, the earlier's thing)}
     of two sibling things' stops (`kin`: {thing: family}): a stop and the stops of the family's OTHER things among the
     `prev` stories before it whose first post is at most `days` earlier (chain_pairs' window and cap); `fresh`: only
     the pairs with a story in it. Each story only of its own thing: a story that is a stop of the other's thing too is
@@ -1778,8 +1777,8 @@ def chain_asked(cur: Any, keys: Sequence[Tuple[str, str]], siblings: Iterable[Tu
     verdict (`chain_verdict`) is not same_release (or not settled yet). v10.34: a chain-v1 same_release is asked again
     under CHAIN_GUIDE (chain-v2: a result achieved with the thing is no part of its release); its edge stands until
     the new task's runs are in (sync_chains reads the newest answered task). v10.38: a pair two sibling things propose
-    (`siblings`) whose earlier guide's verdict is in CHAIN_REASK_SIBLINGS is asked again (chain-v3's same_launch: an
-    earlier guide could not say it); every other earlier answer stands."""
+    (`siblings`) whose earlier guide's verdict is in CHAIN_REASK_SIBLINGS is asked again (chain-v3: an earlier guide
+    never saw two things as one release); every other earlier answer stands."""
     if not keys:
         return set()
     cur.execute("""SELECT t.a::text, t.b::text, t.guide, t.id::text FROM mx_tasks t WHERE t.kind = %s
@@ -1892,7 +1891,7 @@ def chain(cur: Any, story_id: str, *, as_of: Optional[datetime] = None, depth: i
               FROM walk w JOIN mx_stories s ON s.id = w.story
              ORDER BY w.story, w.depth, w.relation""",
                     {"rels": rels, "at": as_of or datetime.now(timezone.utc), "s": story_id,
-                     "depth": depth, "sib": siblings_shown(rels)})
+                     "depth": depth, "sib": siblings_shown()})
         rows = cur.fetchall()
         firsts = _story_firsts(cur, [r[0] for r in rows])
         items = [{"story": s, "via": via, "relation": rel, "reason": reason, "depth": d, "headline": head,
@@ -1921,7 +1920,7 @@ def row_chains(cur: Any, rows: Dict[str, Iterable[str]], *, shown: int = ROW_CHA
         return {}
     cur.execute(f"""SELECT x.a::text, x.b::text, x.relation, x.evidence->>'reason' FROM mx_connections x
                      WHERE {_CHAIN_VALID} AND (x.a = ANY(%(s)s::uuid[]) OR x.b = ANY(%(s)s::uuid[]))""",
-                {"rels": rels, "at": datetime.now(timezone.utc), "s": ids, "sib": siblings_shown(rels)})
+                {"rels": rels, "at": datetime.now(timezone.utc), "s": ids, "sib": bool(cfg.get("siblings"))})
     edges = cur.fetchall()
     every = sorted({s for a, b, *_x in edges for s in (a, b)})
     firsts = _story_firsts(cur, every)
@@ -1980,56 +1979,21 @@ def release_components(edges: Iterable[Tuple[str, str, Optional[str]]]) -> List[
     return sorted(g for g in groups.values() if len(g) >= 2)
 
 
-def launch_components(releases: Sequence[Sequence[str]], launches: Iterable[Tuple[str, str]]) -> List[List[str]]:
-    """v10.38 (one launch, one row): the one-release groups (`release_components`) joined by same_launch edges [(a, b)]:
-    two sibling things' releases the maker launched as one are one group (a story in no release group joins as
-    itself); each group 2+ stories, sorted. Pure."""
-    parent: Dict[str, str] = {}
-
-    def find(x: str) -> str:
-        while parent.get(x, x) != x:
-            x = parent[x]
-        return x
-
-    def union(x: str, y: str) -> None:
-        rx, ry = find(x), find(y)
-        if rx != ry:
-            parent[max(rx, ry)] = min(rx, ry)
-    every: Set[str] = set()
-    for g in releases:
-        every |= set(g)
-        for s in g[1:]:
-            union(g[0], s)
-    for a, b in launches:
-        if a != b:
-            every |= {str(a), str(b)}
-            union(str(a), str(b))
-    groups: Dict[str, List[str]] = defaultdict(list)
-    for s in sorted(every):
-        groups[find(s)].append(s)
-    return sorted(g for g in groups.values() if len(g) >= 2)
-
-
 def release_groups(cur: Any, story_ids: Iterable[str]) -> List[List[str]]:
     """0236 (the one-release row, 0217's input): the groups of `story_ids` the current same_release chain edges join
     (`release_components`: one thing a group); [] while chain_config's `one_row` is off. An edge is between two stops
     of one exact thing (stop-v1 says each story is about it), so a story that only mentions the thing is in none (the
-    runaway guard). v10.38: with same_launch shown, its edges (two sibling things' stops, both runs agreeing) join
-    those groups (`launch_components`: one launch, one row). One read of the chain rows."""
+    runaway guard). v10.38: a sibling pair's same_release edge (two things one release launched together) joins only
+    while chain_config's `siblings` is on. One read of the chain rows."""
     ids = sorted({str(s) for s in story_ids if s})
     cfg = chain_config()
     if not ids or not cfg.get("one_row"):
         return []
-    rels = [r for r in ONE_ROW if r == "same_release" or r in cfg["shown"]]
-    cur.execute(f"""SELECT a::text, b::text, evidence->>'thing', relation FROM mx_connections
+    cur.execute(f"""SELECT a::text, b::text, evidence->>'thing' FROM mx_connections
                      WHERE valid_to IS NULL AND a_kind = 'story' AND b_kind = 'story' AND rule = '{CHAIN_RULE}'
-                       AND relation = ANY(%(r)s) AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])
-                       AND (%(sib)s OR evidence->'things' IS NULL)""",
-                {"s": ids, "r": rels, "sib": siblings_shown(cfg["shown"])})
-    rows = cur.fetchall()
-    groups = release_components([(a, b, t) for a, b, t, rel in rows if rel == "same_release"])
-    launches = [(a, b) for a, b, _t, rel in rows if rel == "same_launch"]
-    return launch_components(groups, launches) if launches else groups
+                       AND relation = 'same_release' AND a = ANY(%(s)s::uuid[]) AND b = ANY(%(s)s::uuid[])
+                       AND (%(sib)s OR evidence->'things' IS NULL)""", {"s": ids, "sib": bool(cfg.get("siblings"))})
+    return release_components(cur.fetchall())
 
 
 # the rule written as a literal, so the planner proves migration 0154's partial indexes even from a prepared plan
@@ -2038,11 +2002,11 @@ _CHAIN_VALID = (f"x.a_kind = 'story' AND x.b_kind = 'story' AND x.rule = '{CHAIN
                 "AND (%(sib)s OR x.evidence->'things' IS NULL)")
 
 
-def siblings_shown(rels: Iterable[str]) -> bool:
+def siblings_shown() -> bool:
     """v10.38: whether a sibling pair's edge (two things: evidence `things`, chain_siblings) is read by the pages and
-    News, whatever its relation: only while same_launch is shown (its bar: plan 0279's measure). Until then the
-    sibling pairs are asked and their edges stored, never shown nor folded."""
-    return "same_launch" in set(rels)
+    News like any other (chain_config's `siblings`, its bar measured in entity_bands.json). Off: the sibling pairs are
+    asked and their edges stored, never shown nor folded."""
+    return bool(chain_config().get("siblings"))
 
 
 def _story_firsts(cur: Any, story_ids: Sequence[str], *, current: bool = False) -> Dict[str, datetime]:

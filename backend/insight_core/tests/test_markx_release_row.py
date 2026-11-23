@@ -179,28 +179,22 @@ class Row(unittest.TestCase):
         self.cur.execute("UPDATE mx_connections SET valid_to = now() WHERE relation = 'same_release'")
         self.assertEqual(len(self.rows(stories)), 3)
 
-    def test_a_shown_launch_edge_joins_two_things_releases_into_one_row(self):
-        """v10.38 (one launch, one row): a same_launch edge joins two sibling things' stories (each with its own
-        release group) into one group, only while same_launch is shown; a launch edge never shown joins nothing."""
+    def test_a_sibling_release_edge_joins_two_things_into_one_row_only_while_siblings_are_on(self):
+        """v10.38 (one release, one row): a release launching two sibling things (a model and its Mini) is one
+        same_release edge between their stories (evidence `things`); it joins the row only while chains.siblings is
+        on (its bar), and a story's own-thing release group is unchanged either way."""
         stories, (sl, sm, sr), _ = self.case()
         s2 = self.story("Acme launches Orbit 4 Nova Mini")
-        self.edge(s2, sm, relation="same_launch", thing="nova-mini")
-        ids = list(stories) + [s2]
-        self.assertEqual(G.release_groups(self.cur, ids), [sorted([sl, sm])])   # not shown: the release only
-        self.switch = dict(ON, shown=("same_release", "same_launch"))
-        self.assertEqual(G.release_groups(self.cur, ids), [sorted([sl, sm, s2])])
-        self.switch = dict(OFF, shown=("same_release", "same_launch"))
-        self.assertEqual(G.release_groups(self.cur, ids), [])
-        # a sibling pair's same_release edge (two things) folds only while same_launch is shown (its bar)
-        s3 = self.story("Acme launches Orbit 4 Nova Max")
         self.cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, p, rule, evidence)
                             VALUES ('story', %s, 'story', %s, 'same_release', 1.0, %s, %s::jsonb)""",
-                         (s3, sm, G.CHAIN_RULE, json.dumps({"reason": "r", "thing": "nova",
-                                                            "things": ["nova-max", "nova"]})))
-        self.switch = dict(ON)
-        self.assertEqual(G.release_groups(self.cur, ids + [s3]), [sorted([sl, sm])])
-        self.switch = dict(ON, shown=("same_release", "same_launch"))
-        self.assertEqual(G.release_groups(self.cur, ids + [s3]), [sorted([sl, sm, s2, s3])])
+                         (s2, sm, G.CHAIN_RULE, json.dumps({"reason": "r", "thing": "nova",
+                                                            "things": ["nova-mini", "nova"]})))
+        ids = list(stories) + [s2]
+        self.assertEqual(G.release_groups(self.cur, ids), [sorted([sl, sm])])     # off: stored, not folded
+        self.switch = dict(ON, siblings=True)
+        self.assertEqual(G.release_groups(self.cur, ids), [sorted([sl, sm, s2])])
+        self.switch = dict(OFF, siblings=True)
+        self.assertEqual(G.release_groups(self.cur, ids), [])
 
     def test_an_untitled_row_led_by_a_leak_takes_the_makers_post_title(self):
         leak, launch = self.post(0, "Nova leaks: coming today"), self.post(4, "Acme launches Orbit 4 Nova")
