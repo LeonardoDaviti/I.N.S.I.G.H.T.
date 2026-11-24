@@ -622,6 +622,43 @@ class Flow(_Briefer):
         self.assertEqual(call("GET", f"/api/markx/tracks/{f}/brief", query={"week": "soon"})[0], 400)
         self.assertEqual(call("GET", f"/api/markx/tracks/{uuid.uuid4()}/brief", query={"week": last.isoformat()})[0], 404)
 
+    def test_a_table_leaves_out_its_quiet_columns_and_each_row_has_one_picture(self):
+        """v10.49.2 (owner 2026-11-24): a column filled in few rows ("Material cost", "Build time") is left out of the
+        tables as it is of the brief (shown when filtered on); each row carries its one picture, from the post its
+        name came from; a closed issue built again with pictures is no correction."""
+        f = self.track("recipes")
+        self.schema(f, "recipes")
+        dishes = ["pasta", "stew", "soup", "curry", "salad", "omelette"]
+        posts = {}
+        for i, d in enumerate(dishes):
+            p = self.in_track(f, d.capitalize(), f"{d.capitalize()} in {10 + i} minutes" + (" for €3." if i == 0 else "."))
+            posts[d] = p
+            if d != "salad":
+                self.cur.execute("UPDATE posts SET media_urls = %s::jsonb WHERE id = %s",
+                                 (json.dumps([f"https://img.example.org/{d}.jpg"]), p))
+        self.run_planner("track_things")
+        for i, d in enumerate(dishes):
+            fields = {"dish": v(d, d.capitalize()), "minutes": v({"number": 10 + i, "unit": "minutes"}, f"in {10 + i} minutes")}
+            if i == 0:
+                fields["cost"] = v({"number": 3, "currency": "EUR"}, "for €3")
+            self.things(f, posts[d], {"kind": "recipe", "fields": fields})
+        status, table = call("GET", f"/api/markx/tracks/{f}/things", query={"kind": "recipe"})
+        self.assertEqual(status, 200, table)
+        self.assertEqual([x["name"] for x in table["fields"]], ["dish", "minutes"], "cost: 1 row in 6, quiet")
+        rows = {t["fields"]["dish"]["value"]: t for t in table["things"]}
+        self.assertEqual(rows["pasta"]["fields"]["cost"]["shown"], "3 EUR", "the value stays in its row")
+        self.assertEqual(rows["stew"]["image"], {"post": posts["stew"], "url": "https://img.example.org/stew.jpg"})
+        self.assertIsNone(rows["salad"]["image"], "a post without a picture: none")
+        self.assertNotIn("image", rows["stew"]["posts"][0], "a post line carries no picture")
+        status, cheap = call("GET", f"/api/markx/tracks/{f}/things", query={"kind": "recipe", "cost.max": "5"})
+        self.assertEqual((status, [x["name"] for x in cheap["fields"]]), (200, ["dish", "minutes", "cost", "source"]),
+                         "one row: too few to leave a column out")
+        sections = [{"kind": "recipe", "things": [dict(rows["stew"], practices=[{"id": "p", "image": None}])]}]
+        bare = json.loads(json.dumps(sections))
+        del bare[0]["things"][0]["image"]
+        del bare[0]["things"][0]["practices"][0]["image"]
+        self.assertEqual(TB._unpictured(sections), TB._unpictured(bare), "pictures are no correction")
+
     def test_points_about_rows_that_left_the_week_are_not_shown_and_the_week_is_asked_again(self):
         """A point is shown only when every row it cites is in the issue's sections; a week in progress whose brief's
         cited rows mostly left is asked again within BRIEF_EVERY (0269)."""

@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 
 import TrackTopic from './TrackTopic';
 import TrackSheet from './TrackSheet';
+import { ThingsView } from './TrackBrief';
 import ReaderNavRail from '../reader/ReaderNavRail';
 import {
   chipParams, citeMarks, dayWord, filterChips, mondayOf, nextSort, sinceLine, sortThings, toggleChip,
@@ -260,6 +261,20 @@ describe('the weekly issue', () => {
 });
 
 describe('the tables', () => {
+  it('shows each row its one picture, through the media proxy, and no picture column when none has one', () => {
+    const pictured = { ...TOOLS[0], image: { post: 'p-t1', url: 'https://img.example.org/hori.jpg' } };
+    const { container, unmount } = renderWithProviders(
+      <ThingsView section={{ kind: 'tool', header: 'Tool (2)', fields: GARDEN.fields, things: [pictured, TOOLS[1]] }} />, { api: makeFakeApi({}) });
+    const imgs = container.querySelectorAll('[data-thing-image="t1"]');
+    expect(imgs).toHaveLength(2);                       // the table's and the card's
+    expect(imgs[0].getAttribute('src')).toBe('/api/media?post=p-t1&url=' + encodeURIComponent('https://img.example.org/hori.jpg'));
+    expect(container.querySelector('[data-thing-image="t2"]')).toBeNull();
+    expect(screen.getAllByRole('columnheader')[0]).toHaveTextContent('Picture');
+    unmount();
+    renderWithProviders(<ThingsView section={{ kind: 'tool', header: 'Tool (1)', fields: GARDEN.fields, things: [TOOLS[1]] }} />, { api: makeFakeApi({}) });
+    expect(screen.getAllByRole('columnheader')[0]).toHaveTextContent('Name');
+  });
+
   it('filters a kind by its chips and sorts by a column, for a board-game track', async () => {
     mockOn({ ...LOOK, sections: [section(GAMES, GAMES_ROWS)], points: [] }, schemaView(GAMES));
     const table = vi.spyOn(briefApi, 'things').mockImplementation(async (_id, kind, filters = {}) => ({

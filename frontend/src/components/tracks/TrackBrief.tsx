@@ -6,6 +6,7 @@ import {
 } from '../../services/tracks';
 import { Button, Chip, ExternalLink, FilterChip, Input, TextLink } from '../ui';
 import { ErrorState, LoadingState } from '../states';
+import { proxiedImage } from '../../lib/mediaProxy';
 import {
   chipParams, citeMarks, dayWord, fieldWord, filterChips, hostOf, kindWord, nextSort, searchParams, sinceLine, sortThings,
   thingFacts, thingLinks, thingName, toggleChip, weekDay, weekLine, type FilterChipDef, type SortState,
@@ -32,6 +33,17 @@ function OpenThing({ thing, name }: { thing: Thing; name: string }) {
   );
 }
 
+/** A thing's one picture (the backend's `image`: from the post its name came from), shown like a feed row's. */
+function ThingImage({ thing, className = 'w-20' }: { thing: Thing; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!thing.image || failed) return null;
+  return (
+    <span className={`block aspect-video shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface ${className}`}>
+      <img src={proxiedImage(thing.image.post, thing.image.url)} alt="" loading="lazy" decoding="async"
+        onError={() => setFailed(true)} className="h-full w-full object-cover grayscale" data-thing-image={thing.id} />
+    </span>
+  );
+}
 
 function LinkFacts({ thing, fields }: { thing: Thing; fields: ThingFieldDef[] }) {
   const links = thingLinks(thing, fields);
@@ -96,6 +108,7 @@ function CompactRows({ section, onSeeAll }: { section: ThingSection; onSeeAll?: 
           const facts = thingFacts(t, section.fields);
           return (
             <li key={t.id} className="flex items-baseline gap-2 py-1 text-[0.875rem] leading-5" data-thing={t.id}>
+              <ThingImage thing={t} className="w-16 self-start" />
               <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                 <span className="text-fg">{name}</span>
                 {facts.length ? <span className="text-fg-2"> · {facts.join(' · ')}</span> : null}
@@ -189,12 +202,14 @@ export function ThingsView({ section, sort, onSort }: {
 }) {
   const rows = sort !== undefined ? sortThings(section.things, sort) : section.things;
   const fields = section.fields;
+  const pictured = rows.some((t) => t.image);
   return (
     <>
       <div className="hidden overflow-x-auto sm:block" data-things-table={section.kind}>
         <table className="w-full border-collapse text-left text-[0.8125rem] leading-5">
           <thead>
             <tr className="border-b border-line text-fg-3">
+              {pictured ? <th scope="col" className="w-24 py-1 pr-3"><span className="sr-only">Picture</span></th> : null}
               {fields.map((f) => {
                 const dir = sort && sort.field === f.name ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined;
                 return (
@@ -213,6 +228,7 @@ export function ThingsView({ section, sort, onSort }: {
           <tbody>
             {rows.map((t) => (
               <tr key={t.id} className="border-b border-line align-baseline" data-thing={t.id}>
+                {pictured ? <td className="py-1.5 pr-3 align-top"><ThingImage thing={t} /></td> : null}
                 {fields.map((f, i) => (
                   <td key={f.name} className={`py-1.5 pr-3 [overflow-wrap:anywhere] ${i === 0 ? 'text-fg' : 'text-fg-2'}`}>
                     <Cell thing={t} field={f} />
@@ -229,7 +245,8 @@ export function ThingsView({ section, sort, onSort }: {
         {rows.map((t) => {
           const name = thingName(t, fields);
           return (
-            <li key={t.id} className="mb-2 rounded-md border border-line px-3 py-2" data-thing-card={t.id}>
+            <li key={t.id} className="mb-2 flex gap-3 rounded-md border border-line px-3 py-2" data-thing-card={t.id}>
+              <div className="min-w-0 flex-1">
               <p className="flex items-baseline gap-2 text-[0.9375rem] font-semibold leading-5 text-fg">
                 <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{name}</span>
                 <OpenThing thing={t} name={name} />
@@ -239,7 +256,8 @@ export function ThingsView({ section, sort, onSort }: {
                   {thingFacts(t, fields).join(' · ')}<LinkFacts thing={t} fields={fields} />
                 </p>
               ) : null}
-              
+              </div>
+              <ThingImage thing={t} />
             </li>
           );
         })}

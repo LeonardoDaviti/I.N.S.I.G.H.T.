@@ -249,15 +249,33 @@ def _cites_left(cur: Any, track_id: str, week: date, rows: Sequence[Dict[str, An
 # ---- shapes ----------------------------------------------------------------------------------------------------
 
 def _posts(cur: Any, track_id: str, ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
-    """{post: {id, title, url, at (its publication), why}} (the why: the track judge's newest line)."""
+    """{post: {id, title, url, at (its publication), why, source_id, image}} (the why: the track judge's newest line;
+    the image: the feed row's picture, `feed_thumb`, read by `thing_view` and never shown on a post line)."""
     if not ids:
         return {}
-    cur.execute(f"""SELECT p.id::text, {shown_title()}, p.url, {TT.post_date()}, p.source_id::text,
+    from insight_core.utils.media import feed_thumb
+    cur.execute(f"""SELECT p.id::text, {shown_title()}, p.url, {TT.post_date()}, p.source_id::text, p.media_urls,
                            (SELECT i.why FROM mx_track_items i WHERE i.track_id = %s AND i.post_id = p.id
                              AND i.verdict IS NOT NULL ORDER BY i.version DESC LIMIT 1)
                       FROM posts p WHERE p.id = ANY(%s::uuid[])""", (track_id, list(ids)))
     return {i: {"id": i, "title": (" ".join((ti or "").split()))[:LINE_CHARS] or None, "url": u,
-                "at": _iso(at), "why": why, "source_id": src} for i, ti, u, at, src, why in cur.fetchall()}
+                "at": _iso(at), "why": why, "source_id": src, "image": feed_thumb(media, u)}
+            for i, ti, u, at, src, media, why in cur.fetchall()}
+
+
+def _post_line(p: Dict[str, Any]) -> Dict[str, Any]:
+    """A post as a line under a thing or in "also": without its image."""
+    return {k: v for k, v in p.items() if k != "image"}
+
+
+def _image(fields: Dict[str, Any], seen: Sequence[str], posts: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    """A thing's one picture {post, url}: the post its name was read from first, then its other posts newest first."""
+    first = (next(iter(fields.values()), None) or {}).get("post")
+    for p in ([first] if first else []) + list(seen):
+        url = (posts.get(p) or {}).get("image")
+        if url:
+            return {"post": p, "url": url}
+    return None
 
 
 def sources_of(rs: Sequence[Dict[str, Any]], posts: Dict[str, Dict[str, Any]]) -> int:
@@ -282,7 +300,7 @@ def _says_nothing(f: Dict[str, Any], v: Any) -> bool:
 def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, Any]],
                posts: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """A row: its fields in the schema's order (each value typed, in words, with its quote, its post and the linked
-    `page` it was quoted from), every post that reported it (newest first), its dates. Not shown (kept in the row): a
+    `page` it was quoted from), every post that reported it (newest first), its one picture (`_image`), its dates. Not shown (kept in the row): a
     choice of "other", and a practice's evidence that only repeats its result's figures."""
     fields = {}
     for f in kind["fields"]:
@@ -295,7 +313,8 @@ def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, A
         if ev and ev <= _digits(fields["result"]["shown"]):
             del fields["evidence"]
     seen = list(dict.fromkeys(r["post"] for r in reversed(list(rs))))
-    return {"id": t["id"], "kind": t["kind"], "fields": fields, "posts": [posts[p] for p in seen if p in posts],
+    return {"id": t["id"], "kind": t["kind"], "fields": fields,
+            "posts": [_post_line(posts[p]) for p in seen if p in posts], "image": _image(fields, seen, posts),
             "sources": sources_of(rs, posts),
             "first_at": _iso(t["first_at"]), "last_at": _iso(t["last_at"]), "found_at": _iso(t["found_at"]),
             **({"new": t["new"]} if "new" in t else {})}
@@ -303,8 +322,9 @@ def thing_view(kind: Dict[str, Any], t: Dict[str, Any], rs: Sequence[Dict[str, A
 
 def _quiet(fields: Sequence[Dict[str, Any]], views: Sequence[Dict[str, Any]]) -> set:
     """The columns that tell a section's rows apart too little to show: with QUIET_ROWS+ rows, a column (never the
-    name) filled in under QUIET_FILLED of them, or a choice whose one value fills over QUIET_SAME. The values stay in
-    each row and in the tables."""
+    name) filled in under QUIET_FILLED of them, or a choice whose one value fills over QUIET_SAME. The brief and the
+    tables (`table`, all its matching rows; a column filtered on is shown) leave them out; the values stay in each row
+    (its page and the filters)."""
     from collections import Counter
     n = len(views)
     if n < QUIET_ROWS:
@@ -454,7 +474,7 @@ def issue(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = Non
     shown = [x["id"] for s in sections for x in s["things"]]
     got = points(cur, tid, week, within=shown + list(_hosts(sections)))   # only points about the week's rows
     body = {**base, "points": _point_views(got, shown, _hosts(sections)), "points_at": _iso(got["at"]) if got else None,
-            "sections": sections, "also": [posts[p] for p in also if p in posts],
+            "sections": sections, "also": [_post_line(posts[p]) for p in also if p in posts],
             "counts": {"things": len(rows), "new": sum(1 for x in rows if x["new"]),
                        "posts": len({r["post"] for x in rows for r in rs.get(x["id"], []) if r["at"] and start <= r["at"] < end}),
                        "also": len(also)},
@@ -462,13 +482,25 @@ def issue(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = Non
     old = kept_pages.newest(cur, PAGE, _key(tid, week))
     if old is not None:   # keep everything: a closed issue built again with other things or points says so
         prev = json.loads(old[0])
-        if prev.get("week", {}).get("closed") and (prev.get("sections") != json.loads(kept_pages.encode(sections))
+        if prev.get("week", {}).get("closed") and (_unpictured(prev.get("sections"))
+                                                   != _unpictured(json.loads(kept_pages.encode(sections)))
                                                    or prev.get("points") != json.loads(kept_pages.encode(body["points"]))):
             body["updated"] = True
         elif prev.get("updated"):
             body["updated"] = True
         body["first_built_at"] = prev.get("first_built_at") or prev.get("built_at")
     return body
+
+
+def _unpictured(sections: Any) -> Any:
+    """Sections without the things' pictures: a picture is no correction (an issue kept before pictures stays not
+    updated)."""
+    def bare(t: Dict[str, Any]) -> Dict[str, Any]:
+        out = {k: v for k, v in t.items() if k != "image"}
+        if out.get("practices"):
+            out["practices"] = [bare(p) for p in out["practices"]]
+        return out
+    return [dict(s, things=[bare(t) for t in s.get("things") or []]) for s in sections or []]
 
 
 def inputs(cur: Any, folder_id: Any, week: date, *, now: Optional[datetime] = None, loose: Optional[str] = None) -> Any:
@@ -599,7 +631,7 @@ def quick_look(cur: Any, folder_id: Any, since: Optional[datetime] = None, *, no
     pts = _point_views(got, shown, _hosts(sections)) if got and got["points"] else []
     return {**base, "sections": sections, "points": pts, "as_of": _iso(got["at"]) if pts else None,
             "stale": bool(pts) and any(x["found_at"] > got["at"] for x in rows),
-            "also": [posts[p] for p in also if p in posts], "counts": {"things": len(rows), "also": len(also)},
+            "also": [_post_line(posts[p]) for p in also if p in posts], "counts": {"things": len(rows), "also": len(also)},
             "nothing_new": not rows and not also and not pts, "last_issue": closed[0] if closed else None, "weeks": weeks}
 
 
@@ -778,8 +810,9 @@ def table(cur: Any, folder_id: Any, kind: str, filters: Dict[str, str], *, limit
         kept = [x for x in kept if (not named or any(names_entity(named, e) for e in ents[x["id"]].values()))
                 and (not typed or any(TT.fold(e["type"]) == typed for e in ents[x["id"]].values()))]
     page = kept[offset:offset + limit]
+    hide = _quiet(d["fields"], [views[x["id"]] for x in kept]) - {f["name"] for f, _, _ in tests}
     return {"on": True, "track": {"id": tid, "name": t["name"]}, "kind": kind, "kinds": list(kinds),
             "about": d.get("about") or "", "fields": [{k: f[k] for k in ("name", "type", "unit", "values") if f.get(k)}
-                                                     for f in d["fields"]],
+                                                     for f in d["fields"] if f["name"] not in hide],
             "filters": filters, "search": {"q": q, "entity": entity, "entity_type": entity_type}, "chips": chips,
             "count": len(kept), "things": [views[x["id"]] for x in page]}

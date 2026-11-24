@@ -215,6 +215,8 @@ export interface Thing {
   kind: string;
   fields: Record<string, { value: ThingValue; shown: string; quote?: string | null; post?: string | null }>;
   posts: ThingPost[];
+  /** Its one picture: the feed picture of the post its name came from, else of its newest post with one. */
+  image?: { post: string; url: string } | null;
   first_at: string | null; last_at: string | null; found_at: string | null;
   new?: boolean;
   sources?: number;
