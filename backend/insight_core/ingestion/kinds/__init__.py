@@ -44,6 +44,7 @@ class KindRegistry:
         from insight_core.adapters import ADAPTER_CLASSES
         from insight_core.db.repo_posts import PostsRepository
         from insight_core.ingestion.kinds.bluesky import BlueskyKind
+        from insight_core.ingestion.kinds.forum import ForumKind
         from insight_core.ingestion.kinds.generic_rss import GenericRssKind, LearnedLadder
         from insight_core.ingestion.kinds.nitter_rss import NitterRssKind
         from insight_core.ingestion.kinds.page_watch import PageWatchKind
@@ -60,6 +61,7 @@ class KindRegistry:
             SavedKind(),
             PageWatchKind(http, stored_urls=stored_urls, kept_urls=posts.kept_urls if posts else None),
             *(adapter_class(http) for adapter_class in ADAPTER_CLASSES),
+            ForumKind(http),   # a forum board's address (Discourse, Flarum, FluxBB listing shapes)
             SubstackKind(http, stored_urls=stored_urls),
             RedditKind(http),
             YouTubeKind(youtube),

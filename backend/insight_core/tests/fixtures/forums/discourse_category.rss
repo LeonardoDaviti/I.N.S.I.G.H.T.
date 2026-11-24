@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:discourse="http://www.discourse.org/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Help Center and Resources - Brave Community</title>
+    <link>https://community.brave.app/c/faq/43</link>
+    <description>Topics in the &#39;Help Center and Resources&#39; category Start here if you’re new to Brave or Community!  Information, guides and useful links for getting involved.</description>
+    
+    <atom:link href="https://community.brave.app/c/faq/43.rss" rel="self" type="application/rss+xml" />
+    <atom:link href="https://community.brave.app/c/faq/43.md" rel="alternate" type="text/markdown" />
+      <lastBuildDate>Sun, 22 Nov 2026 18:41:47 +0000</lastBuildDate>
+        <item>
+          <title>Release Channel 1.100.58</title>
+          <dc:creator><![CDATA[steeven]]></dc:creator>
+          <category>Release Notes</category>
+          <description><![CDATA[
+            <h1><a name="p-1379228-where-to-download-1" class="anchor" href="https://community.brave.app#p-1379228-where-to-download-1" aria-label="Heading link"></a>Where to download:</h1>
+<h3><a name="p-1379228-brave-desktop-2" class="anchor" href="https://community.brave.app#p-1379228-brave-desktop-2" aria-label="Heading link"></a>Brave Desktop:</h3>
+<ul>
+<li><a href="https://brave.com/download">Download Brave Browser</a></li>
+<li><a href="https://github.com/brave/brave-browser/releases">Brave Github repository </a></li>
+</ul>
+<h3><a name="p-1379228-linux-3" class="anchor" href="https://community.brave.app#p-1379228-linux-3" aria-label="Heading link"></a>Linux</h3>
+<ul>
+<li><a href="https://support.brave.com/hc/en-us/articles/360018666072-How-do-I-install-Brave-on-Linux-using-the-terminal-">Linux installation instructions</a></li>
+</ul>
+<h1><a name="p-1379228-full-release-notes-4" class="anchor" href="https://community.brave.app#p-1379228-full-release-notes-4" aria-label="Heading link"></a>Full Release Notes</h1>
+<ul>
+<li>Added support for on-device WebSpeech API for English (being rolled out in phases using Griffin starting at 25%). (<a href="https://github.com/brave/brave-browser/issues/56487">#56487</a>)</li>
+<li>[Security] Updated various sync “datatype” values to “EncryptableUserTypes”. (<a href="https://github.com/brave/brave-browser/issues/61788">#61788</a>)</li>
+<li>Updated AI Chat models. (<a href="https://github.com/brave/brave-browser/issues/59884">#59884</a>)</li>
+<li>Updated UI polish for various icons, colors, and spacing. (<a href="https://github.com/brave/brave-browser/issues/60161">#60161</a>)</li>
+<li>Updated split view UI for stacked mode. (<a href="https://github.com/brave/brave-browser/issues/59845">#59845</a>)</li>
+<li>Fixed issue where “.onion” domains could be leaked as reported on HackerOne by newfunction. (<a href="https://github.com/brave/brave-browser/issues/59801">#59801</a>)</li>
+<li>Fixed crash which occurred when the ability to set Brave as default browser was disabled via Admin policy on Linux. (<a href="https://github.com/brave/brave-browser/issues/60038">#60038</a>)</li>
+<li>Fixed an issue where using “Add Tab to New Split View” on a tab in a container did not open the split view tab in the same container. (<a href="https://github.com/brave/brave-browser/issues/59951">#59951</a>)</li>
+<li>Fixed an issue where <a href="https://play.xbox.com/">https://play.xbox.com</a> and other sites that require viewport size request headers would fail to load. (<a href="https://github.com/brave/brave-browser/issues/61705">#61705</a>)</li>
+<li>Upgraded Chromium to 158.0.8127.42. (<a href="https://github.com/brave/brave-browser/issues/61954">#61954</a>) (<a href="https://chromium.googlesource.com/chromium/src/+log/157.0.8103.79..158.0.8127.42?pretty=fuller&amp;n=1000">Changelog for 158.0.8127.42</a>)</li>
+</ul>
+<h1><a name="p-1379228-origin-release-notes-5" class="anchor" href="https://community.brave.app#p-1379228-origin-release-notes-5" aria-label="Heading link"></a><strong>Origin Release Notes</strong></h1>
+<ul>
+<li>[Security] Updated various sync “datatype” values to “EncryptableUserTypes”. (<a href="https://github.com/brave/brave-browser/issues/61788">#61788</a>)</li>
+<li>Updated UI polish for various icons, colors, and spacing. (<a href="https://github.com/brave/brave-browser/issues/60161">#60161</a>)</li>
+<li>Updated split view UI for stacked mode. (<a href="https://github.com/brave/brave-browser/issues/59845">#59845</a>)</li>
+<li>Fixed crash which occurred when the ability to set Brave as default browser was disabled via Admin policy on Linux. (<a href="https://github.com/brave/brave-browser/issues/60038">#60038</a>)</li>
+<li>Fixed an issue where using “Add Tab to New Split View” on a tab in a container did not open the split view tab in the same container. (<a href="https://github.com/brave/brave-browser/issues/59951">#59951</a>)</li>
+<li>Fixed an issue where <a href="https://play.xbox.com/">https://play.xbox.com</a> and other sites that require viewport size request headers would fail to load. (<a href="https://github.com/brave/brave-browser/issues/61705">#61705</a>)</li>
+<li>Upgraded Chromium to 158.0.8127.42. (<a href="https://github.com/brave/brave-browser/issues/61954">#61954</a>) (<a href="https://chromium.googlesource.com/chromium/src/+log/157.0.8103.79..158.0.8127.42?pretty=fuller&amp;n=1000">Changelog for 158.0.8127.42</a>)</li>
+</ul>
+            <p><small>1 post - 1 participant</small></p>
+            <p><a href="https://community.brave.app/t/release-channel-1-100-58/661507">Read full topic</a></p>
+          ]]></description>
+          <link>https://community.brave.app/t/release-channel-1-100-58/661507</link>
+          <pubDate>Wed, 18 Nov 2026 17:19:19 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">community.brave.app-topic-661507</guid>
+          <source url="https://community.brave.app/t/release-channel-1-100-58/661507.rss">Release Channel 1.100.58</source>
+        </item>
+<item>
+          <title>Release Channel 1.99.57</title>
+          <dc:creator><![CDATA[steeven]]></dc:creator>
+          <category>Release Notes</category>
+          <description><![CDATA[
+            <h1><a name="p-1378347-where-to-download-1" class="anchor" href="https://community.brave.app#p-1378347-where-to-download-1" aria-label="Heading link"></a>Where to download:</h1>
+<h3><a name="p-1378347-brave-desktop-2" class="anchor" href="https://community.brave.app#p-1378347-brave-desktop-2" aria-label="Heading link"></a>Brave Desktop:</h3>
+<ul>
+<li><a href="https://brave.com/download">Download Brave Browser</a></li>
+<li><a href="https://github.com/brave/brave-browser/releases">Brave Github repository </a></li>
+</ul>
+<h3><a name="p-1378347-linux-3" class="anchor" href="https://community.brave.app#p-1378347-linux-3" aria-label="Heading link"></a>Linux</h3>
+<ul>
+<li><a href="https://support.brave.com/hc/en-us/articles/360018666072-How-do-I-install-Brave-on-Linux-using-the-terminal-">Linux installation instructions</a></li>
+</ul>
+<h1><a name="p-1378347-full-release-notes-4" class="anchor" href="https://community.brave.app#p-1378347-full-release-notes-4" aria-label="Heading link"></a>Full Release Notes</h1>
+<ul>
+<li>Upgraded Chromium to 157.0.8103.79. (<a href="https://github.com/brave/brave-browser/issues/61746">#61746</a>) (<a href="https://chromium.googlesource.com/chromium/src/+log/157.0.8103.50..157.0.8103.79?pretty=fuller&amp;n=1000">Changelog for 157.0.8103.79</a>)</li>
+</ul>
+<h1><a name="p-1378347-origin-release-notes-5" class="anchor" href="https://community.brave.app#p-1378347-origin-release-notes-5" aria-label="Heading link"></a><strong>Origin Release Notes</strong></h1>
+<ul>
+<li>Upgraded Chromium to 157.0.8103.79. (<a href="https://github.com/brave/brave-browser/issues/61746">#61746</a>) (<a href="https://chromium.googlesource.com/chromium/src/+log/157.0.8103.50..157.0.8103.79?pretty=fuller&amp;n=1000">Changelog for 157.0.8103.79</a>)</li>
+</ul>
+            <p><small>1 post - 1 participant</small></p>
+            <p><a href="https://community.brave.app/t/release-channel-1-99-57/661105">Read full topic</a></p>
+          ]]></description>
+          <link>https://community.brave.app/t/release-channel-1-99-57/661105</link>
+          <pubDate>Thu, 12 Nov 2026 17:05:33 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">community.brave.app-topic-661105</guid>
+          <source url="https://community.brave.app/t/release-channel-1-99-57/661105.rss">Release Channel 1.99.57</source>
+        </item>
+<item>
+          <title>Refund Request, desperate</title>
+          <dc:creator><![CDATA[Need2PayRent]]></dc:creator>
+          <category>Community Account Deletion Requests</category>
+          <description><![CDATA[
+            <p>Hello, the Auto renew got me, and I just really need money for rent. Please cancel my VPN subscription and refund the card. Haven’t used the service since it was renewed an hour ago.</p>
+<p>Purchase id:</p>
+<p>GPA.3362-2853-8032-99403..0</p>
+<p>Happy to give more information if necessary.</p>
+            <p><small>5 posts - 3 participants</small></p>
+            <p><a href="https://community.brave.app/t/refund-request-desperate/661103">Read full topic</a></p>
+          ]]></description>
+          <link>https://community.brave.app/t/refund-request-desperate/661103</link>
+          <pubDate>Thu, 12 Nov 2026 16:35:14 +0000</pubDate>
+          <discourse:topicPinned>No</discourse:topicPinned>
+          <discourse:topicClosed>Yes</discourse:topicClosed>
+          <discourse:topicArchived>No</discourse:topicArchived>
+          <guid isPermaLink="false">community.brave.app-topic-661103</guid>
+          <source url="https://community.brave.app/t/refund-request-desperate/661103.rss">Refund Request, desperate</source>
+        </item>
+  </channel>
+</rss>

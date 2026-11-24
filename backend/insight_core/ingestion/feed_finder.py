@@ -7,7 +7,9 @@
 One search, cheapest first, stopping at the first stage that finds something:
   0. No request: a kind reads the address directly ("direct"), a bridge serves a t.me / x.com address, or a
      platform rule names its feed (Medium, GitHub, arXiv, PyPI, Substack publications and profiles).
-  1. The address itself, else its page's alternate feed links, then its feed-like <a> links.
+  1. The address itself, else its page's alternate feed links, then its feed-like <a> links. A forum's page (its
+     software told from the page: ingestion/kinds/forum.py) offers the forum's boards instead, the page's own first
+     (a category, tag or subforum: what to follow, not every help thread), from one more GET (its board list).
   2. The section page and the home page, in parallel, the same way.
   3. The page's links to its own blog or newsroom (at most two); with none, its menu links are reported unread.
   4. Common feed paths, under those blogs first, then at the site's root. A blocked page also tries its site's
@@ -36,7 +38,7 @@ from typing import Dict, Iterable, List, Literal, Optional, Sequence, Tuple
 
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds import parsing
+from insight_core.ingestion.kinds import forum, parsing
 from insight_core.ingestion.kinds.base import ReadCheck
 from insight_core.ingestion.kinds.nitter_rss import nitter_origin
 from insight_core.ingestion.kinds.parsing import (
@@ -160,6 +162,8 @@ class Feed:
     flag: str = field(default="", compare=False)
     # the whole document, when the read that proved it held all of it
     whole: bytes = field(default=b"", compare=False, repr=False)
+    # a forum's board (its software, kinds/forum.SOFTWARE): the forum kind reads it, never the feed parser
+    forum: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -368,6 +372,8 @@ class _Search:
         return replace(finding, feeds=tuple(feeds))
 
     async def _parse(self, feed: Feed) -> Tuple[Optional[Feed], str]:
+        if feed.forum:
+            return feed, ""
         if feed.whole:
             text = feed.whole.decode("utf-8", errors="replace")
         else:
@@ -478,6 +484,8 @@ class _Search:
             if _is_feed_root(_repaired(body)):
                 self.empty_feed = True          # a feed with no item yet
                 return FeedFinding("none")
+            if (boards := await self._forum(body, here)) is not None:
+                return boards
             links = _links(body)
             if path_segments(here):
                 self.articles = tuple(_article_links(links, here))
@@ -532,6 +540,20 @@ class _Search:
         if feeds := self._offer(self._in_scope(await self._prove(guesses, limit=None, first=True), here)):
             return FeedFinding("found", feeds[:1])
         return FeedFinding("none", pages=self.pages, menu=self.menu)
+
+    async def _forum(self, body: bytes, here: str) -> Optional[FeedFinding]:
+        """A forum's page: its boards ("found", the page's own board first), from its board list's one GET; None for
+        a page no forum software names (or a forum whose boards cannot be listed)."""
+        page = body.decode("utf-8", errors="replace")
+        software = forum.detect(page)
+        if software is None:
+            return None
+        base = forum.base_of(software, page, here)
+        listing = forum.board_list_url(software, base)
+        got = (body, here) if listing == here else await self._get(listing, PAGE_BYTES) if listing else None
+        rows = forum.offered(software, base, here, page, got[0].decode("utf-8", errors="replace") if got else "")
+        logger.info("Feed finder: %s is a %s forum, %d board(s)", here, software, len(rows))
+        return FeedFinding("found", tuple(Feed(url, title, forum=software) for url, title in rows)) if rows else None
 
     async def _apple_podcast(self, url: str) -> Optional[FeedFinding]:
         """An Apple Podcasts show page: the public lookup's feedUrl for its id, proved; None otherwise."""

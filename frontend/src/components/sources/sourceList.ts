@@ -353,6 +353,7 @@ const KIND_LABELS: Record<string, string> = {
   reddit_subreddit: 'Reddit',
   substack: 'Substack',
   saved: 'Saved pages',
+  forum: 'Forum',
 };
 
 export function kindLabel(row: Pick<SourceHealthRow, 'kind' | 'platform'>): string {

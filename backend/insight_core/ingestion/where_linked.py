@@ -184,6 +184,8 @@ def feed_row(feed: feed_finder.Feed, **more: Any) -> Dict[str, Any]:
     `saved_search` when it reads as one."""
     return {"url": feed.url, "title": feed.title, **({"moved_to": feed.moved_to} if feed.moved_to else {}),
             **({"saved_search": True} if feed.search else {}),
+            # a forum's board: its software (kinds/forum.py reads it)
+            **({"forum": feed.forum} if feed.forum else {}),
             # the site's feed, not this page's: "other_scope" or "stale"
             **({"not_this_page": feed.flag} if feed.flag else {}), **more}
 
