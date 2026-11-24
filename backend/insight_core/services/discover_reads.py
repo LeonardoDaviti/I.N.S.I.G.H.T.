@@ -366,8 +366,10 @@ async def read_first_page(stories: Any, http: Any, registry: Any, *,
     classics = await asyncio.to_thread(stories.untitled_classics)
     with db.connection(stories.db_url) as conn, conn.cursor() as cur:
         reads = DiscoverRepository.reads(cur)
-        todo = work(to_read(answer), reads, clock(),
-                    archives=answer.get("archives", ()), classics=classics, listed=answer["suggestions"][FIRST_PAGE:])
+        # the apart sections' rows (0280 C1) are tested again when their test is due, as the later pages' are
+        apart = [s for got in (answer.get("apart") or {}).values() for s in got.get("rows") or ()]
+        todo = work(to_read(answer), reads, clock(), archives=answer.get("archives", ()), classics=classics,
+                    listed=answer["suggestions"][FIRST_PAGE:] + apart)
         todo["videos"] = videos_due(DiscoverRepository.linked_videos(cur), reads, clock())
     if not todo["follow"] and not todo["titles"] and not todo["videos"]:
         return {"follow": 0, "titles": 0}

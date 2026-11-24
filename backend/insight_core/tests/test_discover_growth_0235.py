@@ -93,7 +93,7 @@ class Growth(unittest.TestCase):
                 {"key": "walled.example", "score": 3.0, "voices": 4, "fit": "follow", "follow_test": {"label": "blocked"}},
                 {"key": "untested.example", "score": 8.0, "voices": 5}]
         self.assertEqual([r["key"] for r in R.order(rows)],
-                         ["x.com/voice", "tested.example", "walled.example", "untested.example"])
+                         ["x.com/voice", "tested.example", "untested.example", "walled.example"])   # 0280 C1: apart
 
     def test_the_daily_pick_is_the_fastest_growing_not_judged(self):
         rows = [{"key": f"outlet{k}.example", "growth": 0.04, "score": 5.0 + k / 10} for k in range(30)]

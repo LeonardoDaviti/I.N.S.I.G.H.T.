@@ -1192,7 +1192,7 @@ describe('SourcesConfig deep links', () => {
     setup('/settings/sources?tab=discover', { getSuggestedSources });
     expect(await screen.findByText('Feed found')).toBeInTheDocument();
     expect(screen.getByText('· also news.feeds.example')).toBeInTheDocument();  // one owner's hosts, one card
-    // The ones that can't be followed are a section of their own, below the followable, above the untested.
+    // The ones that can't be followed are a section of their own, below the main list (0280 C1).
     const apart = screen.getByRole('region', { name: "Can't be followed as a feed" });
     expect(within(apart).getByText('walled.example')).toBeInTheDocument();
     expect(within(apart).getByText('Blocks readers')).toBeInTheDocument();

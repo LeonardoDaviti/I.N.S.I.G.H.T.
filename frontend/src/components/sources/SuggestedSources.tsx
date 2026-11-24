@@ -188,6 +188,35 @@ function Suggestion({ suggestion, onFollow, onHide }: {
   );
 }
 
+/** A section apart from the main list (0280 C1), closed until asked: its rows, and how many more it holds. */
+function ApartSection({ label, note, rows, more, startOpen = false, onFollow, onHide }: {
+  label: string; note: string; rows: SuggestedSource[]; more: number; startOpen?: boolean;
+  onFollow: (url: string) => void; onHide: (suggestion: SuggestedSource) => void;
+}) {
+  const [open, setOpen] = useState(startOpen);
+  return (
+    <section aria-label={label} className="mt-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className={`-ml-1 inline-flex items-center gap-1 rounded-sm px-1 pt-1 text-[0.75rem] font-medium text-fg-3 hover:text-fg ${FOCUS_RING}`}
+      >
+        {open ? <ChevronDown aria-hidden="true" className="h-3 w-3" /> : <ChevronRight aria-hidden="true" className="h-3 w-3" />}
+        {label} ({formatCount(rows.length + Math.max(0, more))})
+      </button>
+      <p className="text-[0.75rem] text-fg-3">{note}</p>
+      {open ? (
+        <ul>
+          {rows.map((suggestion) => (
+            <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={onHide} />
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 /**
  * Sources → discover: the sites and accounts your sources keep linking that you don't follow, the ones your stories
  * start from first, then most of your sources, each saying why. Above them, followed sources whose own pages
@@ -228,7 +257,14 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
     queryClient.setQueriesData<Pages>({ queryKey: [...SUGGESTED_SOURCES_KEY] }, (current) => (
       current ? {
         ...current,
-        pages: current.pages.map((page) => ({ ...page, suggestions: page.suggestions.filter((s) => s.key !== suggestion.key) })),
+        pages: current.pages.map((page) => ({
+          ...page,
+          suggestions: page.suggestions.filter((s) => s.key !== suggestion.key),
+          apart: page.apart ? Object.fromEntries(Object.entries(page.apart).map(([kind, got]) => [kind, got && {
+            total: got.total - (got.rows.some((s) => s.key === suggestion.key) ? 1 : 0),
+            rows: got.rows.filter((s) => s.key !== suggestion.key),
+          }])) : page.apart,
+        })),
       } : current
     ));
     void api.hideSuggestedSource(suggestion.key).then(
@@ -254,11 +290,13 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
     [s.key, ...s.voice_names, ...s.articles.map((a) => `${a.title ?? ''} ${a.url}`), ...stories(s.origin_stories)],
   )) : list);
   const suggestions = shown(all);
-  // those that can't be followed as a feed: their own section, below the followable, above the untested
-  const apart = suggestions.filter((s) => s.section === 'unfollowable');
-  const start = suggestions.findIndex((s) => s.section === 'unfollowable');
-  const head = start < 0 ? suggestions : suggestions.slice(0, start);
-  const rest = start < 0 ? [] : suggestions.slice(start).filter((s) => s.section !== 'unfollowable');
+  // 0280 C1: the main list; those that can't be followed as a feed and those your sources stopped linking sit apart,
+  // below it (an answer built before v10.47 marks them inside the list: they move there too)
+  const head = suggestions.filter((s) => !s.section);
+  const apart = [...shown(first.apart?.unfollowable?.rows ?? []), ...suggestions.filter((s) => s.section === 'unfollowable')];
+  const quiet = [...shown(first.apart?.quiet?.rows ?? []), ...suggestions.filter((s) => s.section === 'quiet')];
+  const quietMore = (first.apart?.quiet?.total ?? 0) - (first.apart?.quiet?.rows.length ?? 0);
+  const apartMore = (first.apart?.unfollowable?.total ?? 0) - (first.apart?.unfollowable?.rows.length ?? 0);
   const archives = (first.archives ?? []).filter((a) => matches([a.name, ...a.places, ...stories(a.origin_stories)]));
   const unnamed = first.unnamed ?? [];
   const also = first.also ?? [];
@@ -319,31 +357,27 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
               ))}
             </ul>
           ) : null}
-          {apart.length ? (
-            <section aria-label="Can't be followed as a feed" className="mt-2">
-              <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Can't be followed as a feed</h2>
-              <p className="text-[0.75rem] text-fg-3">Their follow test found no feed or page to read; your sources still carry their stories.</p>
-              <ul>
-                {apart.map((suggestion) => (
-                  <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
-                ))}
-              </ul>
-            </section>
-          ) : null}
-          {rest.length ? (
-            <ul>
-              {rest.map((suggestion) => (
-                <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
-              ))}
-            </ul>
-          ) : null}
-          {suggestions.length || archives.length ? null : (
+          {suggestions.length || archives.length || apart.length || quiet.length ? null : (
             <p className="py-6 text-[0.8125rem] text-fg-3">Nothing in Discover matches “{filter.trim()}”.</p>
           )}
           {query.hasNextPage ? (
             <Button size="sm" variant="secondary" className="mt-3" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
               {query.isFetchingNextPage ? 'Loading…' : `More (${formatCount((first.total ?? all.length) - all.length)})`}
             </Button>
+          ) : null}
+          {apart.length ? (
+            <ApartSection
+              label="Can't be followed as a feed"
+              note="Their follow test found no feed or page to read; your sources still carry their stories."
+              rows={apart} more={words.length ? 0 : apartMore} startOpen onFollow={onFollow} onHide={hide}
+            />
+          ) : null}
+          {quiet.length ? (
+            <ApartSection
+              label="Quiet lately"
+              note="None of your sources has linked them in two months."
+              rows={quiet} more={words.length ? 0 : quietMore} onFollow={onFollow} onHide={hide}
+            />
           ) : null}
           {first.worlds?.length && !words.length ? (
             <section aria-label="Worlds to explore" className="pt-3">

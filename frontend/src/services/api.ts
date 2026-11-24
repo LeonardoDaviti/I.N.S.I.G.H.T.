@@ -862,7 +862,9 @@ export interface SuggestedSource {
   articles: { url: string; title: string | null; linked_by: string[] }[];
   follow_test?: { label: FollowLabel; at: string };
   places?: string[];
-  section?: 'unfollowable';
+  section?: 'unfollowable' | 'quiet';
+  /** Days since your sources last linked it (0280 C1); a row past QUIET_DAYS sits in the quiet section. */
+  last_days?: number | null;
   classics?: number;
   origins?: number;
   origin_stories?: OriginStory[];
@@ -896,6 +898,8 @@ export interface SuggestedSourcesResponse {
   total?: number;
   more?: boolean;
   references?: { key: string; voices: number }[];
+  /** Apart from the main list (0280 C1): tested and unfollowable, or quiet; each its first rows and its total. */
+  apart?: Partial<Record<'unfollowable' | 'quiet', { total: number; rows: SuggestedSource[] }>>;
   archives?: MissingOrigins[];
   unnamed?: { place: string; origins: number }[];
   pages?: DiscoverPage[];
@@ -1065,6 +1069,8 @@ export interface DiscoverPage {
   entity?: { id: string; name: string };
   voice_names?: string[];
   follow_url?: string | null;
+  /** "reference": a reference or product page (docs, wiki, model card, product, sign-in), not a piece (0280 C2). */
+  kind?: 'reference' | null;
 }
 
 export interface SourceGives { posts: number; read: number; stories: number; first: number; classics: number; links: number; }
