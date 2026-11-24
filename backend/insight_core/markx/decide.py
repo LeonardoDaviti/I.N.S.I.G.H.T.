@@ -86,7 +86,10 @@ class Config:
     # day). Measured with judge-story-v2 (v10.49, one release is one row): 39 right and 1 wrong merge of 79 labeled
     # pairs (precision 0.975, recall 0.68; code-only at 2 / 0.5: 36 and 2, 0.947 / 0.63; judge-story-v1: 23 and 1),
     # 33 right and 0 wrong of 40 fresh held-out pairs (code-only: 13 and 0). 0: off.
-    overlap_min: int = 1
+    # v10.49.1: OFF on production. A mixed story's card (its first members) let a merge absorb a two-week saga
+    # (Nvidia's Nov 8 scandal posts into the Nov 23 reinstatement): the story started Nov 8 and News dropped its
+    # biggest row. Back on once cards follow the story's main subject and a saga guard is measured (0281 E).
+    overlap_min: int = 0
     overlap_share: float = 0.3
 
     @staticmethod
