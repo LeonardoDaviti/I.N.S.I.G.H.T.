@@ -14,6 +14,7 @@ import { formatCount, plural } from '../../lib/format';
 import { errorMessage } from '../../lib/apiError';
 import { usd } from '../../lib/markx';
 import { bylineText } from '../../lib/byline';
+import { AttentionLine } from '../sources/NeedsAttention';
 
 const OVERVIEW_KEY = ['markx-overview'] as const;
 
@@ -75,6 +76,7 @@ export function MarkXBriefing() {
         }
         return (
           <section aria-label="Briefing">
+            <AttentionLine />
             <p className="text-[0.8125rem] text-fg-2">
               {briefing.day} · {latest.guide ?? 'briefing'} · written {postBylineTime(latest.created_at)}
             </p>
