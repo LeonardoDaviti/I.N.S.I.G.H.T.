@@ -348,7 +348,9 @@ class DiscoverTitleMapTests(unittest.TestCase):
         with mock.patch.object(stories_service, "SourceFacts", Counting):
             got = StoriesService(db_url()).discover()
         self.assertEqual(built, [], "the next open, in another process, reads the kept list")
-        [s] = [s for s in got["suggestions"] if s["key"] == site]
+        # every read failed, so the site is tested unfollowable: v10.47 lists it apart (0280 C1), not in the main list
+        rows = list(got["suggestions"]) + [r for part in (got.get("apart") or {}).values() for r in part["rows"]]
+        [s] = [s for s in rows if s["key"] == site]
         self.assertIn("follow_test", s, "the list kept is the one the reads made")
 
 
