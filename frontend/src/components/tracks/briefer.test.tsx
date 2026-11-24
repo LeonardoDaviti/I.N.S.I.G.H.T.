@@ -190,7 +190,7 @@ describe('the quick look on a track page', () => {
     const tools = within(panel).getByRole('region', { name: 'Tool (2)' });
     expect(within(tools).getByText('New: tool (2)')).toBeInTheDocument();
     expect(tools.querySelector('[data-thing="t1"]')).toHaveTextContent('Hori knife · 30 USD · 0.3 kg · hand · reviews.example.com');
-    expect(within(tools).getByRole('link', { name: 'Open the post about Hori knife' })).toHaveAttribute('href', '/posts/p-t1');   // in INSIGHT: a bridge's address may not open on the reader's device
+    expect(within(tools).getByRole('link', { name: 'Hori knife' })).toHaveAttribute('href', '/posts/p-t1');   // in INSIGHT: a bridge's address may not open on the reader's device
     expect(within(panel).getByRole('region', { name: 'Also in the track' })).toHaveTextContent('What do you all use for weeding?');
     const order = [...document.querySelectorAll('[aria-label="Since you looked"], [aria-label="Tools"]')].map((e) => e.getAttribute('aria-label'));
     expect(order).toEqual(['Since you looked', 'Tools']);
@@ -249,7 +249,7 @@ describe('the weekly issue', () => {
     const tools = within(view).getByRole('region', { name: 'Tool (3)' });
     expect(tools.querySelector('[data-things-table="tool"] table')).not.toBeNull();
     expect(tools.querySelectorAll('[data-thing-card]')).toHaveLength(3);    // the phone's cards (under 640px)
-    expect(within(tools).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Name', 'Price', 'Weight', 'Power', 'Review', 'Open']);
+    expect(within(tools).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Name', 'Price', 'Weight', 'Power', 'Review']);
     expect(within(view).getByRole('region', { name: 'Also in the track' })).toHaveTextContent('A garden diary');
     expect(within(view).getByRole('region', { name: 'What changed' })).toHaveTextContent('Three hand tools this week.');
     await userEvent.click(within(view).getByRole('button', { name: 'Older issue' }));

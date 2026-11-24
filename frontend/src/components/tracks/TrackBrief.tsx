@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import {
@@ -22,25 +22,30 @@ const postHref = (id: string) => `/posts/${encodeURIComponent(id)}`;
 const QUICK_ROWS = 5;   // the quick look shows a kind's newest rows; "see all" opens the rest
 
 
-/** The ↗ to a thing's newest post, in INSIGHT: a post's own address can be a server-side feed bridge's that the
- *  reader's device cannot open; the post page links its original. */
-function OpenThing({ thing, name }: { thing: Thing; name: string }) {
+/** A thing's name as the link to its newest post, in INSIGHT (a post's own address can be a server-side feed
+ *  bridge's that the reader's device cannot open; the post page links its original). No post: the name alone. */
+function ThingTitle({ thing, name, children }: { thing: Thing; name: string; children?: ReactNode }) {
   const post = thing.posts[0];
-  if (!post) return null;
+  if (!post) return <>{children ?? name}</>;
   return (
-    <TextLink to={postHref(post.id)} aria-label={`Open the post about ${name}`} title={post.title ?? undefined}
-      className="shrink-0 text-fg-2 no-underline">↗</TextLink>
+    <TextLink to={postHref(post.id)} title={post.title ?? undefined} className="text-fg no-underline hover:underline">
+      {children ?? name}
+    </TextLink>
   );
 }
 
-/** A thing's one picture (the backend's `image`: from the post its name came from), shown like a feed row's. */
-function ThingImage({ thing, className = 'w-20' }: { thing: Thing; className?: string }) {
+/** A thing's one picture (the backend's `image`: from the post its name came from), in colour, opening its post. */
+function ThingImage({ thing, className = 'w-48' }: { thing: Thing; className?: string }) {
   const [failed, setFailed] = useState(false);
   if (!thing.image || failed) return null;
+  const post = thing.posts[0];
+  const img = (
+    <img src={proxiedImage(thing.image.post, thing.image.url)} alt="" loading="lazy" decoding="async"
+      onError={() => setFailed(true)} className="h-full w-full object-cover" data-thing-image={thing.id} />
+  );
   return (
     <span className={`block aspect-video shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface ${className}`}>
-      <img src={proxiedImage(thing.image.post, thing.image.url)} alt="" loading="lazy" decoding="async"
-        onError={() => setFailed(true)} className="h-full w-full object-cover grayscale" data-thing-image={thing.id} />
+      {post ? <TextLink to={postHref(post.id)} tabIndex={-1} aria-hidden="true" className="block h-full w-full">{img}</TextLink> : img}
     </span>
   );
 }
@@ -108,14 +113,12 @@ function CompactRows({ section, onSeeAll }: { section: ThingSection; onSeeAll?: 
           const facts = thingFacts(t, section.fields);
           return (
             <li key={t.id} className="flex items-baseline gap-2 py-1 text-[0.875rem] leading-5" data-thing={t.id}>
-              <ThingImage thing={t} className="w-16 self-start" />
+              <ThingImage thing={t} className="w-32 self-start" />
               <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                <span className="text-fg">{name}</span>
+                <ThingTitle thing={t} name={name} />
                 {facts.length ? <span className="text-fg-2"> · {facts.join(' · ')}</span> : null}
                 <LinkFacts thing={t} fields={section.fields} />
-                
               </span>
-              <OpenThing thing={t} name={name} />
             </li>
           );
         })}
@@ -209,7 +212,7 @@ export function ThingsView({ section, sort, onSort }: {
         <table className="w-full border-collapse text-left text-[0.8125rem] leading-5">
           <thead>
             <tr className="border-b border-line text-fg-3">
-              {pictured ? <th scope="col" className="w-24 py-1 pr-3"><span className="sr-only">Picture</span></th> : null}
+              {pictured ? <th scope="col" className="w-52 py-1 pr-3"><span className="sr-only">Picture</span></th> : null}
               {fields.map((f) => {
                 const dir = sort && sort.field === f.name ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined;
                 return (
@@ -222,20 +225,18 @@ export function ThingsView({ section, sort, onSort }: {
                   </th>
                 );
               })}
-              <th scope="col" className="w-6 py-1"><span className="sr-only">Open</span></th>
             </tr>
           </thead>
           <tbody>
             {rows.map((t) => (
-              <tr key={t.id} className="border-b border-line align-baseline" data-thing={t.id}>
+              <tr key={t.id} className="border-b border-line align-top" data-thing={t.id}>
                 {pictured ? <td className="py-1.5 pr-3 align-top"><ThingImage thing={t} /></td> : null}
                 {fields.map((f, i) => (
                   <td key={f.name} className={`py-1.5 pr-3 [overflow-wrap:anywhere] ${i === 0 ? 'text-fg' : 'text-fg-2'}`}>
-                    <Cell thing={t} field={f} />
-                    
+                    {i === 0 ? <ThingTitle thing={t} name={thingName(t, fields)}><Cell thing={t} field={f} /></ThingTitle>
+                      : <Cell thing={t} field={f} />}
                   </td>
                 ))}
-                <td className="py-1.5"><OpenThing thing={t} name={thingName(t, fields)} /></td>
               </tr>
             ))}
           </tbody>
@@ -248,8 +249,7 @@ export function ThingsView({ section, sort, onSort }: {
             <li key={t.id} className="mb-2 flex gap-3 rounded-md border border-line px-3 py-2" data-thing-card={t.id}>
               <div className="min-w-0 flex-1">
               <p className="flex items-baseline gap-2 text-[0.9375rem] font-semibold leading-5 text-fg">
-                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{name}</span>
-                <OpenThing thing={t} name={name} />
+                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><ThingTitle thing={t} name={name} /></span>
               </p>
               {thingFacts(t, fields).length ? (
                 <p className="mt-0.5 text-[0.8125rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
@@ -257,7 +257,7 @@ export function ThingsView({ section, sort, onSort }: {
                 </p>
               ) : null}
               </div>
-              <ThingImage thing={t} />
+              <ThingImage thing={t} className="w-32" />
             </li>
           );
         })}
