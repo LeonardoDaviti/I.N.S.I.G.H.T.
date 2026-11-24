@@ -6,7 +6,8 @@ budget or more than WORSE_BY worse than the base.
 
 The jobs, each in a fresh process (its peak is its own high-water, utils/peak): `decide_full` (the first decision run,
 full; compared, no budget), `decide` (the next, incremental), `stories` (Mark IX's story job, its web reads left out),
-`discover` (its web reads off), then `plan` (the background planners) and the kept views `news`, `entities` and
+`discover` (its web reads off), then `plan` (the background planners), `lane` (v10.47: the planners a lease ran,
+one pass) and the kept views `news`, `entities` and
 `tracks` after those runs (0279 C3: each derived view has its own budget, so a rebuild that grows shows by name). The decision runs' clock is the copy's (`--now`). A version without a job is "not
 measured" for it, never a failure. BUDGETS (overridable with RESOURCE_BUDGETS JSON) are at the server's size; the
 check's copy is smaller, so a head over them is over at any size. Differences under FLOOR_MB / FLOOR_S never fail."""
@@ -21,13 +22,16 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-JOBS = ("decide_full", "decide", "stories", "discover", "plan", "news", "entities", "tracks")
+JOBS = ("decide_full", "decide", "stories", "discover", "plan", "lane", "news", "entities", "tracks")
 # the kept views' and the plan job's: about 2x a run on the server (2026-11-23, its last runs: plan 15.5 CPU s / 232 MB,
 # news 13.5 / 204, entities 34.8 / 405, tracks 14.4 / 225; 0279 A)
 BUDGETS: Dict[str, Dict[str, float]] = {"decide": {"peak_mb": 600.0, "seconds": 90.0},
                                          "stories": {"peak_mb": 300.0},
                                          "discover": {"peak_mb": 300.0},
                                          "plan": {"peak_mb": 400.0, "cpu_s": 30.0},
+                                         # v10.47: the lane (the planners a lease ran) runs inside the scheduler's
+                                         # process, so its peak is that process's growth: held to the plan job's
+                                         "lane": {"peak_mb": 400.0, "cpu_s": 30.0},
                                          "news": {"peak_mb": 400.0, "cpu_s": 30.0},
                                          "entities": {"peak_mb": 600.0, "cpu_s": 70.0},
                                          "tracks": {"peak_mb": 400.0, "cpu_s": 30.0}}
