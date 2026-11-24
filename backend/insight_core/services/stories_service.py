@@ -645,6 +645,7 @@ class StoriesService:
             stored_at=row.get("stored_at"),
             date_alone=row["precision"] == "date" if row.get("precision") in ("date", "exact") else date_alone(row["t"]),
             undated=row.get("precision") in ("none", "seen"),
+            month_alone=row.get("precision") == "month",
             roundup=bool(row.get("roundup")),   # Mark X's round-up tag: it joins no story by its links
         )
         post.owner = sources.owner_voice(post.voice)
