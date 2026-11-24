@@ -359,18 +359,25 @@ def work(page: List[Dict[str, Any]], reads: Dict[str, Any], now: datetime, *,
             "titles": sorted(url for url in untitled if not is_tweet(url) and due(titles.get(url), now))}
 
 
-async def read_first_page(stories: Any, http: Any, registry: Any, *,
-                          clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> Dict[str, int]:
-    """Read what the first page lacks (`work`) and the videos due, store each dated answer, then rebuild the list."""
-    answer = await asyncio.to_thread(stories.discover_kept)
-    classics = await asyncio.to_thread(stories.untitled_classics)
+def _todo(stories: Any, now: datetime) -> Dict[str, List[str]]:
+    """What the served answer's first page asks to read (`work`) and the videos due. The answer (megabytes) lives
+    only here: the rebuild after the reads never holds it beside its own (v10.48)."""
+    answer = stories.discover_kept()
+    classics = stories.untitled_classics()
     with db.connection(stories.db_url) as conn, conn.cursor() as cur:
         reads = DiscoverRepository.reads(cur)
         # the apart sections' rows (0280 C1) are tested again when their test is due, as the later pages' are
         apart = [s for got in (answer.get("apart") or {}).values() for s in got.get("rows") or ()]
-        todo = work(to_read(answer), reads, clock(), archives=answer.get("archives", ()), classics=classics,
+        todo = work(to_read(answer), reads, now, archives=answer.get("archives", ()), classics=classics,
                     listed=answer["suggestions"][FIRST_PAGE:] + apart)
-        todo["videos"] = videos_due(DiscoverRepository.linked_videos(cur), reads, clock())
+        todo["videos"] = videos_due(DiscoverRepository.linked_videos(cur), reads, now)
+    return todo
+
+
+async def read_first_page(stories: Any, http: Any, registry: Any, *,
+                          clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> Dict[str, int]:
+    """Read what the first page lacks (`work`) and the videos due, store each dated answer, then rebuild the list."""
+    todo = await asyncio.to_thread(_todo, stories, clock())   # the served answer read, and let go before the reads
     if not todo["follow"] and not todo["titles"] and not todo["videos"]:
         return {"follow": 0, "titles": 0}
     gate = asyncio.Semaphore(FAN_OUT)

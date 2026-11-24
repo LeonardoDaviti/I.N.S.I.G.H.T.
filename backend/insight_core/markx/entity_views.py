@@ -215,9 +215,15 @@ def _names_now(cur: Any, book: Any, roots: Sequence[Optional[str]]) -> Set[str]:
     lead = {i: r for r in roots for i in book._leading_to(r) if I._UUID.match(i)}
     if not lead:
         return set()
-    cur.execute("""SELECT post_id::text, guide, n, entity_id::text FROM mx_mentions_now
-                    WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[])""", (_guide(), sorted(lead)))
-    out = {r for p, g, n, e in cur.fetchall() if (r := book.root(book.pins.get((p, g, n), e))) in roots}
+    # each entity some unpinned mention names, once (v10.48: not every mention row: Discover's worlds ask ~100k roots,
+    # 1.7 M mention rows read into memory for a yes or no each); a pinned mention counts for its pin, below
+    keys = list(book.pins)
+    cur.execute("""SELECT DISTINCT m.entity_id::text FROM mx_mentions_now m
+                    WHERE m.guide = ANY(%s) AND m.entity_id = ANY(%s::uuid[])
+                      AND NOT EXISTS (SELECT 1 FROM unnest(%s::uuid[], %s::text[], %s::int[]) AS k(p, g, n)
+                                       WHERE k.p = m.post_id AND k.g = m.guide AND k.n = m.n)""",
+                (_guide(), sorted(lead), [p for p, _g, _n in keys], [g for _p, g, _n in keys], [n for _p, _g, n in keys]))
+    out = {r for (e,) in cur.fetchall() if (r := book.root(e)) in roots}
     pinned = [k for k, e in book.pins.items() if book.root(e) in roots - out]
     if pinned:
         cur.execute("""SELECT post_id::text, guide, n FROM mx_mentions_now WHERE guide = ANY(%s) AND entity_id IS NOT NULL

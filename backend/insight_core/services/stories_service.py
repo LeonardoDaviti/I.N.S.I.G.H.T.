@@ -846,7 +846,15 @@ class StoriesService:
         return stamp, stamp[0] != inputs or age >= REFRESH_AFTER or age < timedelta(0)
 
     def refresh(self) -> Dict[str, Any]:
-        """Build Discover's answer now and keep it as the one served, with `built_at`. Returns it. Background only."""
+        """Build Discover's answer now and keep it as the one served, with `built_at`. Returns it. Background only.
+        A build starts from the memory the process freed handed back (collected and trimmed: v10.48, measured on the
+        server's copy, the job's second build peaked ~100 MB lower), so two builds in one job do not stack."""
+        import gc
+        from insight_core.utils.idle_trim import libc_trim
+        gc.collect()
+        trim = libc_trim()
+        if trim is not None:
+            trim()
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             inputs = self.repo.discover_inputs(cur) + "|" + code_stamp()
         answer = self._fresh()
@@ -857,6 +865,9 @@ class StoriesService:
                 DiscoverRepository.keep_served(cur, inputs, built_at, answer)
         except Exception:  # noqa: BLE001 - derived; the next refresh keeps it
             logger.exception("Discover: the answer was not kept")
+        # v10.48: the list (~150 MB of objects on the server's data) is kept in the database; the jobs process holds
+        # no copy of it between builds (its next build follows new reads, so new inputs: it never hit)
+        self._discovered = ("", None)
         return answer
 
     def _fresh(self, *, persist: bool = True) -> Dict[str, Any]:
@@ -1005,6 +1016,7 @@ class StoriesService:
             inputs = self.repo.discover_inputs(cur) + "|" + code_stamp()
             if self._discovered[0] == inputs and self._discovered[1] is not None:
                 return self._discovered[1]
+            self._discovered = ("", None)   # an older list is let go before this one is read or made (v10.48)
             kept = DiscoverRepository.kept_list(cur, inputs)
             if kept is not None:
                 self._discovered = (inputs, kept)
