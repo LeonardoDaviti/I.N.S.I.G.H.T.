@@ -4,7 +4,7 @@ The rules (`plan_pass1`, `plan_pass2`, `decide`, `settle`, `settle_check`) are p
 the candidates, the valid answers and `Config`: checks demote or remove members, joins and pairs add posts, merges
 join stories, late posts become connections, a story-changing answer counts only once a second answer agrees, and a
 member Mark IX joined by a link is never removed. Question ids (`check:<story>:<post>`, `join:`, `pair:`, `merge:`,
-`merge2:`) key stories inside one run only; the job matches them to Mark X's stories by their member posts.
+`merge2:`, `merge3:`) key stories inside one run only; the job matches them to Mark X's stories by their member posts.
 The job (`run`, inside `snapshot`) reads Mark IX's tables read only, asks the questions as tasks, and writes Mark X's
 stories, memberships, connections, refusals and News (closing what changed, never deleting): mx_* tables only. One
 run at a time (a Postgres advisory lock).
@@ -77,10 +77,11 @@ class Config:
     document_days: int = _SAME.document_window.days   # ... when two of their posts linking it are at most this far apart
     days: int = 30                  # the window a run decides ...
     story_window: bool = True       # ... read from the owner's story window each run (markx/story_window.py)
-    # two stories whose core members overlap are one story, for every event kind (`overlapping`): at least
+    # two stories whose core members overlap are a merge question (`plan_overlaps`), any event kind: at least
     # `overlap_min` posts are core members of both, and they are at least `overlap_share` of the smaller story's
-    # members; never two the judge kept apart this run (a merge answered "different" or "development"). 0: off.
-    # Measured on the server copy of 2026-11-19 (plan/issues/0280 K1): 35 of 37 labeled pairs right.
+    # members; never two the judge kept apart this run (a merge answered "different" or "development"). The overlap
+    # only proposes: the two are one story when that merge's answer says same_event at `tau_merge` (`decide`'s
+    # merges), never without an answer (0280 K1: code-only it merged 2 wrong pairs of 38). 0: off.
     overlap_min: int = 2
     overlap_share: float = 0.5
 
@@ -332,6 +333,33 @@ def plan_pass2(posts: Dict[str, Post], first_pass: Outcome,
     return out
 
 
+def plan_overlaps(posts: Dict[str, Post], out: Outcome, config: Config = Config()) -> List[Question]:
+    """The third pass: a merge question (`merge3:`) for each pair of `out`'s stories whose core members overlap
+    (`overlapping`), never a pair the judge kept apart this run. Each side shows its story's own members first (the
+    posts not in the other, earliest first), then the shared ones, 3 at most: a post in both says nothing about
+    whether the two are one event (0280 K1: one aggregator post in an image-ads story and a GPT-6 story)."""
+    if config.overlap_min <= 0:
+        return []
+
+    def f(k: str) -> str:
+        return out.final.get(k, k)
+
+    def earliest(ps: Iterable[str]) -> List[str]:
+        return sorted(ps, key=lambda p: _at_key(posts, p))
+
+    apart = {frozenset((f(x["a"]), f(x["b"]))) for x in out.refusals}
+    apart |= {frozenset((f(c["a"]), f(c["b"]))) for c in out.connections
+              if c["a_kind"] == "story" and c["b_kind"] == "story"}
+    qs = []
+    for x, y, _ in overlapping(posts, out.about, out.came_from, out.merge_calls, out.ix, apart, config):
+        mx, my = [p for p in out.about[x] if p in posts], [p for p in out.about[y] if p in posts]
+        both = earliest(set(mx) & set(my))
+        side = tuple((earliest(set(mx) - set(my)) + both)[:3])
+        side_b = tuple((earliest(set(my) - set(mx)) + both)[:3])
+        qs.append(Question(f"merge3:{x}:{y}", "merge", story=x, other=y, side=side, side_b=side_b))
+    return qs
+
+
 # ---- the decisions ------------------------------------------------------------------------------------
 
 def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answered: Iterable[Tuple[Question, Verdict]],
@@ -461,16 +489,6 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
         return out_, came
 
     merged, came_from = merge_all()
-    if config.overlap_min > 0:
-        apart = {frozenset((find(g(x["a"])), find(g(x["b"])))) for x in refusals}
-        apart |= {frozenset((find(g(c["a"])), find(g(c["b"])))) for c in connections
-                  if c["a_kind"] == "story" and c["b_kind"] == "story"}
-        for keep, drop, shared in overlapping(posts, merged, came_from, merge_calls, members, apart, config):
-            keep, drop = find(keep), find(drop)
-            if keep != drop:
-                alias[drop] = keep
-                log.append({"change": "overlap", "story": keep, "other": drop, "shared": shared})
-        merged, came_from = merge_all()
     keys = set(glue) | set(alias) | set(about) | set(mentions) | set(members)
     return Outcome(about=dict(merged), mentions={k: dict(v) for k, v in mentions.items()}, log=log,
                    connections=connections, merged_into={k: find(k) for k in alias}, ix=set(members),
@@ -1116,8 +1134,14 @@ def think(cur: Any, world: World, config: Config, ask: Ask, now: datetime) -> Tu
     got2 = _ask_all(q, q2, world, p1)
     ans2 = [(x, got2[n]) for n, x in enumerate(q2) if got2[n] is not None]
     out = decide(world.posts, world.stories, ans1 + ans2, config, world.events())
-    counts = {"questions": dict(Counter(x.type for x in q1 + q2)), "answered": len(ans1) + len(ans2),
-              "pass2": len(q2), "changes": dict(Counter(c["change"] for c in out.log))}
+    # stories whose core members overlap: a merge question each, one story only on its answer
+    q3 = plan_overlaps(world.posts, out, config)
+    got3 = _ask_all(q, q3, world, out)
+    ans3 = [(x, got3[n]) for n, x in enumerate(q3) if got3[n] is not None]
+    if ans3:
+        out = decide(world.posts, world.stories, ans1 + ans2 + ans3, config, world.events())
+    counts = {"questions": dict(Counter(x.type for x in q1 + q2 + q3)), "answered": len(ans1) + len(ans2) + len(ans3),
+              "pass2": len(q2), "pass3": len(q3), "changes": dict(Counter(c["change"] for c in out.log))}
     return out, counts
 
 

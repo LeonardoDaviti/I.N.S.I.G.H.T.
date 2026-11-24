@@ -296,22 +296,38 @@ class Rules(unittest.TestCase):
             out.append((D.Question(f"join:E:{p}", "join", story="E", post=p, anchor="e"), v(rel_e, 0.9)))
         return out
 
-    def test_stories_whose_core_members_overlap_are_one_story(self):
-        """Two posts the judge put in both stories as the same event, half of the smaller story: one story, the
-        older Mark IX story's key (0280 K1, the four Jensen Huang stories); any event kind, no chain needed."""
-        out = D.decide(self.posts, self.stories, self.joined_to_both())
+    def overlap_merge(self, out):
+        """The overlap's merge question for `out` (plan_overlaps), asserting there is exactly one."""
+        qs = D.plan_overlaps(self.posts, out)
+        self.assertEqual([(q.tid, q.type, q.story, q.other) for q in qs], [("merge3:A:E", "merge", "A", "E")])
+        return qs[0]
+
+    def test_stories_whose_core_members_overlap_are_a_merge_question(self):
+        """Two posts the judge put in both stories as the same event, half of the smaller story: the overlap only
+        proposes (0280 K1, the four Jensen Huang stories; v10.48 owner: Haiku's merge judge decides). Unanswered,
+        the two stay apart; same_event at the merge bar makes them one story under the older Mark IX key."""
+        joined = self.joined_to_both()
+        out = D.decide(self.posts, self.stories, joined)
+        self.assertEqual(set(out.about), {"A", "E"})                  # no merge without an answer
+        m = self.overlap_merge(out)
+        self.assertEqual((m.side, m.side_b), (("a", "b", "c"), ("e", "f", "g")))   # each side's own posts first
+        out = D.decide(self.posts, self.stories, joined + [(m, v("same_event", 0.9, call="c9"))])
         self.assertEqual(set(out.about), {"A"})
         self.assertEqual(set(out.about["A"]), {"a", "b", "c", "short", "e", "f", "g", "h"})
         self.assertEqual(out.final["E"], "A")
-        self.assertEqual([(x["change"], x["story"], x["other"], x["shared"]) for x in out.log if x["change"] == "overlap"],
-                         [("overlap", "A", "E", 2)])
+        self.assertEqual([(x["change"], x["story"], x["other"]) for x in out.log if x["change"] == "merge"],
+                         [("merge", "A", "E")])
         rows = D.wanted(out, self.posts)
-        self.assertEqual(rows["A"]["f"][1], "rule:time")             # each post keeps its own reason
-        self.assertEqual(rows["A"]["g"][1], "judge:join")
+        self.assertEqual(rows["A"]["f"][1], "merge")                 # merged in by the judge's call
+        self.assertEqual(rows["A"]["b"][1], "rule:time")             # its own posts keep their reason
+        self.assertEqual(D.plan_overlaps(self.posts, out), [])        # one story: nothing left to ask
+        for rel, p in (("same_event", 0.84), ("development", 0.9), ("different", 0.9)):
+            out = D.decide(self.posts, self.stories, joined + [(m, v(rel, p))])
+            self.assertEqual(set(out.about), {"A", "E"}, (rel, p))   # under the bar, or not one event: apart
 
     def test_overlap_needs_two_core_posts_and_half_the_smaller_story(self):
         one = D.decide(self.posts, self.stories, self.joined_to_both(posts=("g",)))
-        self.assertEqual(set(one.about), {"A", "E"})                  # one shared post: a round-up, apart
+        self.assertEqual(D.plan_overlaps(self.posts, one), [])        # one shared post: a round-up, not asked
         self.assertEqual(D.overlapping(self.posts, {"A": {p: {"by": "rule"} for p in "abcgh"},
                                                     "E": {p: {"by": "rule"} for p in "bcdef"}}, {}, {}, {"A", "E"},
                                        set()), [])                      # 2 of 5: under half
@@ -323,18 +339,18 @@ class Rules(unittest.TestCase):
         """A post joined to one story as a development (or reaction) says the stories differ: apart."""
         for rel in ("development", "reaction"):
             out = D.decide(self.posts, self.stories, self.joined_to_both(rel_e=rel))
-            self.assertEqual(set(out.about), {"A", "E"}, rel)
+            self.assertEqual(D.plan_overlaps(self.posts, out), [], rel)
             self.assertIn("g", out.about["E"])
 
-    def test_the_judge_keeping_two_stories_apart_wins_over_their_overlap(self):
+    def test_a_pair_the_judge_kept_apart_is_not_asked_again_by_its_overlap(self):
         m = D.Question("merge:A:E", "merge", story="A", other="E")
         for rel, p in (("development", 0.9), ("different", 0.9)):
             out = D.decide(self.posts, self.stories, self.joined_to_both() + [(m, v(rel, p))])
-            self.assertEqual(set(out.about), {"A", "E"}, rel)
+            self.assertEqual(D.plan_overlaps(self.posts, out), [], rel)
         out = D.decide(self.posts, self.stories, self.joined_to_both(), D.Config.prototype())
-        self.assertEqual(set(out.about), {"A", "E"})                  # the prototype had no overlap rule
+        self.assertEqual(D.plan_overlaps(self.posts, out, D.Config.prototype()), [])   # the prototype: no overlap
         out = D.decide(self.posts, self.stories, self.joined_to_both(), D.Config(overlap_min=0))
-        self.assertEqual(set(out.about), {"A", "E"})
+        self.assertEqual(D.plan_overlaps(self.posts, out, D.Config(overlap_min=0)), [])
 
     def test_checks_come_before_joins_and_merges_after_glue(self):
         c = D.Question("check:A:b", "check", story="A", post="b", voices=3)
