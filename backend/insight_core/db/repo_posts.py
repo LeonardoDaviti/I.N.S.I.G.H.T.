@@ -43,6 +43,26 @@ X_ARTICLE_KEY = "x_article"
 TELEGRAM_POST_PREFIX = "https://t.me/"
 
 
+# A stated date later than this past now is no publication date: a paper dated by its venue's issue ("PETS, July
+# 2027"), a scheduled event. The slack covers time zones and clocks a little ahead.
+AHEAD_SLACK = timedelta(days=1)
+STATED_DATE_KEY = "stated_date"
+
+
+def not_ahead(post: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
+    """The draft to save: one whose date lies ahead of now (past AHEAD_SLACK) is dated when first seen ("seen"), the
+    date it stated kept in metadata `stated_date`; any other draft unchanged (the same dict)."""
+    date = post.get("date")
+    if not isinstance(date, datetime):
+        return post
+    from datetime import timezone
+    aware = date if date.tzinfo else date.replace(tzinfo=timezone.utc)
+    if aware <= (now or datetime.now(timezone.utc)) + AHEAD_SLACK:
+        return post
+    return {**post, "date": None, "date_precision": "seen",
+            "metadata": {**(post.get("metadata") or {}), STATED_DATE_KEY: aware.isoformat()}}
+
+
 def published_precision(post: Dict[str, Any]) -> str:
     """How precise a post's date is (posts.published_precision): "none" (no date), "seen" (dated when first
     seen), "month" (a page that states only its month: the 1st, page_watch.DATED_BY_MONTH), "date" (no time of day,
@@ -266,6 +286,7 @@ class PostsRepository:
         a posts_source_external_unique violation is resolved by identity.
         """
 
+        post = not_ahead(post)
         url = post['url']
         content = post.get("content", "")
         published_at = post.get("date", None)
@@ -1116,7 +1137,8 @@ class PostsRepository:
 
     def save_full_text(self, cur: Cursor, post_id: str, post: Dict[str, Any]) -> None:
         """Store the full body of a stored post; metadata is merged, never replaced. An undated post takes the page's
-        date and sorts at it."""
+        date and sorts at it (never a date ahead of now: `not_ahead`)."""
+        post = not_ahead(post)
         fields = build_post_fields(post)
         cur.execute(
             """
