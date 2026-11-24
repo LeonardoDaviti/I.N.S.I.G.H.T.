@@ -92,6 +92,23 @@ StoredUrls = Callable[[Sequence[str]], set]
 TeasersDue = Callable[..., List[Dict[str, Any]]]
 
 
+def whole_answer(source: Source, feed_text: str, url: str, parsed: List[Dict[str, Any]],
+                 limit: int) -> List[Dict[str, Any]]:
+    """The items a read keeps: the newest `limit`, or, on a saved search's first read (no post stored yet), its
+    whole answer. A saved search (feed_finder.is_search_feed: an arXiv query, a search's feed) holds all it is in one
+    read and is no site's own feed, so no archive reaches its older items; the items past `limit` are its backlog
+    (BACKLOG_KEY: never new to you), as an archive's pages are."""
+    from insight_core.ingestion import feed_finder   # it reads feeds through this package
+
+    if len(parsed) <= limit or source.get("post_count") != 0 or not feed_finder.is_search_feed(
+            parsing.feed_channel_title(feed_text) or "", url):
+        return parsed[:limit]
+    for post in parsed[limit:]:
+        post[BACKLOG_KEY] = True
+    logger.info("%s: a saved search's first read keeps its whole answer (%s items)", url, len(parsed))
+    return list(parsed)
+
+
 class GenericRssKind(BaseKind):
     name = "generic_rss"
     available_basis = "feed_window"
@@ -137,7 +154,7 @@ class GenericRssKind(BaseKind):
             checked = checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {},
                                     broken=parsed.broken)
             failure, warning = checked.failure, checked.warning   # a few items sharing an address: a warning
-            posts = await self._maybe_expand(source, parsed[:limit])
+            posts = await self._maybe_expand(source, whole_answer(source, feed_text, url, parsed, limit))
         result = FetchedPosts(await self._read_again(source, posts))
         result.failure = failure
         result.warning = warning
