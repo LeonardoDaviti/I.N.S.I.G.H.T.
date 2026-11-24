@@ -202,9 +202,60 @@ def _cite(a: Dict[str, Any], input: str) -> Optional[str]:
     return None
 
 
+# ---- relations: the entities guides' `relations` (ent-v3, ent-v4.2), each between two of the answer's own mentions --
+# The sides each relation takes, as the guides define them: a person leads, joins or leaves an org; an org hires a
+# person; a person is never `part_of` a thing (a person's place in an org is a role: leads, joined). Measured
+# 2026-11-24 on the 11-19 server copy (0281 A6-7): person `part_of` rows 117 of 2,662, a sample of 25 none "a is part
+# of b" (21 a person's job or membership, 4 wrong: Trump part_of Fox News, a senator part_of his bill...); `leads`
+# with a person first 30/30 right.
+RELATION_A_TYPES = {"leads": {"person"}, "joined": {"person"}, "left": {"person"}}
+RELATION_B_TYPES = {"hired": {"person"}}
+RELATION_A_NOT = {"part_of": {"person"}}
+SYMMETRIC_RELATIONS = frozenset({"partnered_with"})   # a with b is b with a: one edge, its sides in one order
+
+
+def relation_sides_error(rel: str, a_type: Optional[str], b_type: Optional[str]) -> Optional[str]:
+    """(pure) What is wrong with a relation's sides by their types (None: nothing)."""
+    if rel in RELATION_A_TYPES and a_type not in RELATION_A_TYPES[rel]:
+        return f"{rel} takes a {' or '.join(sorted(RELATION_A_TYPES[rel]))} first, not a {a_type}"
+    if rel in RELATION_B_TYPES and b_type not in RELATION_B_TYPES[rel]:
+        return f"{rel} takes a {' or '.join(sorted(RELATION_B_TYPES[rel]))} second, not a {b_type}"
+    if a_type in RELATION_A_NOT.get(rel, ()):
+        return f"a {a_type} is never {rel} (a person's place in an org is leads or joined)"
+    return None
+
+
+def _side_key(name: Any) -> str:
+    return fold(name if isinstance(name, str) else "").strip()
+
+
+def relation_error(r: Dict[str, Any], entities: List[Any]) -> Optional[str]:
+    """What is wrong with one relation against the answer's (kept) entities: both sides must be two of them, by name or
+    span, and of the types the relation takes."""
+    types: Dict[str, Optional[str]] = {}
+    for e in entities:
+        if isinstance(e, dict):
+            for k in (_side_key(e.get("name")), _side_key(e.get("span"))):
+                if k:
+                    types.setdefault(k, e.get("type"))
+    a, b = _side_key(r.get("a")), _side_key(r.get("b"))
+    for side, k in (("a", a), ("b", b)):
+        if k not in types:
+            return f"{side} {r.get(side)!r} is none of the answer's entities"
+    if a == b:
+        return "a and b are the same entity"
+    return relation_sides_error(str(r.get("rel")), types[a], types[b])
+
+
+def _relation_entry(r: Dict[str, Any], _input: str, answer: Dict[str, Any]) -> Optional[str]:
+    return relation_error(r, answer.get("entities") or [])
+
+
 # ---- salvage: each entry checked alone, a bad one kept under "dropped" -------------------------------------------
 # {kind: {list key: the entry's check against the post (None: its schema alone)}}; the first list is the entities.
-SALVAGE = {"entities": {"entities": _entity_error, "relations": None},
+# A check in WITH_ANSWER also reads the answer as kept so far (its lists in this order: relations after entities).
+WITH_ANSWER = (_relation_entry,)
+SALVAGE = {"entities": {"entities": _entity_error, "relations": _relation_entry},
            "cite": {"entities": _cite_error},
            "reading": {"entities": _entity_error}}
 SUBJECT_KINDS = ("entities", "reading")              # kinds whose answer must keep a subject it named
@@ -234,7 +285,7 @@ def salvage(kind: str, answer: Any, input: str, guide: Optional[str] = None) -> 
             why = schema_error(spec.get("items"), item, f"{key}[{n}]")
             if why is None and rule is not None:
                 try:
-                    why = rule(item, input or "")
+                    why = rule(item, input or "", out) if rule in WITH_ANSWER else rule(item, input or "")
                 except (KeyError, TypeError, AttributeError) as e:
                     why = f"unreadable ({e})"
                 why = why and f"{key}[{n}].{why}"

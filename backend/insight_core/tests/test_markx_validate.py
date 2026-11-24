@@ -220,6 +220,46 @@ class Salvage(unittest.TestCase):
         self.assertIn("not object", check("entities", {"entities": ["x"]}, POST)[1])
 
 
+class RelationSides(unittest.TestCase):
+    """0281 A6-7: a relation's sides are two of the answer's kept entities, of the types the relation takes."""
+    PERSON = POST.replace("today:", "today, said Jane Roe, CEO of Acme:")
+    ROE = entity(span="Jane Roe", name="Jane Roe", type="person", role="source", maker=None, family=None, version=None,
+                 variant=None)
+    ACME = Salvage.ACME
+
+    def relations(self, *rels, entities=None):
+        answer, error = check("entities", {"entities": entities or [entity(), self.ACME, self.ROE],
+                                           "relations": [dict(zip(("a", "rel", "b"), r)) for r in rels]},
+                              self.PERSON, "ent-v4.2")
+        self.assertIsNone(error)
+        return answer
+
+    def test_a_person_leads_an_org_and_is_never_part_of_it(self):
+        answer = self.relations(("Jane Roe", "leads", "Acme"), ("Jane Roe", "part_of", "Acme"),
+                                ("Acme", "leads", "Widget 4.1 Pro"), ("Widget 4.1 Pro", "part_of", "Acme"))
+        self.assertEqual(answer["relations"], [{"a": "Jane Roe", "rel": "leads", "b": "Acme"},
+                                               {"a": "Widget 4.1 Pro", "rel": "part_of", "b": "Acme"}])
+        self.assertEqual([d["why"] for d in answer["dropped"]],
+                         ["relations[1].a person is never part_of (a person's place in an org is leads or joined)",
+                          "relations[2].leads takes a person first, not a org"])
+
+    def test_both_sides_must_be_kept_entities_by_name_or_span(self):
+        bad = entity(span="Gizmo 9", name="Gizmo 9", role="mention", version=None)
+        answer = self.relations(("Acme", "released", "Widget-4.1 Pro"), ("Acme", "released", "Gizmo 9"),
+                                ("Acme", "acquired", "Acme"), entities=[entity(), self.ACME, bad])
+        self.assertEqual(answer["relations"], [{"a": "Acme", "rel": "released", "b": "Widget-4.1 Pro"}])
+        self.assertEqual([d["why"] for d in answer["dropped"][1:]],
+                         ["relations[1].b 'Gizmo 9' is none of the answer's entities",
+                          "relations[2].a and b are the same entity"])
+
+    def test_the_sides_rule_alone(self):
+        from insight_core.markx.validate import relation_sides_error as sides
+        self.assertIsNone(sides("acquired", "person", "org"))       # Musk bought Twitter: the post says so
+        self.assertIsNone(sides("hired", "org", "person"))
+        self.assertIn("hired takes a person second", sides("hired", "org", "org"))
+        self.assertIsNone(sides("partnered_with", "person", "org"))
+
+
 class StoryAnswers(unittest.TestCase):
     def card(self, **over):
         c = {"headline_en": "Acme released Widget 4.1 Pro", "actors": ["Acme"], "object": "Widget 4.1 Pro",

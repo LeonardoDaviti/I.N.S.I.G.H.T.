@@ -139,7 +139,7 @@ export function VersionLine({ line }: { line: MarkxVersionLine }) {
 
 const RELATION: Record<MarkxEntityRelation['relation'], [string, string]> = {
   based_on: ['Based on', 'Built on it'], released: ['Released', 'Released by'], acquired: ['Acquired', 'Acquired by'],
-  part_of: ['Part of', 'Its parts'], partnered_with: ['Partnered with', 'Partnered with'],
+  part_of: ['Part of', 'Its parts'], partnered_with: ['Partnered with', 'Partnered with'], leads: ['Leads', 'Led by'],
 };
 
 /** How a relation reads from this thing's page (out: it -> the other thing; in: the other thing -> it). */

@@ -439,7 +439,7 @@ def sync_next_version(cur: Any, subjects: Subjects, *, now: datetime, run_id: An
 # ---- 4. between entities: the relations a post states (only those entity_bands.json switches on: 0220) ----------
 RULE_STATED = "stated"
 RELATIONS_KEY = "graph_relations"
-RELATIONS_VERSION = 1
+RELATIONS_VERSION = 2   # 2 (v10.49): the sides' types checked (validate.relation_sides_error), a symmetric one once
 RELATIONS_BATCH = 500
 
 
@@ -726,7 +726,7 @@ def stated(cur: Any, post_ids: Sequence[str], root: Any) -> Dict[Tuple[str, str,
 
 def _stated_answers(cur: Any, ids: Sequence[str], root: Any) -> Dict[Tuple[str, str, str], Dict[str, datetime]]:
     """The relations the answers' own `relations` state."""
-    from insight_core.markx import names as N, schemas
+    from insight_core.markx import names as N, schemas, validate as V
     on = relations_on()
     if not on or not ids:
         return {}
@@ -758,8 +758,12 @@ def _stated_answers(cur: Any, ids: Sequence[str], root: Any) -> Dict[Tuple[str, 
             a, b = names[cid].get(N.key(r.get("a"))), names[cid].get(N.key(r.get("b")))
             if not a or not b or not corroborated(r["rel"], r.get("a") or "", b[1]):
                 continue
+            if V.relation_sides_error(r["rel"], a[2], b[2]):   # answers stored before the check (salvage) are read so too
+                continue
             ra, rb = root(a[0]), root(b[0])
             if ra != rb:
+                if r["rel"] in V.SYMMETRIC_RELATIONS and rb < ra:   # stored once, the smaller id first
+                    ra, rb, a, b = rb, ra, b, a
                 found.append(((ra, rb, r["rel"]), pid, at, a, b))
     return _same_makers(cur, found, root)
 

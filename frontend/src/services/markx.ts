@@ -529,7 +529,7 @@ export interface MarkxVersionLine {
 }
 /** A relation between two things, as posts state it (out: this thing -> other; in: other -> this thing). */
 export interface MarkxEntityRelation {
-  relation: 'based_on' | 'released' | 'acquired' | 'part_of' | 'partnered_with';
+  relation: 'based_on' | 'released' | 'acquired' | 'part_of' | 'partnered_with' | 'leads';
   direction: 'out' | 'in';
   other: { id: string; name: string | null; type: string | null };
   since: string | null;
