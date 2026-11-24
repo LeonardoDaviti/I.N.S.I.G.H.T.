@@ -399,7 +399,9 @@ class Jobs:
         CPU seconds are recorded. The run is counted (`_COUNTED`)."""
         failed = last.get("ok") is False and not last.get("skipped")
         if self.measure:
-            last = {**last, "peak_mb": last.get("peak_mb", peak.mb()), "cpu_s": peak.cpu_s()}
+            from insight_core.markx import tasks
+            last = {**last, "peak_mb": last.get("peak_mb", peak.mb()), "cpu_s": peak.cpu_s(),
+                    **({"load_posts": tally} if (tally := tasks.load_tally(top=8)) else {})}
         with self._tx() as cur:
             cur.execute("INSERT INTO mx_jobs (job) VALUES (%s) ON CONFLICT (job) DO NOTHING", (job,))
             cur.execute(f"""UPDATE mx_jobs SET stage = NULL, stage_at = NULL, finished_at = now(), last = %(last)s::jsonb,
@@ -905,8 +907,10 @@ def _job_main(db_url: str, *names: str) -> None:
     peak memory is counted from its own start."""
     from insight_core.logs.core.logger_config import setup_logging
     setup_logging(debug_mode=False)
+    from insight_core.markx import tasks
     for job in names:
         peak.reset()
+        tasks.load_tally(reset=True)   # each job's run reports its own post loader's callers
         getattr(Jobs(db_url, measure=True), job)()
 
 

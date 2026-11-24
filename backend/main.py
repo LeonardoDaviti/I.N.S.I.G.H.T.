@@ -1921,10 +1921,12 @@ async def get_db_statements(since: Optional[str] = Query(default=None, pattern="
     """Issue 0215: the database's top 20 statements by total time (pg_stat_statements, normalized: no values). Read
     only; {"enabled": false, "reason"} while Postgres runs without the library (DEPLOYMENT.md).
     v10.42: ?since=start|snapshot: since this API process's start or its last ?snapshot=1 (kept in the process, no
-    reset); `api_routes`: this process's routes by total time since its start (utils/route_timings.py)."""
+    reset); `api_routes`: this process's routes by total time since its start (utils/route_timings.py).
+    v10.47: `load_posts`: this process's callers of Mark X's post loader since its start (markx/tasks.load_tally)."""
+    from insight_core.markx import tasks as mx_tasks
     from insight_core.utils import route_timings
     out = await asyncio.to_thread(services().operations.top_statements, since=since, snapshot=snapshot)
-    return {**out, "api_routes": route_timings.snapshot()}
+    return {**out, "api_routes": route_timings.snapshot(), "load_posts": mx_tasks.load_tally(top=20)}
 
 
 def _metrics_page() -> str:

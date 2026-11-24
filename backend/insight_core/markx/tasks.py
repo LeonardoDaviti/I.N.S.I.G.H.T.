@@ -123,6 +123,35 @@ def _squash(s: Optional[str]) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
 
+# v10.47 (0279 B3): who calls the post loader, in this process since its start or the last `load_tally(reset=True)`:
+# {"module:function": [calls, posts asked]}. A job's run reports its own (jobs.Jobs._finish), the API its own (GET
+# /api/operations/db-statements' `load_posts`), so an N+1 caller is named on production, not guessed. One row a
+# calling function (a few dozen).
+_LOAD_TALLY: Dict[str, List[int]] = {}
+
+
+def _tally(n: int) -> None:
+    import sys
+    f = sys._getframe(2)
+    if f.f_code.co_name == "_with_linked_pages":   # the loader's own second read counts to its caller
+        f = f.f_back.f_back
+    via = ""
+    if f.f_code.co_name == "_posts" and f.f_back is not None and f.f_back.f_back is not None:
+        via, f = f" > {f.f_back.f_code.co_name}", f.f_back.f_back   # a task builder: named with its caller
+    row = _LOAD_TALLY.setdefault(
+        f"{f.f_globals.get('__name__', '?').removeprefix('insight_core.')}:{f.f_code.co_name}{via}", [0, 0])
+    row[0] += 1
+    row[1] += n
+
+
+def load_tally(reset: bool = False, top: int = 15) -> Dict[str, Dict[str, int]]:
+    """The post loader's callers, most calls first (the `top`): {caller: {calls, posts}}; `reset` counts again."""
+    rows = sorted(_LOAD_TALLY.items(), key=lambda kv: (-kv[1][0], kv[0]))[:top]
+    if reset:
+        _LOAD_TALLY.clear()
+    return {k: {"calls": c, "posts": n} for k, (c, n) in rows}
+
+
 def load_posts(cur: Cursor, ids: Iterable[Any], *, linked: bool = True) -> Dict[str, Post]:
     """{id: Post} for the posts that exist (markx text v1).
 
@@ -131,6 +160,7 @@ def load_posts(cur: Cursor, ids: Iterable[Any], *, linked: bool = True) -> Dict[
     ids = [str(i) for i in ids]
     if not ids:
         return {}
+    _tally(len(ids))
     cur.execute(
         f"""SELECT p.id, s.platform, s.handle_or_url,
                   COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), NULLIF(btrim(s.settings->>'name'), ''),
