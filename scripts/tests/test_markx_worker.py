@@ -797,6 +797,36 @@ class TestServer(Base):
         self.assertEqual(len(self.stub.by_status("open")), 5)
 
 
+class TestWait(unittest.TestCase):
+    """v10.47: `wait` asks GET /ready until a kind has work (or --max), at the server's retry_after."""
+
+    def wait(self, answers, most=900, every=120):
+        clock, slept, logged = [0.0], [], []
+
+        class S:
+            def ready(self, kinds):
+                a = answers.pop(0)
+                if isinstance(a, Exception):
+                    raise a
+                return a
+
+        def sleep(s):
+            slept.append(s)
+            clock[0] += s
+        rc = W.wait_for_work(S(), lambda ev, **kw: logged.append(ev), ["read"], most, every,
+                             clock=lambda: clock[0], sleep=sleep)
+        return rc, slept, logged
+
+    def test_it_returns_once_work_is_ready_asking_at_the_servers_retry_after(self):
+        rc, slept, _ = self.wait([{"ready": [], "retry_after": 30}, W.ServerUnreachable("deploy"),
+                                  {"ready": [], "retry_after": None}, {"ready": ["read"]}])
+        self.assertEqual((rc, slept), (W.EXIT_OK, [30, 120, 120]))
+
+    def test_it_stops_at_most(self):
+        rc, slept, logged = self.wait([{"ready": []}] * 10, most=300)
+        self.assertEqual((rc, slept, logged[-1]), (W.EXIT_OK, [120, 120, 60], "wait-done"))
+
+
 class TestParts(unittest.TestCase):
     def test_parse_lines(self):
         text = 'prose\n```json\n{"id": 7, "kind": "news"}\n{"task_id": "a", "answer": {"kind": "x"}}\n' \

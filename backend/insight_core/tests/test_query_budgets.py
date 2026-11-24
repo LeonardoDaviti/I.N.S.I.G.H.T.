@@ -21,7 +21,8 @@ from insight_core.tests.test_markx_page_book import Ents
 # an N+1
 PER_TASK = 3
 TASK_WRITE = {"markx/repo.py:add_task", "markx/repo.py:get_setting", "markx/schemas.py:ensure_guides",
-              "markx/holds.py:hold_for", "markx/consumers.py:born_closed"}
+              "markx/holds.py:hold_for", "markx/consumers.py:born_closed",
+              "markx/holds.py:_read"}   # v10.47: hold_for's recount every RECOUNT_SECONDS (by the clock: flaked)
 
 
 def _why(name, small, big):
@@ -170,3 +171,29 @@ class AThingsAnswer(briefer._Briefer):
         self.assertEqual({k: x for k, x in more.items() if k not in self.PER_THING}, {},
                          _why("things answer, 1 thing then 4", *counts))
 
+
+
+class ALeaseAndTheLane(_Api):
+    """v10.47 (0279 B2): a lease only leases (no planner), so it sends as many statements for twice the tasks waiting;
+    the lane's own reads (its planners are budgeted above) are as many for twice the posts."""
+
+    def test_a_lease_sends_as_many_statements_for_twice_the_tasks_waiting(self):
+        counts = []
+        for n in (3, 6):
+            for _ in range(n):
+                self.task("read")
+            with statements() as c:
+                status, body = self.lease("read", limit=2, plan=False)
+            self.assertEqual((status, len(body["tasks"])), (200, 2), body)
+            counts.append(c)
+        self.assertEqual(dict(grown(*counts)), {}, _why("a lease", *counts))
+
+    def test_the_lanes_own_reads_do_not_grow_with_the_posts(self):
+        counts = []
+        for n in (3, 6):
+            for _ in range(n):
+                self.post()
+            with statements() as c:
+                self.lane()
+            counts.append(c)
+        self.assertEqual(dict(grown(*counts)), {}, _why("a lane pass", *counts))

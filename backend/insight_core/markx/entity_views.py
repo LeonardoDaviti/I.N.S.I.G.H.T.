@@ -409,6 +409,8 @@ PAGE_SHAPE = "9"      # the answer's shape, in the kept key: bump it when a fiel
 #                       or gone (a page kept by the previous code is sent only while its shape is this one)
 HOT_PAGES = 20        # the most opened entity pages the jobs process builds after a run or a deploy
 HOT_SECONDS = 120.0   # and at most this long a build (the rest wait for the next one, or are built when opened)
+BEHIND_RUNS = 2       # v10.47: a page kept over one of the last this many runs is sent while the jobs rebuild it
+BEHIND_OPENED = 3600.0   # the pages sent behind (or past their clock) opened this recently are the jobs' to rebuild
 
 
 def limits(by_limit: Optional[int] = None, stories_limit: Optional[int] = None,
@@ -521,11 +523,13 @@ def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None
                      stories_limit: Optional[int] = None, loose_limit: Optional[int] = None,
                      now: Optional[datetime] = None, whole: bool = False) -> Optional[bytes]:
     """GET /api/markx/entities/{id}: the page's bytes at the request's `limits`, cut from the entity's one kept page
-    (`kept_full`); counts the open (`keep_pages` builds the most opened ahead). None: no such entity."""
+    (`kept_full`); counts the open (`keep_pages` builds the most opened ahead, and the pages sent behind). v10.47: a
+    kept page whose inputs moved is sent as kept and rebuilt by the jobs (`behind`); built here only when the entity
+    has no page of the last BEHIND_RUNS runs. None: no such entity."""
     from insight_core.markx import kept_pages
     now = now or datetime.now(timezone.utc)
     by, stories, loose = limits(by_limit, stories_limit, loose_limit)
-    body = kept_full(cur, entity_id, replies=replies, now=now, any_code=True)
+    body = kept_full(cur, entity_id, replies=replies, now=now, any_code=True, behind=True)
     if body is None:
         return None
     kept_pages.opened(cur, "entity", _page_key(entity_id, replies))
@@ -533,10 +537,12 @@ def kept_entity_page(cur: Any, entity_id: str, *, by_limit: Optional[int] = None
 
 
 def kept_full(cur: Any, entity_id: str, *, replies: bool = False, now: Optional[datetime] = None,
-              any_code: bool = False) -> Optional[bytes]:
+              any_code: bool = False, behind: bool = False) -> Optional[bytes]:
     """The bytes of the entity's `_full` page: the kept ones while its inputs (`page_inputs`) and clock (`until`)
-    hold (`any_code`: also kept by the previous code, same shape), else built and kept. A page whose inputs changed
-    during the build (but its own offers) is answered, not kept. None: no such entity."""
+    hold (`any_code`: also kept by the previous code, same shape), else built and kept. `behind` (the API, v10.47):
+    else the newest page kept over the last BEHIND_RUNS runs, marked for the jobs to rebuild (kept_pages.behind).
+    A page whose inputs changed during the build (but its own offers) is answered and kept with the inputs it was
+    built from (sent behind until rebuilt). None: no such entity."""
     import logging
     import time
     from insight_core.markx import kept_pages
@@ -548,6 +554,12 @@ def kept_full(cur: Any, entity_id: str, *, replies: bool = False, now: Optional[
                              any_code=any_code)
         if got is not None:
             return got
+        if behind:
+            cur.execute("""SELECT id FROM mx_runs ORDER BY started_at DESC, finished_at DESC NULLS FIRST, ctid DESC
+                            LIMIT %s""", (BEHIND_RUNS,))
+            got = kept_pages.behind(cur, "entity", key, [r[0] for r in cur.fetchall()])
+            if got is not None:
+                return got
     t0 = time.monotonic()
     built = _full(cur, entity_id, now=now, replies=replies)
     if built is None:
@@ -557,11 +569,12 @@ def kept_full(cur: Any, entity_id: str, *, replies: bool = False, now: Optional[
     seconds = round(time.monotonic() - t0, 2)
     if parts is not None:
         run_after, after = page_inputs(cur, entity_id)
-        if run_after == run and after is not None and after[:-1] == parts[:-1]:
+        if run_after == run and after is not None:
+            moved = after[:-1] != parts[:-1]   # kept as built from `parts`: its next open sends it behind
             try:
                 with cur.connection.transaction():
-                    kept_pages.put(cur, "entity", key, run, kept_pages.stamp("entity", key, after), body,
-                                   seconds=seconds, until=until, replace_older=True)
+                    kept_pages.put(cur, "entity", key, run, kept_pages.stamp("entity", key, parts if moved else after),
+                                   body, seconds=seconds, until=until, replace_older=True)
                     kept_pages.prune_rows(cur, "entity", ENTITY_PAGES)
             except Exception:   # noqa: BLE001 - a cache: the page is answered all the same
                 logging.getLogger(__name__).exception("Mark X: keeping the entity page %s failed", entity_id)
@@ -666,18 +679,24 @@ def kept_missing(cur: Any, now: Optional[datetime] = None) -> bool:
 
 
 def _hot_due(cur: Any, run_id: Any, now: datetime) -> List[Tuple[str, bool]]:
-    """The most opened pages (`_hot`) with no row of the newest run by this code valid past the next look. One build
-    a run: a page made stale between runs is built when opened (rebuilding on every input change cost too much)."""
+    """The pages the jobs build: the ones sent behind (or past their clock) opened in the last BEHIND_OPENED seconds
+    (kept_pages.due_behind, most recently opened first), then the most opened pages (`_hot`) with no row of the newest
+    run by this code valid past the next look."""
     from insight_core.markx import kept_pages
-    hot = _hot(cur)
+    out: List[Tuple[str, bool]] = []
+    for key in kept_pages.due_behind(cur, "entity", now=now, opened_within=BEHIND_OPENED):
+        eid, _, rest = key.split("#", 1)[0].partition("?replies=")
+        if I._UUID.match(eid):
+            out.append((eid, rest == "1"))
+    hot = [er for er in _hot(cur) if er not in out]
     if not hot:
-        return []
+        return out
     keys = {kept_pages.shaped(_page_key(e, r), PAGE_SHAPE): (e, r) for e, r in hot}
     cur.execute("""SELECT DISTINCT key FROM mx_kept_pages WHERE page = 'entity' AND key = ANY(%s)
                       AND run_id = %s AND code = %s AND (until IS NULL OR until > %s)""",
                 (list(keys), run_id, kept_pages.code_stamp(), now + timedelta(seconds=2 * KEPT_GAP)))
     kept = {k for (k,) in cur.fetchall()}
-    return [er for k, er in keys.items() if k not in kept]
+    return out + [er for k, er in keys.items() if k not in kept]
 
 
 def keep_pages(cur: Any, *, now: Optional[datetime] = None, budget: float = HOT_SECONDS) -> Dict[str, Any]:

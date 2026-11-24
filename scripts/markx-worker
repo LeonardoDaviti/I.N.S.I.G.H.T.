@@ -1202,8 +1202,8 @@ class Worker:
                 self.run_batch(b)
 
     def with_work(self, kinds):
-        """v10.42: the kinds a lease would give work now (GET /ready: a leasable task, or a planner the lease runs);
-        every kind when the server cannot say (an older server: 404) or the answer fails, as before."""
+        """v10.42: the kinds a lease would give work now (GET /ready: a leasable task; before v10.47 also a planner the
+        lease ran); every kind when the server cannot say (an older server: 404) or the answer fails, as before."""
         try:
             got = self.server.ready(kinds, self.a.days) or {}
             out = set(got["ready"]) | set(got.get("planned") or [])
@@ -1330,6 +1330,28 @@ class Worker:
 
 # ---------------------------------------------------------------------------------------------- the CLI
 
+def wait_for_work(server, log, kinds, most, every, clock=time.monotonic, sleep=time.sleep):
+    """v10.47: GET /ready until a kind has a leasable task or `most` seconds passed; exit 0 either way (the caller's
+    next cycle leases). Between asks: the server's retry_after (the jobs are planning: about 30 s) or `every`; an
+    unreachable server (a deploy) is asked again after `every`. Replaces a fixed rest after a near-empty round."""
+    end = clock() + most
+    while True:
+        try:
+            got = server.ready(kinds) or {}
+            ready, soon = got.get("ready") or [], got.get("retry_after")
+        except (ServerUnreachable, ServerError, ServerSlow) as e:
+            ready, soon = [], None
+            log("wait-unreachable", error=str(e)[:200])
+        if ready:
+            log("wait-done", ready=len(ready))
+            return EXIT_OK
+        left = end - clock()
+        if left <= 0:
+            log("wait-done", ready=0)
+            return EXIT_OK
+        sleep(min(left, float(soon) if soon else every))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="markx-worker", description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1363,8 +1385,9 @@ def main(argv=None):
     c.add_argument("--parallel", type=int, default=20, help="calls at once (default 20, 0210: the owner's runs used 20-40; "
                    "about 100 at once broke the device's DNS)")
     c.add_argument("--days", type=days_arg, default=None,
-                   help="read, entities and embed: the server plans this window first (a number of days, or 'all'), "
-                        "whatever the page's reading window (default: the page's)")
+                   help="read, entities and embed: leased inside this window first (a number of days, or 'all'), "
+                        "whatever the page's reading window (default: the page's); since v10.47 the server plans "
+                        "only the page's window (its jobs' lane), never for a lease")
     c.add_argument("--model", default="haiku", help="claude --model (default haiku)")
     c.add_argument("--claude", default=os.environ.get("MARKX_CLAUDE", "claude"), help="the claude binary")
     c.add_argument("--timeout", type=float, default=1800, help="seconds per call at most (default 1800)")
@@ -1383,6 +1406,12 @@ def main(argv=None):
     c.add_argument("--embedder", help="for the embed kind: a local llama-server --embedding's address")
     c.add_argument("--embedder-gguf", help="the embedder's GGUF, for its sha256 (default: the model_path of its /props)")
     c.add_argument("--embed-model", default="bge-m3", help="the model id the vectors are stored under (default bge-m3)")
+    w = sub.add_parser("wait", parents=[common],
+                       help="v10.47: wait until the server has work for these kinds (GET /ready), at most --max seconds")
+    w.add_argument("--kinds", default=DEFAULT_KINDS, help="task kinds (default: %(default)s)")
+    w.add_argument("--max", type=float, default=900, help="seconds to wait at most (default 900)")
+    w.add_argument("--every", type=float, default=120,
+                   help="seconds between asks while the server names no retry_after (default 120); with one: that")
     sub.add_parser("status", parents=[common], help="print the server's Mark X status")
     sub.add_parser("release", parents=[common], help="hand back this worker's leased tasks")
     a = ap.parse_args(argv)
@@ -1402,6 +1431,8 @@ def main(argv=None):
         if a.cmd == "status":
             print(json.dumps(server.status(), indent=1, ensure_ascii=False))
             return EXIT_OK
+        if a.cmd == "wait":
+            return wait_for_work(server, log, [k.strip() for k in a.kinds.split(",") if k.strip()], a.max, a.every)
         if a.cmd == "release":
             r = server.release(a.worker)
             log("released", worker=a.worker, released=(r or {}).get("released"))

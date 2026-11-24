@@ -299,14 +299,27 @@ class TheEntityPageKept(_World):
         self.assertEqual(call("GET", f"/api/markx/entities/{self.widget}")[1], json.loads(body))
         self.assertEqual(_raw("/api/markx/entities/00000000-0000-0000-0000-000000000000")[0], 404)
 
-    def test_a_new_run_a_label_a_merge_a_mention_each_build_it_again(self):
+    def rebuild(self):
+        with self.conn.transaction():
+            return EV.keep_pages(self.cur)
+
+    def test_a_new_run_a_label_a_merge_a_mention_each_send_it_behind_and_the_jobs_build_it_again(self):
+        """v10.47 (0279 B4, owner): a page whose inputs moved is sent as kept (no build in the request) and marked;
+        the jobs' next look builds it, and the next open sends that."""
         def changed(why, change):
-            self.open()
+            before = self.open()
             change()
             with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
                 got = self.open()
-            self.assertEqual(built.call_count, 1, why)
-            self.assertEqual(got, self.built(), why)
+            self.assertEqual((built.call_count, got), (0, before), why)       # sent behind
+            self.assertIn((self.widget, False), EV._hot_due(self.cur, repo.last_run(self.cur)["id"], self.now), why)
+            self.assertTrue(EV.kept_missing(self.cur), why)
+            with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+                self.rebuild()
+            self.assertEqual(built.call_count, 1, why)                        # built behind, by the jobs
+            want = self.built()
+            with mock.patch.object(EV, "_entity_page", side_effect=AssertionError("built in the request")):
+                self.assertEqual(self.open(), want, why)
 
         changed("a new run", lambda: repo.finish_run(self.cur, repo.start_run(self.cur, code_version="t", config={}),
                                                      counts={}))
@@ -321,7 +334,16 @@ class TheEntityPageKept(_World):
         self.assertLessEqual(until, (self.now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                              + timedelta(days=1))
         with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
-            self.open(now=until + timedelta(seconds=1))                               # its clock moved: built again
+            self.open(now=until + timedelta(seconds=1))          # its clock moved: sent behind (v10.47), then built
+        self.assertEqual(built.call_count, 0)
+        with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            self.open(eid=self.widget, now=until + timedelta(seconds=1))   # the jobs not by yet: behind again
+        self.assertEqual(built.call_count, 0)
+        self.cur.execute("UPDATE mx_runs SET started_at = started_at - interval '1 hour'")   # an old run only
+        repo.finish_run(self.cur, repo.start_run(self.cur, code_version="t", config={}), counts={})
+        repo.finish_run(self.cur, repo.start_run(self.cur, code_version="t", config={}), counts={})
+        with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            self.open(now=until + timedelta(seconds=1))          # kept BEHIND_RUNS runs ago: built in the request
         self.assertEqual(built.call_count, 1)
         with mock.patch.object(EV, "ENTITY_PAGES", 2):
             for e in (self.acme, self.widget, self.ent("Gadget 2", "product")):
@@ -329,7 +351,7 @@ class TheEntityPageKept(_World):
         self.cur.execute("SELECT count(*) FROM mx_kept_pages WHERE page = 'entity'")
         self.assertEqual(self.cur.fetchone()[0], 2)
 
-    def test_a_page_built_while_an_input_changed_is_answered_not_kept(self):
+    def test_a_page_built_while_an_input_changed_is_kept_as_built_and_sent_behind(self):
         real = EV._entity_page
 
         def racing(*a, **k):
@@ -340,7 +362,10 @@ class TheEntityPageKept(_World):
             body = self.open()
         self.assertIsNotNone(body)
         self.cur.execute("SELECT count(*) FROM mx_kept_pages WHERE page = 'entity'")
-        self.assertEqual(self.cur.fetchone()[0], 0)
+        self.assertEqual(self.cur.fetchone()[0], 1)     # v10.47: kept with the inputs it was built from
+        with mock.patch.object(EV, "_entity_page", side_effect=AssertionError("built in the request")):
+            self.assertEqual(self.open(), body)         # its inputs moved: sent behind, the jobs build it
+        self.assertIn((self.widget, False), EV._hot_due(self.cur, repo.last_run(self.cur)["id"], self.now))
 
 
 class OneKeptPageServesEveryLimit(_World):
@@ -437,10 +462,16 @@ class OneKeptPageServesEveryLimit(_World):
                 self.assertEqual(EV.kept_entity_page(self.cur, self.widget), first)
             run, parts = EV.page_inputs(self.cur, self.widget)
             self.assertIsNone(kept_pages.get(self.cur, "entity", key, run, kept_pages.stamp("entity", key, parts)))
-            labels_tap(self.cur, self.a, self.s1)                   # an input changed: never the old page
+            labels_tap(self.cur, self.a, self.s1)                   # an input changed: sent behind (v10.47) ...
             with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
-                EV.kept_entity_page(self.cur, self.widget)
+                self.assertEqual(EV.kept_entity_page(self.cur, self.widget), first)
+            self.assertEqual(built.call_count, 0)
+            with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+                with self.conn.transaction():
+                    EV.keep_pages(self.cur)                         # ... and the jobs build it by this code
             self.assertEqual(built.call_count, 1)
+            self.assertIsNotNone(kept_pages.get(self.cur, "entity", key, run,
+                                                kept_pages.stamp("entity", key, EV.page_inputs(self.cur, self.widget)[1])))
 
 
 class TheEntityListAndQueueKept(_World):
@@ -503,8 +534,13 @@ class TheEntityListAndQueueKept(_World):
         self.assertEqual((out["hot"]["pages"], out["hot"]["failed"]), (0, 0))
         self.assertFalse(EV.kept_missing(self.cur))
         with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
-            EV.kept_entity_page(self.cur, self.widget)              # opened: built for its inputs now, as before
-        self.assertEqual(built.call_count, 1)
+            EV.kept_entity_page(self.cur, self.widget)              # opened: sent behind (v10.47), marked
+        self.assertEqual(built.call_count, 0)
+        self.assertTrue(EV.kept_missing(self.cur))
+        with mock.patch.object(EV, "_entity_page", wraps=EV._entity_page) as built:
+            out = self.keep()                                       # the jobs build it for its inputs now
+        self.assertEqual((built.call_count, out["hot"]["pages"]), (1, 1))
+        self.assertFalse(EV.kept_missing(self.cur))
 
 
 class TheFirstLookAfterADeploy(_World):

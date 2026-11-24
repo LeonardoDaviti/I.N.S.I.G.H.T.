@@ -361,7 +361,25 @@ class Linking(_Db):
         self.assertEqual(full["check"], {"same": True, "relinked": 0})
 
 
-class TheStagesOwnBudget(_Db):
+class TheNight(unittest.TestCase):
+    def test_v1047_the_night_is_four_hours_from_the_nightly_hour(self):
+        local = datetime(2100, 1, 5, tzinfo=timezone.utc).astimezone().tzinfo   # server time, as the stage reads it
+        at = lambda h, m: datetime(2100, 1, 5, h, m, tzinfo=local)
+        self.assertEqual([entity_stage.night(at(h, m)) for h, m in ((3, 59), (4, 0), (7, 59), (8, 0), (12, 0))],
+                         [False, True, True, False, False])
+
+
+class _Night(_Db):
+    """Every run at night (entity_stage.night): the full pass may start and resume (v10.47: by day it waits)."""
+
+    def setUp(self):
+        super().setUp()
+        dark = mock.patch.object(entity_stage, "night", lambda now: True)
+        dark.start()
+        self.addCleanup(dark.stop)
+
+
+class TheStagesOwnBudget(_Night):
     """The full pass decides in chunks; past its budget it stops after a chunk and the next run resumes it (0128)."""
 
     def names(self):
@@ -407,6 +425,22 @@ class TheStagesOwnBudget(_Db):
         book = self.book()
         self.assertEqual(len({book.root(e) for e in book.ents if e in book.mentioned}), n)
 
+    def test_v1047_by_day_a_half_done_pass_waits_its_place_kept_and_the_night_resumes_it(self):
+        """0279 A1 (owner): the full pass runs at night only; a day run is incremental and carries the unfinished
+        pass's place for the night, which resumes it there."""
+        self.names()
+        self.stage()
+        first = self.run_stage(full=True, budget=0)
+        self.assertFalse(first["full"]["done"])
+        with mock.patch.object(entity_stage, "night", lambda now: False):
+            day = self.run_stage(budget=0)
+            self.assertEqual(day["kind"], "incremental")
+            self.assertEqual((day["full"]["waits"], day["full"]["phase"], day["full"]["chunks"]), ("night", "pool", 0))
+            self.assertEqual(self.run_stage(budget=0)["full"]["after"], first["full"]["after"])   # kept as it was
+            self.assertEqual(entity_stage.unfinished(self.cur)["phase"], "pool")
+        night = self.run_stage(budget=0)                   # dark again: resumed where it stopped
+        self.assertEqual((night["kind"], night["full"]["resumed"], night["full"]["chunks"]), ("full", True, 1))
+
     def test_a_half_done_pass_is_not_the_nights_pass(self):
         self.names()
         self.stage()
@@ -426,7 +460,7 @@ class TheStagesOwnBudget(_Db):
         self.assertEqual(out["check"], {"same": True, "relinked": 0})
 
 
-class BothPassesKeepToTheBudget(_Db):
+class BothPassesKeepToTheBudget(_Night):
     """The incremental pass works in chunks and stops after the chunk past its budget; the mentions it leaves are
     taken by the next runs (nothing lost, nothing done twice). The full pass's relinking stops between pages."""
 

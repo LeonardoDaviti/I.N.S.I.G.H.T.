@@ -24,7 +24,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 import psycopg
 
 from insight_core.ingestion.credentials import SecretBox
-from insight_core.markx import api, repo, schemas, tasks
+from insight_core.markx import api, jobs, repo, schemas, tasks
 from insight_core.services import registry
 from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 
@@ -115,9 +115,9 @@ class _Api(unittest.TestCase):
         api.token_store = api.TokenStore(box=SecretBox(SecretBox.generate_key()))
         schemas._ready.clear()
         api._contacts.clear()
-        api._PLAN_REST.clear()                                   # no planner rests across tests,
-        self.addCleanup(setattr, api, "PLAN_REST_SECONDS", api.PLAN_REST_SECONDS)
-        api.PLAN_REST_SECONDS = 0.0                              # nor within one unless it asks (PlannersRest)
+        jobs._PLAN_REST.clear()                                  # no planner rests across tests,
+        self.addCleanup(setattr, jobs, "PLAN_REST_SECONDS", jobs.PLAN_REST_SECONDS)
+        jobs.PLAN_REST_SECONDS = 0.0                             # nor within one unless it asks (PlannersRest)
         if not self.plan:
             self.addCleanup(setattr, tasks, "PLANNERS", tasks.PLANNERS)
             tasks.PLANNERS = {}
@@ -165,7 +165,14 @@ class _Api(unittest.TestCase):
         with self.conn.transaction():
             return getattr(tasks, f"{kind}_task")(self.cur, post or self.post())[0]
 
-    def lease(self, kind="read", limit=20, worker="device-1", token=None):
+    def lane(self):
+        """The jobs' lane pass (jobs.Jobs.lane): what plans since v10.47; in production every LANE_EVERY seconds."""
+        return jobs.Jobs(db_url()).lane()
+
+    def lease(self, kind="read", limit=20, worker="device-1", token=None, plan=True):
+        """A lease after a lane pass (the jobs plan, the lease leases); `plan` False: the lease alone."""
+        if plan:
+            self.lane()
         return call("GET", "/api/markx/work", query={"kinds": kind, "limit": limit, "worker": worker},
                     token=self.token if token is None else token)
 
@@ -702,11 +709,12 @@ class ChecksOffTheLease(_Api):
 
 
 class PlannersRest(_Api):
-    """A lease counts only its kinds' open tasks, and a planner that added nothing rests a minute."""
+    """The lane counts its kinds' open tasks, and a planner that added nothing rests a minute (v10.47: the lane's, no
+    longer a lease's)."""
 
     def setUp(self):
         super().setUp()
-        api.PLAN_REST_SECONDS = 60.0
+        jobs.PLAN_REST_SECONDS = 60.0
 
     def test_open_counts_reads_only_the_kinds_asked_and_only_open_tasks(self):
         with self.conn.transaction():
@@ -726,7 +734,7 @@ class PlannersRest(_Api):
             self.lease("embed_name")
             self.lease("embed_name")
             self.assertEqual(planner.call_count, 1)               # resting
-            api._PLAN_REST["embed_name"] = 0.0                         # its minute is over
+            jobs._PLAN_REST["embed_name"] = 0.0                        # its minute is over
             self.lease("embed_name")
             self.assertEqual(planner.call_count, 2)
 
@@ -795,22 +803,21 @@ class ReadingWindow(_Api):
         self.assertEqual(self.lease(days="0")[0], 400)
 
     def lease(self, days, kind="read", limit=100):
+        if days is None:
+            self.lane()   # the jobs' lane plans (v10.47); a lease with `days` only leases
         query = {"kinds": kind, "limit": limit, "worker": "device-1", **({"days": days} if days is not None else {})}
         return call("GET", "/api/markx/work", query=query, token=self.token)
 
-    def test_a_lease_with_days_120_plans_older_posts_first(self):
+    def test_a_lease_with_days_plans_nothing_the_lane_plans_the_pages_window(self):
+        """v10.47 (0279 B2): a lease never plans, `days` or not; the lane plans the page's window."""
         status, body = self.lease("120")
-        self.assertEqual(status, 200, body)
-        self.assertEqual(self.planned(), {self.fresh, self.old})
-        leased = {t["input"].split("Title: ")[1].split("\n")[0] for t in body["tasks"]}
-        self.assertTrue({"Fresh", "Old"} <= leased)
-        self.assertNotIn("Ancient", leased)
-        self.assertEqual(call("GET", "/api/markx/settings")[1]["reading_window_days"], 30)   # the page's is unchanged
-
-    def test_a_lease_with_days_all_covers_every_post(self):
+        self.assertEqual((status, body["tasks"]), (200, []), body)
+        self.assertEqual(self.planned(), set())
+        self.lane()
+        self.assertEqual(self.planned(), {self.fresh})
         status, body = self.lease("all")
         self.assertEqual(status, 200, body)
-        self.assertEqual(self.planned(), {self.fresh, self.old, self.ancient})
+        self.assertEqual(self.mine(body), ["Fresh"])
 
     def mine(self, body):
         names = {self.fresh: "Fresh", self.old: "Old", self.ancient: "Ancient"}

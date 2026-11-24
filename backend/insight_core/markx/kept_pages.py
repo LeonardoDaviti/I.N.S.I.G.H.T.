@@ -5,7 +5,9 @@ keeps the bytes (`encode`: exactly what the route would answer) and hands them b
 miss just builds the page (never fails, never stale). Entry points: `kept_or_build` (API side), `get`/`has`/`put`
 (jobs side), `newest` (a page too slow for a request), `changes`/`compact` (per-input write counts kept by triggers),
 `opened`/`most_opened`. A row's `code` is the code stamp it was built with; `any_code` lets a `shaped` key's page
-survive a deploy until rebuilt. Nothing is held in process memory.
+survive a deploy until rebuilt. v10.47: `behind` sends a page's newest row although its stamp moved (it may lag its
+inputs until the jobs' next look) and marks it for the jobs to rebuild (`due_behind`), instead of a build in the
+request. Nothing is held in process memory.
 """
 from __future__ import annotations
 
@@ -117,6 +119,40 @@ def newest(cur: Any, page: str, key: str) -> Optional[Tuple[bytes, Any, str]]:
                     ORDER BY built_at DESC LIMIT 1""", (page, key))
     row = cur.fetchone()
     return (bytes(row[0]), row[1], row[2]) if row else None
+
+
+def behind(cur: Any, page: str, key: str, runs: List[Any]) -> Optional[bytes]:
+    """v10.47 (0279 B4, owner: serve the kept page, rebuild behind): the body of (page, key)'s newest row built over
+    one of `runs` (any code; a `shaped` key keeps the shape), sent although its stamp moved; its `until` is set past
+    so the jobs' next look rebuilds it (`due_behind`). None: no such row (the caller builds). In a savepoint: a
+    failure to mark answers None (the caller builds)."""
+    if not runs:
+        return None
+    try:
+        with cur.connection.transaction():
+            cur.execute("""UPDATE mx_kept_pages k SET until = to_timestamp(0)   -- due: the jobs rebuild it
+                             FROM (SELECT run_id FROM mx_kept_pages WHERE page = %(p)s AND key = %(k)s
+                                      AND run_id = ANY(%(r)s::uuid[]) ORDER BY built_at DESC LIMIT 1) n
+                            WHERE k.page = %(p)s AND k.key = %(k)s AND k.run_id = n.run_id
+                        RETURNING k.body""", {"p": page, "k": key, "r": [str(r) for r in runs]})
+            row = cur.fetchone()
+    except Exception:   # noqa: BLE001 - a cache: the caller builds the page
+        logging.getLogger(__name__).exception("kept pages: sending %s %s behind failed", page, key)
+        return None
+    return bytes(row[0]) if row else None
+
+
+def due_behind(cur: Any, page: str, *, now: Any = None, opened_within: float = 3600.0, limit: int = 50) -> List[str]:
+    """The keys of `page` whose newest row's `until` has passed (sent `behind`, or past its clock) and that were opened
+    in the last `opened_within` seconds, most recently opened first: what the jobs rebuild. One read."""
+    cur.execute("""SELECT k.key FROM (SELECT DISTINCT ON (key) key, until FROM mx_kept_pages WHERE page = %(p)s
+                                       ORDER BY key, built_at DESC) k
+                     JOIN mx_page_opens o ON o.page = %(p)s AND o.key = split_part(k.key, '#', 1)
+                    WHERE k.until IS NOT NULL AND k.until <= COALESCE(%(now)s, now())
+                      AND o.last_at >= COALESCE(%(now)s, now()) - make_interval(secs => %(w)s)
+                    ORDER BY o.last_at DESC, k.key LIMIT %(n)s""",
+                {"p": page, "now": now, "w": opened_within, "n": limit})
+    return [k for (k,) in cur.fetchall()]
 
 
 class Inputs(NamedTuple):
