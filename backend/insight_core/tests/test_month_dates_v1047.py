@@ -96,6 +96,38 @@ class MonthAloneTests(unittest.TestCase):
             self.assertEqual(page_dating(page), (want, DATED_BY_MONTH), written)
 
 
+# 0280 A2: the day after a long author list, past BYLINE_CHARS, with other days cited further down (the lab blog's
+# conceptual-reasoning-index page)
+LONG_BYLINE = ('<html><body><d-title><h1>Introducing the Conceptual Reasoning Index</h1></d-title>'
+               '<div class="section-authors"><div style="display: flex"><div>Emery Cooper<sup>1</sup>, Caspar '
+               'Oesterheld<sup>1</sup>, Chi Nguyen<sup>1</sup>, Alex Kastner<sup>1</sup>,<br>Joe Benton<sup>2</sup>, '
+               'Ethan Perez<sup>2</sup></div>\n        <div>August 12, 2026</div></div>'
+               '<div><sup>1</sup>Redwood Research; <sup>2</sup>Anthropic</div></div>'
+               f'<d-article>{BODY}<p>As of March 3, 2026 the benchmark was released; see June 1, 2025.</p></d-article>'
+               '</body></html>')
+
+
+class LongBylineTests(unittest.TestCase):
+    def test_a_day_alone_after_a_long_author_list(self):
+        self.assertEqual(page_dating(LONG_BYLINE, "https://lab.example/2026/conceptual-reasoning-index/"),
+                         (datetime(2026, 8, 12, tzinfo=timezone.utc), DATED_BY_BODY))
+
+    def test_a_listing_whose_cards_stand_their_days_alone_is_no_date(self):
+        cards = "".join(f'<div class="card"><a href="/blog/p{n}">Post {n}</a><span>Nov {n}, 2026</span></div>'
+                        for n in range(3, 9))
+        page = f'<html><body><h1>Blog</h1><p>Our news and research, written by the whole team, about models, safety, interpretability and policy.</p>{cards}</body></html>'
+        self.assertEqual(page_dating(page, "https://lab.example/blog/"), (None, None))
+
+    def test_a_day_in_a_sentence_past_the_byline_is_no_date(self):
+        page = LONG_BYLINE.replace("<div>August 12, 2026</div>", "<div>Released on August 12, 2026 to partners</div>")
+        self.assertEqual(page_dating(page, "https://lab.example/2026/cri/"), (None, None))
+
+    def test_labels(self):
+        for written in ("Published: Aug. 12, 2026", "Posted on August 12, 2026", "Aug 12, 2026"):
+            page = LONG_BYLINE.replace("August 12, 2026", written)
+            self.assertEqual(page_dating(page)[0], datetime(2026, 8, 12, tzinfo=timezone.utc), written)
+
+
 class DataPublishedTests(unittest.TestCase):
     def test_one_data_published_attribute_is_the_pages_day(self):
         page = (f'<html><body><div class="section-authors" data-author="Ada Byron" data-published="April 23, 2025">'

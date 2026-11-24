@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.db.repo_posts import BACKLOG_KEY, PAGE_READ_KEY
@@ -87,6 +87,11 @@ MONTH_ALONE_RE = re.compile(
     r"(?i)^(?:(?:first\s+|last\s+)?(?:published|posted|updated|released|dated?)\s*(?:on|in)?\s*:?\s*)?"
     r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?"
     r"|Nov(?:ember)?|Dec(?:ember)?)\.?,?\s+((?:19|20)\d\d)$")
+# A page's own day standing alone in one element ("August 12, 2026", "Published: Aug. 12, 2026"): a byline date
+# past BYLINE_CHARS, after a long author list (byline_date). A day a sentence names is no such element.
+DAY_ALONE_RE = re.compile(
+    r"(?i)^(?:(?:first\s+)?(?:published|posted|released|dated?)\s*(?:on)?\s*:?\s*)?"
+    r"((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}, (?:19|20)\d\d)$")
 TAG_RE = re.compile(r"<[^>]+>")
 EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -629,29 +634,34 @@ BYLINE_CHARS = 80   # how near its one <h1> a page's byline date is written
 
 def byline_date(page: str) -> Optional[datetime]:
     """The date written within BYLINE_CHARS of text after the page's one <h1>, so related posts' dates below
-    never count. `page` without scripts and styles."""
+    never count; else a day standing alone in one element (DAY_ALONE_RE) within MONTH_CHARS of text after the
+    <h1> or before it (a byline after a long author list), the only day so written on the page: a listing's cards
+    each stand their own day alone. `page` without scripts and styles."""
     if len(H1_RE.findall(page)) != 1:
         return None
     after = page[page.lower().index("</h1") :] if "</h1" in page.lower() else ""
     text = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", after[:4000])).split())[:BYLINE_CHARS]
     match = TEXT_DATE_RE.search(text)
-    return _written_date(match.group(0)) if match else None
+    if match:
+        return _written_date(match.group(0))
+    def alone(pieces: List[str]) -> Set[datetime]:
+        return {day for piece in pieces if (found := DAY_ALONE_RE.match(piece.strip(" \t·•|–—-:"))) is not None
+                and (day := _written_date(found.group(1))) is not None}
+
+    near = alone(_by_title(page) or [])
+    return near.pop() if len(near) == 1 and alone(_pieces(page)) == near else None
 
 
-MONTH_CHARS = 400   # how much text after its one <h1>, or before it, a page's own month is written within
+MONTH_CHARS = 400   # how much text after its one <h1>, or before it, a page's own month or day is written within
 
 
-def month_date(page: str) -> Optional[datetime]:
-    """The 1st of the month (UTC) a page states as its own: a month and year alone in one element (MONTH_ALONE_RE)
-    within MONTH_CHARS of text after its one <h1> or before it, the only month so written there. None for a page
-    with no <h1> or many, or two different months by its title. `page` without scripts and styles."""
+def _by_title(page: str) -> Optional[List[str]]:
+    """The text pieces (one per element) within MONTH_CHARS of text after the page's one <h1>, then those before
+    it, nearest first; None for a page with no <h1> or many."""
     titles = list(H1_RE.finditer(page))
     if len(titles) != 1:
         return None
     start, end = titles[0].span()
-
-    def pieces(markup: str) -> List[str]:
-        return [text for part in TAG_RE.split(markup) if (text := " ".join(html.unescape(part).split()))]
 
     def near(found: List[str]) -> List[str]:
         kept, chars = [], 0
@@ -662,7 +672,21 @@ def month_date(page: str) -> Optional[datetime]:
             chars += len(text) + 1
         return kept
 
-    window = near(pieces(page[end:end + 20_000])) + near(pieces(page[max(0, start - 20_000):start])[::-1])
+    return near(_pieces(page[end:end + 20_000])) + near(_pieces(page[max(0, start - 20_000):start])[::-1])
+
+
+def _pieces(markup: str) -> List[str]:
+    """The text of each element of `markup`, spaces collapsed, empty ones left out."""
+    return [text for part in TAG_RE.split(markup) if (text := " ".join(html.unescape(part).split()))]
+
+
+def month_date(page: str) -> Optional[datetime]:
+    """The 1st of the month (UTC) a page states as its own: a month and year alone in one element (MONTH_ALONE_RE)
+    within MONTH_CHARS of text after its one <h1> or before it (_by_title), the only month so written there. None
+    for a page with no <h1> or many, or two different months by its title. `page` without scripts and styles."""
+    window = _by_title(page)
+    if window is None:
+        return None
     months = set()
     for text in window:
         if (match := MONTH_ALONE_RE.match(text.strip(" \t·•|–—-:"))) is not None:
