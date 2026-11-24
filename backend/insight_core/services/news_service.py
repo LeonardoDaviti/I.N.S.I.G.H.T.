@@ -315,7 +315,23 @@ class NewsService:
                                   -i["news"]["first_at"].timestamp(), i["id"]))
         if mx_run is None:
             return {"success": True, "items": items, "next_cursor": None}
+        self.titled(cur, mx_run, items)
         return {"success": True, **self.ranked(cur, items, order), "next_cursor": None}
+
+    @staticmethod
+    def titled(cur: Any, mx_run: str, items: List[Dict[str, Any]]) -> None:
+        """Mark X's rows titled by their own headline (markx/news.headlines: the row's main story's, else the row's
+        own answer), not by whichever post leads (0280 K2: a Habr title over a row of WIRED, Fortune and Daring
+        Fireball); a lead's title that is only an address or a file name gives way to any other title the row has
+        (K3: "alpo.ge/remark.pdf")."""
+        from insight_core.markx import news as mx_news
+        named = mx_news.row_titles(cur, mx_run, [i["story"]["id"] for i in items])
+        for i in items:
+            h = named.get(i["story"]["id"]) or {}
+            text = (h.get("text") or "").strip()
+            if text and not mx_news.address_title(text) and (h.get("from") == "haiku"
+                                                              or mx_news.address_title(i["title"])):
+                i["title"] = text
 
     @staticmethod
     def ranked(cur: Any, items: List[Dict[str, Any]], order: Optional[str] = None) -> Dict[str, Any]:

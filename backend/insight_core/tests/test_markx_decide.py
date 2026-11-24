@@ -288,6 +288,54 @@ class Rules(unittest.TestCase):
         out = D.decide(self.posts, self.stories, [(q, v("development", 0.9))], D.Config.prototype())
         self.assertIn("late", out.about["A"])                          # the prototype had no late rule
 
+    def joined_to_both(self, rel_a="same_event", rel_e="same_event", posts=("g", "h")):
+        """Each of `posts` joined by the judge to story A and to story E (0280 K1: one event, several stories)."""
+        out = []
+        for p in posts:
+            out.append((D.Question(f"join:A:{p}", "join", story="A", post=p, anchor="a"), v(rel_a, 0.9)))
+            out.append((D.Question(f"join:E:{p}", "join", story="E", post=p, anchor="e"), v(rel_e, 0.9)))
+        return out
+
+    def test_stories_whose_core_members_overlap_are_one_story(self):
+        """Two posts the judge put in both stories as the same event, half of the smaller story: one story, the
+        older Mark IX story's key (0280 K1, the four Jensen Huang stories); any event kind, no chain needed."""
+        out = D.decide(self.posts, self.stories, self.joined_to_both())
+        self.assertEqual(set(out.about), {"A"})
+        self.assertEqual(set(out.about["A"]), {"a", "b", "c", "short", "e", "f", "g", "h"})
+        self.assertEqual(out.final["E"], "A")
+        self.assertEqual([(x["change"], x["story"], x["other"], x["shared"]) for x in out.log if x["change"] == "overlap"],
+                         [("overlap", "A", "E", 2)])
+        rows = D.wanted(out, self.posts)
+        self.assertEqual(rows["A"]["f"][1], "rule:time")             # each post keeps its own reason
+        self.assertEqual(rows["A"]["g"][1], "judge:join")
+
+    def test_overlap_needs_two_core_posts_and_half_the_smaller_story(self):
+        one = D.decide(self.posts, self.stories, self.joined_to_both(posts=("g",)))
+        self.assertEqual(set(one.about), {"A", "E"})                  # one shared post: a round-up, apart
+        self.assertEqual(D.overlapping(self.posts, {"A": {p: {"by": "rule"} for p in "abcgh"},
+                                                    "E": {p: {"by": "rule"} for p in "bcdef"}}, {}, {}, {"A", "E"},
+                                       set()), [])                      # 2 of 5: under half
+        got = D.overlapping(self.posts, {"A": {p: {"by": "rule"} for p in "abcgh"},
+                                         "E": {p: {"by": "rule"} for p in "bcdefg"}}, {}, {}, {"A", "E"}, set())
+        self.assertEqual(got, [("A", "E", 3)])
+
+    def test_a_development_or_reaction_join_is_no_overlap(self):
+        """A post joined to one story as a development (or reaction) says the stories differ: apart."""
+        for rel in ("development", "reaction"):
+            out = D.decide(self.posts, self.stories, self.joined_to_both(rel_e=rel))
+            self.assertEqual(set(out.about), {"A", "E"}, rel)
+            self.assertIn("g", out.about["E"])
+
+    def test_the_judge_keeping_two_stories_apart_wins_over_their_overlap(self):
+        m = D.Question("merge:A:E", "merge", story="A", other="E")
+        for rel, p in (("development", 0.9), ("different", 0.9)):
+            out = D.decide(self.posts, self.stories, self.joined_to_both() + [(m, v(rel, p))])
+            self.assertEqual(set(out.about), {"A", "E"}, rel)
+        out = D.decide(self.posts, self.stories, self.joined_to_both(), D.Config.prototype())
+        self.assertEqual(set(out.about), {"A", "E"})                  # the prototype had no overlap rule
+        out = D.decide(self.posts, self.stories, self.joined_to_both(), D.Config(overlap_min=0))
+        self.assertEqual(set(out.about), {"A", "E"})
+
     def test_checks_come_before_joins_and_merges_after_glue(self):
         c = D.Question("check:A:b", "check", story="A", post="b", voices=3)
         j = D.Question("join:A:b", "join", story="A", post="b", anchor="a")
@@ -607,6 +655,41 @@ class Job(unittest.TestCase):
                                   {"post_id": c, "voice": "v2", "story": str(sid)}]}
         self.assertEqual(N.main_story(row), str(sid))
         self.assertEqual(N.headlines(self.cur, [row])[a], {"text": "Acme releases Widget 4", "from": "haiku"})
+
+    def test_an_address_is_no_row_title_while_the_row_has_a_title(self):
+        """0280 K3: a lead whose title is "alpo.ge/remark.pdf" gives way to a row post's own title; the main News
+        reads the row's headline by its run (row_titles), and a Haiku headline titles it (K2)."""
+        a, b = self.post(0, "alpo.ge/remark.pdf"), self.post(1, "Levent Alpöge posts a proof of the Riemann hypothesis")
+        self.cur.execute("UPDATE post_parts SET title = 'alpo.ge/remark.pdf' WHERE post_id = %s", (a,))   # a link tweet
+        row = {"id": a, "posts": [{"post_id": a, "voice": "v0", "story": None},
+                                  {"post_id": b, "voice": "v1", "story": None}]}
+        self.assertEqual(N.headlines(self.cur, [row])[a],
+                         {"text": "Levent Alpöge posts a proof of the Riemann hypothesis", "from": "post title"})
+        run = str(repo.start_run(self.cur, code_version="t", config={}))
+        repo.add_news_rows(self.cur, run, [{**row, "first_at": T, "voices": 2, "reports": 2, "shares": 0,
+                                            "mentions": 0, "score": 2.0, "tag": "NEW",
+                                            "posts": [{**p, "role": "report", "name": None, "position": n}
+                                                      for n, p in enumerate(row["posts"])]}])
+        self.assertEqual(N.row_titles(self.cur, run, [a])[a]["from"], "post title")
+        self.assertEqual(N.row_titles(self.cur, None, [a]), {})
+        from insight_core.services.news_service import NewsService
+        items = [{"title": "alpo.ge/remark.pdf", "story": {"id": a}}]
+        NewsService.titled(self.cur, run, items)
+        self.assertEqual(items[0]["title"], "Levent Alpöge posts a proof of the Riemann hypothesis")
+        sid = repo.add_story(self.cur, first_at=T, run_id=run)
+        repo.set_story_headline(self.cur, sid, headline="Levent Alpöge claims a Riemann hypothesis proof with Claude")
+        self.cur.execute("UPDATE mx_news SET posts = jsonb_set(jsonb_set(posts, '{0,story}', to_jsonb(%s::text)), "
+                         "'{1,story}', to_jsonb(%s::text)) WHERE run_id = %s", (str(sid), str(sid), run))
+        items = [{"title": "Совет директоров Nvidia одобрил", "story": {"id": a}}]
+        NewsService.titled(self.cur, run, items)
+        self.assertEqual(items[0]["title"], "Levent Alpöge claims a Riemann hypothesis proof with Claude")
+
+    def test_what_an_address_title_is(self):
+        for t in ("alpo.ge/remark.pdf", "nitter.net/i/article/212463487068…", "https://x.com/a/status/1", "remark.pdf",
+                  "github.com/NVIDIA/kumo-engine"):
+            self.assertTrue(N.address_title(t), t)
+        for t in ("Grok-4.7", "Pruna-Qwen-Image-2.1", "GPT 6.2 is out", "", None, "Claude Fable 5.2 is now #1"):
+            self.assertFalse(N.address_title(t), t)
 
     def test_every_news_row_gets_a_headline_task(self):
         """A row of posts in no 2+ voice story is asked a headline of its own, found again by its input (0121)."""

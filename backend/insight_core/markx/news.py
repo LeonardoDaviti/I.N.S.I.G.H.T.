@@ -6,6 +6,7 @@ written; a post with no post_parts is left out rather than parsed here.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -617,7 +618,38 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
             out[rid] = {"text": titles[makers[rid]]["title"], "from": "maker title"}
         else:
             out[rid] = {"text": (leads.get(rid) or {}).get("title") or "", "from": "lead title"}
+    # an address or a file name is no title while one of the row's posts has a title (0280 K3: "alpo.ge/remark.pdf")
+    bare = [r for r in rows if out[str(r["id"])]["from"] == "lead title" and address_title(out[str(r["id"])]["text"])]
+    if bare:
+        more = _posts(cur, {p["post_id"] for r in bare for p in r.get("posts") or []})
+        for r in bare:
+            got = next((more[p["post_id"]]["title"] for p in r.get("posts") or [] if p["post_id"] in more
+                        and more[p["post_id"]]["title"].strip() and not address_title(more[p["post_id"]]["title"])),
+                       None)
+            if got:
+                out[str(r["id"])] = {"text": got, "from": "post title"}
     return out
+
+
+# a title that is only a web address or a file name ("alpo.ge/remark.pdf", "nitter.net/i/article/2124…"): a host
+# whose last label is letters, an optional path, an optional ellipsis; never a name like "Grok-4.7"
+ADDRESS_TITLE = re.compile(r"^(?:https?://)?(?:www\.)?[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?:[/?#]\S*)?(?:…|\.\.\.)?$", re.I)
+
+
+def address_title(text: Optional[str]) -> bool:
+    """Whether a title is only an address or a file name (ADDRESS_TITLE)."""
+    return bool(text) and bool(ADDRESS_TITLE.match(text.strip()))
+
+
+def row_titles(cur: Any, run: Optional[str], row_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """{row id: its headline (`headlines`)} for these rows of the run's News: what a reader's News row is titled by."""
+    ids = sorted({str(i) for i in row_ids if i})
+    if run is None or not ids:
+        return {}
+    cur.execute("SELECT * FROM mx_news WHERE run_id = %s AND id = ANY(%s::uuid[])", (run, ids))
+    cols = [d[0] for d in cur.description]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return headlines(cur, rows) if rows else {}
 
 
 def _why(cur: Any, post_ids: Sequence[str]) -> Dict[Tuple[str, str], Dict[str, Any]]:
