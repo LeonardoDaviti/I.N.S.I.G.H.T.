@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+	<title type="html"><![CDATA[Arch Linux Forums / Announcements, Package & Security Advisories]]></title>
+	<link rel="self" href="https://bbs.archlinux.org/extern.php?action=feed&amp;type=atom&amp;fid=24&amp;order=posted"/>
+	<link href="https://bbs.archlinux.org/index.php"/>
+	<updated>2025-12-20T19:27:56Z</updated>
+	<generator>FluxBB</generator>
+	<id>https://bbs.archlinux.org/index.php</id>
+	<entry>
+		<title type="html"><![CDATA[NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?id=311143"/>
+		<summary type="html"><![CDATA[<div class="quotebox"><cite>Peter Jung via arch-announce wrote:</cite><blockquote><div><p>With the update to driver version 590, the NVIDIA driver no longer supports Pascal (GTX 10xx) GPUs or older. We will replace the &#039;nvidia&#039; package with &#039;nvidia-open&#039;, &#039;nvidia-dkms&#039; with &#039;nvidia-open-dkms&#039;, and &#039;nvidia-lts&#039; with &#039;nvidia-lts-open&#039;.</p><p><strong>Impact:</strong> Updating the NVIDIA packages on systems with Pascal, Maxwell, or older cards will fail to load the driver, which may result in a broken graphical environment.</p><p><strong>Intervention required for Pascal/older users:</strong> Users with GTX 10xx series and older cards must switch to the legacy proprietary branch to maintain support:</p><ul><li><p>Uninstall the official &#039;nvidia&#039;, &#039;nvidia-lts&#039;, or &#039;nvidia-dkms&#039; packages.</p></li><li><p>Install &#039;nvidia-580xx-dkms&#039; from the AUR</p></li></ul><p>Users with Turing (20xx and GTX 1650 series) and newer GPUs will automatically transition to the open kernel modules on upgrade and require no manual intervention.</p></div></blockquote></div><p><a href="https://archlinux.org/news/nvidia-590-driver-drops-pascal-support-main-packages-switch-to-open-kernel-modules/" rel="nofollow">https://archlinux.org/news/nvidia-590-d … l-modules/</a></p>]]></summary>
+		<author>
+			<name><![CDATA[gromit]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=156813</uri>
+		</author>
+		<updated>2025-12-20T19:27:56Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?id=311143</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[[arch-announce] Recent services outages]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?id=307762"/>
+		<summary type="html"><![CDATA[<p><a href="https://archlinux.org/news/recent-services-outages/" rel="nofollow">https://archlinux.org/news/recent-services-outages/</a></p>]]></summary>
+		<author>
+			<name><![CDATA[gromit]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=156813</uri>
+		</author>
+		<updated>2025-08-21T22:06:01Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?id=307762</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[xz Package Backdoor]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?id=294363"/>
+		<summary type="html"><![CDATA[<p>Please see the Arch main page announcement and take appropriate action.</p><p><a href="https://archlinux.org/news/the-xz-package-has-been-backdoored/" rel="nofollow">https://archlinux.org/news/the-xz-packa … ackdoored/</a></p>]]></summary>
+		<author>
+			<name><![CDATA[ewaller]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=27289</uri>
+		</author>
+		<updated>2024-03-29T19:13:28Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?id=294363</id>
+	</entry>
+</feed>

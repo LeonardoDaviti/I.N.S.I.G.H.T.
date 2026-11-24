@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+	<title type="html"><![CDATA[Arch Linux Forums / NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+	<link rel="self" href="https://bbs.archlinux.org/extern.php?action=feed&amp;type=atom&amp;tid=311143&amp;show=50"/>
+	<link href="https://bbs.archlinux.org/viewtopic.php?id=311143"/>
+	<updated>2026-01-23T15:54:07Z</updated>
+	<generator>FluxBB</generator>
+	<id>https://bbs.archlinux.org/viewtopic.php?id=311143</id>
+	<entry>
+		<title type="html"><![CDATA[Re: NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?pid=2284382#p2284382"/>
+		<content type="html"><![CDATA[<p>Heads-up - the &#039;nvidia-580xx-dkms&#039; from the AUR currently doesn&#039;t work with the LTS 6.12.66-1 (and older) kernel - there is a note on <a href="https://aur.archlinux.org/packages/nvidia-580xx-utils" rel="nofollow">https://aur.archlinux.org/packages/nvidia-580xx-utils</a> about this from a few days back.&#160; I just found this out the hard way.</p><p>Rather than roll back, I decided the easiest way forward was to install 6.18.6-arch1-1 alongside the LTS and run a grub-mkconfig to make it available as a fall-back until this gets fixed, and all is now well, but be aware of this if you&#039;re running an LTS kernel.</p>]]></content>
+		<author>
+			<name><![CDATA[dmloader]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=174525</uri>
+		</author>
+		<updated>2026-01-23T15:54:07Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?pid=2284382#p2284382</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[Re: NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?pid=2282005#p2282005"/>
+		<content type="html"><![CDATA[<div class="quotebox"><cite>VectorSpiral wrote:</cite><blockquote><div><p>So are the normal nvidia packages no longer going to be available from this point forward?</p></div></blockquote></div><div class="quotebox"><cite>announcement wrote:</cite><blockquote><div><p>GTX 10xx series and older cards must switch to the legacy proprietary branch to maintain support:</p><ul><li><p>Uninstall the official &#039;nvidia&#039;, &#039;nvidia-lts&#039;, or &#039;nvidia-dkms&#039; packages.</p></li><li><p>Install &#039;nvidia-580xx-dkms&#039; from the AUR</p></li></ul></div></blockquote></div><p>You can still switch to the AUR packages if you have &gt;10xx series card, but it&#039;s not supported by Arch.</p>]]></content>
+		<author>
+			<name><![CDATA[WorMzy]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=38091</uri>
+		</author>
+		<updated>2026-01-08T00:23:08Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?pid=2282005#p2282005</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[Re: NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?pid=2282001#p2282001"/>
+		<content type="html"><![CDATA[<p>So are the normal nvidia packages no longer going to be available from this point forward? I&#039;ve had problems with the nvidia-open branch beforehand that were not present in the non-open equivalent.</p><p>I have to admit that I&#039;m also a little confused by the announcement as it seems like switching the proprietary packages to the -open ones and Nvidia&#039;s support depreciation are two separate things, as people with the older cards are still unsupported on the -open branch and have to stay on the (legacy) proprietary branch anyways.</p>]]></content>
+		<author>
+			<name><![CDATA[VectorSpiral]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=174188</uri>
+		</author>
+		<updated>2026-01-07T23:16:03Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?pid=2282001#p2282001</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[Re: NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?pid=2279773#p2279773"/>
+		<content type="html"><![CDATA[<div class="quotebox"><cite>gromit wrote:</cite><blockquote><div><div class="quotebox"><cite>Peter Jung via arch-announce wrote:</cite><blockquote><div><p>With the update to driver version 590, the NVIDIA driver no longer supports Pascal (GTX 10xx) GPUs or older. We will replace the &#039;nvidia&#039; package with &#039;nvidia-open&#039;, &#039;nvidia-dkms&#039; with &#039;nvidia-open-dkms&#039;, and &#039;nvidia-lts&#039; with &#039;nvidia-lts-open&#039;.</p><p>(...)</p><p>Users with Turing (20xx and GTX 1650 series) and newer GPUs will automatically transition to the open kernel modules on upgrade and require no manual intervention.</p></div></blockquote></div></div></blockquote></div><p>Absolutely seamless migration from nvidia to nvidia-open. It&#039;s been years, but I came from a distro where switching drivers always gave me cold sweats because, more often than not, something went wrong. Well done to the entire team <img src="https://bbs.archlinux.org/img/smilies/smile.png" width="15" height="15" alt="smile" /></p>]]></content>
+		<author>
+			<name><![CDATA[faetter]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=123782</uri>
+		</author>
+		<updated>2025-12-24T18:15:53Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?pid=2279773#p2279773</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[Re: NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?pid=2279356#p2279356"/>
+		<content type="html"><![CDATA[<div class="quotebox"><cite>gromit wrote:</cite><blockquote><div><div class="quotebox"><cite>Peter Jung via arch-announce wrote:</cite><blockquote><div><p>With the update to driver version 590, the NVIDIA driver no longer supports Pascal (GTX 10xx) GPUs or older. <br />(...)<br /><strong>Intervention required for Pascal/older users:</strong> Users with GTX 10xx series and older cards must switch to the legacy proprietary branch to maintain support:</p><ul><li><p>Uninstall the official &#039;nvidia&#039;, &#039;nvidia-lts&#039;, or &#039;nvidia-dkms&#039; packages.</p></li><li><p>Install &#039;nvidia-580xx-dkms&#039; from the AUR</p></li></ul><p>(...)</p></div></blockquote></div><p><a href="https://archlinux.org/news/nvidia-590-driver-drops-pascal-support-main-packages-switch-to-open-kernel-modules/" rel="nofollow">https://archlinux.org/news/nvidia-590-d … l-modules/</a></p></div></blockquote></div><p>I was missing `linux-headers` too (didn&#039;t think about it first after years without using DKMS). <br />Thanks you raggerv8 for making my brain switch on ;-) <br />Most Arch users will do it logically: switching from the nvidia default arch package to AUR requires to have `linux-headers` installed before installing &#039;nvidia-580xx-dkms&#039; (as for any DKMS package).</p>]]></content>
+		<author>
+			<name><![CDATA[kozaki]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=3903</uri>
+		</author>
+		<updated>2025-12-22T13:14:45Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?pid=2279356#p2279356</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[Re: NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?pid=2279350#p2279350"/>
+		<content type="html"><![CDATA[<div class="quotebox"><cite>gromit wrote:</cite><blockquote><div><div class="quotebox"><cite>Peter Jung via arch-announce wrote:</cite><blockquote><div><p>With the update to driver version 590, the NVIDIA driver no longer supports Pascal (GTX 10xx) GPUs or older. We will replace the &#039;nvidia&#039; package with &#039;nvidia-open&#039;, &#039;nvidia-dkms&#039; with &#039;nvidia-open-dkms&#039;, and &#039;nvidia-lts&#039; with &#039;nvidia-lts-open&#039;.</p><p><strong>Impact:</strong> Updating the NVIDIA packages on systems with Pascal, Maxwell, or older cards will fail to load the driver, which may result in a broken graphical environment.</p><p><strong>Intervention required for Pascal/older users:</strong> Users with GTX 10xx series and older cards must switch to the legacy proprietary branch to maintain support:</p><ul><li><p>Uninstall the official &#039;nvidia&#039;, &#039;nvidia-lts&#039;, or &#039;nvidia-dkms&#039; packages.</p></li><li><p>Install &#039;nvidia-580xx-dkms&#039; from the AUR</p></li></ul><p>Users with Turing (20xx and GTX 1650 series) and newer GPUs will automatically transition to the open kernel modules on upgrade and require no manual intervention.</p></div></blockquote></div><p><a href="https://archlinux.org/news/nvidia-590-driver-drops-pascal-support-main-packages-switch-to-open-kernel-modules/" rel="nofollow">https://archlinux.org/news/nvidia-590-d … l-modules/</a></p></div></blockquote></div><p>There is a typo in the post, <a href="https://archlinux.org/packages/extra/x86_64/nvidia-lts-open/" rel="nofollow">nvidia-lts-open</a> VS <a href="https://archlinux.org/packages/extra/x86_64/nvidia-open-lts/" rel="nofollow">nvidia-open-lts</a></p>]]></content>
+		<author>
+			<name><![CDATA[SailReal]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=135600</uri>
+		</author>
+		<updated>2025-12-22T12:15:51Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?pid=2279350#p2279350</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[Re: NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?pid=2279029#p2279029"/>
+		<content type="html"><![CDATA[<p>I successfully built and installed the nvidia-580xx packages for my system which runs a GTX 1050 Ti, but I am having some concerns regarding DRM. I had “MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)” which doesn&#039;t work for the nvidia-580xx driver, as well as nvidia-drm.modeset=1 in the kernel parameters.</p><p>I notice I have software rendering as well, similar to the issues in the <a href="https://bbs.archlinux.org/viewtopic.php?id=309874" rel="nofollow">https://bbs.archlinux.org/viewtopic.php?id=309874</a> thread that I solved by disabling the iGPU in the BIOS. Not sure if the software rendering is because of DRM not being loaded?</p><p>Xorg.log <a href="https://0x0.st/PsOl.txt" rel="nofollow">https://0x0.st/PsOl.txt</a></p><p>Hopefully it&#039;s okay to post about this in this thread, let me know.</p><p><strong>Edit</strong>: I did notice these errors too.</p><div class="codebox"><pre><code>[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing sys kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing etc kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing tmp kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing home kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing boot kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing mnt kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing proc kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing efi kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing run kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing lib kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing root kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing dev kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing sbin kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing opt kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing srv kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing lost+found kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing lib64 kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing bin kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing usr kernel headers for module nvidia/580.119.02.
+[2025-12-20T21:25:42+0100] [ALPM-SCRIPTLET] ==&gt; ERROR: Missing var kernel headers for module nvidia/580.119.02.</code></pre></div><p><strong>Edit 2</strong>: I was missing linux-headers for some reason. I installed it, then reinstalled the nvidia driver (just to be safe) and now I have GPU rendering again. I didn&#039;t add back the modules, because according to the wiki DRM is enabled by default.</p>]]></content>
+		<author>
+			<name><![CDATA[raggerv8]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=38644</uri>
+		</author>
+		<updated>2025-12-20T20:16:06Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?pid=2279029#p2279029</id>
+	</entry>
+	<entry>
+		<title type="html"><![CDATA[NVIDIA 590 driver drops Pascal and lower support / switch to -open]]></title>
+		<link rel="alternate" href="https://bbs.archlinux.org/viewtopic.php?pid=2279021#p2279021"/>
+		<content type="html"><![CDATA[<div class="quotebox"><cite>Peter Jung via arch-announce wrote:</cite><blockquote><div><p>With the update to driver version 590, the NVIDIA driver no longer supports Pascal (GTX 10xx) GPUs or older. We will replace the &#039;nvidia&#039; package with &#039;nvidia-open&#039;, &#039;nvidia-dkms&#039; with &#039;nvidia-open-dkms&#039;, and &#039;nvidia-lts&#039; with &#039;nvidia-lts-open&#039;.</p><p><strong>Impact:</strong> Updating the NVIDIA packages on systems with Pascal, Maxwell, or older cards will fail to load the driver, which may result in a broken graphical environment.</p><p><strong>Intervention required for Pascal/older users:</strong> Users with GTX 10xx series and older cards must switch to the legacy proprietary branch to maintain support:</p><ul><li><p>Uninstall the official &#039;nvidia&#039;, &#039;nvidia-lts&#039;, or &#039;nvidia-dkms&#039; packages.</p></li><li><p>Install &#039;nvidia-580xx-dkms&#039; from the AUR</p></li></ul><p>Users with Turing (20xx and GTX 1650 series) and newer GPUs will automatically transition to the open kernel modules on upgrade and require no manual intervention.</p></div></blockquote></div><p><a href="https://archlinux.org/news/nvidia-590-driver-drops-pascal-support-main-packages-switch-to-open-kernel-modules/" rel="nofollow">https://archlinux.org/news/nvidia-590-d … l-modules/</a></p>]]></content>
+		<author>
+			<name><![CDATA[gromit]]></name>
+			<uri>https://bbs.archlinux.org/profile.php?id=156813</uri>
+		</author>
+		<updated>2025-12-20T19:27:56Z</updated>
+		<id>https://bbs.archlinux.org/viewtopic.php?pid=2279021#p2279021</id>
+	</entry>
+</feed>
