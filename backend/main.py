@@ -998,7 +998,8 @@ async def add_source(request: NewSourceRequest):
     named = None if str(settings.get("display_name") or "").strip() else await _name_new_source(
         created["source_id"], platform, created["handle"], settings)
     await asyncio.to_thread(_export_sources_json)
-    # Following a feed fetches its archive (back to follow_archive's horizon), queued in its turn.
+    # Following a feed fetches its archive (back to follow_archive's horizon), queued in its turn. Its first read is
+    # the jobs process's within a minute (run_scheduler.read_new_sources), never this request's.
     archive = await asyncio.to_thread(follow_archive.queue_on_follow, services(), _archive_jobs, created["source_id"])
     return {"success": True, "source_id": created["source_id"], "platform": platform,
             "handle_or_url": created["handle"], **({"recognised": recognised} if recognised else {}),

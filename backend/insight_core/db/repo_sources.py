@@ -199,11 +199,23 @@ class SourcesRepository:
                s.fetch_interval_hours_override
         FROM sources s
     """
+    # A source never read yet (selector "new"): enabled, never tried, and no run decided anything for it but to read
+    # it (a first read waiting on its host's share of a run still is new; one its kind can't read now is not).
+    NEVER_READ_SQL = """s.enabled AND NOT EXISTS (
+        SELECT 1 FROM source_fetch_state f WHERE f.source_id = s.id
+           AND (f.last_attempt_at IS NOT NULL
+                OR f.last_decision_kind NOT IN ('fetch_new_source', 'fetch_due', 'skip_host_busy')))"""
+
+    def has_never_read(self, cur: Cursor) -> bool:
+        """Whether an enabled source waits for its first read (NEVER_READ_SQL): one indexed look."""
+        cur.execute(f"SELECT EXISTS (SELECT 1 FROM sources s WHERE {self.NEVER_READ_SQL})")
+        return bool(cur.fetchone()[0])
 
     def load_for_ingestion(self, cur: Cursor, selector_kind: str, selector_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """The sources a fetch request targets, in one query (the ingestion SourceCatalog).
 
-        all / folder: enabled sources only. source: that source even when disabled (fetch-now is explicit).
+        all / folder: enabled sources only. source: that source even when disabled (fetch-now is explicit). new: the
+        enabled sources never read yet (NEVER_READ_SQL).
         Settings come back merged with the platform defaults, with post_count and the cadence columns.
         """
         if selector_kind == "all":
@@ -217,6 +229,8 @@ class SourcesRepository:
             )
         elif selector_kind == "source":
             cur.execute(self._INGESTION_SELECT + " WHERE s.id = %s::uuid", (selector_id,))
+        elif selector_kind == "new":
+            cur.execute(self._INGESTION_SELECT + f" WHERE {self.NEVER_READ_SQL} ORDER BY s.platform, s.handle_or_url")
         else:
             raise ValueError(f"Unknown source selector {selector_kind!r}")
         return [

@@ -6,7 +6,8 @@ Its loop runs: the ingestion tick (every scheduler_config.ingest_tick_minutes, f
 cadence decides which sources are due); daily work (prune job_runs, spend answered Mark X inputs, refresh
 cadence; gated on system_settings.scheduler_state.last_daily_work_at); waiting and queued archives, continued
 in this process so their pages share the host limiter with the hourly fetches; channel profiles after each
-tick; the Operations page's data repair asks (services/data_repairs.py), looked for with the archives. In
+tick; the Operations page's data repair asks (services/data_repairs.py) and the first read of a source just added
+(read_new_sources), looked for with the archives. In
 threads of their own: the API watchdog (INSIGHT_API_WATCHDOG), Mark X's job runner (candidate finder,
 decision runs, kept views; with Mark X off, the reader's kept views only) and the source stats job.
 
@@ -102,6 +103,64 @@ def _daily_interval(config: Dict[str, Any]) -> timedelta:
     return timedelta(hours=max(0.25, hours))
 
 
+async def ingestion_job(request: FetchRequest, *, ingest: Callable[..., Awaitable[Any]], ops: Any,
+                        name: str) -> Optional[Any]:
+    """One ingestion run as an ingestion_run job, finished in every case (a raise marks it failed); a run with
+    nothing due made no request: its job is deleted. The report, or None when the run raised."""
+    job_id = None
+    try:
+        job_id = ops.start_job("ingestion_run", trigger="scheduler",
+                               payload={"selector": request.selector.as_dict(), "force": request.force})
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not start the ingestion_run job (running untracked)")
+    status, message, payload, nothing_due, report = "failed", "Ingestion run did not finish", {}, False, None
+    try:
+        report = await ingest(request, progress=JobProgressSink(ops, job_id))
+        status, message, payload = report.job_status, report.summary_line(), report.to_payload()
+        # a read of new sources a full run held off is nothing either: the full run reads them
+        nothing_due = report.status == "nothing_due" or (request.selector.kind == "new"
+                                                          and report.status == "skipped_busy")
+        logger.info("Ingestion %s: %s", name, message)
+    except Exception as exc:  # noqa: BLE001
+        message = f"Ingestion run failed: {exc}"
+        logger.exception("Ingestion %s failed", name)
+    finally:
+        if job_id:
+            try:
+                if nothing_due:
+                    ops.discard_job(job_id)
+                else:
+                    ops.finish_job(job_id, status=status, message=message, payload=payload, compact=True)
+            except Exception:  # noqa: BLE001
+                logger.exception("Could not finish the ingestion_run job")
+    return report
+
+
+def new_sources_waiting(db_url: str) -> bool:
+    """Whether a source just added waits for its first read (SourcesRepository.has_never_read). Never raises."""
+    try:
+        from insight_core.db import database
+        from insight_core.db.repo_sources import SourcesRepository
+        with database.transaction(db_url) as cur:
+            return SourcesRepository(db_url).has_never_read(cur)
+    except Exception:  # noqa: BLE001 - the next tick reads it
+        logger.exception("Could not look for sources never read")
+        return False
+
+
+def read_new_sources(db_url: str, running: Optional[Any], *, ingest: Callable[..., Awaitable[Any]],
+                     ops: Any) -> Optional[Any]:
+    """A source just added is read at once, not at the next tick: when one waits (new_sources_waiting) and no such
+    read is running, one ingestion run of the sources never read (SourceSelector.new) as a task of its own, so a
+    long first read never holds the loop. Returns the task (or the one still running)."""
+    if running is not None and not running.done():
+        return running
+    if not new_sources_waiting(db_url):
+        return None
+    return asyncio.get_running_loop().create_task(ingestion_job(
+        FetchRequest(SourceSelector.new(), Trigger.SCHEDULER), ingest=ingest, ops=ops, name="of new sources"))
+
+
 async def tick(
     now: datetime,
     state: SchedulerState,
@@ -120,33 +179,8 @@ async def tick(
             logger.exception("Could not seed the daily-work gate; daily work runs now")
             last_daily = None
 
-    # 1. The ingestion run. The job is finished in every case (a raise marks it failed). A tick with nothing due
-    #    made no request: its job is deleted; the scheduler state still records the tick.
-    request = FetchRequest(SourceSelector.all(), Trigger.SCHEDULER)
-    job_id = None
-    try:
-        job_id = ops.start_job("ingestion_run", trigger="scheduler",
-                               payload={"selector": request.selector.as_dict(), "force": request.force})
-    except Exception:  # noqa: BLE001
-        logger.exception("Could not start the ingestion_run job (running untracked)")
-    status, message, payload, nothing_due = "failed", "Ingestion run did not finish", {}, False
-    try:
-        report = await ingest(request, progress=JobProgressSink(ops, job_id))
-        status, message, payload = report.job_status, report.summary_line(), report.to_payload()
-        nothing_due = report.status == "nothing_due"
-        logger.info("Ingestion tick: %s", message)
-    except Exception as exc:  # noqa: BLE001
-        message = f"Ingestion run failed: {exc}"
-        logger.exception("Ingestion tick failed")
-    finally:
-        if job_id:
-            try:
-                if nothing_due:
-                    ops.discard_job(job_id)
-                else:
-                    ops.finish_job(job_id, status=status, message=message, payload=payload, compact=True)
-            except Exception:  # noqa: BLE001
-                logger.exception("Could not finish the ingestion_run job")
+    # 1. The ingestion run; the scheduler state records the tick whatever it did.
+    await ingestion_job(FetchRequest(SourceSelector.all(), Trigger.SCHEDULER), ingest=ingest, ops=ops, name="tick")
 
     # 2. Daily work, gated on interval_hours since it last ran.
     daily_interval = _daily_interval(config)
@@ -342,6 +376,7 @@ async def main() -> None:
     archives = ArchiveJobs(operations_service, archive_service(db_url), trigger="scheduler")
     last_archive_poll = 0.0
     repairs_running = None   # the page's data repair asks, run in a process of their own
+    new_reads = None         # the first read of the sources just added, a task of its own
     loop = asyncio.get_running_loop()
     beating = loop.create_task(_heartbeat())   # what the container's healthcheck reads
     from insight_core.utils.idle_trim import libc_trim
@@ -352,6 +387,7 @@ async def main() -> None:
         if loop.time() - last_archive_poll >= ARCHIVE_POLL_SECONDS:
             last_archive_poll = loop.time()
             repairs_running = repair_asks(db_url, repairs_running)
+            new_reads = read_new_sources(db_url, new_reads, ingest=run_ingestion, ops=operations_service)
             try:
                 for job_id in await archives.continue_due():
                     logger.info("Continuing archive job %s after its wait", job_id)
@@ -363,6 +399,8 @@ async def main() -> None:
             except Exception:  # noqa: BLE001
                 logger.exception("Could not start the queued archives")
         if state.next_tick_at is None or now >= state.next_tick_at:
+            if new_reads is not None and not new_reads.done():
+                await asyncio.wait([new_reads])   # it holds the run lock: the tick would be skipped
             config = operations_service.get_scheduler_config()
 
             async def daily(cfg: Dict[str, Any]) -> None:
