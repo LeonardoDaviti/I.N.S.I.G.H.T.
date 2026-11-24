@@ -53,6 +53,7 @@ from insight_core.ingestion.types import (
     OutcomeStatus,
     RunReport,
     SourceFailure,
+    Trigger,
 )
 
 logger = logging.getLogger("insight.ingestion.runner")
@@ -175,6 +176,9 @@ class IngestionRunner:
                     return await self._run(request, progress, started)
                 finally:
                     await self._keep_derived()
+                    if request.trigger == Trigger.SCHEDULER and hasattr(self.state, "keep_attention"):
+                        # the scheduler's full run: the jobs process, never an API request (services/attention.py)
+                        await self._safely("check what needs attention", self.state.keep_attention)
         try:
             return await self._run(request, progress, started)
         finally:

@@ -145,30 +145,21 @@ class SourcesService:
     
     def get_source_with_settings(self, source_id: str) -> Dict[str, Any]:
         """Get source with merged settings (platform defaults + overrides)."""
-        with db.connection(self.db_url) as conn:
-            with conn.cursor() as cur:
-                sources = self.repo.get_all_sources(cur)
-                source = next((s for s in sources if s["id"] == source_id), None)
-                
-                if not source:
-                    raise LookupError(f"Source {source_id} not found")
-                
-                settings = self.repo.get_source_settings(cur, source_id)
-                
-                return {
-                    **source,
-                    "settings": settings
-                }
-    
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            source = self.repo.get_source_with_settings(cur, source_id)   # one row (v10.49: not every source)
+        if not source:
+            raise LookupError(f"Source {source_id} not found")
+        return source
+
     def get_all_sources_with_settings(self) -> List[Dict[str, Any]]:
-        """Get all sources with their merged settings and post counts."""
+        """Get all sources with their merged settings and post counts (two statements, whatever the sources)."""
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 sources_with_counts = self.repo.get_sources_with_post_counts(cur)
-                
+                cur.execute("SELECT id::text, platform, settings FROM sources")
+                settings = {sid: self.repo.merge_with_defaults(platform, raw) for sid, platform, raw in cur.fetchall()}
                 for source in sources_with_counts:
-                    source["settings"] = self.repo.get_source_settings(cur, source["id"])
-                
+                    source["settings"] = settings.get(source["id"], {})
                 return sources_with_counts
 
     def list_sources(self) -> List[Dict[str, Any]]:

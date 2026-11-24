@@ -59,6 +59,19 @@ def stats_sql(where: str = "") -> str:
   {where}"""
 
 
+def post_counts(cur: Cursor, source_ids: Sequence[str]) -> Dict[str, int]:
+    """{source_id: its posts} in one statement: the kept count, or a live count(*) for a source whose posts changed
+    since its last refresh (an archive mid-way, a fetch that saved posts), so never stale. What a live fetch's and an
+    archive page's archive record read (v10.49: they read count, MIN/MAX and an oldest-post subquery over every post
+    of the source each time, the top statement on the server)."""
+    if not source_ids:
+        return {}
+    cur.execute(f"""SELECT s.id::text, CASE WHEN {_LIVE} THEN {COLUMNS["post_count"]} ELSE st.post_count END
+                      FROM sources s LEFT JOIN source_post_stats st ON st.source_id = s.id
+                     WHERE s.id = ANY(%s::uuid[])""", ([str(i) for i in source_ids],))
+    return {sid: int(n or 0) for sid, n in cur.fetchall()}
+
+
 def refresh(cur: Cursor) -> Optional[int]:
     """Keep the changed and the never kept sources again; the number kept, or None when another refresh runs.
 

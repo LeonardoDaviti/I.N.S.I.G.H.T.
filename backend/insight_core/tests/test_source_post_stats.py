@@ -76,6 +76,16 @@ class KeptPostStats(unittest.TestCase):
         self.assertEqual(self.read(self.a)["post_count"], 3)
         self.assertEqual(self.read(self.b)["post_count"], 1)
 
+    def test_post_counts_are_kept_or_live_and_never_stale(self):
+        """v10.49: what an archive record reads (one statement for any sources)."""
+        self.world()
+        self.assertEqual(R.post_counts(self.cur, [self.a, self.b]), {self.a: 3, self.b: 1})   # changed: live
+        R.refresh(self.cur)
+        self.assertEqual(R.post_counts(self.cur, [self.a]), {self.a: 3})                     # kept
+        self.post(self.a)
+        self.assertEqual(R.post_counts(self.cur, [self.a]), {self.a: 4})                     # changed again: live
+        self.assertEqual(R.post_counts(self.cur, []), {})
+
     def test_every_write_that_moves_a_statistic_is_logged_and_read_live_until_kept(self):
         self.world()
         R.refresh(self.cur)

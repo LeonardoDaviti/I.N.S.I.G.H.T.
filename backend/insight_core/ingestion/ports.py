@@ -282,6 +282,12 @@ class DbFetchStateStore:
                 logger.warning("Could not keep %s: %s", name, exc)
         return done
 
+    def keep_attention(self) -> Optional[int]:
+        """What needs attention checked again when due (services/attention.py): its count, or None when not due."""
+        from insight_core.services import attention
+
+        return attention.refresh_if_due(self.db_url)
+
     def refresh_cadence(self) -> int:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:

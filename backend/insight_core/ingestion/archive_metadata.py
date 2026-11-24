@@ -51,12 +51,12 @@ class ArchiveMetadataWriter:
 
     def record(self, source_id: str, kind: SourceKind, data: Dict[str, Any], mode: Mode) -> None:
         """Merge one plan / archive / archive-progress / live-fetch observation into settings.archive."""
-        stats = self.posts.get_source_post_stats(source_id)
+        # the count alone, kept or live (one per fetched source and per archive page: never the dates' aggregate)
+        stored = int(self.posts.post_count(source_id))
         source = self.sources.get_source_by_id(source_id)
         merged_settings = self.sources.get_source_with_settings(source_id)["settings"] if source else {}
         current = (merged_settings or {}).get("archive", {})
         now = self.clock().isoformat()
-        stored = int(stats["post_count"])
 
         # what is left to archive, derived on every path so it falls as posts come in; None when the size is unknown
         available_posts = data.get("available_posts", current.get("available_posts"))
@@ -76,7 +76,7 @@ class ArchiveMetadataWriter:
 
         history = list(current.get("history") or [])
         if mode in {"plan", "archive", "live"}:
-            history.append(self._history_event(mode, stats, data, now))
+            history.append(self._history_event(mode, stored, data, now))
         checkpoint = self._prepare_checkpoint(current, data, mode, now)
 
         archive = {
@@ -154,12 +154,12 @@ class ArchiveMetadataWriter:
         return current.get("checkpoint")
 
     @staticmethod
-    def _history_event(mode: Mode, stats: Dict[str, Any], data: Dict[str, Any], now: str) -> Dict[str, Any]:
+    def _history_event(mode: Mode, stored: int, data: Dict[str, Any], now: str) -> Dict[str, Any]:
         return {
             "at": now,
             "mode": mode,
             "status": data.get("archive_status") or data.get("status"),
-            "stored_posts": stats.get("post_count", 0),
+            "stored_posts": stored,
             "available_posts": data.get("available_posts"),
             "pages_fetched": data.get("pages_fetched"),
             "source_type": data.get("source_type"),

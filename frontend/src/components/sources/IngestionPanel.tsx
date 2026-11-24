@@ -21,6 +21,7 @@ import IngestionArchive from './IngestionArchive';
 import IngestionLogs from './IngestionLogs';
 import BackgroundWork from './BackgroundWork';
 import DataRepairs from './DataRepairs';
+import NeedsAttention from './NeedsAttention';
 import { LoadingState, Notice } from '../states';
 
 // source anatomy: its own chunk, loaded when the view opens
@@ -113,6 +114,7 @@ export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: st
         </Suspense>
       ) : sub === 'jobs' ? <IngestionJobs jobs={jobs} loading={overview.isPending} /> : sub === 'archive' ? <IngestionArchive /> : sub === 'logs' ? <IngestionLogs /> : (
         <div className="space-y-10">
+          <NeedsAttention titleClass={sectionTitle} onOpenSource={onOpenSource} />
           <section aria-labelledby="ingestion-scheduler" className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <h2 id="ingestion-scheduler" className={sectionTitle}>Scheduler</h2>

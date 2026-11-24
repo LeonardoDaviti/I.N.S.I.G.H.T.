@@ -111,6 +111,9 @@ class _ReadingKind(FakeKind):
 
 
 class _Posts:
+    def post_count(self, _source_id):
+        return 3
+
     def get_source_post_stats(self, _source_id):
         return {"post_count": 3}
 

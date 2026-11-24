@@ -29,7 +29,7 @@ from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.db.repo_posts import BACKLOG_KEY, PAGE_READ_KEY
 from insight_core.ingestion.http import AddressMemory, Conditional, HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing, paywall
-from insight_core.ingestion.kinds.base import UNREADABLE, Inspection, RateLimit, Source
+from insight_core.ingestion.kinds.base import UNREADABLE, FetchedPosts, Inspection, RateLimit, Source
 from insight_core.ingestion.kinds.generic_rss import StoredUrls
 from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.json_safe import iso
@@ -277,6 +277,26 @@ def twin(url: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(netloc=other))
 
 
+# settings key: where a page watch's listing page lands when that is another page (lands_elsewhere), else null
+LANDS_AT_KEY = "lands_at"
+
+
+def lands_elsewhere(asked: str, landed: str) -> Optional[str]:
+    """The landed address when it is another page than the asked one; None for the same page at http/https, www. or
+    bare host, a trailing slash, or a different case of host."""
+    def same_page(url: str) -> Optional[Tuple[str, str, str]]:
+        clean = _clean(url)
+        if not clean:
+            return None
+        parsed = urllib.parse.urlparse(clean)
+        host = parsed.netloc.lower()
+        return host[4:] if host.startswith("www.") else host, parsed.path.rstrip("/") or "/", parsed.query
+
+    if not landed or same_page(asked) == same_page(landed):
+        return None
+    return _clean(landed) or landed
+
+
 # A site's name after its titles ("Title | Blog", "Title — Acme"), learned across a section's titles: the trailing
 # segment after a separator most of them share. The separator is spaced after it, before it optionally.
 TITLE_SUFFIX_RE = re.compile(r"^(.*\S)\s*[|\\/·•–—-]\s+([^|\\/·•–—]{1,40}?)\s*$")
@@ -351,6 +371,7 @@ class Discovery:
     listed: Tuple[str, ...]                          # the listing page's article links, page order
     sitemap: Dict[str, Optional[datetime]]           # the sitemap's article URLs -> lastmod
     title: str = ""                                  # the listing page's own title (for the site's suffix)
+    landed: str = ""                                 # where the listing page landed after its redirects
 
     def candidates(self) -> List[str]:
         """Listing links first (page order), then the sitemap's others by lastmod, newest first."""
@@ -451,7 +472,7 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
             url = _clean(loc)
             if url and under(url, prefix):
                 sitemap.setdefault(first.setdefault(page_key(url), url), parsing.parse_datetime_value(lastmod))
-        return Discovery(prefix, listed, sitemap, title)
+        return Discovery(prefix, listed, sitemap, title, landed=listing)
 
     if prefix:   # the owner's prefix always wins, less any date it ends in
         return await found_under(stable_prefix(normalise_prefix(prefix)))
@@ -1091,7 +1112,11 @@ class PageWatchKind(BaseSourceAdapter):
                     post[BACKLOG_KEY] = True   # from the sitemap: never "new to you"
                 posts.append(post)
         name_titles(posts, [found.title])   # the site's name off the titles
-        return posts
+        got = FetchedPosts(posts)
+        # where the listing page now lands, when another page (a site that moved its blog): the attention check
+        # lists it; None again once it lands at its own address (merged only when it changed)
+        got.recognised = {LANDS_AT_KEY: lands_elsewhere(str(source["handle_or_url"]), found.landed)}
+        return got
 
     def page_post(self, source: Source, url: str, page: str) -> Optional[Dict[str, Any]]:
         return post_from(page, str(source["handle_or_url"]), url, None)

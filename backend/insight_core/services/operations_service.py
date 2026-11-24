@@ -234,6 +234,9 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
     return {
         "source_id": source["id"],
         "display_name": settings.get("display_name") or source.get("handle_or_url"),
+        "address": source.get("handle_or_url"),
+        # a page watch whose listing page now lands at another page (page_watch.lands_elsewhere), else None
+        "lands_at": settings.get("lands_at"),
         "platform": source.get("platform"),
         "kind": kind.name,
         "enabled": enabled,

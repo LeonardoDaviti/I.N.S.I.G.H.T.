@@ -735,6 +735,26 @@ export interface BackgroundWorkResponse extends Envelope {
   links: BackgroundProgress;
 }
 
+/** GET /api/operations/attention (services/attention.py): kept by the jobs process after a scheduled run. `count`
+ *  is the `act` items; `watch` and `info` are listed only. */
+export interface AttentionItem {
+  key: string;
+  kind: 'source' | 'silent' | 'moved' | 'platform' | 'blocked' | 'failed_tasks' | 'queue' | 'db_size' | 'statement';
+  level: 'act' | 'watch' | 'info';
+  title: string;
+  detail: string;
+  since?: string | null;
+  source_id?: string | null;
+  host?: string | null;
+}
+
+export interface AttentionResponse {
+  computed_at: string | null;
+  count: number;
+  items: AttentionItem[];
+  line: string | null;
+}
+
 export interface RunningJobsResponse extends Envelope {
   jobs?: JobRun[];
 }
@@ -1357,6 +1377,7 @@ export function createApi() {
     getOperationsOverview: () => request<OperationsOverviewResponse>('/api/operations/overview'),
     getRunningJobs: () => request<RunningJobsResponse>('/api/operations/running'),
     getBackgroundWork: () => request<BackgroundWorkResponse>('/api/operations/background'),
+    getAttention: () => request<AttentionResponse>('/api/operations/attention'),
     getOperationJob: (jobId: string) => request<OperationJobResponse>(`/api/operations/jobs/${jobId}`),
     getSchedulerConfig: () => request<SchedulerResponse>('/api/operations/scheduler'),
     updateSchedulerConfig: (config: Partial<SchedulerConfig>) => settle(request<SchedulerResponse>('/api/operations/scheduler', {

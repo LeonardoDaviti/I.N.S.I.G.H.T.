@@ -1915,6 +1915,17 @@ async def get_background_work():
     return await asyncio.to_thread(services().operations.background_work)
 
 
+@app.get("/api/operations/attention")
+@error_detail("load what needs attention")
+async def get_attention():
+    """What needs attention (0280 I; services/attention.py): the answer the jobs process kept after its last scheduled
+    run, never computed here. {computed_at, count, items, line}; computed_at null before the first check."""
+    from insight_core.services import attention
+
+    kept = await asyncio.to_thread(attention.kept, services().operations.db_url)
+    return kept or {"computed_at": None, "count": 0, "items": [], "line": None}
+
+
 @app.get("/api/operations/db-statements")
 @error_detail("load the database's top statements")
 async def get_db_statements(since: Optional[str] = Query(default=None, pattern="^(start|snapshot)$"),

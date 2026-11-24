@@ -49,6 +49,9 @@ class _Posts:
     def __init__(self):
         self.count = 0
 
+    def post_count(self, _source_id):
+        return self.count
+
     def get_source_post_stats(self, _source_id):
         return {"post_count": self.count}
 
