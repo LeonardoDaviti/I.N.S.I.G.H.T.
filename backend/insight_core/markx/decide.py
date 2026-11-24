@@ -82,9 +82,10 @@ class Config:
     # members; never two the judge kept apart this run (a merge answered "different" or "development"). The overlap
     # only proposes: the two are one story when that merge's answer says same_event at `tau_merge` (`decide`'s
     # merges), never without an answer (0280 K1: code-only at 2 posts / half it merged 2 wrong pairs of 38). With the
-    # judge deciding, the bar is loosened to 1 post / 0.3 (measured on the 2026-11-19 server copy, v10.48: 172
-    # candidates, about 3 new a day; Haiku merged 23 labeled right pairs and 1 wrong of 79, 15 of 15 sampled
-    # unlabeled merges right; at any share it merged 3 wrong of 21 sampled, all under a quarter). 0: off.
+    # judge deciding, the bar is loosened to 1 post / 0.3 (the 2026-11-19 server copy: 172 candidates, about 3 new a
+    # day). Measured with judge-story-v2 (v10.49, one release is one row): 39 right and 1 wrong merge of 79 labeled
+    # pairs (precision 0.975, recall 0.68; code-only at 2 / 0.5: 36 and 2, 0.947 / 0.63; judge-story-v1: 23 and 1),
+    # 33 right and 0 wrong of 40 fresh held-out pairs (code-only: 13 and 0). 0: off.
     overlap_min: int = 1
     overlap_share: float = 0.3
 

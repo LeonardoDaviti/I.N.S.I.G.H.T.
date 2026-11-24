@@ -46,7 +46,7 @@ ENTITY_RELATIONS = ["released", "announced", "acquired", "invested_in", "partner
                     "published"]   # a issues or publishes document b
 MAX_ENTITIES = 20
 
-# The judge's seven relations (judge-*-v1, judge-story-v1, connect-v1), and those that make a post "about" a story.
+# The judge's seven relations (judge-*-v1, judge-story-v1/v2, connect-v1), and those that make a post "about" a story.
 RELATIONS = ["same_event", "development", "reaction", "mention", "digest_item", "different", "cant_tell"]
 ABOUT = ["same_event", "development", "reaction"]
 
@@ -774,7 +774,7 @@ KINDS: Dict[str, Kind] = {k.name: k for k in (
     Kind("check", "judge-raw-v1", "post_story", JUDGE_SCHEMA),
     Kind("join", "judge-read-v2", "post_story", JUDGE_V2_SCHEMA),   # v2 quotes the post (v1's tasks kept:
     Kind("pair", "judge-read-v2", "post_post", JUDGE_V2_SCHEMA),    # EARLIER_GUIDES)
-    Kind("merge", "judge-story-v1", "story_story", JUDGE_SCHEMA),
+    Kind("merge", "judge-story-v2", "story_story", JUDGE_SCHEMA),   # one release is one row (0281 D)
     Kind("connect", "connect-v1", "story_story", JUDGE_SCHEMA),
     Kind("card", "card-v1", "story", CARD_SCHEMA),
     Kind("headline", "headline-v2", "story", HEADLINE_SCHEMA),     # core members; who acted, its date
@@ -931,6 +931,8 @@ EARLIER_GUIDES: Dict[str, Tuple[Tuple[str, ...], Dict[str, Any]]] = {
                                               # that linked nothing are asked again (graph.chain_asked)
     "chain-v3": (("chain",), CHAIN_SCHEMA),   # before v4's project made with the thing (builds_on); its
                                               # same_release and unknown pairs are asked again (graph.chain_asked)
+    "judge-story-v1": (("merge",), JUDGE_SCHEMA),   # v10.49: before v2's one-release-one-row rules; its answers are
+                                                    # kept (12k merges), new questions are asked under v2
     "ent-v5": (("reading",), READING_V5_SCHEMA),   # v10.42: before v6's subtype; its readings are not asked again
 }
 

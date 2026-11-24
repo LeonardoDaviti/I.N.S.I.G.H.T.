@@ -323,7 +323,8 @@ class DecisionRun(_World):
             return out
         for config in (D.Config(), D.Config(document_merges=True, connect_lo=0.5, story_days=5)):
             old_cfg = _old(config)
-            config = replace(config, roundup_first=False, connect_settle_below=None)   # new gates off
+            # new gates off (the overlap's merge3 questions are a pass the legacy copy never asks)
+            config = replace(config, roundup_first=False, connect_settle_below=None, overlap_min=0)
             self.cur.execute("SAVEPOINT pairing_run")
             # the legacy copy's Later developments stage is a no-op here
             with mock.patch.object(later_mod, "stage", lambda *a, **k: {}, create=True):

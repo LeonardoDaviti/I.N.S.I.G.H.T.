@@ -416,7 +416,14 @@ class JudgeQuotes0258(unittest.TestCase):
         self.assertEqual(schemas.guide_ids()["judge-read-v2"], "join")
         self.assertNotEqual(schemas.guide_body("judge-read-v1"), schemas.guide_body("judge-read-v2"))
         self.assertIn("post_quote", schemas.guide_body("judge-read-v2"))
-        self.assertEqual(schemas.answer_guides("merge"), ("judge-story-v1",))
+        self.assertEqual(schemas.answer_guides("merge"), ("judge-story-v2", "judge-story-v1"))
+        self.assertIs(schemas.schema_for("merge", "judge-story-v1"), schemas.JUDGE_SCHEMA)   # v1's answers kept
+        self.assertEqual(schemas.guide_ids()["judge-story-v1"], "merge")
+        v2 = schemas.guide_body("judge-story-v2")
+        self.assertIn("One release is one row", v2)
+        # the guide states the rule, never the measured cases' makers or models (0281 D)
+        for name in ("Anthropic", "Fable", "Gemini", "Nvidia", "OpenAI", "Kimi", "DeepSeek", "Google"):
+            self.assertNotIn(name, v2)
 
     def test_an_answer_written_from_another_question_is_refused(self):
         for kind in ("pair", "join"):
