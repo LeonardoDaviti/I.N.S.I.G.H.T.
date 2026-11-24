@@ -110,6 +110,7 @@ class RepairForeignPagesTests(unittest.TestCase):
                         (saved.PLATFORM, saved.HANDLE))
             self.saved = cur.fetchone()[0]
             self.source = insert_source(cur, handle=f"{self.site}/feed")
+            self.sources = [self.source]
             self.feeds = {f"{self.site}/feed": rss([f"{self.paper}/2026/11/01/linked-story"], link=f"{self.site}/")}
             self.own_entry = self._post(cur, f"{self.site}/2025/03/an-entry", "/2025/03/an-entry", "generic_rss")
             self.feed_link = self._post(cur, f"{self.paper}/2026/11/01/linked-story", None, None)   # a feed item
@@ -129,7 +130,11 @@ class RepairForeignPagesTests(unittest.TestCase):
 
     def tearDown(self):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM posts WHERE source_id = %s::uuid AND url LIKE %s", (self.saved, f"{self.paper}%"))
+            cur.execute("DELETE FROM posts WHERE source_id = %s::uuid AND (url LIKE %s OR url LIKE %s)",
+                        (self.saved, f"{self.paper}%", f"{self.site}%"))
+            # insert_source gives each its own address in place of the scratch one, so delete_scratch_sources misses
+            # them: left on, their fresh posts were planned by the next module's leases (test_markx_reading_windows)
+            cur.execute("DELETE FROM sources WHERE id = ANY(%s::uuid[])", (self.sources,))
             delete_scratch_sources(cur)
             conn.commit()
 
@@ -188,6 +193,7 @@ class RepairForeignPagesTests(unittest.TestCase):
         """A feed served off the site its items are on, with one page its archive read from that site."""
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             other = insert_source(cur, handle=feed)
+            self.sources.append(other)
             for n in range(3):
                 insert_post(cur, other, f"{self.site}/feed-item-{n}", content="A page.")
             pid = insert_post(cur, other, f"{self.site}/2019/an-archived-entry", content="A page.")
