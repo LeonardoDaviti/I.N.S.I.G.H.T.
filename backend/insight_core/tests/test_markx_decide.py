@@ -325,15 +325,18 @@ class Rules(unittest.TestCase):
             out = D.decide(self.posts, self.stories, joined + [(m, v(rel, p))])
             self.assertEqual(set(out.about), {"A", "E"}, (rel, p))   # under the bar, or not one event: apart
 
-    def test_overlap_needs_two_core_posts_and_half_the_smaller_story(self):
+    def test_overlap_needs_its_core_posts_and_share_of_the_smaller_story(self):
+        """With the judge deciding, one core post shared, 0.3 of the smaller story, is a question (v10.48)."""
+        def ov(a, e, config=D.Config()):
+            return D.overlapping(self.posts, {"A": {p: {"by": "rule"} for p in a}, "E": {p: {"by": "rule"} for p in e}},
+                                 {}, {}, {"A", "E"}, set(), config)
         one = D.decide(self.posts, self.stories, self.joined_to_both(posts=("g",)))
-        self.assertEqual(D.plan_overlaps(self.posts, one), [])        # one shared post: a round-up, not asked
-        self.assertEqual(D.overlapping(self.posts, {"A": {p: {"by": "rule"} for p in "abcgh"},
-                                                    "E": {p: {"by": "rule"} for p in "bcdef"}}, {}, {}, {"A", "E"},
-                                       set()), [])                      # 2 of 5: under half
-        got = D.overlapping(self.posts, {"A": {p: {"by": "rule"} for p in "abcgh"},
-                                         "E": {p: {"by": "rule"} for p in "bcdefg"}}, {}, {}, {"A", "E"}, set())
-        self.assertEqual(got, [("A", "E", 3)])
+        self.assertEqual([q.tid for q in D.plan_overlaps(self.posts, one)], ["merge3:A:E"])   # 1 of E's 3
+        self.assertEqual(ov("abcgh", "defg"), [])                       # 1 of 4: under 0.3
+        old = D.Config(overlap_min=2, overlap_share=0.5)               # v10.47's code-only bar
+        self.assertEqual(D.plan_overlaps(self.posts, one, old), [])
+        self.assertEqual(ov("abcgh", "bcdef", old), [])                 # 2 of 5: under half
+        self.assertEqual(ov("abcgh", "bcdefg", old), [("A", "E", 3)])
 
     def test_a_development_or_reaction_join_is_no_overlap(self):
         """A post joined to one story as a development (or reaction) says the stories differ: apart."""
