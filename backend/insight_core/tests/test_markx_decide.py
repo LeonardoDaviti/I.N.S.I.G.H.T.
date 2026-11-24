@@ -288,6 +288,54 @@ class Rules(unittest.TestCase):
         out = D.decide(self.posts, self.stories, [(q, v("development", 0.9))], D.Config.prototype())
         self.assertIn("late", out.about["A"])                          # the prototype had no late rule
 
+    def joined_to_both(self, rel_a="same_event", rel_e="same_event", posts=("g", "h")):
+        """Each of `posts` joined by the judge to story A and to story E (0280 K1: one event, several stories)."""
+        out = []
+        for p in posts:
+            out.append((D.Question(f"join:A:{p}", "join", story="A", post=p, anchor="a"), v(rel_a, 0.9)))
+            out.append((D.Question(f"join:E:{p}", "join", story="E", post=p, anchor="e"), v(rel_e, 0.9)))
+        return out
+
+    def test_stories_whose_core_members_overlap_are_one_story(self):
+        """Two posts the judge put in both stories as the same event, half of the smaller story: one story, the
+        older Mark IX story's key (0280 K1, the four Jensen Huang stories); any event kind, no chain needed."""
+        out = D.decide(self.posts, self.stories, self.joined_to_both())
+        self.assertEqual(set(out.about), {"A"})
+        self.assertEqual(set(out.about["A"]), {"a", "b", "c", "short", "e", "f", "g", "h"})
+        self.assertEqual(out.final["E"], "A")
+        self.assertEqual([(x["change"], x["story"], x["other"], x["shared"]) for x in out.log if x["change"] == "overlap"],
+                         [("overlap", "A", "E", 2)])
+        rows = D.wanted(out, self.posts)
+        self.assertEqual(rows["A"]["f"][1], "rule:time")             # each post keeps its own reason
+        self.assertEqual(rows["A"]["g"][1], "judge:join")
+
+    def test_overlap_needs_two_core_posts_and_half_the_smaller_story(self):
+        one = D.decide(self.posts, self.stories, self.joined_to_both(posts=("g",)))
+        self.assertEqual(set(one.about), {"A", "E"})                  # one shared post: a round-up, apart
+        self.assertEqual(D.overlapping(self.posts, {"A": {p: {"by": "rule"} for p in "abcgh"},
+                                                    "E": {p: {"by": "rule"} for p in "bcdef"}}, {}, {}, {"A", "E"},
+                                       set()), [])                      # 2 of 5: under half
+        got = D.overlapping(self.posts, {"A": {p: {"by": "rule"} for p in "abcgh"},
+                                         "E": {p: {"by": "rule"} for p in "bcdefg"}}, {}, {}, {"A", "E"}, set())
+        self.assertEqual(got, [("A", "E", 3)])
+
+    def test_a_development_or_reaction_join_is_no_overlap(self):
+        """A post joined to one story as a development (or reaction) says the stories differ: apart."""
+        for rel in ("development", "reaction"):
+            out = D.decide(self.posts, self.stories, self.joined_to_both(rel_e=rel))
+            self.assertEqual(set(out.about), {"A", "E"}, rel)
+            self.assertIn("g", out.about["E"])
+
+    def test_the_judge_keeping_two_stories_apart_wins_over_their_overlap(self):
+        m = D.Question("merge:A:E", "merge", story="A", other="E")
+        for rel, p in (("development", 0.9), ("different", 0.9)):
+            out = D.decide(self.posts, self.stories, self.joined_to_both() + [(m, v(rel, p))])
+            self.assertEqual(set(out.about), {"A", "E"}, rel)
+        out = D.decide(self.posts, self.stories, self.joined_to_both(), D.Config.prototype())
+        self.assertEqual(set(out.about), {"A", "E"})                  # the prototype had no overlap rule
+        out = D.decide(self.posts, self.stories, self.joined_to_both(), D.Config(overlap_min=0))
+        self.assertEqual(set(out.about), {"A", "E"})
+
     def test_checks_come_before_joins_and_merges_after_glue(self):
         c = D.Question("check:A:b", "check", story="A", post="b", voices=3)
         j = D.Question("join:A:b", "join", story="A", post="b", anchor="a")

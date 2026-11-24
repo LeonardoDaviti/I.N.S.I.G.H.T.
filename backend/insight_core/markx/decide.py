@@ -18,7 +18,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
 from psycopg import errors as psycopg_errors
 
@@ -77,12 +77,18 @@ class Config:
     document_days: int = _SAME.document_window.days   # ... when two of their posts linking it are at most this far apart
     days: int = 30                  # the window a run decides ...
     story_window: bool = True       # ... read from the owner's story window each run (markx/story_window.py)
+    # two stories whose core members overlap are one story, for every event kind (`overlapping`): at least
+    # `overlap_min` posts are core members of both, and they are at least `overlap_share` of the smaller story's
+    # members; never two the judge kept apart this run (a merge answered "different" or "development"). 0: off.
+    # Measured on the server copy of 2026-11-19 (plan/issues/0280 K1): 35 of 37 labeled pairs right.
+    overlap_min: int = 2
+    overlap_share: float = 0.5
 
     @staticmethod
     def prototype() -> "Config":
         return Config(two_event_guard=False, late_rule=False, check_threads=False, confirm=False, reason_rule=False,
                       link_keeps=False, confirm_check=False, document_merges=False, roundup_first=False,
-                      reask_unquoted=False)
+                      reask_unquoted=False, overlap_min=0)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -393,7 +399,8 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
                                     "relation": rel, "p_about": pa, "reason": v.reason, "call": v.call})
                         continue
                 if key not in about:
-                    about[key][q.anchor] = {"by": "meaning-anchor", "call": v.call, "p_about": pa, "type": q.type}
+                    about[key][q.anchor] = {"by": "meaning-anchor", "call": v.call, "p_about": pa, "type": q.type,
+                                            "relation": rel}
                 about[key][q.post] = {"by": "judge", "relation": rel, "p_about": pa, "cos": q.cos, "reason": v.reason,
                                       "call": v.call, "type": q.type}
                 log.append({"tid": q.tid, "change": "join" if q.type == "join" else "new_pair", "story": key,
@@ -444,17 +451,69 @@ def decide(posts: Dict[str, Post], stories: Dict[str, Sequence[Member]], answere
                 merge_calls[drop] = v.call
                 log.append({"tid": q.tid, "change": "merge", "story": keep, "other": drop, "p_about": pa,
                             "cos": q.cos, "reason": v.reason, "call": v.call})
-    merged: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
-    came_from: Dict[Tuple[str, str], str] = {}
-    for key, ms in about.items():
-        merged[find(key)].update(ms)
-        for p in ms:
-            came_from[(find(key), p)] = key
+    def merge_all() -> Tuple[Dict[str, Dict[str, Dict[str, Any]]], Dict[Tuple[str, str], str]]:
+        out_: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
+        came: Dict[Tuple[str, str], str] = {}
+        for key, ms in about.items():
+            out_[find(key)].update(ms)
+            for p in ms:
+                came[(find(key), p)] = key
+        return out_, came
+
+    merged, came_from = merge_all()
+    if config.overlap_min > 0:
+        apart = {frozenset((find(g(x["a"])), find(g(x["b"])))) for x in refusals}
+        apart |= {frozenset((find(g(c["a"])), find(g(c["b"])))) for c in connections
+                  if c["a_kind"] == "story" and c["b_kind"] == "story"}
+        for keep, drop, shared in overlapping(posts, merged, came_from, merge_calls, members, apart, config):
+            keep, drop = find(keep), find(drop)
+            if keep != drop:
+                alias[drop] = keep
+                log.append({"change": "overlap", "story": keep, "other": drop, "shared": shared})
+        merged, came_from = merge_all()
     keys = set(glue) | set(alias) | set(about) | set(mentions) | set(members)
     return Outcome(about=dict(merged), mentions={k: dict(v) for k, v in mentions.items()}, log=log,
                    connections=connections, merged_into={k: find(k) for k in alias}, ix=set(members),
                    final={k: find(g(k)) for k in keys}, merge_calls=merge_calls, came_from=came_from,
                    refusals=refusals)
+
+
+def core(ev: Dict[str, Any], merged_in: bool) -> bool:
+    """Whether a member's evidence says the post is about its story's own event: Mark IX joined it, the judge said
+    same_event (a join, a pair or its anchor), or a merge brought it in; not a development or a reaction joined."""
+    return merged_in or ev.get("by") == "rule" or (ev.get("by") in ("judge", "meaning-anchor")
+                                                   and ev.get("relation") == "same_event")
+
+
+def overlapping(posts: Dict[str, Post], stories: Dict[str, Dict[str, Dict[str, Any]]],
+                came_from: Dict[Tuple[str, str], str], merge_calls: Dict[str, Optional[str]], ix: Iterable[str],
+                apart: Set[FrozenSet[str]], config: Config = Config()) -> List[Tuple[str, str, int]]:
+    """The story pairs that are one story by their overlap, as (keep, drop, shared core posts), each pair once, in a
+    stable order: two stories in which at least `config.overlap_min` posts are core members of both (`core`), those
+    being at least `config.overlap_share` of the smaller story's known members, and never a pair in `apart`. One
+    event told by several stories (0280 K1: four Mark X stories of one reinstatement) whatever its kind; a launch's
+    stories are joined by the chain as well. Between the two, a Mark IX story keeps its key, else the older one."""
+    ix = set(ix)
+    known = {k: [p for p in ms if p in posts] for k, ms in stories.items()}
+    cores: Dict[str, List[str]] = defaultdict(list)
+    for key, ms in sorted(stories.items()):
+        for p, ev in ms.items():
+            origin = came_from.get((key, p), key)
+            if p in posts and core(ev, origin != key and bool(merge_calls.get(origin))):
+                cores[p].append(key)
+    shared: Counter = Counter()
+    for p, keys in cores.items():
+        for n, x in enumerate(keys):
+            for y in keys[n + 1:]:
+                shared[(x, y)] += 1
+    out = []
+    for (x, y), n in sorted(shared.items()):
+        small = min(len(known[x]), len(known[y]))
+        if n < config.overlap_min or n < config.overlap_share * small or frozenset((x, y)) in apart:
+            continue
+        keep, drop = sorted([x, y], key=lambda s: (s not in ix, _first_key(posts, stories[s]), s))
+        out.append((keep, drop, n))
+    return out
 
 
 def _late(at: Any, began: Any) -> bool:
