@@ -11,7 +11,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, bare, paper_id, publication_of, site_of, x_account
 from insight_core.utils.post_links import LANGUAGE, NUMBERISH, is_article, is_home, section_of
@@ -279,15 +279,61 @@ PLACE_TESTS = (("reference", reference_address), ("archive", archive_address), (
 # References and documents are a quiet line of references; the other kinds are no suggestion at all.
 REFERENCE_KINDS = ("reference", "document")
 
+# A reference or product page (v10.47, 0280 C2): a page you look a thing up in, not a piece a publication published,
+# told by its address's shape (page kinds, never sites): a docs, help, wiki, Q&A, course, statistics, product,
+# pricing, download or login page, a one-word page, a catalogue's entry (`listing_address`), an app's shared page, a
+# model hub's page, a front page. A site most of whose linked pages are such is a reference (`place_kind`);
+# Discover's Pages keeps such pages apart from the pieces (`page_kind`). Measured on production's answer 2026-11-24
+# (0280 C2): "learn", "data", "technologies", "topic", "features" and a knowledge. host took publications' sections
+# (endorlabs.com/learn/<post>, carta.com/data/<report>, a forum's /topic/), so they are not here.
+REFERENCE_PAGE_HOST = re.compile(r"^(?:www\.)?(?:help|support|docs?|wiki|kb|status|console"
+                                 r"|app|dashboard|login|accounts?|auth|store|shop)\.", re.I)
+CATALOG_PATH = frozenset({
+    "wiki", "questions", "answers", "course", "courses", "lecture", "lectures", "specializations",
+    "professional-certificates", "certificates", "tutorial", "tutorials", "chart", "charts", "statistics", "forecasts",
+    "outlook", "indicators", "dataset", "datasets", "product", "products", "pricing", "plans", "solutions",
+    "dashboard", "download", "downloads", "login", "signin", "sign-in", "signup", "sign-up", "register", "waitlist",
+    "model", "models", "model-cards", "leaderboard", "leaderboards", "playground", "prompts", "docs",
+    "doc", "documentation", "help", "support", "reference", "api"})
+
+
+ONE_WORD = re.compile(r"^[a-z]+$")
+
+
+def reference_page(url: str) -> bool:
+    """Whether a page is a reference or product page (above), not a publication's piece. Pure."""
+    from insight_core.utils.entity_originals import MODEL_HUBS   # entity_originals reads this module
+    from insight_core.utils.post_links import LEGAL
+    host = bare(url).partition("/")[0].lower()
+    if not host:
+        return False
+    if site_of(host) in MODEL_HUBS or REFERENCE_PAGE_HOST.match(host):
+        return True
+    segs = [s for s in path_segments(url) if not LANGUAGE.match(s)]
+    if not segs:
+        return True   # a front page (or one only a query names) says who, not what
+    if len(segs) == 1 and ONE_WORD.match(segs[0]) and "?" not in url:
+        return True   # /windows, /chrome: one word alone is a product's or a section's page; a piece has a slug
+    return (any(s in CATALOG_PATH for s in segs[:2]) or bool(LEGAL.search(_path(url))) or listing_address(url)
+            or app_address(url))
+
+
+def page_kind(url: str) -> Optional[str]:
+    """Discover's Pages: "reference" for a reference or product page, None for a piece."""
+    return "reference" if reference_page(url) else None
+
 
 def place_kind(key: str, urls: Iterable[str]) -> Optional[str]:
     """What a suggestion is when it is no source (PLACE_TESTS, PLACE_SHARE of its shown pages of that shape), else
-    None. A platform's owner is only a reference, document, paper source or listing."""
+    None. A platform's owner is only a reference, document, paper source or listing. A site PLACE_SHARE of whose shown
+    pages are reference or product pages (`reference_page`) is a reference (0280 C2)."""
     urls = list(urls)
     if REFERENCE_HOST.match(key):
         return "reference"
     tests = PLACE_TESTS if "/" not in key else tuple(t for t in PLACE_TESTS
                                                      if t[0] in ("reference", "document", "paper", "listing"))
+    if "/" not in key:
+        tests += (("reference", reference_page),)
     for kind, test in tests:
         if urls and sum(1 for u in urls if test(u)) >= PLACE_SHARE * len(urls):
             return kind
@@ -633,16 +679,54 @@ def fit_score(s: Mapping, *, on: bool) -> float:
     return s["score"] * (1 + READER_FIT_WEIGHT * float(s.get("reader_fit") or 0.0))
 
 
+# A row none of your sources linked in this many days is quiet (0280 C1): kept apart from the main list.
+QUIET_DAYS = LATELY_DAYS
+APART = ("unfollowable", "quiet")
+APART_SHOWN = 40     # each apart section's rows served (the main list pages; these are few and below it)
+
+
+def quiet(s: Mapping) -> bool:
+    """No link from your sources in QUIET_DAYS (`last_days`, set where the links are counted; a row without it, an
+    originals' or citations' row, is never quiet)."""
+    days = s.get("last_days")
+    return days is not None and days > QUIET_DAYS
+
+
+def apart_of(s: Mapping) -> Optional[str]:
+    """The section a row sits in apart from the main list: "unfollowable" (tested, no feed or page reads it), else
+    "quiet"; None in the main list. A row the worker judged "follow" stays in the main list."""
+    if section(s) == 1:
+        return "unfollowable"
+    if quiet(s) and not judged_follow(s):
+        return "quiet"
+    return None
+
+
 def order(found: Iterable[Mapping], *, reader: Optional[bool] = None) -> List[Mapping]:
-    """Judged "follow" first, then by section, judgement, linked before unlinked, fit_score, key; the unfollowable
-    section is marked `section: "unfollowable"`."""
+    """The main list first (judged "follow" first, then by section, judgement, linked before unlinked, fit_score,
+    key), then the apart sections in APART's order, each so ordered; each apart row marked `section`."""
     on = reader_fit_on() if reader is None else reader
-    out = sorted(found, key=lambda s: (not judged_follow(s), section(s), FIT_ORDER.get(s.get("fit"), 1),
-                                       not s.get("voices"), -fit_score(s, on=on), s["key"]))
+    out = sorted(found, key=lambda s: (APART.index(apart_of(s)) + 1 if apart_of(s) else 0, not judged_follow(s),
+                                       section(s), FIT_ORDER.get(s.get("fit"), 1), not s.get("voices"),
+                                       -fit_score(s, on=on), s["key"]))
     for s in out:
-        if section(s) == 1:
-            s["section"] = "unfollowable"   # type: ignore[index]
+        kind = apart_of(s)
+        if kind:
+            s["section"] = kind   # type: ignore[index]
+        else:
+            s.pop("section", None)   # type: ignore[attr-defined]
     return out
+
+
+def split(ordered: Sequence[Mapping]) -> Tuple[List[Mapping], Dict[str, Any]]:
+    """(the main list, {section: {total, rows: its first APART_SHOWN}}) of an `order`ed list."""
+    main = [s for s in ordered if not s.get("section")]
+    apart: Dict[str, Any] = {}
+    for kind in APART:
+        rows = [s for s in ordered if s.get("section") == kind]
+        apart[kind] = {"total": len(rows), "rows": rows[:APART_SHOWN]}
+    return main, apart
+
 
 # ---- Discover --------------------------------------------------------------------------------
 

@@ -41,9 +41,9 @@ class OrderTests(unittest.TestCase):
                  card("hubowner.example", 1.0, "other_feed"),
                  card("paid.example", 9.0, "headlines"), card("page.example", 2.0, "page"), card("new.example", 6.0)]
         got = discover_rules.order(found)
-        self.assertEqual([s["key"] for s in got], ["feed.example", "page.example", "walled.example", "paid.example",
-                                                   "hubowner.example", "new.example", "untested.example"],
-                         "the section in score order, never below an untested one")
+        self.assertEqual([s["key"] for s in got], ["feed.example", "page.example", "new.example", "untested.example",
+                                                   "walled.example", "paid.example", "hubowner.example"],
+                         "v10.47 (0280 C1): the main list first, then the unfollowable section in score order")
         self.assertEqual([s["key"] for s in got if s.get("section") == "unfollowable"],
                          ["walled.example", "paid.example", "hubowner.example"], "a feed, but not of these pages: can't be followed as one")
 
@@ -276,9 +276,11 @@ class DiscoverServiceTests(unittest.TestCase):
         self._linked(quiet, voices[:3])
         self._linked(fed, voices[:3])
         self._tested({walled: "blocked", fed: "feed"})
-        got = self._discover()["suggestions"]
-        self.assertEqual([s["key"] for s in got], [fed, walled, quiet], "below the followable, above the untested")
-        self.assertEqual([s.get("section") for s in got], [None, "unfollowable", None])
+        answer = self._discover()
+        got = answer["suggestions"]
+        self.assertEqual([s["key"] for s in got], [fed, quiet], "v10.47 (0280 C1): out of the main list")
+        self.assertEqual([s["key"] for s in answer["apart"]["unfollowable"]["rows"]], [walled], "its own section")
+        self.assertEqual(answer["apart"]["unfollowable"]["rows"][0]["section"], "unfollowable")
 
     def test_an_archive_and_a_document_host_are_no_suggestions(self):
         voices = [self._voice(n) for n in range(3)]

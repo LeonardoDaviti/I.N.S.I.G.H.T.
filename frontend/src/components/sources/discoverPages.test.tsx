@@ -79,4 +79,12 @@ describe('DiscoverPages (issue 0113)', () => {
     setup([]);
     expect(screen.getByText('No pages to save')).toBeInTheDocument();
   });
+
+  it('keeps reference and product pages apart from the pieces (0280 C2)', () => {
+    setup([essay, { ...essay, url: 'https://hub.example/model/a-model', title: 'A model page', site: 'hub.example',
+      hide_key: 'page:hub.example/model/a-model', stories: [], kind: 'reference' }]);
+    const apart = screen.getByRole('region', { name: 'Reference and product pages' });
+    expect(apart).toHaveTextContent('A model page');
+    expect(apart).not.toHaveTextContent('An essay about the release');
+  });
 });

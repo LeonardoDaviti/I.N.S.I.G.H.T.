@@ -44,7 +44,7 @@ from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_M
                                               other_channel, owner_domain, place_kind, reader_fit, score, site_unit)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, NOT_PUBLISHERS, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, threads)
-from insight_core.utils.discover_rules import GROWTH_DAYS, growth, page_key_of, pages as pages_of
+from insight_core.utils.discover_rules import GROWTH_DAYS, growth, page_key_of, page_kind, pages as pages_of, split
 from insight_core.utils.entity_originals import supplier_reason
 from insight_core.utils.originals_rules import SiteReads, site_reads_of, strip_access_tokens, tokened
 from insight_core.utils.tree_rules import _PAGE, slug_title
@@ -824,7 +824,7 @@ class StoriesService:
             refreshing = state.get("stage") is not None or state.get("wanted_at") is not None
         if stamp is None or "built_at" not in answer:
             empty = {"success": True, "suggestions": [], "also": [], "archives": [], "unnamed": [], "pages": [],
-                     "references": [], "first_page": FIRST_PAGE}
+                     "references": [], "first_page": FIRST_PAGE, "apart": {}}
             answer = {**empty, **answer, "built_at": None}
         return {**self._page(answer, offset=offset, limit=limit, q=q, total=total), "refreshing": refreshing}
 
@@ -863,7 +863,11 @@ class StoriesService:
         """The list (`_discover_all`) with Mark X's originals rows read now. Without `persist`, nothing is written."""
         result = self._discover_all(persist=persist)
         result = self._from_originals(result)
-        return {**result, "suggestions": self._by_fit(result["suggestions"])}
+        # 0280: the main list apart from the unfollowable and quiet rows (C1); Pages' reference and product pages
+        # marked (C2)
+        main, apart = split(self._by_fit(result["suggestions"]))
+        pages = [dict(p, kind=page_kind(p["url"])) for p in result.get("pages") or []]
+        return {**result, "suggestions": main, "apart": apart, "pages": pages}
 
     def _page(self, result: Dict[str, Any], *, offset: int = 0, limit: Optional[int] = None,
               q: Optional[str] = None, total: Optional[int] = None, ordered: bool = False) -> Dict[str, Any]:
@@ -885,6 +889,9 @@ class StoriesService:
             words = q.casefold().split()
             ranked = [s for s in ranked if all(w in _words(s) for w in words)]
             also = [s for s in also if all(w in _words(s) for w in words)]
+            result = {**result, "apart": {kind: {"total": len(rows), "rows": rows} for kind, got in
+                                          (result.get("apart") or {}).items()
+                                          for rows in [[s for s in got["rows"] if all(w in _words(s) for w in words)]]}}
         end = len(ranked) if limit is None else offset + max(0, limit)
         return {**result, "suggestions": ranked[offset:end], "also": also if offset == 0 else [], "total": len(ranked),
                 "offset": offset, "more": end < len(ranked)}
@@ -1129,12 +1136,16 @@ class StoriesService:
             else:
                 kept_out.append(s)
         out = kept_out
+        days_of = {s["key"]: s.get("days") for s in out}
         out = one_card_per_domain(out, federations=publication_sites)
         for s in out:
-            for place in s.get("places", ()):
-                if place != s["key"]:
-                    linkers[s["key"]] |= linkers.get(place, set())
+            places = list(dict.fromkeys([s["key"], *s.get("places", ())]))
+            for place in places[1:]:
+                linkers[s["key"]] |= linkers.get(place, set())
             s.pop("days", None)
+            # 0280 C1: the days since your sources last linked it (any of its places): a quiet row sits apart
+            known = [days_of[p] for p in places if days_of.get(p) is not None]
+            s["last_days"] = round(min(known), 1) if known else None
             s["reader_fit"] = reader_fit(linkers.get(s["key"], set()), read_sources)
         out, also = self._other_channels(sources, out, linkers)
         also = sorted(also + moved, key=lambda s: (-s["score"], s["key"]))

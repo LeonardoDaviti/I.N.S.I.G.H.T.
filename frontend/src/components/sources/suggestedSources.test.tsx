@@ -71,3 +71,23 @@ describe('Discover says when its list was built', () => {
     expect(screen.queryByText(/^Updated|updating…/)).toBeNull();
   });
 });
+
+describe('Discover keeps the unfollowable and the quiet apart (0280 C1)', () => {
+  it('lists them below the main list with their counts, the quiet closed', async () => {
+    const wire = { ...site, key: 'wire.example', url: 'https://wire.example', section: 'unfollowable' as const,
+      follow_test: { label: 'headlines' as const, at: '2026-11-01T00:00:00Z' } };
+    const old = { ...site, key: 'old.example', url: 'https://old.example', section: 'quiet' as const, last_days: 200 };
+    const getSuggestedSources = vi.fn().mockResolvedValue(answer({
+      suggestions: [site], built_at: NOW.toISOString(),
+      apart: { unfollowable: { total: 3, rows: [wire] }, quiet: { total: 1, rows: [old] } },
+    }));
+    renderWithProviders(<SuggestedSources onFollow={vi.fn()} />, { api: makeFakeApi({ getSuggestedSources }) });
+    expect(await screen.findByText('acme.example.org')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Can't be followed as a feed \(3\)/ })).toBeInTheDocument();
+    expect(screen.getByText('wire.example')).toBeInTheDocument();
+    const quiet = screen.getByRole('button', { name: /Quiet lately \(1\)/ });
+    expect(screen.queryByText('old.example')).toBeNull();
+    act(() => { quiet.click(); });
+    expect(screen.getByText('old.example')).toBeInTheDocument();
+  });
+});

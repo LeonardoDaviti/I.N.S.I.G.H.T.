@@ -104,16 +104,29 @@ export default function DiscoverPages({ pages, onFollow }: { pages: DiscoverPage
       />
     );
   }
+  // 0280 C2: reference and product pages (docs, wiki, model cards, product and login pages) apart from the pieces
+  const pieces = shown.filter((page) => page.kind !== 'reference');
+  const references = shown.filter((page) => page.kind === 'reference');
+  const done = (page: DiscoverPage) => setGone((now) => new Set(now).add(page.url));
   return (
     <section aria-label="Pages">
       <p className="mb-2 text-[0.8125rem] text-fg-3">
         Pages your stories start at that you don&rsquo;t have. Save one to read it with its story, without following its site.
       </p>
-      <ul>
-        {shown.map((page) => (
-          <PageRow key={page.url} page={page} onFollow={onFollow} onDone={(done) => setGone((now) => new Set(now).add(done.url))} />
-        ))}
-      </ul>
+      {pieces.length ? (
+        <ul>
+          {pieces.map((page) => <PageRow key={page.url} page={page} onFollow={onFollow} onDone={done} />)}
+        </ul>
+      ) : null}
+      {references.length ? (
+        <section aria-label="Reference and product pages" className="mt-3">
+          <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Reference and product pages</h2>
+          <p className="text-[0.75rem] text-fg-3">Docs, wiki entries, model cards, product and sign-in pages your sources point to: things to look up, not pieces.</p>
+          <ul>
+            {references.map((page) => <PageRow key={page.url} page={page} onFollow={onFollow} onDone={done} />)}
+          </ul>
+        </section>
+      ) : null}
     </section>
   );
 }
