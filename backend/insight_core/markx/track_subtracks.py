@@ -282,7 +282,7 @@ def news_rank(cur: Cursor, post_ids: Sequence[str]) -> Dict[str, float]:
                     WHERE m.p->>'post_id' = ANY(%s)""", (list(post_ids),))
     out: Dict[str, float] = {}
     for pid, sig, cov in cur.fetchall():
-        v = nr.combine(sig, cov or 0.0, 0.0)
+        v = nr.combine(sig, cov or 0.0)   # the global score: News for you's personal factor stays out
         out[pid] = max(out.get(pid, 0.0), v)
     return out
 

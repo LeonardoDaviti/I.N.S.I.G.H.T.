@@ -6,6 +6,7 @@ one takes the others with no question; a post the parent drops leaves its sub-tr
 the stack and the shape are the owner's (a new version). Invented names only; synthetic data."""
 from __future__ import annotations
 
+import json
 import unittest
 import uuid
 
@@ -113,6 +114,32 @@ class SubTracks(_Tracks):
         status, _ = call("POST", f"/api/markx/tracks/{self.news}/labels", body={"post": b, "answer": "in"})
         self.assertEqual(status, 200)
         self.assertIn(b, self.in_page(self.page_of(self.news)))
+
+    def test_a_news_sorted_sub_track_with_ranked_posts_opens(self):
+        """v10.47: a judged sub-track sorted by News' rank (and its parent, which lists it) answered 500 once a post
+        of it was in a ranked News row: news_rank passed a third argument news_rank.combine no longer takes."""
+        a, b = self.post(title="A cloud host lost a billion records"), self.post(title="Vrrm Cloud outage across Europe")
+        self.plan()
+        for p in (a, b):
+            self.judge(p, verdict())
+        self.shape(self.mine, parent=self.folder)
+        self.shape(self.news, parent=self.folder, rest=True, sort="news")
+        self.plan()
+        run = repo.start_run(self.cur, code_version="test", config={})
+        for n, (p, sig) in enumerate(((a, 0.2), (b, 0.9))):
+            row = str(uuid.uuid4())
+            self.cur.execute("""INSERT INTO mx_news (run_id, id, first_at, voices, reports, shares, mentions, score, posts)
+                                VALUES (%s, %s, now(), 1, 1, 0, 0, 1, %s::jsonb)""",
+                             (run, row, json.dumps([{"post_id": p, "role": "report"}])))
+            self.cur.execute("INSERT INTO mx_news_rank (row_id, run_id, significance, coverage, score) "
+                             "VALUES (%s, %s, %s, 0.5, 0)", (row, run, sig))
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_runs WHERE id = %s", (run,))
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_news WHERE run_id = %s", (run,))
+        self.addCleanup(self.cur.execute, "DELETE FROM mx_news_rank WHERE run_id = %s", (run,))
+        page = self.page_of(self.news)
+        self.assertEqual([it["post_id"] for s in page["sections"] for it in s["items"]][:2], [b, a])   # rank first
+        listed = {s["id"]: s for s in self.page_of(self.folder)["subtracks"]}
+        self.assertEqual([it["post_id"] for it in listed[self.news]["items"]], [b, a])
 
     def test_kept_placements_follow_the_parent(self):
         a = self.post(title="Zqphone OS 2026.11 adds a USB lock")
