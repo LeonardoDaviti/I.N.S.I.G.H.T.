@@ -320,6 +320,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     { path: '/api/operations/scheduler', respond: () => ({ success: true, scheduler: site.scheduler }) },
     { path: '/api/operations/background', respond: () => site.background ?? backgroundWork(new Date()) },
     { path: '/api/operations/repairs', respond: () => ({ repairs: [] }) },   // v10.43: the Data repairs panel
+    { path: '/api/operations/attention', respond: () => ({ computed_at: null, count: 0, items: [], line: null }) },   // v10.49: Needs attention
     { path: '/api/version', respond: () => ({ version: null, commit: null, commit_date: null }) },
     {
       path: '/api/operations/jobs/:jobId',
