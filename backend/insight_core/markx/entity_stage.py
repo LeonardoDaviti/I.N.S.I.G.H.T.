@@ -3,8 +3,9 @@
 Incremental by the database, not process memory: a run links the mentions not linked yet and decides the pairs
 answered since the last run; the surges recount only those mentions' days (every day when a merge, undo or split
 changed). The first run after NIGHTLY_HOUR, or a forced one, is the full pass (every mention relinked and checked,
-every entity pooled, every day recounted), resumable across runs from the counts `unfinished` reads. The stage has its
-own `budget`, spent in order: the run's book, linking the new mentions, the full pass, then the repairs, shown names,
+every entity pooled, every day recounted), resumable across runs from the counts `unfinished` reads, at night only
+(NIGHT_HOURS from NIGHTLY_HOUR, NIGHT_FACTOR x the budget; by day an unfinished pass waits for the next night). The
+stage has its own `budget`, spent in order: the run's book, linking the new mentions, the full pass, then the repairs, shown names,
 invariants, addresses, renames and handles; each step starts only when its expected seconds (`after_pass`, the last
 run's measurement) are left, and what is left is the next run's.
 """
@@ -16,6 +17,11 @@ from typing import Any, Dict, Optional, Set, Tuple
 from insight_core.markx import identity, surges as S
 
 NIGHTLY_HOUR = 4
+# v10.47 (0279 A1, owner): the full pass starts and resumes only from NIGHTLY_HOUR for NIGHT_HOURS; by day the runs are
+# incremental. Before, an unfinished pass resumed every run all day: on production (11-24) one begun 11-11 was resumed
+# by every run with 0 chunks done (the new mentions' linking took the whole 45 s), each run flagged full.
+NIGHT_HOURS = 4
+NIGHT_FACTOR = 5       # a night run's stage has this times its budget (the jobs' 45 s: 225 s; the run's process dies at 900)
 MARGIN = timedelta(minutes=2)
 
 
@@ -41,6 +47,11 @@ def _night_mark(now: datetime) -> datetime:
     if mark > local:
         mark -= timedelta(days=1)
     return mark
+
+
+def night(now: datetime) -> bool:
+    """Within NIGHT_HOURS of tonight's NIGHTLY_HOUR (server time): when the full pass may run."""
+    return now.astimezone() - _night_mark(now) < timedelta(hours=NIGHT_HOURS)
 
 
 def full_due(cur: Any, now: datetime) -> bool:
@@ -85,9 +96,17 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
     no limit); a full pass past it stops after a chunk and the next run resumes it (a forced `full` starts again).
     `book`: the entity book as the run read it, else read here."""
     import time
-    deadline = None if budget is None else time.monotonic() + budget
     left = None if full else unfinished(cur)
-    whole = bool(full) or left is not None or full_due(cur, now)
+    # v10.47 (0279 A1, owner): the full pass runs, and resumes, at night only; by day an unfinished pass waits (its
+    # place carried in the counts) and the runs are incremental. At night the stage has NIGHT_FACTOR x its budget.
+    dark = night(now)
+    whole = bool(full) or dark and (left is not None or full_due(cur, now))
+    waits = left if left is not None and not whole else None
+    if waits is not None:
+        left = None
+    if whole and not full and budget is not None:
+        budget *= NIGHT_FACTOR
+    deadline = None if budget is None else time.monotonic() + budget
     # an answer committed by a transaction that began before the last run's start is read again (jobs.MENTIONS_MARGIN)
     since = since - MARGIN if since is not None else None
     book = identity.run_book(cur) if book is None else book
@@ -105,6 +124,8 @@ def entities(cur: Any, *, ask: Any, now: datetime, run_id: Any, since: Optional[
         out["full"]["started"] = left.get("started")
     elif "full" in out:
         out["full"]["started"] = now.isoformat()
+    elif waits is not None:   # by day: the unfinished pass's place, for tonight's run to resume (`unfinished`)
+        out["full"] = {**waits, "resumed": False, "chunks": 0, "seconds": 0.0, "waits": "night"}
     linked = out.get("posts_linked", [])   # left in the counts: decide.run hands it to the graph stage
     # then the repairs (resumed where the last run stopped) and the sweeps; each leaves the next its expected time
     out["repair"], book = repairs(cur, book, run_id=run_id, full=whole, last=_last(cur, "repair"),
