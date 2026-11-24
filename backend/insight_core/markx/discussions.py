@@ -38,7 +38,7 @@ POST_CHARS = 2000             # the post's text the question shows
 INPUT_CHARS = 60000           # the question's comments, at most (the rest are not shown)
 FAIL_STOP = 3                 # a thread failing this often in a row is not fetched again
 ASKED = -1                    # a reader's thread is leased before the planned ones (0)
-PATTERN = r"(news\.ycombinator\.com/item|lobste\.rs/s/)"   # a cheap SQL pre-filter for D.thread_of (forums: by metadata)
+PATTERN = r"(news\.ycombinator\.com/item|lobste\.rs/s/)"   # a cheap SQL pre-filter (forums: metadata)
 
 
 def next_fetch(created: Optional[datetime], now: datetime) -> Optional[datetime]:
