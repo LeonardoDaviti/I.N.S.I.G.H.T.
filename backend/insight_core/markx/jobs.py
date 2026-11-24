@@ -540,8 +540,11 @@ class Jobs:
     def lane(self) -> Dict[str, Any]:
         """One lane pass (LANE_EVERY): the fresh lane's planners, then every lease-planned kind a feature reads whose
         queue runs low (LANE_LOW) or whose reading window changed, each kind in its own transaction. Never raises:
-        {kind: added | {error}}, with the pass's seconds and its thread's CPU seconds; recorded in mx_jobs ("lane")."""
+        {kind: added | {error}}, with the pass's seconds, its thread's CPU seconds and the process's resident MB
+        (`rss_mb`: before, after, and after its freed memory is trimmed back: the scheduler's process is long-lived);
+        recorded in mx_jobs ("lane")."""
         from insight_core.markx import consumers, repo, schemas, tasks
+        rss_before = rss_mb()
         t0, c0 = time.monotonic(), time.thread_time()
         self._begin("lane", "planning")
         out: Dict[str, Any] = {}
@@ -579,8 +582,16 @@ class Jobs:
         except Exception as exc:  # noqa: BLE001 - the next pass tries again
             log.exception("Mark X lane: the pass failed")
             out["error"] = str(exc)[:300]
-        last = {"ok": not any(isinstance(v, (dict, str)) for v in out.values()),
-                "seconds": round(time.monotonic() - t0, 2), "cpu_s": round(time.thread_time() - c0, 2), "added": out}
+        seconds, cpu_s = round(time.monotonic() - t0, 2), round(time.thread_time() - c0, 2)
+        rss_after = rss_mb()
+        trim = libc_trim()
+        if trim is not None:
+            trim()
+        # v10.48: measured at production's volumes (7 days of posts, 1,000 tasks a pass), a pass grows the process by
+        # 35-80 MB and the trim gives back all but 20-100 MB that the next pass reuses (no growth over 20 passes); a
+        # spawned process a pass would cost ~2 CPU s (its imports) against ~0.2: the lane stays in this process
+        last = {"ok": not any(isinstance(v, (dict, str)) for v in out.values()), "seconds": seconds, "cpu_s": cpu_s,
+                "added": out, "rss_mb": [None if x is None else round(x, 1) for x in (rss_before, rss_after, rss_mb())]}
         self._finish("lane", last)
         return last
 
@@ -1149,14 +1160,14 @@ class Runner:
             return None
 
     def lane(self) -> Optional[Dict[str, Any]]:
-        """One lane pass (Jobs.lane) in this process, while Mark X is on; never raises into the loop. Its memory is
-        trimmed back after (the scheduler's process is long-lived)."""
+        """One lane pass (Jobs.lane, which trims its memory back after) in this process, while Mark X is on; never
+        raises into the loop. Shown in the scheduler's beat while it runs (`doing`)."""
         try:
             if not self.on():
                 return None
-            out = Jobs(self.db_url, clock=self.clock).lane()
-            libc_trim()
-            return out
+            from insight_core.utils.heartbeat import doing
+            with doing("lane"):
+                return Jobs(self.db_url, clock=self.clock).lane()
         except Exception:
             log.exception("Mark X jobs: the lane pass failed")
             return None
@@ -1190,11 +1201,14 @@ class Runner:
             log.exception("Mark X jobs: keeping the views after the decision run failed")
 
     def _in_own_process(self, *names: str) -> None:
+        from insight_core.utils import heartbeat
         what = "+".join(names)
         process = multiprocessing.get_context("spawn").Process(target=_job_main, args=(self.db_url, *names),
                                                                name=f"markx-{what}", daemon=True)
-        process.start()
-        process.join(self.hard_limit)
+        with heartbeat.doing(f"markx {what}"):   # the scheduler's beat reads the child's memory beside its own
+            process.start()
+            heartbeat.child(f"markx {what}", process.pid)
+            process.join(self.hard_limit)
         if process.is_alive():
             process.kill()
             process.join(10)
