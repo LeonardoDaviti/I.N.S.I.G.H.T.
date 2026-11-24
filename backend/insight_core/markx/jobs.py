@@ -886,7 +886,7 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
     after the last start, never within RUN_GAP of it, never while Mark IX holds it (`busy`) or the candidate finder
     runs; a rebuild's slice (`stories_due`); the candidate finder or official pass due for `starve_after`; a kept
     view missing and let start (`_kept_may`); then candidates, then official, then the discussions pass every
-    `discussions_every` (wanted by a reader: before the candidates). A job in backoff (`held`) waits, whatever makes
+    `discussions_every` (wanted by a reader: before the candidates; due for `starve_after`: before them too). A job in backoff (`held`) waits, whatever makes
     it due. `markx` False: only the rebuild's slice and the reader's kept views."""
     s = states.get("stories") or {}
     slice_due = stories_due(s, now, rebuild=rebuild, gap=gap)
@@ -924,10 +924,21 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
             official_at = datetime.min.replace(tzinfo=timezone.utc)
         elif (now - o["started_at"]).total_seconds() >= official_every:
             official_at = o["started_at"] + timedelta(seconds=official_every)
+    # the discussions pass is due since its last start + its period (at once when it never ran); like the official
+    # pass, one due for starve_after runs before the candidates, which new posts keep wanted all day (v10.48: it
+    # never ran on production after v10.47's deploy)
+    talk_at = None
+    if talk:
+        talk_at = (datetime.min.replace(tzinfo=timezone.utc) if g.get("started_at") is None
+                   else g["started_at"] + timedelta(seconds=discussions_every))
+        if talk_at > now:
+            talk_at = None
     if candidates and (now - c["wanted_at"]).total_seconds() >= starve_after:
         return "candidates"
     if official_at is not None and (now - official_at).total_seconds() >= starve_after:
         return "official"
+    if talk_at is not None and (now - talk_at).total_seconds() >= starve_after:
+        return "discussions"
     if c["stage"] is None:
         for v in KEPT_VIEWS:
             if v.job in kept_missing and _kept_may(v, states.get(v.job) or {}, now, gap):
@@ -936,7 +947,7 @@ def due(states: Dict[str, Dict[str, Any]], now: datetime, *, settle: float = SET
         return "candidates"
     if official_at is not None:
         return "official"
-    if talk and (g.get("started_at") is None or (now - g["started_at"]).total_seconds() >= discussions_every):
+    if talk_at is not None:
         return "discussions"
     return None
 

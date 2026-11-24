@@ -287,6 +287,17 @@ class Due(unittest.TestCase):
         self.assertEqual(jobs.due(states, now, discussions_every=jobs.DISCUSSIONS_EVERY), "discussions")
         self.assertIsNone(jobs.due(states, now))      # off when the runner names no period
 
+    def test_a_pass_starved_by_wanted_candidates_runs_once_overdue(self):
+        """New posts keep the candidates wanted all day: an overdue pass still runs (production after v10.47)."""
+        long_ago = datetime.now(timezone.utc) - timedelta(hours=3)
+        states, now = self.states(candidates={"wanted_at": datetime.now(timezone.utc) - timedelta(seconds=30)},
+                                  discussions={"started_at": long_ago})
+        states["decide"]["started_at"] = now
+        self.assertEqual(jobs.due(states, now, discussions_every=jobs.DISCUSSIONS_EVERY), "discussions")
+        fresh = now - timedelta(seconds=jobs.DISCUSSIONS_EVERY + 1)   # just due: the wanted candidates go first
+        states["discussions"]["started_at"] = fresh
+        self.assertEqual(jobs.due(states, now, discussions_every=jobs.DISCUSSIONS_EVERY), "candidates")
+
 
 class Bylines(_Api):
     """An aggregator's page names its site, its thread is linked in the post page's header; a re-hosted feed's own
