@@ -46,6 +46,25 @@ class Heartbeats(_Env):
         heartbeat.clear("markx")
         self.assertEqual(heartbeat.stale(t), [])
 
+    def test_the_scheduler_says_what_its_process_is_doing_beside_its_memory(self):
+        """v10.48: the scheduler's beat carries `doing` (fetch runs, archives, the lane, a job's child by its pid with
+        the child's own numbers); GET /api/operations/scheduler reads it as `process`."""
+        from insight_core.scripts import run_scheduler
+        self.assertIsNone(OperationsService.scheduler_process(NOW))
+        with heartbeat.doing("archives"), heartbeat.doing("archives"), heartbeat.doing("markx news"):
+            heartbeat.child("markx news", os.getpid())   # stands for the job's child process
+            stats = run_scheduler.process_stats()
+            heartbeat.beat("scheduler", now=NOW.timestamp() - 10, stats=stats)
+        self.assertEqual(heartbeat.activity(), {}, "each ends with its block")
+        self.assertEqual(stats["doing"]["archives"]["n"], 2)
+        self.assertGreater(stats["doing"]["markx news"]["rss_mb"], 0)
+        self.assertGreater(stats["rss_mb"], 0)
+        got = OperationsService.scheduler_process(NOW)
+        self.assertEqual(got["age_s"], 10)
+        self.assertEqual((got["rss_mb"], got["peak_mb"]), (stats["rss_mb"], stats["hwm_mb"]))
+        self.assertEqual(set(got["doing"]), {"archives", "markx news"})
+        self.assertEqual(got["doing"]["markx news"]["pid"], os.getpid())
+
     def test_the_healthcheck_command(self):
         script = Path(heartbeat.__file__)
         run = lambda: subprocess.run([sys.executable, "-I", str(script)], env={**os.environ}, capture_output=True,  # noqa: E731

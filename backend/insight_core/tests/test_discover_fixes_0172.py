@@ -259,9 +259,11 @@ class ServedTests(unittest.TestCase):
         self.assertIn("success", got)
         self.cur.execute("SELECT count(*) FROM system_settings WHERE key IN ('discover_counts', 'discover_list')")
         self.assertEqual(self.cur.fetchone()[0], 0, "a read keeps nothing")
-        StoriesService(db_url()).refresh()
+        service = StoriesService(db_url())
+        service.refresh()
         self.cur.execute("SELECT count(*) FROM system_settings WHERE key IN ('discover_counts', 'discover_list', 'discover_served')")
         self.assertEqual(self.cur.fetchone()[0], 3, "the background build keeps them")
+        self.assertEqual(service._discovered, ("", None), "v10.48: kept in the database, no copy held in the process")
 
     def test_an_open_serves_the_last_answer_and_says_when_it_is_due(self):
         built = []

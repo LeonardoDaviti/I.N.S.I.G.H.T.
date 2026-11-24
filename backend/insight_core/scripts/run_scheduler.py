@@ -115,7 +115,9 @@ async def ingestion_job(request: FetchRequest, *, ingest: Callable[..., Awaitabl
         logger.exception("Could not start the ingestion_run job (running untracked)")
     status, message, payload, nothing_due, report = "failed", "Ingestion run did not finish", {}, False, None
     try:
-        report = await ingest(request, progress=JobProgressSink(ops, job_id))
+        from insight_core.utils.heartbeat import doing
+        with doing(f"fetch ({name})"):   # the beat's `doing`: a fetch run beside the process's memory
+            report = await ingest(request, progress=JobProgressSink(ops, job_id))
         status, message, payload = report.job_status, report.summary_line(), report.to_payload()
         # a read of new sources a full run held off is nothing either: the full run reads them
         nothing_due = report.status == "nothing_due" or (request.selector.kind == "new"
@@ -252,13 +254,25 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
         logger.exception("Cadence refresh failed (continuing with stored tiers)")
 
 
-async def _heartbeat() -> None:
-    """A heartbeat every BEAT_SECONDS (utils/heartbeat.py) with this process's own memory and CPU, read by the
-    container's healthcheck and /api/status. A task of its own, so a long tick doesn't read as a dead loop; a
-    loop blocked by a stuck call does."""
+def process_stats() -> Dict[str, Any]:
+    """This process's own {rss_mb, hwm_mb, cpu_s} and what it is doing now (`doing`: heartbeat.activity), a child
+    process's own numbers with its entry (a Mark X job: the container's memory is this process's plus its child's).
+    A few /proc reads (v10.48)."""
     from insight_core.utils import heartbeat, peak
+    doing = heartbeat.activity()
+    for got in doing.values():
+        if got.get("pid"):
+            got.update({k: v for k, v in peak.of(got["pid"]).items() if v is not None})
+    return {**peak.own(), "doing": doing}
+
+
+async def _heartbeat() -> None:
+    """A heartbeat every BEAT_SECONDS (utils/heartbeat.py) with this process's own memory and CPU and what it is
+    doing (`process_stats`), read by the container's healthcheck, /api/status and GET /api/operations/scheduler. A
+    task of its own, so a long tick doesn't read as a dead loop; a loop blocked by a stuck call does."""
+    from insight_core.utils import heartbeat
     while True:
-        heartbeat.beat("scheduler", stats=peak.own())
+        heartbeat.beat("scheduler", stats=process_stats())
         await asyncio.sleep(heartbeat.BEAT_SECONDS)
 
 

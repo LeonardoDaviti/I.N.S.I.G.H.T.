@@ -160,6 +160,40 @@ names, the objects the old `_match` built for every thing (the kind's rows, each
 and kept until the answer ends instead of rebuilt per thing: the peak is the old one's (plus a second link set for
 the rows of a post that gave one thing, and of the answer's own post), held for one answer.
 
+## E. v10.48: the jobs container's memory, split and cut (branch v1048-memory)
+
+Production (2026-11-24): insight-ingestion 1–2.2 GiB (max 2.84); Discover's job 809 MB / 106 CPU s / 502 s.
+
+1. **The split, readable (kept).** The scheduler's beat (every 30 s, a few /proc reads) carries `doing`: what its
+   process runs now (`fetch (tick)`, `archives` with how many, `lane`, `markx <job>` and `source_stats` with the
+   child's pid and its own rss/hwm/cpu). GET /api/operations/scheduler gains `process: {age_s, rss_mb, peak_mb,
+   cpu_s, doing}`; /api/status' `checks.processes.scheduler` carries the same. The lane's mx_jobs record gains
+   `rss_mb: [before, after, after the trim]` (GET /api/markx/status).
+2. **Discover's job (kept).** Measured on the read-only server copy (11-19, 162k posts, 1.77 M mentions), the job as
+   production runs it (build, the first page's work, the reads — web stubbed, 25 follow tests, 69 titles, 25 videos
+   — then the rebuild), writes no-ops, the clock fixed, each run a fresh spawned process:
+
+   | | peak MB | CPU s | wall s |
+   |---|---|---|---|
+   | main | 682 (653, 610 on earlier runs) | 20.7 | 36 |
+   | v10.48 | **331** (340) | 21.1 | 37 |
+
+   Where it went: Discover's "worlds" (rabbit_hole.discover_rows) asked which of ~100k roots a current reading names
+   by reading every mention row of them (1.77 M rows: +255 MB peak, +120 MB held); `entity_views._names_now` now
+   reads each named entity once (DISTINCT, pinned mentions excluded and counted for their pin as before): the
+   worlds' peak 423 → 187 MB, CPU 5.7 → 5.1 s. The job's second build stacked on the first: the cached list
+   (~145 MB) was held into the rebuild, and the served answer the first page's work reads lived through it;
+   `refresh` now keeps no copy (the list is in the database; the jobs' next build always has new inputs), collects
+   and trims before it builds, and `read_first_page` reads the served answer in a function of its own. The answer is
+   byte-identical (the whole JSON, clock fixed). No cap on the re-tests: the memory was the builds, not the tests.
+3. **The lane stays in the scheduler's process (measured, not moved).** On a test database at production's volumes
+   (393 sources, 7 days × 660 posts of 5.8 kB, 6 links each; 1,000 tasks planned a pass, a 1,175-post burst once),
+   20 passes in one process: a pass 0.12–0.3 CPU s (1.0 the first), grows the process 35–80 MB, and after the trim
+   it holds 20–100 MB over its post-import size, reused by the next pass (83–165 MB, no growth over 20 passes, 87
+   at the end). A spawned process a pass: 1.9–2.8 CPU s (its imports) and a 140 MB child each pass. At LANE_EVERY
+   30 s that is ~240 CPU s/h against ~20–40 to save a bounded 20–100 MB; a long-lived lane process would pay its own
+   ~60–100 MB of imports to save the same. Kept as it is; the trim moved into `Jobs.lane` so its record shows it.
+
 ## Owner decisions
 
 1. **B2**: may the lease stop planning (a new post's first questions wait for the jobs' next look, ≤ 60 s)?

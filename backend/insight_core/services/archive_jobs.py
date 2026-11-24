@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from insight_core.utils.heartbeat import doing
+
 logger = logging.getLogger("insight.archive_jobs")
 
 JOB_TYPE = "archive_source"
@@ -295,9 +297,10 @@ class ArchiveJobs:
 
     async def _run_queued(self, source_id: str, job_id: str, payload: Dict[str, Any]) -> None:
         try:
-            await self.run(source_id, resume=bool(payload.get("resume", True)),
-                           rate_limit_overrides=payload.get("rate_limit") or None, job_id=job_id,
-                           until=payload.get("until") or None)
+            with doing("archives"):   # the scheduler's beat counts the archives running beside its memory
+                await self.run(source_id, resume=bool(payload.get("resume", True)),
+                               rate_limit_overrides=payload.get("rate_limit") or None, job_id=job_id,
+                               until=payload.get("until") or None)
         except Exception:  # noqa: BLE001 - the job is failed already; the scheduler goes on
             logger.exception("Queued archive job %s failed", job_id)
 
@@ -309,7 +312,8 @@ class ArchiveJobs:
 
     async def _continue_logged(self, job_id: str) -> None:
         try:
-            await self.continue_job(job_id)
+            with doing("archives"):
+                await self.continue_job(job_id)
         except Exception:  # noqa: BLE001 - the job is failed already; the scheduler goes on
             logger.exception("Continuing archive job %s failed", job_id)
 

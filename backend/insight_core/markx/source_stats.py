@@ -1232,10 +1232,13 @@ class Runner:
                 return None
             log.info("Source stats: a run (%s)", why)
             if self.spawn:
+                from insight_core.utils import heartbeat
                 proc = multiprocessing.get_context("spawn").Process(target=_job_main, args=(self.db_url,),
                                                                     name="source-stats", daemon=True)
-                proc.start()
-                proc.join(HARD_LIMIT)
+                with heartbeat.doing("source_stats"):   # the scheduler's beat reads the child's memory beside its own
+                    proc.start()
+                    heartbeat.child("source_stats", proc.pid)
+                    proc.join(HARD_LIMIT)
                 if proc.is_alive():
                     proc.kill()
                     proc.join(10)

@@ -99,6 +99,38 @@ class APagesBook(Ents, built_tests.Stored):
                 self.assertEqual(page.is_maker(o, mk), whole.is_maker(o, mk), (o, mk))
         self.assertEqual(page.ancestors(self.nimbus), whole.ancestors(self.nimbus))
 
+    def named(self, post, *eids):
+        """`post`'s current reading names `eids` (mentions 0, 1, ...)."""
+        from insight_core.markx import tasks
+        with self.conn.transaction():
+            task_id, _ = tasks.entities_task(self.cur, post)
+            cid = repo.add_call(self.cur, task_id=task_id, executor="claude-code", model="haiku", valid=True,
+                                answer={"entities": []})
+            repo.add_mentions(self.cur, post_id=post, guide="ent-v3", call_id=cid, mentions=[
+                {"span": f"name {i}", "name": f"name {i}", "name_key": f"name {i}", "type": "product",
+                 "role": "subject", "maker": None, "family": None, "version": None, "variant": None, "size": None,
+                 "build": None} for i in range(len(eids))])
+            for i, eid in enumerate(eids):
+                self.cur.execute("UPDATE mx_mentions SET entity_id = %s WHERE post_id = %s AND n = %s", (eid, post, i))
+
+    def test_the_roots_named_now_are_the_whole_books(self):
+        """v10.48: a page's book asks which roots are named by each entity once (DISTINCT), not every mention row;
+        a mention pinned to another entity names its pin, never its own."""
+        from insight_core.markx import entity_views as EV
+        a, b = self.post(title="Acme Labs ships"), self.post(title="Orbit ships")
+        self.named(a, self.acme2, self.nimbus)          # a merged one names its root
+        self.named(b, self.lone, self.orbit)
+        self.cur.execute("INSERT INTO mx_entity_pins (post_id, guide, n, entity_id) VALUES (%s, 'ent-v3', 0, %s)",
+                         (b, self.zeta))                # Lone Widget's only mention is Zeta Café's
+        whole, page = I.load_book(self.cur, counts=False), I.lazy_book(self.cur)
+        roots = sorted({whole.root(e) for e in whole.ents})
+        want = {r for r in EV.named_now(self.cur, whole) if r in roots}
+        got = EV.named_now(self.cur, page)
+        got.want(roots)                                 # all at once, as Discover's worlds ask (rabbit_hole)
+        page_named = {r for r in roots if r in got}
+        self.assertEqual(page_named, want)
+        self.assertEqual(want, {self.acme, self.nimbus, self.zeta, self.orbit})
+
     def test_it_cannot_be_walked(self):
         page = I.lazy_book(self.cur)
         for walk in (lambda: list(page.ents), lambda: page.alias.items(), lambda: len(page.ents)):

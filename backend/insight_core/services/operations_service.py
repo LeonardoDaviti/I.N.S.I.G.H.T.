@@ -931,6 +931,19 @@ class OperationsService:
 
     # ------------------------------------------------------------------ the system's health
 
+    @staticmethod
+    def scheduler_process(now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+        """The scheduler process as its last beat says (run_scheduler.process_stats, every 30 s): {age_s, rss_mb,
+        peak_mb (its high-water since it started), cpu_s, doing: {what: {n, for_s, pid?, rss_mb?, hwm_mb?, cpu_s?}}}
+        (a fetch run, the archives, Mark X's lane, a job's child process with its own numbers); None before a beat."""
+        from insight_core.utils import heartbeat
+        now = now or datetime.now(timezone.utc)
+        got = heartbeat.processes(now.timestamp()).get("scheduler")
+        if not got:
+            return None
+        return {"age_s": round(got.get("age") or 0), "rss_mb": got.get("rss_mb"), "peak_mb": got.get("hwm_mb"),
+                "cpu_s": got.get("cpu_s"), "doing": got.get("doing") or {}}
+
     def system_health(self, now: Optional[datetime] = None, *, failing_sources: Optional[int] = None) -> Dict[str, Any]:
         """/api/status's `healthy`: {healthy, reasons, warnings (never unhealthy alone), checks}. Reasons: ingestion
         or the scheduler tick overdue, a heartbeat past its limit, a failing Mark X job or stale decision run, and any
