@@ -45,14 +45,15 @@ TELEGRAM_POST_PREFIX = "https://t.me/"
 
 def published_precision(post: Dict[str, Any]) -> str:
     """How precise a post's date is (posts.published_precision): "none" (no date), "seen" (dated when first
-    seen), "date" (no time of day, or stored as 00:00:00 UTC), else "exact"."""
+    seen), "month" (a page that states only its month: the 1st, page_watch.DATED_BY_MONTH), "date" (no time of day,
+    or stored as 00:00:00 UTC), else "exact"."""
     date = post.get("date")
     if not isinstance(date, datetime):
         return "seen" if post.get("date_precision") == "seen" else "none"
     told = post.get("date_precision")
     if told == "before":   # no date given; bounded by the feed's next older dated item (parsing._bound_undated)
         return "none"
-    return told if told in ("date", "exact") else "date" if date_alone(date) else "exact"
+    return told if told in ("date", "exact", "month") else "date" if date_alone(date) else "exact"
 
 
 def _env_commit_batch() -> int:

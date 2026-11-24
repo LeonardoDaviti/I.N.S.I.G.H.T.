@@ -22,7 +22,7 @@ from insight_core.db.repo_posts import PostsRepository
 from insight_core.ingestion.feed_finder import FeedFinding, find_feeds
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing, saved
-from insight_core.ingestion.kinds.page_watch import LISTING_MAX_BYTES, article_post, page_date, page_title
+from insight_core.ingestion.kinds.page_watch import LISTING_MAX_BYTES, article_post, page_dating, page_title, stated_precision
 from insight_core.services.reader_service import ReaderService
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.services import page_titles
@@ -266,8 +266,9 @@ class SavedService:
             logger.info("Save a page: %s could not be read (%s)", address, str(exc)[:300])
             reason = _reason(exc)
         url = landed or address
-        stated = page_date(page, url) if page else None
-        post = article_post(page, saved.HANDLE, url, stated, adapter=ADAPTER, platform=saved.PLATFORM) if page else None
+        stated, how = page_dating(page, url) if page else (None, None)
+        post = article_post(page, saved.HANDLE, url, stated, adapter=ADAPTER, platform=saved.PLATFORM,
+                            precision=stated_precision(how)) if page else None
         if post is not None:
             # identity is the whole address: two sites' "/" are two posts
             return {**post, "external_id": url, "date": stated}, None

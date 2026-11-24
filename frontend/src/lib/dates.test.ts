@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   compactAge, dateAlone, feedDateLabel, feedDayHeading, feedDayKey, feedFullTime, feedTimeLabel, formatLocalDateTime, formatRelativeTime, localDateISO,
-  postBylineTime,
+  monthAloneLabel, postBylineTime,
 } from './dates.ts';
 
 // getTimezoneOffset() convention: minutes to ADD to local time to get UTC,
@@ -148,4 +148,12 @@ test('formatLocalDateTime is null for missing or invalid values', () => {
   assert.equal(formatLocalDateTime(null), null);
   assert.equal(formatLocalDateTime('garbage'), null);
   assert.equal(typeof formatLocalDateTime('2026-10-10T12:00:00Z'), 'string');
+});
+
+test('monthAloneLabel: a month-precise date is its month and year, in UTC; any other precision is no label (v10.47)', () => {
+  assert.equal(monthAloneLabel('2026-02-01T00:00:00+00:00', 'month'), 'Feb 2026');
+  assert.equal(monthAloneLabel('2026-11-01T00:00:00Z', 'month'), 'Nov 2026');   // never "Oct 2026" west of UTC
+  assert.equal(monthAloneLabel('2026-02-01T00:00:00Z', 'date'), null);
+  assert.equal(monthAloneLabel('2026-02-01T00:00:00Z', null), null);
+  assert.equal(monthAloneLabel(null, 'month'), null);
 });
