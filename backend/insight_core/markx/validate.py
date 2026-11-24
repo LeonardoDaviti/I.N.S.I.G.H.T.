@@ -612,8 +612,11 @@ def track_verdict_error(a: Dict[str, Any], input: Optional[str]) -> Optional[str
 
 
 def _track(a: Dict[str, Any], input: str) -> Optional[str]:
-    """`why` is one line, at most TRACK_WHY_CHARS, and the answer is a verdict of its post."""
-    return _one_line_why(a) or track_verdict_error(a, input)
+    """`why` is one line, at most TRACK_WHY_CHARS, and the answer is a verdict of its post. An answer with no
+    `subject` (track-v2, track-check-v1) names its post in `why` only when `in` is true: out, those guides ask `why`
+    to say why not ("Cloud product rollout; not run on local hardware."), so an out why names no word of the post by
+    design (v10.47: 12 of 14 such refusals of 781 answers were right verdicts; track-v3 names it in `subject`)."""
+    return _one_line_why(a) or track_verdict_error(a, input if a.get("in") else None)
 
 
 # track-v3: `in` true needs `fits` true, a `matches` quote of `Belongs:` (the header's own words) and no `excluded`
