@@ -70,9 +70,10 @@ def _cap(text: Any) -> str:
 
 @dataclass(frozen=True)
 class SourceSelector:
-    """Which sources a fetch request targets: all enabled, one folder's enabled members, or one source."""
+    """Which sources a fetch request targets: all enabled, one folder's enabled members, one source, or the enabled
+    sources never read yet (`new`: just added; the jobs process reads them at once, not at the next tick)."""
 
-    kind: Literal["all", "folder", "source"]
+    kind: Literal["all", "folder", "source", "new"]
     id: Optional[str] = None
 
     @staticmethod
@@ -86,6 +87,10 @@ class SourceSelector:
     @staticmethod
     def source(source_id: str) -> "SourceSelector":
         return SourceSelector("source", str(source_id))
+
+    @staticmethod
+    def new() -> "SourceSelector":
+        return SourceSelector("new")
 
     def as_dict(self) -> dict[str, Any]:
         return {"kind": self.kind} if self.id is None else {"kind": self.kind, "id": self.id}

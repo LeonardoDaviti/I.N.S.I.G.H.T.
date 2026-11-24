@@ -182,7 +182,7 @@ class DbSourceCatalog:
         self.repo = repo
 
     def load(self, selector: SourceSelector) -> List[Dict[str, Any]]:
-        if selector.kind != "all":
+        if selector.kind in ("folder", "source"):
             try:
                 uuid.UUID(str(selector.id))
             except (TypeError, ValueError):

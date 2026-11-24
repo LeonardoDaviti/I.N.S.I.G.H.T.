@@ -52,7 +52,8 @@ def plan(services: Any, source_id: str) -> Dict[str, Any]:
     if not source.get("enabled", True):
         return {"queue": False, "reason": "disabled"}
     if not own_pages.owns(source.get("platform"), source.get("handle_or_url"), source.get("handle_or_url")):
-        return {"queue": False, "reason": "not a website's own feed (an aggregator's): archived by hand"}
+        return {"queue": False, "reason": ("not a website's own feed (an aggregator's): archived by hand; "
+                                           "a saved search's first read keeps its whole answer")}
     fetch = services.source_fetch
     kind = fetch.kinds.resolve(source)
     if kind.name not in FOLLOW_KINDS:

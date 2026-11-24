@@ -1,6 +1,6 @@
 """IngestionRunner: one algorithm for every fetch run (scheduler tick, Run cycle, track fetch, fetch-now, CLI).
 
-Orchestration only; every collaborator is an injected port. Steps: run lock (selector all only) -> load sources and
+Orchestration only; every collaborator is an injected port. Steps: run lock (selectors all and new) -> load sources and
 fetch state -> decide -> record decisions -> per source: fetch under the gates, save, record outcome and archive
 metadata -> want the story job when posts were saved -> report. A run never measures its sources. Kind sessions
 open lazily in the gate slot of the kind's first due source and close in a finally; one that cannot open makes that
@@ -156,6 +156,16 @@ class IngestionRunner:
 
     async def run(self, request: FetchRequest, *, progress: ProgressSink = NULL_PROGRESS) -> RunReport:
         started = self.clock()
+        if request.selector.kind == "new":
+            # the sources just added, read at once: never beside a full run (it reads them), and a run that found
+            # none keeps nothing derived (it is looked for every few seconds)
+            async with self.run_lock.try_acquire() as acquired:
+                if not acquired:
+                    return self._report(request, started, status="skipped_busy")
+                report = await self._run(request, progress, started)
+                if report.status != "nothing_due":
+                    await self._keep_derived()
+                return report
         if request.selector.kind == "all":
             async with self.run_lock.try_acquire() as acquired:
                 if not acquired:
