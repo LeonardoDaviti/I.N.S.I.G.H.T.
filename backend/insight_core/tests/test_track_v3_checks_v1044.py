@@ -115,14 +115,14 @@ class Reopen(unittest.TestCase):
 
     def test_the_failed_track_v3_questions_open_once_the_rest_untouched(self):
         repair = data_repairs.by_name("reopen_failed_track_v3")
-        self.assertEqual(repair.version, "v10.44")
+        self.assertEqual(repair.version, "v10.47")   # v10.47 widened it to the older guides (test_track_checks_v1047)
         preview = reopen_failed_tracks.run(self.conn, dry_run=True)
         self.assertGreaterEqual(preview["reopened"], 2)
         self.assertEqual(self.status()["v3"], ("failed", 2), "a preview changes nothing")
         reopen_failed_tracks.run(self.conn, dry_run=False)
         got = self.status()
-        self.assertEqual((got["v3"], got["check"]), (("open", 0), ("open", 0)))
-        self.assertEqual((got["v2"], got["read"]), (("failed", 2), ("failed", 2)), "older guides and kinds stay")
+        self.assertEqual((got["v3"], got["check"], got["v2"]), (("open", 0), ("open", 0), ("open", 0)))
+        self.assertEqual(got["read"], ("failed", 2), "other kinds stay")
 
 
 if __name__ == "__main__":

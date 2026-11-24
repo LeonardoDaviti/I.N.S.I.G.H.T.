@@ -119,9 +119,10 @@ REPAIRS: Sequence[Repair] = (
     Repair("repair_foreign_pages", "v10.42", "Move another site's pages out of a source",
            "Pages of another site stored as a source's posts move to Saved (one feed read a source affected).",
            _repair_foreign_pages),
-    Repair("reopen_failed_track_v3", "v10.44", "Ask the failed track questions again",
-           "Track questions the track-v3 checks refused twice (a post in another script, a reworded quote of the "
-           "track) are asked once more under the v10.44 checks.",
+    Repair("reopen_failed_track_v3", "v10.47", "Ask the failed track questions again",
+           "Track questions the checks refused twice (a post in another script, a reworded quote of the track; "
+           "v10.47: also the older guides' questions, an out verdict that says why not) are asked once more under "
+           "the v10.47 checks.",
            _reopen_failed_tracks),
 )
 
