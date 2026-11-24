@@ -315,15 +315,17 @@ def page_links(page: str, base: str) -> List[str]:
 
 
 def next_page(page: str, base: str, number: int) -> Optional[str]:
-    """A listing's next page: its rel=next, else a link to page number+1 (/page/N/, ?page=N, ?paged=N)."""
-    for tag in NEXT_LINK_RE.findall(page or ""):
-        href = HREF_RE.search(tag)
-        if href and (url := clean(href.group(1), base)) and url != base:
-            return url
+    """A listing's next page: a link to its page number+1 (/page/N/, ?page=N, ?paged=N), else its rel=next. The
+    numbered link first: a documentation site's rel=next is the next page of its menu (MkDocs: /articles/ ->
+    /articles/editorial/), while a page linking its page N+1 is paginated by that link (0280 A4)."""
     for url in page_links(page, base):
         match = PAGE_NUMBER_RE.search(urllib.parse.urlparse(url).path + ("?" + urllib.parse.urlparse(url).query
                                                                           if urllib.parse.urlparse(url).query else ""))
         if match and int(match.group(1) or match.group(2)) == number + 1 and publication_of(host_of(url)) == publication_of(host_of(base)):
+            return url
+    for tag in NEXT_LINK_RE.findall(page or ""):
+        href = HREF_RE.search(tag)
+        if href and (url := clean(href.group(1), base)) and url != base:
             return url
     return None
 

@@ -197,9 +197,11 @@ def same_article(current_text: str, text: str, page: str, *, url: str, title: Op
 @dataclass(frozen=True)
 class PageRead:
     """A page read's outcome (FULL, NOTHING_LONGER, NOT_SAME_ARTICLE, NEEDS_SCRIPT) and, when FULL, the
-    article: (html, text, how well the page was read, the date the page states, where the page moved)."""
+    article: (html, text, how well the page was read, the date the page states, where the page moved), and that
+    date's precision when the date can't tell it (page_watch.stated_precision: "month" for a month alone)."""
     outcome: str
     article: Optional[Tuple[str, str, Dict[str, Any], Optional[datetime], Optional[str]]] = None
+    precision: Optional[str] = None
 
 
 def error_outcome(exc: BaseException) -> str:
@@ -254,7 +256,7 @@ async def read_page(http: KindHttp, url: str, current_text: str, *, title: Optio
     now is no date. A redirect stub (under STUB_PAGE_CHARS, naming another address) is followed one hop. `title` and
     `site` feed the same-article test. Raises what the requests raise (ValueError for an HTTP or network error).
     """
-    from insight_core.ingestion.kinds.page_watch import page_date   # page_watch imports generic_rss, this module's caller
+    from insight_core.ingestion.kinds.page_watch import page_dating, stated_precision   # page_watch imports generic_rss
 
     page, _ = await http.get_text(url)
     html, fidelity = parsing.read_article_page(page, base_url=url)
@@ -280,9 +282,10 @@ async def read_page(http: KindHttp, url: str, current_text: str, *, title: Optio
     paid = paywall.marker(page) is not None
     if outcome != FULL:
         return PageRead(PAYWALLED if paid else outcome)
-    date = page_date(page, url)
-    return PageRead(PAYWALLED if paid else FULL,
-                    (html, text, fidelity, date if date and date <= datetime.now(timezone.utc) else None, moved))
+    date, how = page_dating(page, url)
+    date = date if date and date <= datetime.now(timezone.utc) else None
+    return PageRead(PAYWALLED if paid else FULL, (html, text, fidelity, date, moved),
+                    stated_precision(how) if date is not None else None)
 
 
 async def read_article(http: KindHttp, url: str, current_text: str, *, title: Optional[str] = None,
@@ -294,16 +297,17 @@ async def read_article(http: KindHttp, url: str, current_text: str, *, title: Op
 
 def with_full_text(post: Dict[str, Any], html: str, text: str,
                    fidelity: Optional[Dict[str, Any]] = None, date: Optional[datetime] = None,
-                   moved: Optional[str] = None) -> Dict[str, Any]:
-    """The post with its page's body, and the page's date when the feed gave it none. A page that moved: the post
-    keeps its address; its canonical and metadata.moved_to (normalized) are where it moved."""
+                   moved: Optional[str] = None, *, precision: Optional[str] = None) -> Dict[str, Any]:
+    """The post with its page's body, and the page's date when the feed gave it none, with `precision` (PageRead's:
+    "month" for a month alone; else the saver tells it by the date). A page that moved: the post keeps its address;
+    its canonical and metadata.moved_to (normalized) are where it moved."""
     return {
         **post,
         "content_html": html,
         "content": text,
         "date": post.get("date") or date,
         # an undated item dated by its page is no longer "seen"
-        **({"date_precision": None} if not post.get("date") and date else {}),
+        **({"date_precision": precision} if not post.get("date") and date else {}),
         **({"canonical_url": moved} if moved else {}),
         "metadata": {**(post.get("metadata") or {}), FULL_TEXT_FLAG: True,
                      **({PAGE_READ_KEY: fidelity} if fidelity else {}),

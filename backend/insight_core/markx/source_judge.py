@@ -530,7 +530,8 @@ def question(address: str, resolved: Dict[str, Any], items: Sequence[Dict[str, A
     lines.append("ITEMS (newest first):")
     from insight_core.utils.item_filter import tag_of
     for n, i in enumerate(items):
-        when = (i.get("published_at") or "")[:10] or "undated"
+        # a page that states only its month is dated the 1st: it reads as that month, never that day
+        when = (i.get("published_at") or "")[:7 if i.get("precision") == "month" else 10] or "undated"
         t = re.sub(r"\s+", " ", i.get("title") or "").strip()[:TITLE_CHARS] or "(no title)"
         tag = tag_of(i.get("url"))
         if n == ITEMS:
@@ -556,6 +557,7 @@ def scratch_items(items: Sequence[Dict[str, Any]], limit: int = ITEMS) -> List[D
     for n, i in enumerate(sorted(items, key=at, reverse=True)[:limit], start=1):
         out.append({"id": f"i{n}", "url": i["url"], "title": i.get("title") or "", "text": (i.get("text") or "")[:1500],
                     "chars": int(i.get("chars") or 0), "published_at": _iso(i.get("published_at")),
+                    **({"precision": i["precision"]} if i.get("precision") else {}),
                     "lang": i.get("lang") or "und", "transcript": i.get("transcript")})
     return out
 

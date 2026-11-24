@@ -204,7 +204,7 @@ class Repair:
                                          site=str(post["source"].get("handle_or_url") or ""))
         if read.article is None:
             return None, read.outcome
-        return full_text.with_full_text({}, *read.article), read.outcome   # content, content_html and metadata
+        return full_text.with_full_text({}, *read.article, precision=read.precision), read.outcome   # content, content_html and metadata
 
     def _write(self, post: Dict[str, Any], found: Optional[Dict[str, Any]], outcome: str, *,
                failed: bool = False, counted: bool = True) -> None:

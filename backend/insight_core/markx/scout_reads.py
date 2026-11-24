@@ -4,7 +4,7 @@ newest items kept in a scratch area, and its health. Nothing is followed, nothin
     reader = Reader(http, registry)
     got = await reader.read("https://example.org/blog/", limit=20)
     got.resolved   # {platform, handle_or_url, settings, via: kind | feed | page, title}, or None: can't read
-    got.items      # [{url, title, text, published_at, lang, chars, transcript}], newest first
+    got.items      # [{url, title, text, published_at, precision, lang, chars, transcript}], newest first
     got.reason     # "" when read; else why not (the finder's reason: blocked, gone, NOTHING: no feed and no dated list)
     health(got.items, now)   # {items, dated, median_chars, lang, per_week, newest_days, reads_well, reason, labels}
 
@@ -97,8 +97,12 @@ def item_of(post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     when = post.get("date")
     lang = post.get("language_code") or detect_language(f"{title}\n{text[:2000]}").get("language_code") or "und"
     video = meta.get("kind") == "youtube_video"
+    dated = isinstance(when, datetime)
     return {"url": url, "title": title, "text": text[:TEXT_CHARS], "chars": len(text),
-            "published_at": when if isinstance(when, datetime) else None, "lang": str(lang),
+            "published_at": when if dated else None,
+            # "month": a page that states only its month (page_watch.stated_precision), dated the 1st
+            "precision": post.get("date_precision") if dated and post.get("date_precision") == "month" else None,
+            "lang": str(lang),
             "transcript": bool(meta.get("transcript_source")) if video else None}
 
 
@@ -254,9 +258,9 @@ class Reader:
                 continue
             changed = False
             if item.get("published_at") is None:
-                date, _how = page_watch.page_dating(page, item["url"])
+                date, how = page_watch.page_dating(page, item["url"])
                 if date is not None:
-                    item["published_at"], changed = date, True
+                    item["published_at"], item["precision"], changed = date, page_watch.stated_precision(how), True
             if int(item.get("chars") or 0) < NO_TEXT_CHARS:
                 post = page_watch.article_post(page, item["url"], item["url"], None, adapter=page_watch.PageWatchKind.adapter_type)
                 text = str((post or {}).get("content") or "").strip()

@@ -77,6 +77,8 @@ class StoryPost:
     stored_at: Optional[datetime] = None   # when INSIGHT stored it (posts.created_at): what a story's id keeps to
     date_alone: Optional[bool] = None      # its time is a date alone; None: told by the time (`date_only`)
     undated: bool = False                  # the source gave no date: its time is when it was fetched
+    # its page states only its month (published_precision "month"): its time is the 1st, the post any day of it
+    month_alone: bool = False
     moved_to: Optional[str] = None         # where its page moved (a redirect stub's target), normalized
     # a round-up as Mark X tells it (markx/units.py): it joins no story by its links
     roundup: bool = False
@@ -124,7 +126,15 @@ class StoryPost:
 
     @property
     def date_only(self) -> bool:
-        return self.date_alone if self.date_alone is not None else date_alone(self.t)
+        return self.month_alone or (self.date_alone if self.date_alone is not None else date_alone(self.t))
+
+    @property
+    def last_t(self) -> datetime:
+        """The latest its time can be: the 1st of the next month for a month alone, else its time."""
+        if not self.month_alone:
+            return self.t
+        t = self.t.astimezone(timezone.utc) if self.t.tzinfo else self.t
+        return t.replace(year=t.year + t.month // 12, month=t.month % 12 + 1, day=1)
 
     @property
     def on_own_site(self) -> bool:
@@ -136,6 +146,11 @@ class StoryPost:
     def own_tweet(self) -> bool:
         return bool(self.kind == "x" and self.author and not self.reposted
                     and (self.reply_to is None or self.reply_to.lower() == self.author.lower()))
+
+
+def apart(a: StoryPost, b: StoryPost) -> timedelta:
+    """How far apart two posts' times are: zero when they may be the same time (a month alone spans its month)."""
+    return max(timedelta(0), max(a.t, b.t) - min(a.last_t, b.last_t))
 
 
 def date_alone(t: datetime) -> bool:
@@ -381,7 +396,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
     def chain(same: Dict[str, List[StoryPost]], within: timedelta, reason: str, via: Callable[[str], str]) -> None:
         for key, run in same.items():
             for a, b in zip(run, run[1:]):
-                if a.source_id != b.source_id and b.t - a.t <= within:
+                if a.source_id != b.source_id and apart(a, b) <= within:
                     join(b.id, a.id, reason, via(key))
                     why[a.id].add(reason)
                     why[b.id].add(reason)
@@ -430,7 +445,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             if cited.kind == "saved":
                 # a saved page is still the outside page its linkers link: their link join holds, and it joins them
                 # whatever its own date (0113)
-                near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
+                near = [p for p in ps if apart(p, ps[0]) <= LINK_WITHIN]   # ps is in time order
                 if len({p.place for p in near}) >= 2:
                     for p in near:
                         join(p.id, cited.id, "citation")
@@ -438,12 +453,12 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
                         why[cited.id].add("citation")
                     ps = [p for p in ps if p not in near]
             for p in ps:
-                if p.place != cited.place and abs(p.t - cited.t) <= LINK_WITHIN:
+                if p.place != cited.place and apart(p, cited) <= LINK_WITHIN:
                     join(p.id, cited.id, "citation")
                     why[p.id].add("citation")
                     why[cited.id].add("citation")
         else:
-            near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
+            near = [p for p in ps if apart(p, ps[0]) <= LINK_WITHIN]   # ps is in time order
             if len({p.place for p in near}) >= 2:
                 for p in near:
                     join(p.id, _PAGE + target, "link", link_via(target))
@@ -451,7 +466,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
     replies = threads(posts) if replies is None else {c: p for c, p in replies.items() if c in by_id and p in by_id}
     joins = [(child, parent, "thread", None) for child, parent in replies.items()]
     joins += [(child, parent, "quote", "u:" + by_id[child].quoted) for child, parent in quotes.items()
-              if abs(by_id[child].t - by_id[parent].t) <= LINK_WITHIN]
+              if apart(by_id[child], by_id[parent]) <= LINK_WITHIN]
     for child, parent, reason, via in joins:
         join(child, parent, reason, via)
         why[child].add(reason)
@@ -537,13 +552,19 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
 
 def story_times(posts: Sequence[StoryPost]) -> Dict[str, datetime]:
     """Each post's time as its story counts it: a date alone counts as that day's earliest timed post of the story,
-    else its date. A story's start, its order and the News window read it."""
+    a month alone (`month_alone`) as that month's, else its date. A story's start, its order and the News window
+    read it."""
     earliest: Dict[object, datetime] = {}
     for p in posts:
         if p.trusted_time:
             day = p.t.astimezone(timezone.utc).date()
             earliest[day] = min(earliest.get(day, p.t), p.t)
-    return {p.id: earliest.get(p.t.astimezone(timezone.utc).date(), p.t) if p.date_only else p.t for p in posts}
+            earliest[day.year, day.month] = min(earliest.get((day.year, day.month), p.t), p.t)
+
+    def counted(p: StoryPost) -> datetime:
+        day = p.t.astimezone(timezone.utc).date()
+        return earliest.get((day.year, day.month) if p.month_alone else day, p.t) if p.date_only else p.t
+    return {p.id: counted(p) for p in posts}
 
 
 # A post of no voice dated more than BACKGROUND_BEFORE before its story's first voiced post is background: a member,
@@ -675,6 +696,6 @@ def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = sit
     return sites.most_common(1)[0][0] if sites else ""
 
 
-__all__ = ["StoryPost", "Story", "Edge", "Grouping", "group", "grouping", "story_times", "background", "story_start", "keys", "page_key", "threads", "date_alone",
+__all__ = ["StoryPost", "Story", "Edge", "Grouping", "apart", "group", "grouping", "story_times", "background", "story_start", "keys", "page_key", "threads", "date_alone",
            "address_origins", "page_aliases", "paper_aliases", "link_via", "one_page", "roles", "named_voices", "text_key", "source_site", "title_key",
            "anchors"]

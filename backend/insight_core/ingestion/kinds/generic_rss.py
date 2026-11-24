@@ -771,7 +771,8 @@ class GenericRssKind(BaseKind):
         if read.article is None:
             kept = full_text.with_page_try(post, now, failed=True) if full_text.empty_read_failed(post) else post
             return full_text.with_outcome(kept, read.outcome, now)
-        return full_text.with_outcome(full_text.with_full_text(post, *read.article), read.outcome, now)
+        return full_text.with_outcome(full_text.with_full_text(post, *read.article, precision=read.precision),
+                                     read.outcome, now)
 
     async def _read_again(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """The source's stored teasers whose page read failed, read again: a slice at a time, PAGE_DELAY_S apart.
@@ -810,7 +811,8 @@ class GenericRssKind(BaseKind):
             # nothing longer ends it, unless the post has no body at all
             counted = full_text.with_outcome(full_text.with_page_try(
                 stored, now, failed=article is None and full_text.empty_read_failed(stored)), read.outcome, now)
-            read_again[stored["url"]] = full_text.with_full_text(counted, *article) if article else counted
+            read_again[stored["url"]] = (full_text.with_full_text(counted, *article, precision=read.precision)
+                                         if article else counted)
         if read_again:
             logger.info("%s: %s teasers read again, %s in full", source.get("handle_or_url"), len(read_again),
                         sum(1 for post in read_again.values() if post["metadata"].get(full_text.FULL_TEXT_FLAG)))
