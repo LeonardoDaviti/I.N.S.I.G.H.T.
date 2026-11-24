@@ -814,5 +814,22 @@ class DiscoveriesDbTests(unittest.TestCase):
             source_discoveries(self.cur, str(uuid.UUID(int=7)))
 
 
+class NextPageTests(unittest.TestCase):
+    """0280 A4: a documentation site's rel=next is its menu's next page; the numbered link paginates the listing."""
+
+    def test_the_numbered_link_wins_over_a_menus_rel_next(self):
+        # Privacy Guides (MkDocs Material): rel=next names the next menu page, the listing links page/2/
+        page = ('<link rel="next" href="editorial/"><a href="2025/11/15/email-security/">post</a>'
+                '<a href="page/2/">2</a><a href="page/3/">3</a>')
+        base = "https://docs.example/articles/"
+        self.assertEqual(ladder.next_page(page, base, 1), "https://docs.example/articles/page/2/")
+        page2 = '<link rel="next" href="../../editorial/"><a href="../3/">3</a><a href="https://docs.example/en/page/2/">x</a>'
+        self.assertEqual(ladder.next_page(page2, base + "page/2/", 2), "https://docs.example/articles/page/3/")
+
+    def test_rel_next_alone_is_followed(self):
+        page = '<link rel="next" href="/blog/?after=abc"><a href="/blog/post-1/">post</a>'
+        self.assertEqual(ladder.next_page(page, "https://blog.example/blog/", 1), "https://blog.example/blog/?after=abc")
+
+
 if __name__ == "__main__":
     unittest.main()
