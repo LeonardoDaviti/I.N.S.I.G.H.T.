@@ -540,6 +540,9 @@ class FakePosts:
     def __init__(self, count):
         self.count = count
 
+    def post_count(self, _source_id):
+        return self.count
+
     def get_source_post_stats(self, source_id):
         return {"post_count": self.count}
 

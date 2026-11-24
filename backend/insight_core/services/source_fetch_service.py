@@ -482,17 +482,17 @@ class SourceFetchService:
         continues_from = until_datetime(plan.get("continues_from"))
         if horizon is not None and not carried and continues_from is not None and continues_from <= horizon:
             # The archive continues below the stored posts, and they already reach the date.
-            post_stats = self.posts_service.get_source_post_stats(source_id)
+            stored_now = self.posts_service.post_count(source_id)
             result = {**plan, "success": True, "posts_fetched": 0, "pages_fetched": total_pages_fetched,
-                      "posts_inserted": 0, "posts_updated": 0, "stored_posts": post_stats["post_count"],
-                      "archive_status": derive_archive_status(post_stats["post_count"], plan["available_posts"]),
+                      "posts_inserted": 0, "posts_updated": 0, "stored_posts": stored_now,
+                      "archive_status": derive_archive_status(stored_now, plan["available_posts"]),
                       "until_reached": plan["until"],
                       "message": f"The archive already reaches {horizon:%-d %b %Y}"}
             await record(source_id, result, mode="archive", kind=kind)
             return result
 
         if older_posts == 0 and not carried:
-            post_stats = self.posts_service.get_source_post_stats(source_id)
+            stored_now = self.posts_service.post_count(source_id)
             result = {
                 **plan,
                 "success": True,
@@ -500,8 +500,8 @@ class SourceFetchService:
                 "pages_fetched": total_pages_fetched,
                 "posts_inserted": 0,
                 "posts_updated": 0,
-                "stored_posts": post_stats["post_count"],
-                "archive_status": derive_archive_status(post_stats["post_count"], plan["available_posts"]),
+                "stored_posts": stored_now,
+                "archive_status": derive_archive_status(stored_now, plan["available_posts"]),
                 "message": ("Every page your posts link is stored" if linked
                             else "The archive already reaches the source's oldest post"),
             }
@@ -602,7 +602,7 @@ class SourceFetchService:
         finally:
             gates.budgets.archive_stopped(host)
 
-        post_stats = self.posts_service.get_source_post_stats(source_id)
+        stored_now = self.posts_service.post_count(source_id)
         result = {
             **plan,
             "success": True,
@@ -610,7 +610,7 @@ class SourceFetchService:
             "pages_fetched": total_pages_fetched,
             "posts_inserted": total_inserted,
             "posts_updated": total_updated,
-            "stored_posts": post_stats["post_count"],
+            "stored_posts": stored_now,
             "checkpoint": checkpoint,
         }
         if stopped is not None:
@@ -619,7 +619,7 @@ class SourceFetchService:
             return await self._stopped(source_id, kind, plan, result, host, stopped,
                                        waits=0 if pages_this_leg else int(carried.get("waits") or 0),
                                        refill_s=refill, progress_callback=progress_callback, record=record)
-        result["archive_status"] = derive_archive_status(post_stats["post_count"], plan["available_posts"])
+        result["archive_status"] = derive_archive_status(stored_now, plan["available_posts"])
         message = (f"Archive stopped by you after {total_pages_fetched} pages ({total_posts_fetched} posts kept)"
                    if owner_stopped else f"Archive completed with {total_posts_fetched} posts")
         skipped = skipped_counts(checkpoint)
@@ -652,7 +652,7 @@ class SourceFetchService:
             "posts_fetched": total_posts_fetched,
             "posts_inserted": total_inserted,
             "posts_updated": total_updated,
-            "stored_posts": post_stats["post_count"],
+            "stored_posts": stored_now,
             "message": message,
             "progress": 100,
         })

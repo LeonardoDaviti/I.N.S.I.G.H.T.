@@ -1,6 +1,7 @@
 """SQL for the sources table: listing, adding, removing (remembered), switching, settings merged with the
 platform defaults."""
 import json
+import uuid
 import psycopg
 from psycopg import Cursor
 from typing import List, Dict, Any, Optional, Tuple
@@ -249,6 +250,21 @@ class SourcesRepository:
             }
             for row in cur.fetchall()
         ]
+
+    def get_source_with_settings(self, cur: Cursor, source_id: str) -> Optional[Dict[str, Any]]:
+        """One source's row with its settings merged over the defaults (get_source_settings), or None."""
+        try:
+            uuid.UUID(str(source_id))
+        except ValueError:
+            return None
+        cur.execute("""SELECT id, platform, handle_or_url, enabled, created_at, updated_at, in_main_digest, settings
+                         FROM sources WHERE id = %s""", (str(source_id),))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"id": str(row[0]), "platform": row[1], "handle_or_url": row[2], "enabled": row[3],
+                "created_at": row[4], "updated_at": row[5], "in_main_digest": row[6],
+                "settings": self.merge_with_defaults(row[1], row[7])}
 
     def get_source_settings(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
         """A source's settings: its overrides over the platform defaults."""

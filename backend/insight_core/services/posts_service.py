@@ -35,6 +35,13 @@ class PostsService:
             with conn.cursor() as cur:
                 return self.repo.get_source_post_stats(cur, source_id)
 
+    def post_count(self, source_id: str) -> int:
+        """A source's stored posts (repo_post_stats.post_counts: kept, or counted live while its posts change)."""
+        from insight_core.db import repo_post_stats
+
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return repo_post_stats.post_counts(cur, [source_id]).get(str(source_id), 0)
+
     def catch_up_stored_bodies(self) -> int:
         """Bring stored bodies up to the current reader rule once (`stored_bodies` holds the stamp they are at),
         from what is stored, nothing fetched. Returns how many posts changed."""

@@ -202,6 +202,9 @@ class _Posts:
     def __init__(self, count=0, oldest=None):
         self.count, self.oldest = count, oldest
 
+    def post_count(self, _source_id):
+        return self.count
+
     def get_source_post_stats(self, _source_id):
         return {"post_count": self.count, "oldest_published_at": self.oldest, "oldest_external_id": None}
 

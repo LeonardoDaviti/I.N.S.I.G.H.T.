@@ -4,14 +4,18 @@ sizes; code whose statement count grows with the world is an N+1 and fails here,
 planner may add one task's writes per new task, PER_TASK). Invented names; a _test database."""
 from __future__ import annotations
 
+import unittest
 from datetime import datetime, timezone
 from unittest import mock
+
+import psycopg
 
 from insight_core.markx import entity_views as EV, holds, news, repo, schemas, tasks, track_things as TT
 from insight_core.tests import test_markx_built as built_tests
 from insight_core.tests import test_markx_decide as decide_tests
 from insight_core.tests import test_track_briefer_0245 as briefer
-from insight_core.tests._db import clear_tables
+from insight_core.tests._db import (SCRATCH_PREFIX, clear_tables, db_url, delete_scratch_sources,
+                                    insert_scratch_source, requires_test_db)
 from insight_core.tests._query_budget import grown, statements
 from insight_core.tests.test_markx_api import MX_TABLES, _Api
 from insight_core.tests.test_markx_built import H
@@ -199,3 +203,68 @@ class ALeaseAndTheLane(_Api):
                 self.lane()
             counts.append(c)
         self.assertEqual(dict(grown(*counts)), {}, _why("a lane pass", *counts))
+
+
+@requires_test_db
+class TheSourceReads(unittest.TestCase):
+    """v10.49 (0280 G; the server's top statement after v10.47: COUNT, MIN/MAX(published_at) and an oldest-post
+    subquery over a source's posts, 5,074 calls in 1.1 h): GET /api/sources, the archive catalog and the OPML export
+    send as many statements for twice the sources, and a fetched source's archive record reads its count alone."""
+
+    def setUp(self):
+        self.url = db_url()
+        self._clean()
+
+    def tearDown(self):
+        self._clean()
+
+    def _clean(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            conn.commit()
+
+    def add(self, n):
+        """`n` enabled scratch sources of three posts each, committed (the services read on their own connections)."""
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            ids = [insert_scratch_source(cur, enabled=True) for _ in range(n)]
+            cur.execute("""INSERT INTO posts (source_id, url, published_at, fetched_at)
+                           SELECT s::uuid, %s || s || '/' || g, now() - g * interval '1 hour', now()
+                             FROM unnest(%s::text[]) s, generate_series(1, 3) g""", (SCRATCH_PREFIX, ids))
+            conn.commit()
+        return ids
+
+    def measured(self, path):
+        self.add(3)
+        with statements() as small:
+            path()
+        self.add(3)
+        with statements() as big:
+            path()
+        return small, big
+
+    def test_the_source_list_the_catalog_and_the_export_do_not_grow_with_the_sources(self):
+        from insight_core.services.source_fetch_service import SourceFetchService
+        from insight_core.services.sources_service import SourcesService
+
+        fetch = SourceFetchService(self.url)
+        for name, path in (("GET /api/sources", SourcesService(self.url).list_sources),
+                           ("the archive catalog", fetch.archive_catalog),
+                           ("the OPML export's sources", SourcesService(self.url).get_all_sources_with_settings)):
+            self._clean()
+            small, big = self.measured(path)
+            self.assertEqual(dict(grown(small, big)), {}, _why(name, small, big))
+
+    def test_a_fetched_sources_archive_record_reads_its_count_alone(self):
+        from insight_core.services.source_fetch_service import SourceFetchService
+
+        fetch = SourceFetchService(self.url)
+        sid = self.add(1)[0]
+        self.add(5)   # more sources: the record reads one
+        source = fetch.sources_service.get_source_with_settings(sid)
+        with statements() as c:
+            fetch.archive_metadata.record(sid, fetch.kinds.resolve(source), {"posts_fetched": 3}, "live")
+        self.assertNotIn("db/repo_posts.py:get_source_post_stats", c.by_line, c)
+        # the source, its settings, its count, the locked merge (2); each connection's own setup aside
+        self.assertLessEqual(sum(n for at, n in c.by_line.items()
+                                 if not at.endswith(":__enter__") and not at.startswith("db/database.py:")), 5, c)
+        self.assertEqual(fetch.sources_service.get_source_with_settings(sid)["settings"]["archive"]["stored_posts"], 3)
