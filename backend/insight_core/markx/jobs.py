@@ -18,9 +18,10 @@ import multiprocessing
 import threading
 import time
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from insight_core.utils import peak
 from insight_core.utils.idle_trim import libc_trim, rss_mb
@@ -42,7 +43,18 @@ WAIT_PAGE = 1000                 # waiting posts a candidates run reads (the res
 HARD_LIMIT = 900.0               # a job's process is killed after this (a stage that never ends); the run rolls back
 STALE_MARGIN = 120.0             # a stage older than HARD_LIMIT + this is a dead run's (`stale`): cleared
 JOBS = ("candidates", "decide", "plan", "news", "tracks", "unread", "main_source", "discover", "official",
-        "stories", "entities", "discussions")
+        "stories", "entities", "discussions", "lane")
+# The lane (v10.47, 0279 B2): the planners a worker's lease ran, run here instead, beside the jobs (its own thread,
+# never waiting on a job's process), so a lease only leases. Every LANE_EVERY seconds: the fresh lane's planners, then
+# each lease-planned kind whose queue holds fewer than LANE_LOW (or whose reading window changed); a planner that
+# added nothing rests PLAN_REST_SECONDS. A new post's first question waits at most about LANE_EVERY.
+LANE_EVERY = 30.0
+LANE_LOW = 500                   # tasks.PLAN_LIMIT: a planner's page waits ahead of the worker
+PLAN_REST_SECONDS = 60.0
+# kinds the decision run plans itself, in its one long transaction: the lane planning one meanwhile would wait on the
+# run's uncommitted rows until the run ends
+PLANNED_BY_RUNS = ("relate", "back")
+_PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (this process's lane)
 DISCUSSIONS_EVERY = 600.0        # the discussions pass (markx/discussions.run): its planner and due fetches, this often
 STORIES_GAP = 120.0              # a rebuild's next slice starts this long after the last ended
 ORIGINALS_GAP = 1800.0           # the originals follow a wanted story run at most this often
@@ -304,6 +316,25 @@ def decision_running(cur: Any) -> bool:
     return bool(cur.fetchone()[0])
 
 
+PLANNING_JOBS = ("lane", "plan", "candidates", "decide")   # the jobs whose runs add tasks a worker leases
+
+
+def planning_soon(cur: Any) -> Optional[float]:
+    """Seconds a worker with nothing to lease should wait before it asks again because tasks are on their way (GET
+    /api/markx/ready's `retry_after`), or None (nothing is being planned: the worker rests as it likes). Soon when a
+    planning job (PLANNING_JOBS) runs now or is wanted (a restart's recover() wants the runs it ended), or when the lane
+    has not passed for 3 x LANE_EVERY (the jobs' process restarting, as in a deploy). One read of mx_jobs."""
+    cur.execute("""SELECT job, stage IS NOT NULL, wanted_at IS NOT NULL,
+                          extract(epoch FROM now() - COALESCE(finished_at, started_at))
+                     FROM mx_jobs WHERE job = ANY(%s)""", (list(PLANNING_JOBS),))
+    rows = {job: (running, wanted, age) for job, running, wanted, age in cur.fetchall()}
+    lane = rows.get("lane")
+    if any(running or wanted for running, wanted, _age in rows.values()) or (
+            lane is not None and (lane[2] is None or lane[2] > 3 * LANE_EVERY)):
+        return LANE_EVERY
+    return None
+
+
 def waiting_posts(cur: Any, limit: Optional[int] = None) -> List[str]:
     """The posts waiting for the candidate finder, longest waiting first; at most `limit` (None: all)."""
     cur.execute("""SELECT post_id::text FROM mx_candidate_posts WHERE found_at IS NULL OR found_at < noted_at
@@ -470,7 +501,7 @@ class Jobs:
             try:
                 with self._tx() as cur:
                     if not tasks.planned_in_background(cur, kind, self.clock()):
-                        out[kind] = {"planned": "by the lease"}
+                        out[kind] = {"planned": "by the lane"}
                         continue
                     # skipped while what it reads is as it was at its last pass that planned nothing
                     added = unchanged.run(cur, "plan:" + kind, *tasks.background_inputs(cur, kind, self.clock()),
@@ -494,6 +525,64 @@ class Jobs:
             log.exception("Mark X jobs: closing the tasks no feature reads failed")
             out["not_asked"] = {"error": str(exc)[:300]}
         return out
+
+    @contextmanager
+    def _planning(self, out: Dict[str, Any], kind: str) -> Iterator[Any]:
+        """One kind's planning in a transaction of its own; a failure is recorded in `out` and logged, never raised
+        (that kind is tried again at the next lane pass)."""
+        try:
+            with self._tx() as cur:
+                yield cur
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Mark X lane: planning %s failed", kind)
+            out[kind] = {"error": str(exc)[:300]}
+
+    def lane(self) -> Dict[str, Any]:
+        """One lane pass (LANE_EVERY): the fresh lane's planners, then every lease-planned kind a feature reads whose
+        queue runs low (LANE_LOW) or whose reading window changed, each kind in its own transaction. Never raises:
+        {kind: added | {error}}, with the pass's seconds and its thread's CPU seconds; recorded in mx_jobs ("lane")."""
+        from insight_core.markx import consumers, repo, schemas, tasks
+        t0, c0 = time.monotonic(), time.thread_time()
+        self._begin("lane", "planning")
+        out: Dict[str, Any] = {}
+
+        def add(kind: str, n: int) -> None:
+            if n:
+                out[kind] = out.get(kind, 0) + n
+        try:
+            with self._tx() as cur:
+                schemas.ensure_guides(cur)
+                kinds = [k for k in tasks.PLANNERS
+                         if not tasks.planned_in_background(cur, k, self.clock()) and consumers.wanted(cur, k)]
+                waiting = repo.open_counts(cur, kinds)
+                setting = tasks.reading_window(cur)
+                windows = {k: tasks.planned_window(cur, k) for k in kinds if k in tasks.WINDOWED}
+                running = decision_running(cur)
+            for kind in tasks.FRESH_PLANNERS:   # a new post's first questions, every pass
+                if kind in tasks.PLANNERS:
+                    with self._planning(out, kind) as cur:
+                        add(kind, tasks.FRESH_PLANNERS[kind](cur))
+            now = time.monotonic()
+            for kind in kinds:
+                if kind in PLANNED_BY_RUNS and running:
+                    continue                                       # never wait on a running decision run
+                if kind in windows and windows[kind] != setting:   # the page's window changed: at once
+                    with self._planning(out, kind) as cur:
+                        add(kind, tasks.PLANNERS[kind](cur, days=setting))
+                        tasks.note_planned(cur, kind, setting)
+                elif waiting.get(kind, 0) < LANE_LOW and _PLAN_REST.get(kind, 0.0) <= now:
+                    with self._planning(out, kind) as cur:
+                        n = tasks.PLANNERS[kind](cur)
+                        add(kind, n)
+                        if not n:   # it found nothing: it rests
+                            _PLAN_REST[kind] = time.monotonic() + PLAN_REST_SECONDS
+        except Exception as exc:  # noqa: BLE001 - the next pass tries again
+            log.exception("Mark X lane: the pass failed")
+            out["error"] = str(exc)[:300]
+        last = {"ok": not any(isinstance(v, (dict, str)) for v in out.values()),
+                "seconds": round(time.monotonic() - t0, 2), "cpu_s": round(time.thread_time() - c0, 2), "added": out}
+        self._finish("lane", last)
+        return last
 
     def _keep_track_places(self) -> Dict[str, Any]:
         """The topic tracks whose inputs changed placed again (track_kept.refresh), in a savepoint; a failure is
@@ -921,8 +1010,9 @@ class Runner:
     def __init__(self, db_url: str, *, clock: Callable[[], datetime] = _now, spawn: bool = True,
                  on: Optional[Callable[[], bool]] = None, settle: float = SETTLE, every: float = EVERY,
                  gap: float = GAP, hard_limit: float = HARD_LIMIT, plan_every: Optional[float] = PLAN_EVERY,
-                 run_gap: float = RUN_GAP) -> None:
+                 run_gap: float = RUN_GAP, lane_every: Optional[float] = LANE_EVERY) -> None:
         self.db_url, self.clock, self.spawn = db_url, clock, spawn
+        self.lane_every = lane_every
         self.run_gap = run_gap
         self.plan_every = plan_every
         self.on = on or enabled
@@ -1047,6 +1137,19 @@ class Runner:
             log.exception("Mark X jobs: the tick failed")
             return None
 
+    def lane(self) -> Optional[Dict[str, Any]]:
+        """One lane pass (Jobs.lane) in this process, while Mark X is on; never raises into the loop. Its memory is
+        trimmed back after (the scheduler's process is long-lived)."""
+        try:
+            if not self.on():
+                return None
+            out = Jobs(self.db_url, clock=self.clock).lane()
+            libc_trim()
+            return out
+        except Exception:
+            log.exception("Mark X jobs: the lane pass failed")
+            return None
+
     def official_every(self) -> Optional[float]:
         """The official channels' pass's period, None while INSIGHT_OFFICIAL is off."""
         from insight_core.markx import official
@@ -1140,7 +1243,13 @@ class Runner:
             while not self.stop.wait(poll):
                 self.tick()
                 beat()
+
+        def lane() -> None:   # its own thread: a job's process (minutes) never holds a new post's first questions
+            while not self.stop.wait(self.lane_every):
+                self.lane()
         self.thread = threading.Thread(target=loop, name="markx-jobs", daemon=True)
         self.thread.start()
+        if self.lane_every:
+            threading.Thread(target=lane, name="markx-lane", daemon=True).start()
         log.info("Mark X jobs: running here, every %.0f s (Mark X %s)", poll, "on" if self.on() else "off: kept views only")
         return True

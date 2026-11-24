@@ -6,7 +6,7 @@ same input_hash and is never asked twice, and a story's answer is found again by
 (`repo.task_for`). Post text is `markx text v1` (post_parts' title and text, kept links, the quoted tweet); bump
 TEXT_VERSION on purpose to re-read every post. A repost renders as its original author's post shared by the feed,
 and counts as the author's voice only when a source follows that author (utils/voice.py). Planners: `plan_posts`
-(read, entities), `plan_checks` (check) and the fresh lane, called when the worker asks for work (markx/api.py);
+(read, entities), `plan_checks` (check) and the fresh lane, run by the jobs' lane (markx/jobs.py Jobs.lane, v10.47);
 the other kinds are built by S2's candidates and S5's decisions through the builders below.
 """
 from __future__ import annotations
@@ -771,7 +771,7 @@ def check_side(post: Post, members: Sequence[Post], reports: Iterable[str]) -> L
             or [m for m in members if m.id != post.id])
 
 
-# kinds the decision job plans, never a lease: their planners are too slow for a lease's wait (0216)
+# kinds the decision job plans (jobs.Jobs.plan_background), not the lane: their planners are slow (0216)
 BACKGROUND_PLANNED = ("check", "cite", "track", "relate", "stop",
                       "chain",
                       "derive",
@@ -818,7 +818,7 @@ def background_inputs(cur: Cursor, kind: str, now: datetime) -> Tuple[Sequence[s
 
 def checks_in_background(cur: Cursor, now: Optional[datetime] = None) -> bool:
     """Whether the checks are planned by the decision job: while the story window reaches past RECENT days planning
-    them takes longer than a worker waits for its lease; within RECENT days a lease plans them."""
+    them is slow; within RECENT days the jobs' lane plans them (jobs.Jobs.lane)."""
     from insight_core.markx import story_window
     return story_window.days_for_run(cur, now or datetime.now(timezone.utc)) > story_window.RECENT
 
@@ -1256,7 +1256,7 @@ def fresh_since(now: Optional[datetime] = None) -> datetime:
 
 def plan_fresh(cur: Cursor, kind: str, *, limit: int = PLAN_LIMIT, now: Optional[datetime] = None) -> int:
     """The fresh lane's planning for `kind` (read, entities, read3), whatever the reading window: how many were
-    added. A lease runs it first, every time; the general planner only when its queue runs low."""
+    added. The jobs' lane runs it every pass (jobs.Jobs.lane); the general planner only when its queue runs low."""
     since = fresh_since(now)
     if kind in ("read", "entities"):
         return plan_posts(cur, kind, limit=limit, now=now, fetched_since=since)

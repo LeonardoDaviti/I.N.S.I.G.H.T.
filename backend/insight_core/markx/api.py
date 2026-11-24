@@ -9,7 +9,7 @@ The worker contract (scripts/markx-worker is built against it). Every worker req
 
 GET /api/markx/work?kinds=<k1,k2>&limit=<n>&worker=<name>
     Leases up to n (1-100, default 20) open tasks of those kinds for 30 minutes, by priority then age (an expired
-    lease is leased again), planning more first when few are open. 200 {"lease_until": ISO with offset, "guides":
+    lease is leased again); it plans nothing (v10.47: the jobs' lane plans, jobs.Jobs.lane). 200 {"lease_until": ISO with offset, "guides":
     {id: {sha256, body, schema}}, "tasks": [{id, kind, guide, input, post?}]}. A task of a post's kind (POST_KINDS)
     carries its post, so the worker never asks two tasks of one post in one call. Fresh posts are leased first
     (the fresh lane). An unknown kind: 400.
@@ -19,8 +19,9 @@ POST /api/markx/answers
     A valid one closes its task; an invalid one reopens it with its error (failed at the third try). An answer to a
     task already answered or failed changes nothing ("repeated"); a late answer is taken like any other; an unknown
     task id is listed in "invalid" and not stored.
-GET /api/markx/ready?kinds=&days=   (v10.42) -> {"ready": kinds with a leasable task, "planned": kinds a lease would
-    plan first}: the worker leases only these; an older server's 404: every kind.
+GET /api/markx/ready?kinds=&days=   (v10.42) -> {"ready": kinds with a leasable task, "planned": [] (v10.47),
+    "retry_after": seconds or null (v10.47: the jobs are planning, ask again then)}: the worker leases only the ready
+    kinds; an older server's 404: every kind.
 POST /api/markx/release   {"worker", "task_ids"?} -> {"released"}: the leases go back to open, no try counted.
 GET /api/markx/status     the queue, answers a day, tokens, workers, last run, guides and jobs.
 POST /api/markx/embeddings
@@ -37,7 +38,6 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -177,34 +177,19 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 
 # ---- the worker's routes -------------------------------------------------------------------------
 
-# kinds the decision run plans itself, in its one long transaction: a lease planning one meanwhile would wait on the
-# run's uncommitted rows until the run ends. The run plans them; the lease leases.
-PLANNED_BY_RUNS = ("relate", "back")
-
-PLAN_REST_SECONDS = 60.0   # a planner that found nothing to add rests this long before a lease runs it again
-_PLAN_REST: Dict[str, float] = {}   # kind -> monotonic time its planner rests until (per API process)
-FRESH = "fresh:"                    # _PLAN_REST's key prefix for a kind's fresh-lane planner
-FRESH_REST_SECONDS = 30.0           # a fresh-lane planner that found nothing rests this long (a new post waits at most this)
 # kinds whose leased tasks carry their post, by the column it is in (join's `a`, pair's `b`: the judged post), so
 # the worker never asks two questions of one post in one call: an answer written for one could pass the other's
 # quote check under the other's task id.
 POST_KINDS = {"entities": "a", "reading": "a", "join": "a", "pair": "b"}
 
 
-def _plan_resting(kind: str) -> bool:
-    """Most queues run near empty, and a planner that finds nothing still reads its whole window: after a run that
-    added nothing, leases skip it for PLAN_REST_SECONDS. New work still arrives within a minute."""
-    return _PLAN_REST.get(kind, 0.0) > time.monotonic()
-
-
 @router.get("/work", dependencies=[Depends(_worker_auth)])
 def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), worker: str = Query(...),
          days: Optional[str] = Query(None)):
-    """A lease. With `days` (a number, or "all"; `markx-worker cycle --days`), the read, entities and embed kinds asked
-    are planned for that window first, newest first, PLAN_LIMIT a call; without it, the page's window holds and a kind
-    is planned when fewer than `limit` wait, or at once when the page's window changed. Those kinds are leased inside
-    the window first, newest first, then the older tasks still queued. Before all that, the fresh lane: posts fetched in
-    the last tasks.FRESH_HOURS are planned and get up to tasks.FRESH_SHARE of the lease (repo.lease_tasks)."""
+    """A lease, and only a lease (v10.47, 0279 B2: the planners run in the jobs' lane, jobs.Jobs.lane, every
+    jobs.LANE_EVERY seconds). The windowed kinds are leased inside the reading window first (or `days`: a number, or
+    "all"), newest first, then the older tasks still queued; the fresh lane (posts fetched in the last
+    tasks.FRESH_HOURS) gets up to tasks.FRESH_SHARE of the lease (repo.lease_tasks)."""
     worker = _name(worker)
     wanted = [k.strip() for k in kinds.split(",") if k.strip()]
     unknown = [k for k in wanted if k not in schemas.KINDS]
@@ -214,27 +199,7 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
     _contact(worker)
     with transaction() as cur:
         ensure_guides(cur)
-        waiting = repo.open_counts(cur, wanted)
         setting = tasks.reading_window(cur)
-        for kind in wanted:   # the fresh lane is planned on every lease (FRESH_REST_SECONDS after a dry one)
-            if kind in tasks.FRESH_PLANNERS and kind in tasks.PLANNERS and not _plan_resting(FRESH + kind):
-                if not tasks.FRESH_PLANNERS[kind](cur):
-                    _PLAN_REST[FRESH + kind] = time.monotonic() + FRESH_REST_SECONDS
-        for kind in wanted:
-            if kind not in tasks.PLANNERS or not consumers.wanted(cur, kind):
-                continue                                          # no feature reads it: nothing planned
-            if tasks.planned_in_background(cur, kind):
-                continue                                          # the decision job plans them
-            if kind in PLANNED_BY_RUNS and jobs.decision_running(cur):
-                continue                                          # never wait on a running decision run
-            if window is not tasks.SETTING and kind in tasks.WINDOWED:
-                tasks.PLANNERS[kind](cur, days=window)
-            elif kind in tasks.WINDOWED and tasks.planned_window(cur, kind) != setting:
-                tasks.PLANNERS[kind](cur, days=setting)          # the page's window changed: at once
-                tasks.note_planned(cur, kind, setting)
-            elif waiting.get(kind, 0) < limit and not _plan_resting(kind):
-                if not tasks.PLANNERS[kind](cur):
-                    _PLAN_REST[kind] = time.monotonic() + PLAN_REST_SECONDS
         leased = repo.lease_tasks(cur, kinds=wanted, limit=limit, worker=worker, windowed=tasks.WINDOWED,
                                   days=setting if window is tasks.SETTING else window,
                                   fresh=tasks.FRESH_KINDS, fresh_hours=tasks.FRESH_HOURS, fresh_share=tasks.FRESH_SHARE,
@@ -256,32 +221,20 @@ def work(kinds: str = Query(...), limit: int = Query(20, ge=1, le=MAX_LIMIT), wo
 
 @router.get("/ready", dependencies=[Depends(_worker_auth)])
 def ready(kinds: str = Query(...), days: Optional[str] = Query(None)):
-    """v10.42: which of `kinds` a lease would give work now: {"ready": [kinds with a leasable task],
-    "planned": [kinds a lease would plan first (as /work decides: a fresh lane, or a planner the lease runs and that
-    is not resting)]}. Cheap (an EXISTS a kind on the queue index), so the worker leases only these instead of every
-    kind each cycle; no lease, no plan, no write. An unknown kind: 400."""
+    """v10.42: which of `kinds` a lease would give work now: {"ready": [kinds with a leasable task], "planned": [] (no
+    lease plans since v10.47; kept for older workers), "retry_after": seconds or null}. `retry_after` (v10.47): the
+    jobs are planning or about to (jobs.planning_soon: the lane, the background planners or a decision run running or
+    wanted, or the lane not seen lately, as after a deploy): ask again after that many seconds instead of resting.
+    Cheap (an EXISTS a kind on the queue index, one read of mx_jobs); no lease, no plan, no write. An unknown kind:
+    400. `days` is accepted as before (older workers send it) and changes nothing."""
     wanted = [k.strip() for k in kinds.split(",") if k.strip()]
     unknown = [k for k in wanted if k not in schemas.KINDS]
     if not wanted or unknown:
         raise HTTPException(status_code=400, detail=f"unknown kind: {unknown[0] if unknown else '(none)'}")
     with transaction() as cur:
         ready_ = set(repo.leasable_kinds(cur, wanted))
-        setting = tasks.reading_window(cur)
-        planned = set()
-        for kind in wanted:
-            if kind in tasks.FRESH_PLANNERS and kind in tasks.PLANNERS and not _plan_resting(FRESH + kind):
-                planned.add(kind)
-            elif kind not in tasks.PLANNERS or not consumers.wanted(cur, kind) or tasks.planned_in_background(cur, kind):
-                continue
-            elif kind in PLANNED_BY_RUNS and jobs.decision_running(cur):
-                continue
-            elif days is not None and kind in tasks.WINDOWED:
-                planned.add(kind)
-            elif kind in tasks.WINDOWED and tasks.planned_window(cur, kind) != setting:
-                planned.add(kind)
-            elif not _plan_resting(kind):
-                planned.add(kind)
-    return {"ready": [k for k in wanted if k in ready_], "planned": [k for k in wanted if k in planned and k not in ready_]}
+        soon = jobs.planning_soon(cur)
+    return {"ready": [k for k in wanted if k in ready_], "planned": [], "retry_after": soon}
 
 
 def _model(kind: str) -> Dict[str, str]:

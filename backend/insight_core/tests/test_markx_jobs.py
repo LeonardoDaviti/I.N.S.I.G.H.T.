@@ -792,7 +792,7 @@ class PlanningInTheBackground(_Api):
                 mock.patch.dict(tasks.PLANNERS, planners):
             got = self.jobs_().plan_background()
         planners["check"].assert_not_called()
-        self.assertEqual(got["check"], {"planned": "by the lease"})
+        self.assertEqual(got["check"], {"planned": "by the lane"})
         self.assertEqual(got["cite"]["added"], 1)
 
     def test_one_failure_never_stops_the_others(self):

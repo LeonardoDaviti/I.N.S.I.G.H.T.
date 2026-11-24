@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 
-from insight_core.markx import api, plan_marks, repo, schemas, tasks
+from insight_core.markx import api, jobs, plan_marks, repo, schemas, tasks
 from insight_core.tests._db import clear_tables, db_url, insert_scratch_source, requires_test_db
 from insight_core.tests import test_markx_incremental as TI
 from insight_core.tests.test_markx_api import MX_TABLES, _Api
@@ -349,9 +349,7 @@ class FreshLaneApi(_Api):
 
     def setUp(self):
         super().setUp()
-        self.addCleanup(setattr, api, "FRESH_REST_SECONDS", api.FRESH_REST_SECONDS)
-        api.FRESH_REST_SECONDS = 0.0
-        api._PLAN_REST.clear()   # a planner rest an earlier module's lease left in this process
+        jobs._PLAN_REST.clear()   # a planner rest an earlier module's lane left in this process
 
     def test_a_lease_plans_new_posts_even_when_the_queue_is_full(self):
         for k in range(25):                                         # a full queue: the general planner rests
