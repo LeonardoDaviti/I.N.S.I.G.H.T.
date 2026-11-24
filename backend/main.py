@@ -1966,6 +1966,7 @@ def get_scheduler_config():
     except Exception:
         logger.exception("Could not read the scheduler state")
         scheduler["state"] = {}
+    scheduler["process"] = ops.scheduler_process()
     return {"success": True, "scheduler": scheduler}
 
 

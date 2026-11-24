@@ -8,7 +8,9 @@ so its Docker healthcheck and the API's /api/status read the truth (a hung loop 
     python -I insight_core/utils/heartbeat.py   # the healthcheck: exit 1 when a heartbeat is stale
 
 A beat may carry its process's own numbers (`stats`: utils/peak.own) on a second line, read by `processes()` for
-/api/status and /metrics. Each API process has a beat too, "api-<pid>", written by scripts/api_supervisor.py for its
+/api/status and /metrics. The scheduler's beat carries what its process is doing then (`doing` and `child` mark it,
+`activity` reads it: a fetch run, the archives, Mark X's lane, a job's child process by its pid), so its memory reads
+beside its work (v10.48). Each API process has a beat too, "api-<pid>", written by scripts/api_supervisor.py for its
 numbers only; the writer of a set of beats owns their end (`only` removes the beats of processes that ended).
 
 Standard library only, and no import of insight_core: the healthcheck starts a Python each minute.
@@ -18,8 +20,10 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
-from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional
 
 BEAT_SECONDS = 30.0
 # a heartbeat older than this is a loop that stopped: the scheduler's beats every 30 s; Mark X's after each look,
@@ -50,6 +54,43 @@ def beat(name: str, now: Optional[float] = None, stats: Optional[Dict[str, Any]]
         os.replace(path + ".tmp", path)
     except (OSError, TypeError, ValueError):
         pass
+
+
+_DOING: Dict[str, Dict[str, Any]] = {}   # what this process does now: name -> {n, since, pid?}
+_DOING_LOCK = threading.Lock()
+
+
+@contextmanager
+def doing(name: str) -> Iterator[None]:
+    """`name` is in progress in this process while the block runs (counted: two at once are n 2). Any thread or
+    task; a dict write, never raises."""
+    with _DOING_LOCK:
+        got = _DOING.setdefault(name, {"n": 0, "since": time.time()})
+        got["n"] += 1
+    try:
+        yield
+    finally:
+        with _DOING_LOCK:
+            got = _DOING.get(name)
+            if got is not None:
+                got["n"] -= 1
+                if got["n"] <= 0:
+                    del _DOING[name]
+
+
+def child(name: str, pid: Optional[int]) -> None:
+    """The process doing `name` (inside its `doing` block): a child whose own numbers the beat reads too."""
+    with _DOING_LOCK:
+        if name in _DOING:
+            _DOING[name]["pid"] = pid
+
+
+def activity(now: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
+    """{name: {n, for_s, pid?}}: what this process is doing now, each for how long (since the first of them)."""
+    now = time.time() if now is None else now
+    with _DOING_LOCK:
+        return {name: {"n": got["n"], "for_s": round(max(0.0, now - got["since"])),
+                       **({"pid": got["pid"]} if got.get("pid") else {})} for name, got in sorted(_DOING.items())}
 
 
 def _read(path: str) -> Optional[Dict[str, Any]]:
