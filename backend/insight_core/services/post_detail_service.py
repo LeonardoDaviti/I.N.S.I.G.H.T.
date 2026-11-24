@@ -76,7 +76,8 @@ class PostDetailService:
                       (SELECT string_agg(a.content_html, '' ORDER BY a.published_at, length(a.url), a.url)
                          FROM posts a WHERE a.album_of = p.id),
                       -- Its parts (issue 0076: read once, when it was saved).
-                      pp.title, pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break, pp.text_copy, pp.html_cut, pp.html_decode_entities, pp.html_cut_leaves_break, pp.html_copy, pp.quoted, pp.quote_only, pp.folded, pp.counts, pp.link_target
+                      pp.title, pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break, pp.text_copy, pp.html_cut, pp.html_decode_entities, pp.html_cut_leaves_break, pp.html_copy, pp.quoted, pp.quote_only, pp.folded, pp.counts, pp.link_target,
+                      p.published_precision
                     FROM posts p
                     JOIN sources s ON s.id = p.source_id
                     LEFT JOIN post_parts pp ON pp.post_id = p.id
@@ -115,6 +116,7 @@ class PostDetailService:
             "url": row[2],
             "external_id": row[3],
             "published_at": row[4].isoformat() if row[4] else None,
+            "published_precision": row[41],   # "month": shown as its month alone (0180)
             "fetched_at": row[5].isoformat() if row[5] else None,
             "title": title,
             "counts": counts,

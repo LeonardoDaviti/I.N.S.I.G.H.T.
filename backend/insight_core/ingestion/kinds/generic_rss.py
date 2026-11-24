@@ -681,7 +681,7 @@ class GenericRssKind(BaseKind):
         the Web Archive's capture, read when the live page is gone (404 / 410). A page off the source's own site
         (`site`, its ladder's, else the feed's: archive_ladder.own_site) is never its post and is not read: an
         address strategy stores only the source's own pages; what it links elsewhere is a linked page."""
-        from insight_core.ingestion.kinds.page_watch import article_post, not_post, page_date
+        from insight_core.ingestion.kinds.page_watch import article_post, not_post, page_dating, stated_precision
 
         feed = str(source.get("handle_or_url") or "")
         if not archive_ladder.own_site(url, site or feed, feed):
@@ -705,12 +705,12 @@ class GenericRssKind(BaseKind):
             logger.info("Archive: %s could not be read (%s)", url, exc)
             return UNREADABLE
         # no date in its markup: its address's day before the sitemap's lastmod (often the last rebuild)
-        date = page_date(page, url)
+        date, how = page_dating(page, url)
         if date is None and parsing.meta_content(page, "og:type").lower() != "article":
             return None
         # then its address's month, else undated: the saver sorts it before the source's oldest post, never on top
         post = article_post(page, str(source["handle_or_url"]), url, date or address_hint(url) or lastmod,
-                            adapter=self.name)
+                            adapter=self.name, precision=stated_precision(how))
         if post is None or not_post(page, url, post):
             return None
         post[BACKLOG_KEY] = True   # from the sitemap: never "new to you"

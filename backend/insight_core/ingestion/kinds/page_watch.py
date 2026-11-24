@@ -59,6 +59,8 @@ SKIPPED: Dict[str, float] = {}
 
 LINK_RE = re.compile(r"""(?is)<a\b[^>]*?\bhref\s*=\s*["']([^"']+)["']""")
 JSON_LD_DATE_RE = re.compile(r'"datePublished"\s*:\s*"([^"]+)"')
+# An element's data-published attribute (Distill-style posts: <div data-published="April 23, 2025">), markup too.
+DATA_PUBLISHED_RE = re.compile(r"""(?is)<[a-z][^>]*?\bdata-published\s*=\s*["']([^"']+)["']""")
 TIME_RE = re.compile(r"""(?is)<time\b[^>]*?\bdatetime\s*=\s*["']([^"']+)["']""")
 TITLE_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
 H1_RE = re.compile(r"(?is)<h1\b[^>]*>(.*?)</h1>")
@@ -79,6 +81,13 @@ LISTING_MAX_BYTES = 4_000_000                     # a listing page is read up to
 # A date written on the page ("June 29, 2026", "Jun 29, 2026").
 TEXT_DATE_RE = re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}, (?:19|20)\d\d\b")
 SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
+# A page's own month and year standing alone in one element ("February 2026", "published Nov. 2026"): what dates a
+# page that states no day (month_date). A month a sentence names ("In March 2024 we ...") is no such element.
+MONTH_ALONE_RE = re.compile(
+    r"(?i)^(?:(?:first\s+|last\s+)?(?:published|posted|updated|released|dated?)\s*(?:on|in)?\s*:?\s*)?"
+    r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?"
+    r"|Nov(?:ember)?|Dec(?:ember)?)\.?,?\s+((?:19|20)\d\d)$")
+TAG_RE = re.compile(r"<[^>]+>")
 EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
@@ -556,7 +565,8 @@ FUTURE_SLACK = timedelta(days=1)   # a page date past now + this is no post's da
 
 # How page_dating dated a page, in the order of trust (0228); HELD: a body date the address or the web's age
 # contradicts, so no date rather than a guess.
-DATED_BY_PAGE, DATED_BY_ADDRESS, DATED_BY_BODY, DATE_HELD = "page", "address", "body", "held"
+# MONTH: the page's own month and year alone (month_date), the 1st of that month, stored as precision "month".
+DATED_BY_PAGE, DATED_BY_ADDRESS, DATED_BY_BODY, DATED_BY_MONTH, DATE_HELD = "page", "address", "body", "month", "held"
 # No page was published before the first web page (1991-08-06): a body date before it is one the text names.
 WEB_BEGAN = datetime(1991, 8, 6, tzinfo=timezone.utc)
 
@@ -569,10 +579,11 @@ def page_date(page: str, url: Optional[str] = None) -> Optional[datetime]:
 def page_dating(page: str, url: Optional[str] = None) -> Tuple[Optional[datetime], Optional[str]]:
     """(the page's publication date, how it was read: DATED_BY_*), or (None, DATE_HELD | None). In the order of trust:
       1. the page's markup: article:published_time, JSON-LD datePublished, meta date, its one <time datetime>,
-         then a scholarly meta date (SCHOLARLY_DATES);
+         then a scholarly meta date (SCHOLARLY_DATES), then its one data-published attribute;
       2. the day its address names (/2026/10/21/, /2008/Jul/7/);
       3. its body: the byline under its title, else its one written date; held when its address names another
-         month or it is before WEB_BEGAN (articles quote dates).
+         month or it is before WEB_BEGAN (articles quote dates);
+      4. last, its own month and year by its title (month_date): the 1st of that month, DATED_BY_MONTH, held alike.
     The <time> and the written date count only when the page has one; no date past FUTURE_SLACK is taken."""
     json_ld, times = JSON_LD_DATE_RE.search(page), {value.strip() for value in TIME_RE.findall(page)}
     one_time = times.pop() if len(times) == 1 else None
@@ -585,6 +596,9 @@ def page_dating(page: str, url: Optional[str] = None) -> Tuple[Optional[datetime
     for name in SCHOLARLY_DATES:
         if (date := scholarly_date(parsing.meta_content(page, name))) is not None and date <= latest:
             return date, DATED_BY_PAGE
+    published = {value.strip() for value in DATA_PUBLISHED_RE.findall(page)}
+    if len(published) == 1 and (date := scholarly_date(published.pop())) is not None and date <= latest:
+        return date, DATED_BY_PAGE
     from insight_core.utils.originals_rules import address_day, address_month
     if url and (date := address_day(url)) is not None and date <= latest:
         return date, DATED_BY_ADDRESS
@@ -593,12 +607,21 @@ def page_dating(page: str, url: Optional[str] = None) -> Tuple[Optional[datetime
     if date is None:
         written = set(TEXT_DATE_RE.findall(parsing.strip_html(visible)))
         date = _written_date(written.pop()) if len(written) == 1 else None
+    how = DATED_BY_BODY
+    if date is None and (date := month_date(visible)) is not None:
+        how = DATED_BY_MONTH
     if date is None or date > latest:
         return None, None
     month = address_month(url) if url else None
     if date < WEB_BEGAN or (month is not None and (date.year, date.month) != (month.year, month.month)):
         return None, DATE_HELD
-    return date, DATED_BY_BODY
+    return date, how
+
+
+def stated_precision(how: Optional[str]) -> Optional[str]:
+    """The post's date_precision for how page_dating dated its page: "month" for a month alone, else None (the
+    saver tells it by the date: a day alone or a time of day)."""
+    return "month" if how == DATED_BY_MONTH else None
 
 
 BYLINE_CHARS = 80   # how near its one <h1> a page's byline date is written
@@ -613,6 +636,41 @@ def byline_date(page: str) -> Optional[datetime]:
     text = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", after[:4000])).split())[:BYLINE_CHARS]
     match = TEXT_DATE_RE.search(text)
     return _written_date(match.group(0)) if match else None
+
+
+MONTH_CHARS = 400   # how much text after its one <h1>, or before it, a page's own month is written within
+
+
+def month_date(page: str) -> Optional[datetime]:
+    """The 1st of the month (UTC) a page states as its own: a month and year alone in one element (MONTH_ALONE_RE)
+    within MONTH_CHARS of text after its one <h1> or before it, the only month so written there. None for a page
+    with no <h1> or many, or two different months by its title. `page` without scripts and styles."""
+    titles = list(H1_RE.finditer(page))
+    if len(titles) != 1:
+        return None
+    start, end = titles[0].span()
+
+    def pieces(markup: str) -> List[str]:
+        return [text for part in TAG_RE.split(markup) if (text := " ".join(html.unescape(part).split()))]
+
+    def near(found: List[str]) -> List[str]:
+        kept, chars = [], 0
+        for text in found:
+            if chars >= MONTH_CHARS:
+                break
+            kept.append(text)
+            chars += len(text) + 1
+        return kept
+
+    window = near(pieces(page[end:end + 20_000])) + near(pieces(page[max(0, start - 20_000):start])[::-1])
+    months = set()
+    for text in window:
+        if (match := MONTH_ALONE_RE.match(text.strip(" \t·•|–—-:"))) is not None:
+            months.add((int(match.group(2)), datetime.strptime(match.group(1)[:3].title(), "%b").month))
+    if len(months) != 1:
+        return None
+    year, month = months.pop()
+    return datetime(year, month, 1, tzinfo=timezone.utc)
 
 
 def scholarly_date(value: str) -> Optional[datetime]:
@@ -677,11 +735,12 @@ def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime],
     """The post the page at url is, or None when it is no article. Undated by its markup: its address's day, then
     month, then the sitemap's lastmod. `new`: a page the listing shows now is dated now when nothing dates it; any
     other page stays undated (None)."""
-    date = page_date(page, url)
+    date, how = page_dating(page, url)
     if date is None and parsing.meta_content(page, "og:type").lower() != "article":
         return None
+    precision = stated_precision(how) if date is not None else None
     date = date or (None if new else older_date(url)) or lastmod or (datetime.now(timezone.utc) if new else None)
-    post = article_post(page, source_url, url, date, adapter=PageWatchKind.adapter_type)
+    post = article_post(page, source_url, url, date, adapter=PageWatchKind.adapter_type, precision=precision)
     if post is not None and not_post(page, url, post):
         return None
     return post
@@ -698,10 +757,10 @@ async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: s
     """One page of a website source read as its post, marked backlog. None when the page has no article or no
     date of its own (an old page would sort as new). Raises what the request raises."""
     page, _ = await http.get_text(url)
-    date = page_date(page, url)
+    date, how = page_dating(page, url)
     if date is None or date > datetime.now(timezone.utc):
         return None
-    post = article_post(page, str(source["handle_or_url"]), url, date, adapter=adapter)
+    post = article_post(page, str(source["handle_or_url"]), url, date, adapter=adapter, precision=stated_precision(how))
     if post is None or not_post(page, url, post):
         return None
     post[BACKLOG_KEY] = True
@@ -709,9 +768,10 @@ async def read_page_post(http: KindHttp, source: Source, url: str, *, adapter: s
 
 
 def article_post(page: str, source_url: str, url: str, date: Optional[datetime], *,
-                 adapter: str, platform: str = "rss") -> Optional[Dict[str, Any]]:
+                 adapter: str, platform: str = "rss", precision: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """The post any article page is: its body (the full-text reader), title, date and images; None without an
-    article body. The date as given, None staying None (never "now"; a caller reading a new page passes now)."""
+    article body. The date as given, None staying None (never "now"; a caller reading a new page passes now);
+    `precision`: its date_precision when the saver can't tell it by the date (stated_precision: "month")."""
     content_html, fidelity = parsing.read_article_page(page, base_url=url)
     content = parsing.strip_html(content_html)
     if not content:
@@ -728,6 +788,7 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
         "content": content,
         "content_html": content_html,
         "date": date,
+        **({"date_precision": precision} if precision and date is not None else {}),
         "media_urls": media_urls,
         "categories": [],
         # when the page says it last changed: what a watched page is checked by
@@ -1040,5 +1101,5 @@ class PageWatchKind(BaseSourceAdapter):
 
 __all__ = ["Discovery", "PageWatchKind", "action_page", "listing_address", "listing_markup", "not_post", "stored_listing", "article_post", "article_shaped", "discover", "discover_changed",
            "form_page", "name_titles", "pagination_page", "site_suffixes", "stable_prefix",
-           "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_dating", "page_title", "preview",
+           "infer_prefix", "is_home", "normalise_prefix", "offers", "page_date", "page_dating", "page_title", "preview", "stated_precision",
            "read_page_post", "read_from_address", "section_prefix", "sitemap_entries", "list_pages", "list_offers", "dated_list"]

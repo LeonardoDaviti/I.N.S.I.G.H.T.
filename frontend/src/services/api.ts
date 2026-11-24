@@ -59,6 +59,8 @@ export interface Post {
   feed_title?: string;
   media_urls?: string[];
   published_at?: string | null;
+  /** How precise published_at is (posts.published_precision): "month" shows as "Feb 2026". */
+  published_precision?: string | null;
   fetched_at?: string | null;
   categories?: string[];
   metadata?: Record<string, unknown>;
@@ -110,6 +112,8 @@ export interface FeedItem {
   id: string; title: string; excerpt: string; url: string;   // title already falls back to the excerpt
   source_id: string; source_display_name: string; platform: string;
   sort_at: string; published_at: string | null; read_at: string | null; starred_at: string | null;
+  /** How precise published_at is: "month" shows as "Feb 2026" (no day). */
+  published_precision?: string | null;
   reading_minutes: number | null; duration_seconds: number | null;
   media_thumb: string | null;
   resume_block?: number | null; resume_blocks?: number | null;

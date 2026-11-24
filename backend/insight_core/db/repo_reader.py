@@ -310,7 +310,7 @@ _ITEM_COLUMNS = f"""
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
     rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by, s.handle_or_url,
     pp.quote_only, pp.counts, p.metadata ? '{SAVED_KEY}' AND s.platform <> 'saved',
-    NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''), pp.quoted
+    NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''), pp.quoted, p.published_precision
 """
 
 
@@ -337,6 +337,8 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "platform": platform,
         "sort_at": row[7],
         "published_at": row[8],
+        # how precise published_at is: "month" shows as its month alone (posts.published_precision, 0180)
+        "published_precision": row[26],
         "read_at": row[9],
         "starred_at": row[10],
         "later_at": row[16],

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Circle, CircleCheck, Clock, PlayCircle, Star } from 'lucide-react';
 
 import type { FeedItem as FeedItemData, FeedStory, SnippetPart } from '../../services/api';
-import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/dates';
+import { feedDateLabel, feedFullTime, feedTimeLabel, monthAloneLabel } from '../../lib/dates';
 import { countsLabel, formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { feedItemDomId } from '../../lib/feedItem';
@@ -223,18 +223,23 @@ function FeedItem({
 
   // relative labels only move by the minute, so a re-render inside the same minute reuses the label
   const minute = Math.floor((now ? now.getTime() : Date.now()) / 60_000);
+  // a page that stated only its month: its month, never a day it does not state (when the row is keyed by it)
+  const month = item.published_at && Date.parse(time) === Date.parse(item.published_at)
+    ? monthAloneLabel(time, item.published_precision) : null;
   const timeLabel = useMemo(
-    () => (dateColumn === 'time' ? feedTimeLabel(time) : feedDateLabel(time, now ?? new Date())),
+    () => month ?? (dateColumn === 'time' ? feedTimeLabel(time) : feedDateLabel(time, now ?? new Date())),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `minute` stands in for `now`.
-    [dateColumn, minute, time],
+    [dateColumn, minute, time, month],
   );
-  const fullTime = useMemo(() => feedFullTime(time), [time]);
+  const fullTime = useMemo(() => month ?? feedFullTime(time), [time, month]);
   const source = sourceLabel(item.source_display_name);
   const carriedText = carriedLine(item);
   // when the post reached you; a changed or late-found page says why
   const pageNote = item.update
     ? `updated ${updateChanges(item.update)}`.trim()
-    : lateFind(item) ? `published ${feedDateLabel(item.published_at, now ?? new Date())}` : null;
+    : lateFind(item)
+      ? `published ${monthAloneLabel(item.published_at, item.published_precision) ?? feedDateLabel(item.published_at, now ?? new Date())}`
+      : null;
   // below `sm` the meta line is up to three lines beside the actions; from `sm` up one line, in `sm:order-*` order
   const barLine = progress !== null;
   const lengthPart = length ? (

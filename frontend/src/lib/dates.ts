@@ -92,6 +92,18 @@ export function dateAlone(value: DateInput): boolean {
   return Boolean(date) && date!.getUTCHours() === 0 && date!.getUTCMinutes() === 0 && date!.getUTCSeconds() === 0;
 }
 
+/** A post's date_precision (posts.published_precision): "month" when its page stated only its month and year. */
+export type DatePrecision = 'exact' | 'date' | 'month' | 'seen' | 'none' | null | undefined;
+
+const monthFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', year: 'numeric' });
+/** "Feb 2026" for a date whose precision is its month alone (stored as the 1st, UTC), else null: a month-precise
+ *  post never shows a day it does not state. */
+export function monthAloneLabel(value: DateInput, precision: DatePrecision | string): string | null {
+  if (precision !== 'month') return null;
+  const date = toDate(value);
+  return date ? monthFormatter.format(date) : null;
+}
+
 /** "Sep 29" (or "Sep 29 ’25" in another year); "5h ago" within the last 24h; a date alone, its day. */
 export function feedDateLabel(value: string | Date | null | undefined, now: Date = new Date(), timeZone?: string): string {
   const date = toDate(value);

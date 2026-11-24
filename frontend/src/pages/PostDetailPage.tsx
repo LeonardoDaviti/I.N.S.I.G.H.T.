@@ -38,7 +38,7 @@ import { bylineName, carried, carriedLine } from '../lib/byline';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
 import { countsLabel, middleTruncate, plural } from '../lib/format';
-import { feedDateLabel, feedFullTime, formatLocalDateTime, postBylineTime } from '../lib/dates';
+import { feedDateLabel, feedFullTime, formatLocalDateTime, monthAloneLabel, postBylineTime } from '../lib/dates';
 import { pageState, updateLine } from '../lib/pageUpdate';
 import { formatClock } from '../lib/duration';
 import { publicationOf } from '../lib/addresses';
@@ -965,8 +965,10 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     postId, api, body: bodyRef, end: endRef, saved: detail.reader_state ?? null,
     enabled: longPost && !fixture && !isYouTubePost, offer: offerResume,
   });
-  const publishedLabel = postBylineTime(post?.published_at || post?.fetched_at || null);
-  const publishedFull = feedFullTime(post?.published_at || post?.fetched_at || null);
+  // a page that stated only its month shows that month ("Feb 2026"), never a day
+  const publishedMonth = monthAloneLabel(post?.published_at, post?.published_precision);
+  const publishedLabel = publishedMonth ?? postBylineTime(post?.published_at || post?.fetched_at || null);
+  const publishedFull = publishedMonth ?? feedFullTime(post?.published_at || post?.fetched_at || null);
   const publishedIso = post?.published_at || post?.fetched_at || undefined;
   const page = useMemo(() => pageState(post.metadata, post.published_at), [post.metadata, post.published_at]);
   const pageLine = [page.update ? updateLine(page.update) : null, ...page.notes].filter(Boolean).join(' · ');
