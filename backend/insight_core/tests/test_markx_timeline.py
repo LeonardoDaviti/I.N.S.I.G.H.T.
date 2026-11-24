@@ -842,6 +842,32 @@ class ThingLinks(_Db):
         self.assertNotIn(other, got)
         self.assertEqual(counts["since_posts"], 1)
 
+    def test_a_symmetric_relation_is_one_edge_and_a_person_leads_an_org_never_part_of_it(self):
+        """0281 A6-7: Megaspeed with NVIDIA and NVIDIA with Megaspeed are one edge, its posts together (a mirror row
+        stored before v10.49 closes); a person `leads` an org, never `part_of` it."""
+        one = self.post_at(0, T0 - 10 * D, "Vantor and Rehost partner")
+        self.mentions(one, ("Vantor", "org", "actor"), ("Rehost", "org", "actor"), ("Ada Lux", "person", "source"))
+        self.state(one, [{"a": "Vantor", "rel": "partnered_with", "b": "Rehost"},
+                         {"a": "Ada Lux", "rel": "leads", "b": "Vantor"},
+                         {"a": "Ada Lux", "rel": "part_of", "b": "Vantor"}])     # a person's job: never part_of
+        two = self.post_at(1, T0 - 5 * D, "Rehost and Vantor deepen ties")
+        self.mentions(two, ("Rehost", "org", "actor"), ("Vantor", "org", "actor"))
+        self.state(two, [{"a": "Rehost", "rel": "partnered_with", "b": "Vantor"}])
+        self.stage()
+        vantor, rehost, ada = self.entity_of(one), self.entity_of(one, 1), self.entity_of(one, 2)
+        lo, hi = sorted([vantor, rehost])
+        self.cur.execute("""INSERT INTO mx_connections (a_kind, a, b_kind, b, relation, p, rule, evidence, valid_from)
+                            VALUES ('entity', %s, 'entity', %s, 'partnered_with', 1.0, 'stated', %s::jsonb, %s)""",
+                         (hi, lo, json.dumps({"posts": [two], "since": (T0 - 5 * D).isoformat(),
+                                              "dates": {two: (T0 - 5 * D).isoformat()}}), T0 - 5 * D))   # before v10.49
+        self.graph()
+        got = {(a, b, rel): ev for a, b, rel, _r, ev, *_ in self.edges()}
+        self.assertEqual(set(got), {(lo, hi, "partnered_with"), (ada, vantor, "leads")})
+        self.assertEqual(got[(lo, hi, "partnered_with")]["posts"], [one, two])
+        page = entity_views.entity_page(self.cur, vantor, now=T0 + 2 * D)
+        self.assertEqual(sorted((r["relation"], r["other"]["name"]) for r in page["relations"]),
+                         [("leads", "Ada Lux"), ("partnered_with", "Rehost")])
+
     @mock.patch.object(I, "families_on", lambda: {"maker": True, "stem": True, "namesakes": True})
     def test_a_relation_never_crosses_two_makers_namesakes(self):
         """"Orbit" the exchange is linked to Vantor's model Orbit by its name, but "Orbit released Orbit dollar" is not
