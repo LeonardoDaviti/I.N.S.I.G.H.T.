@@ -359,7 +359,7 @@ class TheKindsAndGuides(unittest.TestCase):
                                               "scout", "identity",
                                               "websearch",
                                               "source_judge", "question",
-                                              "news_sections",
+                                              "news_sections", "discussion",
                                               "reading",
                                               "news_place",
                                               "unit_types",

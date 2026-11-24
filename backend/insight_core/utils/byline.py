@@ -14,6 +14,8 @@ import re
 from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from insight_core.markx import pairing
+
 # The stored fields a byline reads, for a query joining posts p, sources s and (LEFT) post_parts pp, in `of_row`'s
 # order after the source name: platform, handle, author, forward's name, quoted tweet.
 COLUMNS = ("s.platform, s.handle_or_url, p.author, NULLIF(btrim(p.metadata->'forwarded_from'->>'name'), ''), "
@@ -128,7 +130,7 @@ def aggregators(cur: Any, source_ids: Iterable[Any]) -> set:
                        SELECT h, count(*) AS n FROM (
                          SELECT regexp_replace(lower(COALESCE(p.url_host, '')), '^www\\.', '') AS h FROM posts p
                           WHERE p.source_id = s.id
-                          ORDER BY COALESCE(p.surfaced_at, p.published_at, p.fetched_at) DESC, p.id DESC
+                          ORDER BY """ + pairing.ordinary_date("p") + """ DESC, p.id DESC
                           LIMIT %s) newest GROUP BY h) by_host) z
                    WHERE z.hosts >= %s AND z.top * 2 < z.posts""", (ids, AGGREGATOR_POSTS, AGGREGATOR_SITES))
     return {r[0] for r in cur.fetchall()}
