@@ -109,7 +109,7 @@ class KindResolutionTests(unittest.TestCase):
     def test_every_kind_is_registered_once(self):
         names = [kind.name for kind in _registry().kinds]
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual(len(names), 17, "saved, page_watch + 7 sites + substack, reddit, youtube, telegram_rss, nitter, bluesky (0137, off by default), mtproto, generic")
+        self.assertEqual(len(names), 18, "saved, page_watch + 7 sites + forum, substack, reddit, youtube, telegram_rss, nitter, bluesky (0137, off by default), mtproto, generic")
         self.assertEqual(names[:2], ["saved", "page_watch"], "the Saved source is no feed; page_watch's setting is the owner's explicit choice")
         self.assertEqual(names[-1], "generic_rss", "generic_rss is the fallback")
 
@@ -738,6 +738,7 @@ class AvailableBasisTests(unittest.TestCase):
     EXPECTED = {
         "saved": "unknown",                    # pages saved by hand; nothing to count
         "bluesky": "exact",                    # the profile's postsCount
+        "forum": "unknown",                    # a board's feed or API names no total
         "page_watch": "estimate",              # listing links and sitemap URLs; some are no post
         "lesswrong_graphql": "exact",          # counted through the GraphQL API
         "gwern_site": "estimate",              # candidate pages discovered on the index

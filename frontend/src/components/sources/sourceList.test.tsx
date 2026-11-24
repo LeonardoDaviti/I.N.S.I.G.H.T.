@@ -181,6 +181,7 @@ describe('row columns', () => {
   it('names the kind, falling back to the platform', () => {
     expect(kindLabel({ kind: 'youtube_channel', platform: 'youtube' })).toBe('YouTube');
     expect(kindLabel({ kind: 'telegram_rss', platform: 'rss' })).toBe('Telegram RSS');
+    expect(kindLabel({ kind: 'forum', platform: 'rss' })).toBe('Forum');
     expect(kindLabel({ kind: 'something_new', platform: 'telegram' })).toBe('Telegram');
   });
 

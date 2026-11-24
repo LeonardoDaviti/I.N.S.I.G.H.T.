@@ -1,5 +1,5 @@
-"""Discussions (issue 0280): a post's Hacker News or Lobsters thread, fetched while young, read once by Haiku for what
-it adds beyond the post, shown folded on the post page.
+"""Discussions (issue 0280): a post's Hacker News or Lobsters thread, or a forum thread's own replies (v10.47), fetched
+while young, read once by Haiku for what it adds beyond the post, shown folded on the post page.
 
 Which threads: a post with a thread (ingestion/discussions.post_thread) that a reader opened (`want`, from the post
 page's request: one insert), or that sits in the newest News run's rows or a track while young (`plan`, the jobs
@@ -38,7 +38,7 @@ POST_CHARS = 2000             # the post's text the question shows
 INPUT_CHARS = 60000           # the question's comments, at most (the rest are not shown)
 FAIL_STOP = 3                 # a thread failing this often in a row is not fetched again
 ASKED = -1                    # a reader's thread is leased before the planned ones (0)
-PATTERN = r"(news\.ycombinator\.com/item|lobste\.rs/s/)"   # a cheap SQL pre-filter for D.thread_of
+PATTERN = r"(news\.ycombinator\.com/item|lobste\.rs/s/)"   # a cheap SQL pre-filter (forums: metadata)
 
 
 def next_fetch(created: Optional[datetime], now: datetime) -> Optional[datetime]:
@@ -105,7 +105,7 @@ def plan(cur: Cursor, now: datetime) -> Dict[str, int]:
     since = now - timedelta(hours=PLAN_HOURS)
     got = {"news": 0, "track": 0}
     young = f"""AND {pairing.ordinary_date('p')} >= %s
-                AND (p.metadata->>'comments_url' ~ %s OR p.url ~ %s)
+                AND (p.metadata->>'comments_url' ~ %s OR p.url ~ %s OR p.metadata ? 'forum')
                 AND NOT EXISTS (SELECT 1 FROM discussion_threads d WHERE d.post_id = p.id)"""
     run = news.last_written(cur)
     if run:
@@ -164,6 +164,7 @@ def discussion_input(cur: Cursor, post_id: str) -> Optional[str]:
     if row is None or row[2] is None:
         return None
     host, total, fetched, url = row
+    name = D.Thread(host, "", url).name
     cur.execute("""SELECT comment_id, parent_id, author, text FROM discussion_comments
                     WHERE post_id = %s AND seen_at = %s ORDER BY position""", (post_id, fetched))
     comments = cur.fetchall()
@@ -171,7 +172,7 @@ def discussion_input(cur: Cursor, post_id: str) -> Optional[str]:
     if post is None or not comments:
         return None
     text = post.text[len(post.title):].strip() if post.title and post.text.startswith(post.title) else post.text
-    return render(post.title, host_of(url) or url, text, D.HOSTS[host].name, total, comments)
+    return render(post.title, host_of(url) or url, text, name, total, comments)
 
 
 def render(title: Optional[str], site: str, text: str, host_name: str, total: Optional[int],
@@ -230,12 +231,12 @@ async def _pass(db_url: str, now: datetime, http: Any, limiter: Any) -> Dict[str
         todo = due(cur, now)
     out: Dict[str, Any] = {"planned": planned, "fetched": 0, "failed": 0, "requests": 0, "asked": 0, "bytes": 0}
 
-    async def get(url: str) -> Any:
+    async def get(url: str, text: bool = False) -> Any:
         host = urlsplit(url).hostname or ""
-        async with limiter.slot(host):
+        async with limiter.slot(host, D.floor(host)):
             out["requests"] += 1
             try:
-                got = await http.get_json(url)
+                got = (await http.get_text(url))[0] if text else await http.get_json(url)
             except HttpError as exc:
                 if exc.limiting:
                     await asyncio.sleep(min(limiter.limited(host, exc.retry_after), 30.0))
@@ -290,10 +291,6 @@ def _comments(cur: Cursor, post_id: str, ids: Iterable[str]) -> Dict[str, Dict[s
                          "at": r[4].isoformat() if r[4] else None, "text": r[5]} for r in cur.fetchall()}
 
 
-def comment_url(host: str, thread_url: str, cid: str) -> str:
-    return f"https://news.ycombinator.com/item?id={cid}" if host == "hn" else f"https://lobste.rs/c/{cid}"
-
-
 def kept(answer: Dict[str, Any], comments: Dict[str, Dict[str, Any]]) -> Tuple[List[Dict[str, Any]],
                                                                               List[Dict[str, Any]], int]:
     """(the points shown, the tools shown, how many points were dropped). A point is shown with its cited comments
@@ -331,8 +328,8 @@ def view(cur: Cursor, post_id: str) -> Dict[str, Any]:
             out.update(status="waiting", thread={"host": t.host, "name": t.name, "url": t.url, "total": None,
                                                  "kept": None, "fetched_at": None, "next_at": None, "failed": None})
         return out
-    host, _tid, url, total, kept_n, fetched, nxt, error, task_id = row
-    out["thread"] = {"host": host, "name": D.HOSTS[host].name, "url": url, "total": total, "kept": kept_n,
+    host, tid, url, total, kept_n, fetched, nxt, error, task_id = row
+    out["thread"] = {"host": host, "name": D.Thread(host, tid, url).name, "url": url, "total": total, "kept": kept_n,
                      "fetched_at": fetched.isoformat() if fetched else None,
                      "next_at": nxt.isoformat() if nxt else None, "failed": error}
     if fetched is None:
@@ -347,7 +344,7 @@ def view(cur: Cursor, post_id: str) -> Dict[str, Any]:
     comments = _comments(cur, post_id, ids)
     points, tools, dropped = kept(a, comments)
     for c in comments.values():
-        c["url"] = comment_url(host, url, c["id"])
+        c["url"] = D.comment_url(D.Thread(host, tid, url), c["id"])
     used = {c for x in points + tools for c in x["comments"]}
     out.update(status="answered", stance=a.get("stance"), points=points, tools=tools, dropped=dropped,
                answered_at=got["at"].isoformat() if got.get("at") else None,
@@ -361,14 +358,14 @@ def counts(cur: Cursor, post_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
     ids = sorted({str(p) for p in post_ids})
     if not ids:
         return {}
-    cur.execute("""SELECT DISTINCT ON (t.a) t.a::text, c.answer, d.host, d.total
+    cur.execute("""SELECT DISTINCT ON (t.a) t.a::text, c.answer, d.host, d.total, d.url
                      FROM discussion_threads d JOIN mx_tasks t ON t.kind = %s AND t.a = d.post_id
                      JOIN mx_calls c ON c.task_id = t.id AND c.valid
                     WHERE d.post_id = ANY(%s::uuid[]) ORDER BY t.a, c.created_at DESC""", (KIND, ids))
     rows = [r for r in cur.fetchall() if isinstance(r[1], dict)]
     if not rows:
         return {}
-    wanted = [(pid, c[1:]) for pid, a, _h, _t in rows for p in a.get("points") or [] for c in p.get("comments") or []
+    wanted = [(pid, c[1:]) for pid, a, _h, _t, _u in rows for p in a.get("points") or [] for c in p.get("comments") or []
               if isinstance(c, str) and c.startswith("c")]
     texts: Dict[Tuple[str, str], Dict[str, Any]] = {}
     if wanted:
@@ -377,11 +374,11 @@ def counts(cur: Cursor, post_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
                     (json.dumps(wanted),))
         texts = {(r[0], r[1]): {"text": r[2]} for r in cur.fetchall()}
     out = {}
-    for pid, a, host, total in rows:
+    for pid, a, host, total, url in rows:
         comments = {"c" + cid: v for (p, cid), v in texts.items() if p == pid}
         points, _tools, _ = kept(a, comments)
         if points:
-            out[pid] = {"points": len(points), "total": total, "name": D.HOSTS[host].name}
+            out[pid] = {"points": len(points), "total": total, "name": D.Thread(host, "", url).name}
     return out
 
 
