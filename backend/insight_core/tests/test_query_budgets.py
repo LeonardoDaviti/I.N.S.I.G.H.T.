@@ -5,8 +5,9 @@ planner may add one task's writes per new task, PER_TASK). Invented names; a _te
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest import mock
 
-from insight_core.markx import entity_views as EV, news, repo, schemas, tasks, track_things as TT
+from insight_core.markx import entity_views as EV, holds, news, repo, schemas, tasks, track_things as TT
 from insight_core.tests import test_markx_built as built_tests
 from insight_core.tests import test_markx_decide as decide_tests
 from insight_core.tests import test_track_briefer_0245 as briefer
@@ -137,7 +138,8 @@ class ThePostPlanners(_Run):
             for n in (3, 6):
                 self.world(n)
                 self.cur.execute("DELETE FROM mx_tasks WHERE kind <> 'read'")
-                with statements() as c:
+                holds._COUNTS.clear()   # each run reads the day's count once; the 30 s recount never fires mid-run
+                with mock.patch.object(holds, "RECOUNT_SECONDS", 1e9), statements() as c:
                     added.append(int(tasks.PLANNERS[kind](self.cur) or 0))
                 counts.append(c)
             why = _why(f"planner {kind} (tasks added {added})", *counts)
