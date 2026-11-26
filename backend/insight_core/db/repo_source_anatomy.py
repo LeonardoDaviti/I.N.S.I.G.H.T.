@@ -33,7 +33,7 @@ class SourceAnatomyRepository:
                    count(o.post_id), count(o.post_id) FILTER (WHERE {RECENT})
             FROM posts p
             LEFT JOIN (SELECT DISTINCT post_id FROM post_interactions
-                        WHERE interaction_type IN ('opened', 'reading_session')) o ON o.post_id = p.id
+                        WHERE interaction_type IN ('opened', 'reading_session', 'opened_source')) o ON o.post_id = p.id
             GROUP BY p.source_id
             """,
             {"since": since},

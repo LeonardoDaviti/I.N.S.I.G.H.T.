@@ -36,7 +36,7 @@ export function navItems(markx: boolean): readonly NavItem[] {
 export function activeNavKey(pathname: string): NavKey | null {
   const path = pathname.replace(/\/+$/, '') || '/';
   const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
-  if (path === '/' || under('/read') || under('/posts') || under('/tracks') || under('/search')) return 'feed';
+  if (path === '/' || under('/read') || under('/reading') || under('/posts') || under('/tracks') || under('/search')) return 'feed';
   if (under('/settings')) return 'sources';
   if (under('/blog')) return 'blog';
   if (under('/markx')) return 'markx';
@@ -58,6 +58,7 @@ export const DESTINATIONS: readonly Destination[] = [
   { id: 'feed-main', label: 'Main feed', group: 'feed', to: '/', keywords: 'home reader feed inbox new unread all posts' },
   { id: 'feed-later', label: 'Later', group: 'feed', to: '/?filter=later', keywords: 'read later saved bookmarks queue' },
   { id: 'feed-by-source', label: 'By source', group: 'feed', to: '/?view=by_source', keywords: 'grouped sources view' },
+  { id: 'reading', label: 'Your reading', group: 'feed', to: '/reading', keywords: 'history opened read time stats seen usage depth' },
   { id: 'sources', label: 'Sources', group: 'sources', to: '/settings/sources', keywords: 'settings feeds add source health cadence backoff failing due schedule' },
   { id: 'ingestion', label: 'Ingestion', group: 'sources', to: '/settings/sources?tab=ingestion', keywords: 'run cycle fetch jobs report' },
   { id: 'data', label: 'Export data', group: 'sources', to: '/settings/sources?tab=data', keywords: 'export backup dump download database zip csv sources.json' },

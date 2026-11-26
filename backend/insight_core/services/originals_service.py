@@ -632,7 +632,7 @@ class OriginalsService:
         cur.execute(f"""
             SELECT p.id::text, COALESCE(p.normalized_url, p.url) FROM posts p
              WHERE p.id = ANY(ARRAY(SELECT post_id FROM post_interactions
-                                     WHERE interaction_type IN ('opened', 'reading_session')
+                                     WHERE interaction_type IN ('opened', 'reading_session', 'opened_source')
                                     UNION SELECT post_id FROM post_reader_state WHERE starred_at IS NOT NULL))
                AND char_length(COALESCE(p.content, '')) >= %s
                AND EXISTS (SELECT 1 FROM mx_readings r WHERE r.post_id = p.id AND r.kind = ANY(%s))

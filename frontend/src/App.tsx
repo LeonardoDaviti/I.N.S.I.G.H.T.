@@ -15,6 +15,7 @@ const SearchPage = lazy(() => import('./pages/SearchPage'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const SavePage = lazy(() => import('./pages/SavePage'));
+const ReadingPage = lazy(() => import('./pages/ReadingPage'));
 // Dev only: the blog and the Design Studio are never in the production bundle (`import.meta.env.DEV` is false
 // in `vite build`, so their chunks are not built; scripts/bundle-check.mjs fails if one is).
 const BlogPage = import.meta.env.DEV ? lazy(() => import('./pages/BlogPage')) : null;
@@ -96,6 +97,7 @@ export function AppRoutes() {
       <Route path="/settings/sources" element={<SourcesConfig />} />
       <Route path="/tracks/:trackId" element={<TrackRedirect />} />
       <Route path="/save" element={<SavePage />} />
+      <Route path="/reading" element={<ReadingPage />} />
       {BlogPage && <Route path="/blog" element={<BlogPage />} />}
       {BlogPage && <Route path="/blog/:slug" element={<BlogPage />} />}
       {DesignStudio && <Route path="/design/*" element={<DesignStudio />} />}

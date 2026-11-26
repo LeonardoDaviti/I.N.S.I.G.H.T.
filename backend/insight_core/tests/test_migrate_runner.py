@@ -545,7 +545,8 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
                        "posts", "post_edges", "story_keys", "post_parts",
                        "post_refs",   # read again from the post's text by the saver and the backfill
                        "series_posts",   # made again by the story job's series pass
-                       "discussion_threads"}   # fetched again from the discussion site (0280)
+                       "discussion_threads",   # fetched again from the discussion site (0280)
+                       "post_seen"}   # 0187, after every post merge (0038, 0052): rows seen a day, no owner state
             self.assertEqual({r[0] for r in cur.fetchall()} - derived,
                              {"post_reader_state", "post_notes", "post_interactions", "post_watch"})
             for table in ("post_reader_state", "post_interactions", "post_notes", "post_watch"):

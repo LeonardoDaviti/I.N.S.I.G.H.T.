@@ -3,6 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { ArrowUpRight, Check, Clock, Copy, MessageSquare, Star } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { buttonVariants } from '../ui';
+import { opensOriginal } from '../../lib/readingActivity';
 
 /**
  * The post's actions, icon-only, in the post page's sticky band left of Aa: open the original, open its discussion
@@ -39,6 +40,8 @@ function Action({ tip, children }: { tip: string; children: ReactNode }) {
 
 export interface PostActionsProps {
   url?: string | null;
+  /** The original was opened (clicked or middle-clicked): Your reading records it. */
+  onOpenOriginal?: () => void;
   discussionUrl?: string | null;
   starred: boolean;
   starring: boolean;
@@ -49,13 +52,14 @@ export interface PostActionsProps {
   onCopy: () => void;
 }
 
-export default function PostActions({ url, discussionUrl, starred, starring, onStar, later, onLater, copied, onCopy }: PostActionsProps) {
+export default function PostActions({ url, onOpenOriginal, discussionUrl, starred, starring, onStar, later, onLater, copied, onCopy }: PostActionsProps) {
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={400}>
       <div role="group" aria-label="Post actions" className="flex shrink-0 items-center">
         {url ? (
           <Action tip="Open original">
-            <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open original" className={ICON_ACTION}>
+            <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open original" className={ICON_ACTION}
+              {...(onOpenOriginal ? opensOriginal(onOpenOriginal) : {})}>
               <ArrowUpRight aria-hidden="true" />
             </a>
           </Action>

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import html as html_lib
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional
+import uuid
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 from urllib.parse import urljoin
 
 import psycopg
@@ -12,7 +13,7 @@ from insight_core.db import database as db
 from insight_core.ingestion import full_text
 
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.db.repo_interactions import PostInteractionsRepository
+from insight_core.db.repo_interactions import SEEN_BATCH, SEEN_SURFACES, PostInteractionsRepository
 from insight_core.db.repo_post_refs import PostRefsRepository
 from insight_core.db.repo_reader import ReaderRepository, voice_sources
 from insight_core.utils.byline import aggregators, repost_of
@@ -270,14 +271,55 @@ class PostDetailService:
         *,
         duration_seconds: int,
         metadata: Optional[Dict[str, Any]] = None,
+        active_seconds: Optional[int] = None,
+        depth: Optional[float] = None,
     ) -> Dict[str, Any]:
-        payload = {
-            **(metadata or {}),
-            "duration_seconds": max(0, int(duration_seconds)),
-        }
+        """One reading session: duration_seconds the time the post was current and visible; active_seconds (never
+        more than it) the time also focused with input or a scroll in the last minute; depth (0-1) the farthest the
+        article body was read to. The last two only when the reader measured them."""
+        duration = max(0, int(duration_seconds))
+        payload: Dict[str, Any] = {**(metadata or {}), "duration_seconds": duration}
+        if active_seconds is not None:
+            payload["active_seconds"] = min(duration, max(0, int(active_seconds)))
+        if depth is not None:
+            payload["depth"] = round(min(1.0, max(0.0, float(depth))), 3)
         with self._post_write(post_id) as cur:
             stored = self.interactions.record_post_interaction(cur, post_id, "reading_session", payload)
         return stored
+
+    def record_source_open(self, post_id: str, url: str) -> Dict[str, Any]:
+        """The reader opened the post's original (or the page it reads on) from INSIGHT: one "opened_source"."""
+        url = (url or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            raise ValueError("url must be an http(s) address")
+        with self._post_write(post_id) as cur:
+            return self.interactions.record_post_interaction(cur, post_id, "opened_source", {"url": url[:2048]})
+
+    def record_seen(self, items: Sequence[Tuple[str, str]]) -> int:
+        """Rows the reader saw in a list (post_seen, one row a post, surface and day): each item a (post id,
+        surface). A ValueError (400) for an unknown surface, a bad id or too many items."""
+        if len(items) > SEEN_BATCH:
+            raise ValueError(f"at most {SEEN_BATCH} items per request")
+        clean = []
+        for post, surface in items:
+            if surface not in SEEN_SURFACES:
+                raise ValueError(f"surface must be one of {', '.join(SEEN_SURFACES)}")
+            try:
+                clean.append((str(uuid.UUID(str(post))), surface))
+            except ValueError:
+                raise ValueError("post must be a post UUID") from None
+        if not clean:
+            return 0
+        with db.transaction(self.db_url) as cur:
+            return self.interactions.record_seen(cur, clean)
+
+    def reading_summary(self, days: Optional[int]) -> Dict[str, Any]:
+        """GET /api/reading/summary: what the reader opened and saw over the last `days` (None: all time)."""
+        if days is not None and not 1 <= days <= 3660:
+            raise ValueError("days must be 1 to 3660, or all")
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.interactions.reading_summary(cur, days)
 
     def save_position(self, post_id: str, block: Optional[int], blocks: Optional[int]) -> None:
         """Where a long post was left; block None clears it (the post was finished)."""

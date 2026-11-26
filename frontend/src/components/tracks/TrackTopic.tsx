@@ -20,6 +20,7 @@ import { QuickLookPanel, ThingTables, WeekIssueView, WhatChanged } from './Track
 import TrackFieldSuggestions from './TrackFieldSuggestions';
 import { StackEditor, SubTracks } from './TrackSubtracks';
 import { TRACK_COUNTS_KEY } from '../../hooks/useTrackCounts';
+import { seenRef } from '../../hooks/useSeen';
 import { kindWord, mondayOf, newestAt, schemaKey } from './briefWords';
 
 export const trackKey = (id: string) => ['markx-track', id] as const;
@@ -58,7 +59,7 @@ function Row({ folderId, item, discover = false, fresh = false }: {
   folderId: string; item: TrackItem; discover?: boolean; fresh?: boolean;
 }) {
   return (
-    <li className="flex items-start gap-3 border-b border-line py-2.5" data-track-item={item.post_id} data-new={fresh || undefined}>
+    <li ref={seenRef(item.post_id, 'track')} className="flex items-start gap-3 border-b border-line py-2.5" data-track-item={item.post_id} data-new={fresh || undefined}>
       <div className="min-w-0 flex-1">
         <p className="text-[0.9375rem] font-semibold leading-[1.35] text-fg [overflow-wrap:anywhere]">
           {fresh ? <span className="mr-1.5 text-[0.75rem] font-normal text-fg-2" aria-label="new since you looked">new ·</span> : null}

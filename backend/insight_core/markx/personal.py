@@ -305,8 +305,10 @@ def _acts(cur: Any, since: datetime) -> List[Tuple[str, str, datetime]]:
                    UNION ALL
                    SELECT post_id::text, 'long_read', created_at FROM post_interactions
                     WHERE interaction_type = 'reading_session' AND created_at >= %(s)s
-                      AND jsonb_typeof(interaction_value->'duration_seconds') = 'number'
-                      AND (interaction_value->>'duration_seconds')::float >= %(long)s
+                      AND jsonb_typeof(COALESCE(interaction_value->'active_seconds',
+                                                interaction_value->'duration_seconds')) = 'number'
+                      AND (COALESCE(interaction_value->'active_seconds',
+                                    interaction_value->'duration_seconds') #>> '{}')::float >= %(long)s
                    UNION ALL
                    SELECT post_id::text, 'kept', starred_at FROM post_reader_state WHERE starred_at >= %(s)s
                    UNION ALL

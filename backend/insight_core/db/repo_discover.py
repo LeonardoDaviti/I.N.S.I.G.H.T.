@@ -212,7 +212,7 @@ SELECT key, max(last_at), sum(opened)::int, count(*) FILTER (WHERE first_at > %(
 FROM (SELECT d.key, p.source_id, max({pairing.ix_date('p')}) AS last_at, min({pairing.ix_date('p')}) AS first_at,
              count(DISTINCT p.id) FILTER (WHERE rs.read_at IS NOT NULL OR EXISTS (
                  SELECT 1 FROM post_interactions i WHERE i.post_id = p.id
-                    AND i.interaction_type IN ('opened', 'reading_session'))) AS opened
+                    AND i.interaction_type IN ('opened', 'reading_session', 'opened_source'))) AS opened
       FROM discover_addresses d JOIN post_links pl ON pl.target_url = d.url AND {read_sql("pl")}
       JOIN posts p ON p.id = pl.post_id LEFT JOIN post_reader_state rs ON rs.post_id = p.id
       WHERE d.rules = %(rules)s AND d.key = ANY(%(keys)s) AND {suggestable_sql("p.source_id")}
@@ -407,7 +407,7 @@ class DiscoverRepository:
     def read_sources(cur: Cursor, since: datetime) -> Set[str]:
         """The sources you read since `since`: a post of theirs opened, read in a session or marked read."""
         cur.execute("""SELECT DISTINCT p.source_id::text FROM post_interactions i JOIN posts p ON p.id = i.post_id
-                        WHERE i.interaction_type IN ('opened', 'reading_session') AND i.created_at > %(since)s
+                        WHERE i.interaction_type IN ('opened', 'reading_session', 'opened_source') AND i.created_at > %(since)s
                        UNION
                        SELECT DISTINCT p.source_id::text FROM post_reader_state rs JOIN posts p ON p.id = rs.post_id
                         WHERE rs.read_at > %(since)s""", {"since": since})

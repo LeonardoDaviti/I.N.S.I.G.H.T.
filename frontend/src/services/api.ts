@@ -1258,8 +1258,14 @@ export function createApi() {
       request<PostConnected>(`/api/posts/item/${enc(postId)}/connected${all ? '?all=true' : ''}`),
     recordPostOpen: (postId: string, metadata?: Record<string, unknown>) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, { method: 'POST', body: { metadata } })),
-    recordPostReadingSession: (postId: string, durationSeconds: number, metadata?: Record<string, unknown>) =>
-      settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata } })),
+    /** `measured`: the session's active seconds (visible, focused, input or a scroll in the last minute) and depth
+     *  (0-1, the farthest the article body was read to). */
+    recordPostReadingSession: (postId: string, durationSeconds: number, metadata?: Record<string, unknown>,
+      measured?: { activeSeconds: number; depth: number | null }) =>
+      settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata, ...measured } })),
+    /** The reader opened the post's original (or the page it reads on): one "opened_source" with its address. */
+    recordPostSourceOpen: (postId: string, url: string) =>
+      settle(request<PostInteractionResponse>(`/api/posts/item/${enc(postId)}/opened-source`, { method: 'POST', body: { url } })),
     togglePostFavorite: (postId: string, favorited: boolean) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, { method: 'POST', body: { favorited } })),
     /** Where a long post was left; `null` clears it (the post was finished). */

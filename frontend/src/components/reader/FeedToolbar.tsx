@@ -99,6 +99,8 @@ export default function FeedToolbar({
     >
       <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
         {ranked ? null : <SlashChoice label="Show" value={filter} options={updates ? [...FILTERS, UPDATED] : FILTERS} onChange={onFilterChange} />}
+        {/* History is what you opened; Your reading is the whole of it, with time, depth and what you saw */}
+        {!ranked && filter === 'history' ? <TextLink to="/reading" className="text-[0.875rem]">your reading</TextLink> : null}
         {view === 'news' && newsShow ? <SlashChoice label="Show" value={newsShow.value} options={NEWS_SHOW} onChange={newsShow.onChange} /> : null}
         <SlashChoice label="View" value={view} options={views} onChange={onViewChange} />
         {oneSource || ranked ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}

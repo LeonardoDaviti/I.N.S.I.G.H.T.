@@ -7,6 +7,7 @@ import {
 import { Button, Chip, ExternalLink, FilterChip, Input, TextLink } from '../ui';
 import { ErrorState, LoadingState } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
+import { seenRef } from '../../hooks/useSeen';
 import {
   chipParams, citeMarks, dayWord, fieldWord, filterChips, hostOf, kindWord, nextSort, searchParams, sinceLine, sortThings,
   thingFacts, thingLinks, thingName, toggleChip, weekDay, weekLine, type FilterChipDef, type SortState,
@@ -112,7 +113,7 @@ function CompactRows({ section, onSeeAll }: { section: ThingSection; onSeeAll?: 
           const name = thingName(t, section.fields);
           const facts = thingFacts(t, section.fields);
           return (
-            <li key={t.id} className="flex items-baseline gap-2 py-1 text-[0.875rem] leading-5" data-thing={t.id}>
+            <li key={t.id} ref={seenRef(t.posts[0]?.id, 'track')} className="flex items-baseline gap-2 py-1 text-[0.875rem] leading-5" data-thing={t.id}>
               <ThingImage thing={t} className="w-32 self-start" />
               <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                 <ThingTitle thing={t} name={name} />
@@ -143,7 +144,7 @@ function PostList({ posts, label }: { posts: ThingPost[]; label: string }) {
       <h3 className="text-[0.8125rem] font-semibold text-fg-2">{label}</h3>
       <ul className="mt-1">
         {posts.map((p) => (
-          <li key={p.id} className="py-0.5 text-[0.875rem] leading-5 [overflow-wrap:anywhere]">
+          <li key={p.id} ref={seenRef(p.id, 'track')} className="py-0.5 text-[0.875rem] leading-5 [overflow-wrap:anywhere]">
             <TextLink to={postHref(p.id)}>{p.title || '(no title)'}</TextLink>
             {p.why ? <span className="text-fg-2"> · {p.why}</span> : null}
           </li>
@@ -229,7 +230,7 @@ export function ThingsView({ section, sort, onSort }: {
           </thead>
           <tbody>
             {rows.map((t) => (
-              <tr key={t.id} className="border-b border-line align-top" data-thing={t.id}>
+              <tr key={t.id} ref={seenRef(t.posts[0]?.id, 'track')} className="border-b border-line align-top" data-thing={t.id}>
                 {pictured ? <td className="py-1.5 pr-3 align-top"><ThingImage thing={t} /></td> : null}
                 {fields.map((f, i) => (
                   <td key={f.name} className={`py-1.5 pr-3 [overflow-wrap:anywhere] ${i === 0 ? 'text-fg' : 'text-fg-2'}`}>
@@ -246,7 +247,7 @@ export function ThingsView({ section, sort, onSort }: {
         {rows.map((t) => {
           const name = thingName(t, fields);
           return (
-            <li key={t.id} className="mb-2 flex gap-3 rounded-md border border-line px-3 py-2" data-thing-card={t.id}>
+            <li key={t.id} ref={seenRef(t.posts[0]?.id, 'track')} className="mb-2 flex gap-3 rounded-md border border-line px-3 py-2" data-thing-card={t.id}>
               <div className="min-w-0 flex-1">
               <p className="flex items-baseline gap-2 text-[0.9375rem] font-semibold leading-5 text-fg">
                 <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><ThingTitle thing={t} name={name} /></span>

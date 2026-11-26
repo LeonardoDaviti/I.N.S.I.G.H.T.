@@ -38,7 +38,7 @@ from insight_core.db.repo_post_stats import MOVED_NEWEST, PAGE_READS_IN_HEALTH  
 # read_at alone is not an open ("mark read up to here" sets it). `p` is the post.
 OPENED_POST_SQL = """(
     EXISTS (SELECT 1 FROM post_interactions i
-             WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session'))
+             WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session', 'opened_source'))
     OR EXISTS (SELECT 1 FROM post_reader_state r
                 WHERE r.post_id = p.id AND (r.later_at IS NOT NULL OR r.starred_at IS NOT NULL
                                             OR r.resume_block IS NOT NULL)))"""

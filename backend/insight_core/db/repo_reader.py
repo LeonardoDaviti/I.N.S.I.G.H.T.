@@ -70,12 +70,12 @@ MINUTES_SQL = (
 # History: what you opened or read, never what "mark read" cleared in bulk.
 HISTORY_SQL = (
     "EXISTS (SELECT 1 FROM post_interactions i WHERE i.post_id = p.id"
-    " AND i.interaction_type IN ('opened', 'reading_session'))"
+    " AND i.interaction_type IN ('opened', 'reading_session', 'opened_source'))"
 )
 # Each post once, at its last open or reading session.
 HISTORY_CTE = (
     "SELECT post_id, MAX(created_at) AS opened_at FROM post_interactions"
-    " WHERE interaction_type IN ('opened', 'reading_session') GROUP BY post_id"
+    " WHERE interaction_type IN ('opened', 'reading_session', 'opened_source') GROUP BY post_id"
 )
 # Lists that ignore "Show in Main feed: off": a post you saved, or opened, is yours whatever its source.
 _EVERY_SOURCE_FILTERS = ("later", "history")

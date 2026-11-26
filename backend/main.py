@@ -371,6 +371,21 @@ class SchedulerConfigRequest(BaseModel):
 class PostReaderSessionRequest(BaseModel):
     durationSeconds: int
     metadata: Dict[str, Any] | None = None
+    activeSeconds: int | None = None   # visible, focused, input or a scroll in the last minute
+    depth: float | None = None         # 0-1: the farthest the article body was read to
+
+
+class PostSourceOpenRequest(BaseModel):
+    url: str
+
+
+class SeenItem(BaseModel):
+    post: str
+    surface: str
+
+
+class SeenRequest(BaseModel):
+    items: List[SeenItem]
 
 
 class PostFavoriteRequest(BaseModel):
@@ -743,8 +758,37 @@ def record_post_reading_session(post_id: str, request: PostReaderSessionRequest)
         post_id,
         duration_seconds=int(request.durationSeconds or 0),
         metadata=request.metadata,
+        active_seconds=request.activeSeconds,
+        depth=request.depth,
     )
     return {"success": True, "event": event}
+
+
+@app.post("/api/posts/item/{post_id}/opened-source")
+@error_detail("record the original opened")
+def record_post_source_open(post_id: str, request: PostSourceOpenRequest):
+    """The reader opened the post's original from INSIGHT (one "opened_source" interaction with {url})."""
+    return {"success": True, "event": services().post_detail.record_source_open(post_id, request.url)}
+
+
+# ============= YOUR READING =============
+
+@app.post("/api/reading/seen")
+@error_detail("record what was seen")
+def record_reading_seen(request: SeenRequest):
+    """Rows the reader saw (half on screen for a second) in News, a track page or a feed list, batched by the
+    frontend: one post_seen row a post, surface and UTC day, counted."""
+    written = services().post_detail.record_seen([(i.post, i.surface) for i in request.items])
+    return {"success": True, "written": written}
+
+
+@app.get("/api/reading/summary")
+@error_detail("load your reading")
+def get_reading_summary(days: str = "7"):
+    """Your reading over the last `days` (7, 30, any 1-3660, or all): the posts opened by day, totals by source,
+    track and story, and per source and track the rows seen against those opened."""
+    window = None if days == "all" else int(days) if days.isdigit() else -1
+    return {"success": True, **services().post_detail.reading_summary(window)}
 
 
 @app.post("/api/posts/item/{post_id}/favorite")

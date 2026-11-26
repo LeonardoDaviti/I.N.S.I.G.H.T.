@@ -20,6 +20,7 @@ import {
 } from '../../lib/story';
 import { bylineName, carried, carriedLine } from '../../lib/byline';
 import { TextLink } from '../ui/TextLink';
+import { useSeen } from '../../hooks/useSeen';
 
 // "Also on <channel>": its own chunk, loaded the first time a row has one (the reader's JS budget).
 const AlsoOn = lazy(() => import('./AlsoOn'));
@@ -196,6 +197,7 @@ function FeedItem({
   snippet, snippetFrom, storyLine,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
+  const seenRef = useSeen(item.id);   // counted as seen on its list's surface (Your reading)
   // a News row is read when every post of it is: a read row a new post joined is bold again, "N new"
   const row = item.news ? newsReadState(item) : null;
   const isRead = row ? row.read : Boolean(item.read_at);
@@ -260,6 +262,7 @@ function FeedItem({
 
   return (
     <article
+      ref={seenRef}
       id={feedItemDomId(item.id)}
       tabIndex={tabbable ? 0 : -1}
       aria-current={selected ? 'true' : undefined}

@@ -111,7 +111,7 @@ def opened_counts(cur: Cursor, source_ids: Optional[Sequence[str]] = None) -> Di
     cur.execute(f"""
         SELECT p.source_id::text, count(*) FROM posts p
          WHERE p.id IN (SELECT i.post_id FROM post_interactions i
-                         WHERE i.interaction_type IN ('opened', 'reading_session')
+                         WHERE i.interaction_type IN ('opened', 'reading_session', 'opened_source')
                         UNION
                         SELECT r.post_id FROM post_reader_state r
                          WHERE r.later_at IS NOT NULL OR r.starred_at IS NOT NULL OR r.resume_block IS NOT NULL)

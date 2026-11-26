@@ -29,6 +29,7 @@ import {
 } from '../lib/feedContext';
 import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
+import { ActiveClock, INPUT_EVENTS, opensOriginal, readDepth, TICK_MS } from '../lib/readingActivity';
 import { classicTitle } from '../lib/classics';
 import {
   coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, storyTree,
@@ -869,13 +870,40 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     return () => observer.disconnect();
   }, [readOn, recordOpen]);
 
-  // Reading time runs while the post is current and the tab visible. Under a second (StrictMode's mount check,
-  // a j held down) is not reading and is not recorded.
+  // How far down the article body the reader got (0-1), the farthest over the post's time on screen.
+  const depthRef = useRef<number | null>(null);
+  useEffect(() => {
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const body = bodyRef.current;
+      if (!body) return;
+      const rect = body.getBoundingClientRect();
+      const depth = readDepth(rect.top, rect.height, window.innerHeight);
+      if (depth !== null && depth > (depthRef.current ?? -1)) depthRef.current = depth;
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(measure);
+    };
+    measure();
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll, { capture: true });
+      window.removeEventListener('resize', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  // Reading time runs while the post is current and the tab visible; active time only while the window is also
+  // focused with input or a scroll in the last minute (lib/readingActivity). Under a second (StrictMode's mount
+  // check, a j held down) is not reading and is not recorded. Both go with the depth reached in one session call.
   useEffect(() => {
     if (!current) return undefined;
     rememberSelection(postId);
     let total = 0;
     let since: number | null = document.hidden ? null : Date.now();
+    const clock = new ActiveClock(Date.now());
     const onVisibility = () => {
       if (document.hidden && since !== null) {
         total += Date.now() - since;
@@ -884,14 +912,28 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
         since = Date.now();
       }
     };
+    const onInput = () => clock.input(Date.now());
+    const tick = () => clock.tick(Date.now(), !document.hidden, document.hasFocus());
+    const ticking = window.setInterval(tick, TICK_MS);
     document.addEventListener('visibilitychange', onVisibility);
+    for (const event of INPUT_EVENTS) window.addEventListener(event, onInput, { capture: true, passive: true });
     return () => {
+      window.clearInterval(ticking);
+      tick();
       document.removeEventListener('visibilitychange', onVisibility);
+      for (const event of INPUT_EVENTS) window.removeEventListener(event, onInput, { capture: true });
       const seconds = Math.round((total + (since === null ? 0 : Date.now() - since)) / 1000);
       if (seconds < 1) return;
-      void api.recordPostReadingSession(postId, seconds, meta);
+      const depth = depthRef.current === null ? null : Math.round(depthRef.current * 1000) / 1000;
+      void api.recordPostReadingSession(postId, seconds, meta, { activeSeconds: Math.min(seconds, clock.seconds()), depth });
     };
   }, [api, current, meta, postId]);
+
+  // Opening the original (the band's ↗, "Open the page", "Read on …") is recorded once a click, best effort.
+  const recordSourceOpen = useCallback((url: string | null | undefined) => {
+    if (!url) return;
+    Promise.resolve().then(() => api.recordPostSourceOpen(postId, url)).catch(() => undefined);
+  }, [api, postId]);
 
   const isRedditPost = post?.platform === 'reddit';
 
@@ -1040,6 +1082,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       {current && actionsSlot ? createPortal(
         <PostActions
           url={post.url}
+          onOpenOriginal={() => recordSourceOpen(post.url)}
           discussionUrl={typeof post.metadata?.comments_url === 'string' ? post.metadata.comments_url : null}
           starred={isFavorited}
           starring={togglingFavorite}
@@ -1292,7 +1335,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
                   {post.url ? (
                     <>
                       {' · '}
-                      <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-link">Open the page ↗</a>
+                      <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-link" {...opensOriginal(() => recordSourceOpen(post.url))}>Open the page ↗</a>
                     </>
                   ) : null}
                 </p>
@@ -1303,7 +1346,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
           ) : post.link || post.url ? (
             // No body stored: the next step is the page itself (a link post's: the page it shares).
             <p data-read-on>
-              <a href={post.link?.url ?? post.url} target="_blank" rel="noopener noreferrer" className="text-link">{readOnLabel(post.link ?? { url: post.url ?? "", title: null }, displayTitle)} ↗</a>
+              <a href={post.link?.url ?? post.url} target="_blank" rel="noopener noreferrer" className="text-link" {...opensOriginal(() => recordSourceOpen(post.link?.url ?? post.url))}>{readOnLabel(post.link ?? { url: post.url ?? "", title: null }, displayTitle)} ↗</a>
             </p>
           ) : null}
         </div>

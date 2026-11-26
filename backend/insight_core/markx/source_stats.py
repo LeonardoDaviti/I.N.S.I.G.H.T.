@@ -43,7 +43,8 @@ ACCOUNT_SITES = frozenset({"x.com", "twitter.com", "t.me", "telegram.me", "youtu
                            "medium.com"})
 NOT_SUBJECTS = ("saved",)
 RECORD_DAYS = 30                          # the track record's window
-OPENED = ("opened", "reading_session")    # an open the reader made (read_at is also set by "mark all read")
+# an open the reader made, its original opened from INSIGHT too (read_at is also set by "mark all read")
+OPENED = ("opened", "reading_session", "opened_source")
 NOISE_OFF = 0.9                           # "switch off?" at this noise share or more, with no first
 OPENED_KEEP = 0.1                         # ... never for a source you open 10% of
 CITED_KEEP = 3                            # ... nor one 3+ other voices link (cited_by, 90 days)

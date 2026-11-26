@@ -15,6 +15,7 @@ import { plural } from '../../lib/format';
 import { feedDayHeading, feedDayKey } from '../../lib/dates';
 import { EmptyState, ErrorState, LoadingState, Notice, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 import FeedItem from './FeedItem';
+import { SeenSurfaceContext } from '../../hooks/useSeen';
 import { feedItemDomId } from '../../lib/feedItem';
 import { newsReadState } from '../../lib/story';
 import { recallSelection, rememberSelection } from '../../lib/readerSelection';
@@ -456,7 +457,8 @@ function PostListBody({
 
   return (
     <>
-      {body}
+      {/* rows seen half on screen for a second are counted (Your reading): News's, the feeds'; not search results */}
+      <SeenSurfaceContext.Provider value={search ? null : ranked ? 'news' : 'feed'}>{body}</SeenSurfaceContext.Provider>
       <Suspense fallback={null}>
         {helpUsed ? <ShortcutHelp open={help} onOpenChange={setHelp} /> : null}
         {confirmUsed ? (
