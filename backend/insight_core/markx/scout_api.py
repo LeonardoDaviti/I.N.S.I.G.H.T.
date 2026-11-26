@@ -3,6 +3,7 @@
 GET  /api/markx/tracks/{id}/scout                 the "Sources for this track" block; a due run advances in the background
 POST /api/markx/tracks/{id}/scout                 start a run, its reads in the background -> {id, candidates}
 GET  /api/markx/scout/suggestions                 every track's suggested sources
+GET  /api/markx/scout/value[?track=&days=]       what the followed suggestions brought that no other source had
 POST /api/markx/scout/candidates/{id}/follow      {as: active | passive} -> {source_id, as}
 POST /api/markx/scout/candidates/{id}/not         "Not this one" -> {answer}
 """
@@ -86,6 +87,15 @@ def mx_scout_suggestions():
         got = scout.suggestions(cur)["suggested"]
         names = {t["folder_id"]: t["name"] for t in tracks.described(cur)}
     return [dict(row, track_name=names.get(row["track"], "")) for row in got if row["track"] in names]
+
+
+@router.get("/scout/value")
+def mx_scout_value(track: Optional[str] = None, days: int = 30):
+    """Per followed scout source and track: posts, in, unique (no other source covers it), lead_hours, examples."""
+    from insight_core.markx.api import transaction
+    tid = _id(track) if track else None
+    with transaction() as cur:
+        return scout.value(cur, tid, days=days if days > 0 else None)
 
 
 def _follow_as(body: Dict[str, Any]) -> str:

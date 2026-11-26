@@ -109,6 +109,12 @@ class PrefixTests(unittest.TestCase):
         self.assertEqual(infer_prefix(f"{SITE}/", links), "/posts/")
         self.assertEqual(infer_prefix(f"{SITE}/", [f"{SITE}/about"]), "/")
 
+    def test_one_deep_link_is_no_section(self):
+        """A site whose pages sit at its root and whose one deep link is its CDN's: the whole site is watched."""
+        links = [f"{SITE}/orbs.html", f"{SITE}/voice.html", f"{SITE}/cdn-cgi/l/email-protection",
+                 f"{SITE}/cdn-cgi/l/email-protection#x"]
+        self.assertEqual(infer_prefix(f"{SITE}/", links), "/")
+
 
 class PageWatchKindTests(unittest.TestCase):
     def setUp(self):

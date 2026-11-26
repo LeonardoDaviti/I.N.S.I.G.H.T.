@@ -8,21 +8,31 @@ Nothing is followed without the owner's tap; nothing read is a post.
 **When** (`start`): the owner's tap, and weekly (`due_weekly`, insight-ingestion's hook): every described track once
 a week, starving ones (fewer than WEEKLY_MIN items in) first, one weekly run open at a time.
 
-**Candidates, three finders** (no request): 1. `match`: the link targets (and @mentions) of the track's in and ✓
-posts, by Discover's address key; never one you follow, never a reference, app, archive, document or paper address,
-never a key answered "Not this one"; 2. `shape`: platform-class addresses built from the track's words and names
-(search feeds, subreddits, accounts; no site is named here); 3. `haiku`: one `scout` task, each source test-read like
-the others, never trusted as is.
+**Candidates, five finders** (no request but the two questions): 1. `maker`: a person the track's in and ✓ posts name (Mark X's entities)
+whose own account or site the same post links or @mentions (its handle or site is the name: `own_address`), even from
+one post; 2. `match`: the link targets (and @mentions) of those posts, by Discover's address key; never one you
+follow, never a link that is no source's (`source_link`: no public host, an action or share link, an app's page, a
+paper), never a reference, app, archive, document or paper place, never a key answered "Not this one"; 3. `shape`:
+platform-class addresses built from the track's words and names (Hacker News' search feed, accounts; no site is named
+here); 4. `haiku`: one `scout` task, each source test-read like the others, never trusted as is; 5. `web`: one
+`websearch` task (guide websearch-sphere-v1, asked of the worker: Claude Code's web search, Haiku) for new projects,
+tools, makers and sites of the track's sphere this week or month, each result's own address keyed and tested like
+match's (`web_candidates`), its task id in the run's stats.web_task_id. A platform the server
+can never read (SERVER_BLOCKED: Reddit, read through the reader's browser, 0262) is no candidate of these finders.
 
 **The test read** (scout_reads.Reader): at most MAX_READS candidates a run, by each finder's share (READ_SHARE), up to
-20 newest items each; one that reads badly (scout_reads.health) is never suggested. **The judge**: each item a `track`
-task (subject 'scout_item'), at most MAX_JUDGEMENTS a run; precision = in / judged. **Suggested** (`suggestions`): read
-well, MIN_JUDGED+ judged, precision FLOOR+, ranked by precision then cadence. Following adds the source as POST
-/api/sources does and records its provenance (mx_source_provenance).
+20 newest items each; the share of a finder whose question is still open (haiku's, web's) is held for its answer, the rest
+refilled by the others only once it is answered. An X account is read and followed as the add path does
+(discover_reads.kind_source: feed_finder.bridge_feed's Nitter feed). One that reads badly (scout_reads.health) is never
+suggested. **The judge**: each item a `track` task (subject 'scout_item'), at most MAX_JUDGEMENTS a run; precision =
+in / judged. **Suggested** (`suggestions`): read well, MIN_JUDGED+ judged, precision FLOOR+, ranked by precision then
+cadence. Following adds the source as POST /api/sources does and records its provenance (mx_source_provenance).
 
-`advance` is called by the API after the tap and by insight-ingestion's hook (`hook`), each claiming the run
-(busy_until) so two never read at once. With INSIGHT_DISCOVER_READS=0 nothing is read. Only mx_* tables are written,
-except the owner's own Follow.
+`advance` is called by the API after the tap and by insight-ingestion's hook (`tick`), each claiming the run
+(busy_until) so two never read at once. `tick` also settles every open run with nothing to read (its questions
+answered: done), and `settle` closes a track run still open STALL after it started (its questions unanswered: done,
+stats.closed says so), so the one open weekly run never holds the other tracks' weekly runs. With
+INSIGHT_DISCOVER_READS=0 nothing is read. Only mx_* tables are written, except the owner's own Follow.
 """
 from __future__ import annotations
 
@@ -46,8 +56,12 @@ MAX_READS = 40
 MAX_JUDGEMENTS = 800
 MAX_REQUESTS = 800                # the test reads' request budget a run (the finder alone may ask ~10 a candidate)
 ITEMS = scout_reads.ITEMS
-READ_SHARE = {"match": 15, "haiku": 15, "shape": 10}
-FINDER_ORDER = ("match", "haiku", "shape")
+READ_SHARE = {"maker": 8, "match": 10, "haiku": 8, "web": 8, "shape": 6}   # not measured; MAX_READS in all
+FINDER_ORDER = ("maker", "match", "haiku", "web", "shape")
+ASKED = ("haiku", "web")          # the finders whose candidates come with a question's answer (held while it is open)
+WEB_KIND, WEB_GUIDE = "websearch", "websearch-sphere-v1"   # the worker's web search (Claude Code's, Haiku)
+SERVER_BLOCKED = frozenset({"reddit"})   # platforms every server read is refused (0262: the reader's browser reads them)
+STALL = timedelta(days=2)         # a track run still open this long after it started is closed (not measured)
 WEEKLY_MIN = 5
 WEEK = timedelta(days=7)
 FLOOR = 0.30
@@ -55,7 +69,9 @@ MIN_JUDGED = 5
 BEST_ITEMS = 10
 MATCH_POSTS = 200                 # the newest in / ✓ posts whose links finder 1 reads
 MATCH_MAX = 60                    # candidates finder 1 keeps (most linked first)
-SHAPE_TERMS = 3
+MAKER_MAX = 40                    # candidates the maker finder keeps (most posts, then the newest, first)
+MAKER_MIN = 4                     # a squashed name shorter than this is no one's handle
+MAKER_ROLES = frozenset({"actor", "subject", "mention"})   # a person quoted as a `source` made nothing here
 SHAPE_NAMES = 3
 CLAIM = timedelta(minutes=20)
 JUDGE_PRIORITY = 0
@@ -208,45 +224,162 @@ def is_followed(key: str, site: str, platform: bool, followed: Followed) -> bool
     return (key, site, platform) in followed
 
 
-def match_candidates(cur: Cursor, folder_id: str, *, skip: Iterable[str] = ()) -> List[Dict[str, Any]]:
-    """Finder 1: the link targets of the track's in and ✓ posts, by address key, the most posts first."""
-    from insight_core.utils.discover_rules import paper_address, place_kind
-    posts = in_posts(cur, folder_id)
-    if not posts:
-        return []
+def source_link(url: str) -> bool:
+    """Whether a link can be a source's at all, by the address's nature alone (Discover's place tests, per link): a
+    public host (not localhost, a dotless name or an IP), not an action or share link carrying another address
+    (a submit or share page: archive_address), not an app's shared page, not an interactive page told by its query,
+    not a paper. A site whose links pass is still tested as a place (place_kind) by its caller."""
+    import ipaddress
+    from insight_core.utils.addresses import host_of
+    from insight_core.utils.discover_rules import app_address, archive_address, paper_address, query_address
+    host = host_of(url).rstrip(".")
+    if "." not in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    return not (archive_address(url) or app_address(url) or query_address(url) or paper_address(url))
+
+
+def _post_links(cur: Cursor, posts: Sequence[str]) -> Tuple[List[Tuple[str, str]], Dict[str, str]]:
+    """(post, link target) of the posts' own links and @mentions, and each post's source address."""
     cur.execute("""SELECT l.post_id::text, l.target_url FROM post_links l
                     WHERE l.post_id = ANY(%s::uuid[])
-                      AND ((NOT l.boilerplate AND l.kind = 'link') OR l.kind = 'mention')""", (posts,))
+                      AND ((NOT l.boilerplate AND l.kind = 'link') OR l.kind = 'mention')""", (list(posts),))
     rows = cur.fetchall()
     cur.execute("SELECT p.id::text, s.handle_or_url FROM posts p JOIN sources s ON s.id = p.source_id "
-                "WHERE p.id = ANY(%s::uuid[])", (posts,))
-    own = dict(cur.fetchall())
+                "WHERE p.id = ANY(%s::uuid[])", (list(posts),))
+    return rows, dict(cur.fetchall())
+
+
+def _own_link(own: Optional[str], key: str) -> bool:
+    return (own or "").split("://", 1)[-1].lower().removeprefix("www.").startswith(key)
+
+
+def match_candidates(cur: Cursor, folder_id: str, *, skip: Iterable[str] = (),
+                     posts: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+    """Finder 1: the link targets of the track's in and ✓ posts, by address key, the most posts first, then the
+    most recently linked (`posts` newest first: in_posts)."""
+    from insight_core.utils.discover_rules import place_kind
+    posts = in_posts(cur, folder_id) if posts is None else list(posts)
+    if not posts:
+        return []
+    order = {pid: n for n, pid in enumerate(posts)}
+    rows, own = _post_links(cur, posts)
     platforms = _platforms(cur)
     followed = _followed(cur)
     skip = set(skip)
     by_key: Dict[str, Dict[str, Any]] = {}
     for pid, url in rows:
-        if paper_address(url):
+        if not source_link(url):
             continue
         key, site, platform = key_of(url, platforms)
         if not key or key in skip or is_followed(key, site, platform, followed):
             continue
-        if (own.get(pid) or "").split("://", 1)[-1].startswith(key):
+        if _own_link(own.get(pid), key):
             continue                                   # a source's link to itself
         got = by_key.setdefault(key, {"key": key, "site": site, "platform": platform, "posts": set(), "urls": []})
         got["posts"].add(pid)
         if url not in got["urls"]:
             got["urls"].append(url)
+    kept = {key: got for key, got in by_key.items() if not place_kind(key, got["urls"][:20])}
+    # a post's attention is shared by the places it links: one linking a single place points at it, one footer of
+    # ten social links points at none of them much
+    places: Counter = Counter(p for got in kept.values() for p in got["posts"])
     out = []
-    for key, got in by_key.items():
-        if place_kind(key, got["urls"][:20]):
-            continue
+    for key, got in kept.items():
         n = len(got["posts"])
         out.append({"finder": "match", "platform": _platform_word(key, got["platform"]), "address": address_of_key(key),
                     "key": key, "name": None, "why": f"linked by {n} of the track's posts",
-                    "evidence": {"posts": n, "linked": got["urls"][:20]}})
-    out.sort(key=lambda c: (-c["evidence"]["posts"], c["key"]))
+                    "evidence": {"posts": n, "linked": got["urls"][:20],
+                                 "weight": round(sum(1 / places[p] for p in got["posts"]), 3),
+                                 "newest": min(order.get(p, len(order)) for p in got["posts"])}})
+    out.sort(key=lambda c: (-c["evidence"]["posts"], -c["evidence"]["weight"], c["evidence"]["newest"], c["key"]))
     return out[:MATCH_MAX]
+
+
+# ---- finder 0: the makers of the finds --------------------------------------------------------------------------
+
+def name_handle(name: str) -> str:
+    """A person's name as a handle or a site's name would write it: its letters and digits, lower case
+    ("Jakub Antalik" -> "jakubantalik"); "" for a name in another script."""
+    return squash(name)
+
+
+def own_address(name: str, url: str, platforms: Optional[Dict[str, Tuple[str, ...]]] = None
+                ) -> Optional[Tuple[str, str, bool]]:
+    """(key, site, on a platform) when `url` is the person `name`'s own: a person's account (Discover's
+    discover_people.person_key: x.com/jakubantalik, github.com/jakubantalik, never a wiki page or a raw file) whose
+    handle is the name, or a site whose own name is (jakubantalik.com); else None. The name and the address must
+    agree whole (MAKER_MIN+ letters): a name alone is never an address."""
+    from insight_core.markx.discover_people import person_key
+    from insight_core.utils.addresses import host_of, site_of
+    want = name_handle(name)
+    if len(want) < MAKER_MIN or not source_link(url):
+        return None
+    key, site, platform = key_of(url, platforms or {})
+    if not key:
+        return None
+    if platform or "/" in key:
+        person = person_key(url, platforms or {})
+        if person is None:
+            return None
+        handle = person[0].rsplit("/", 1)[-1].lstrip("@~")
+        return (person[0], site, True) if squash(handle) == want else None
+    label = site_of(host_of(url)).split(".", 1)[0]
+    return (key, site, False) if squash(label) == want else None
+
+
+def maker_candidates(cur: Cursor, folder_id: str, *, skip: Iterable[str] = (),
+                     posts: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+    """Finder 0: the people the track's in and ✓ posts name (Mark X's entities of type person, as actor, subject or
+    mention) whose own account or site the same post links or @mentions (own_address), even from one post; the most
+    posts first, then the newest."""
+    posts = in_posts(cur, folder_id) if posts is None else list(posts)
+    if not posts:
+        return []
+    order = {pid: n for n, pid in enumerate(posts)}
+    cur.execute("""SELECT DISTINCT post_id::text, name, role FROM mx_mentions_now
+                    WHERE post_id = ANY(%s::uuid[]) AND type = 'person' AND name IS NOT NULL""", (posts,))
+    people: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+    for pid, name, role in cur.fetchall():
+        if role in MAKER_ROLES and len(name_handle(name)) >= MAKER_MIN:
+            people[pid].append((name, role))
+    if not people:
+        return []
+    rows, own = _post_links(cur, list(people))
+    platforms = _platforms(cur)
+    followed = _followed(cur)
+    skip = set(skip)
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for pid, url in rows:
+        for name, role in people.get(pid, ()):
+            got = own_address(name, url, platforms)
+            if not got:
+                continue
+            key, site, platform = got
+            if key in skip or is_followed(key, site, platform, followed) or _own_link(own.get(pid), key):
+                continue
+            c = by_key.setdefault(key, {"key": key, "platform": platform, "name": name, "posts": set(), "made": set(),
+                                        "urls": []})
+            c["posts"].add(pid)
+            if role == "actor":
+                c["made"].add(pid)
+            if url not in c["urls"]:
+                c["urls"].append(url)
+    out = []
+    for key, c in by_key.items():
+        n, made = len(c["posts"]), len(c["made"])
+        why = (f"made something {made} of the track's posts {'is' if made == 1 else 'are'} about" if made
+               else f"named in {n} of the track's posts, which link{'s' if n == 1 else ''} their own account")
+        out.append({"finder": "maker", "platform": _platform_word(key, c["platform"]), "address": address_of_key(key),
+                    "key": key, "name": c["name"], "why": why,
+                    "evidence": {"posts": n, "made": made, "person": c["name"], "linked": c["urls"][:20],
+                                 "newest": min(order.get(p, len(order)) for p in c["posts"])}})
+    out.sort(key=lambda c: (-c["evidence"]["made"], -c["evidence"]["posts"], c["evidence"]["newest"], c["key"]))
+    return out[:MAKER_MAX]
 
 
 def _platform_word(key: str, platform: bool) -> str:
@@ -269,11 +402,22 @@ def words_of(text: str) -> List[str]:
     return [w for w in _WORD.findall((text or "").casefold()) if w not in STOPWORDS and len(w) >= 2 and not w.isdigit()]
 
 
+_CLAUSE = re.compile(r"[.,:;!?()\[\]{}\"“”«»—–/]|\s-\s|\band\b|\bor\b")
+
+
 def description_terms(track: Dict[str, Any], n: int = 6) -> List[str]:
-    """The description's nouns, roughly: its words not stop words, its two-word phrases first (as written)."""
-    words = words_of(f"{track.get('name') or ''}. {track.get('description') or ''}")
+    """The description's nouns, roughly: its two-word phrases first, each two words written side by side in one clause
+    (no stop word between: "weekend hacks", never "interesting build" out of "interesting things people build"), then
+    its words that are no stop word."""
     excluded = set(words_of(track.get("excludes") or ""))
-    pairs = [f"{a} {b}" for a, b in zip(words, words[1:]) if a not in excluded and b not in excluded]
+    pairs: List[str] = []
+    for text in (track.get("name") or "", track.get("description") or ""):
+        for clause in _CLAUSE.split(text.casefold()):
+            tokens = _WORD.findall(clause)
+            for a, b in zip(tokens, tokens[1:]):
+                if all(w not in STOPWORDS and w not in excluded and len(w) >= 2 and not w.isdigit() for w in (a, b)):
+                    pairs.append(f"{a} {b}")
+    words = words_of(f"{track.get('name') or ''}. {track.get('description') or ''}")
     single = [w for w in words if w not in excluded and len(w) >= 3]
     return list(dict.fromkeys([*pairs[:2], *single]))[:n]
 
@@ -302,7 +446,9 @@ def item_names(cur: Cursor, posts: Sequence[str], n: int = SHAPE_NAMES) -> List[
 
 
 def shape_candidates(terms: Sequence[str], names: Sequence[str], *, x_bridge: Optional[str]) -> List[Dict[str, Any]]:
-    """Finder 2: the platform classes' addresses for the track's words and names (search feeds first)."""
+    """Finder 2: the platform classes' addresses for the track's phrases (Hacker News' search feed) and names (a video
+    channel, an X account through the bridge). No Reddit (SERVER_BLOCKED) and no X search: the bridge's kind reads an
+    account's feed only (nitter_rss reads /search/rss as an account named "search", its query dropped)."""
     out: List[Dict[str, Any]] = []
 
     def add(platform: str, address: str, why: str) -> None:
@@ -310,14 +456,7 @@ def shape_candidates(terms: Sequence[str], names: Sequence[str], *, x_bridge: Op
                     "evidence": {}})
     phrases = list(dict.fromkeys(t for t in terms if t))[:2]
     for phrase in phrases:
-        q = urllib.parse.quote(f'"{phrase}"' if " " in phrase else phrase)
-        add("reddit", REDDIT_SEARCH.format(q=q), f"Reddit's search feed for “{phrase}”")
         add("hn", HN_SEARCH.format(q=urllib.parse.quote(phrase)), f"Hacker News' search feed for “{phrase}”")
-        if x_bridge:
-            add("x", f"{x_bridge}/search/rss?f=tweets&q={q}", f"X's search for “{phrase}” through your bridge")
-    singles = [squash(t) for t in terms if 3 <= len(squash(t)) <= 21][:SHAPE_TERMS]
-    for word in dict.fromkeys(singles):
-        add("reddit", f"https://www.reddit.com/r/{word}", f"a subreddit named “{word}”")
     for name in names[:SHAPE_NAMES]:
         handle = squash(name)
         add("youtube", f"https://www.youtube.com/@{handle}", f"a video channel named for “{name}”")
@@ -336,7 +475,7 @@ def _x_bridge() -> Optional[str]:
 
 # ---- finder 3: the scout question ------------------------------------------------------------------------------
 
-PLATFORMS_LINE = ("sites and blogs (a feed, or a page INSIGHT watches), subreddits, YouTube channels, Telegram channels, "
+PLATFORMS_LINE = ("sites and blogs (a feed, or a page INSIGHT watches), YouTube channels, Telegram channels, "
                   "X accounts (through a bridge), Hacker News, code hosts' and model hubs' accounts, paper categories, "
                   "podcasts and newsletters")
 
@@ -381,11 +520,83 @@ def haiku_candidates(answer: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def after_answer(cur: Cursor, task: Dict[str, Any], answer: Dict[str, Any]) -> int:
-    """tasks.record's part for a `scout` answer: its sources become candidates of every run asking it."""
-    cur.execute("SELECT id::text, track_id::text FROM mx_scout_runs WHERE scout_task_id = %s", (task["id"],))
+    """tasks.record's part for a `scout` answer: its sources become candidates of every open run asking it (a run
+    closed meanwhile takes none: nothing would read them)."""
+    cur.execute("""SELECT id::text, track_id::text FROM mx_scout_runs
+                    WHERE scout_task_id = %s AND status IN ('running', 'waiting')""", (task["id"],))
     added = 0
     for run_id, track_id in cur.fetchall():
         added += add_candidates(cur, run_id, haiku_candidates(answer), track_id=track_id)
+        cur.execute("UPDATE mx_scout_runs SET status = 'running' WHERE id = %s AND status = 'waiting'", (run_id,))
+    return added
+
+
+# ---- finder 5: the web, by the worker's search ---------------------------------------------------------------------
+
+WEB_SEARCHES = schemas.WEBSEARCH_QUERIES
+
+
+def web_input(cur: Cursor, track: Dict[str, Any], now: datetime) -> str:
+    """The `websearch` question (guide websearch-sphere-v1): the track's sphere (name, description, excludes), the
+    week it asks about (a new week is a new question), the places followed for it, the searches allowed."""
+    from insight_core.markx import tracks
+    monday = (now.astimezone(timezone.utc) - timedelta(days=now.astimezone(timezone.utc).weekday())).date()
+    lines = [f"Track: {track['name']}", f"Belongs: {track['description']}"]
+    if track.get("excludes"):
+        lines.append(f"Not: {track['excludes']}")
+    lines.append(f"Week of: {monday.isoformat()} (new this week or this month)")
+    names = [s["name"] for s in tracks.active_sources(cur, track["folder_id"])]
+    if names:
+        lines.append("Already followed (leave out): " + "; ".join(names[:30]))
+    lines.append(f"Searches allowed: at most {WEB_SEARCHES}")
+    return "\n".join(lines)
+
+
+def web_ask(cur: Cursor, track: Dict[str, Any], run_id: str, now: datetime) -> Tuple[Any, bool]:
+    """The run's one web search, asked of the worker (a = the folder; its id kept in the run's stats.web_task_id):
+    (its id, whether new). The same week's question is one task."""
+    schemas.ensure_guides(cur)
+    task_id, new = repo.add_task(cur, kind=WEB_KIND, guide=WEB_GUIDE, subject_kind="track",
+                                 input=web_input(cur, track, now), a=track["folder_id"], priority=-1)
+    _stats(cur, run_id, web_task_id=str(task_id))
+    return task_id, new
+
+
+def web_candidates(answer: Dict[str, Any], platforms: Optional[Dict[str, Tuple[str, ...]]] = None
+                   ) -> List[Dict[str, Any]]:
+    """The web search's results as candidates, keyed like the others (key_of), never a link that is no source's
+    (source_link) nor a place that is none (place_kind). A front page is what the search was asked for (the maker's
+    or project's own address): it is kept unless its host is a reference's (docs., help., app. ...)."""
+    from insight_core.utils.discover_rules import REFERENCE_HOST, REFERENCE_PAGE_HOST, path_segments, place_kind
+    out, seen = [], set()
+    for c in (answer.get("candidates") or [])[:schemas.WEBSEARCH_MAX]:
+        url = (c.get("url") or "").strip()
+        if not url.startswith(("http://", "https://")) or not source_link(url):
+            continue
+        key, _, platform = key_of(url, platforms or {})
+        if not key or key in seen:
+            continue
+        kind = place_kind(key, [url])
+        front = not path_segments(url)
+        if kind and not (front and kind == "reference" and not REFERENCE_HOST.match(key)
+                         and not REFERENCE_PAGE_HOST.match(key)):
+            continue
+        seen.add(key)
+        out.append({"finder": "web", "platform": _platform_word(key, platform), "address": address_of_key(key),
+                    "key": key, "name": (c.get("title") or "").strip()[:120] or None,
+                    "why": (c.get("why") or "").strip()[:300] or None,
+                    "evidence": {"url": url, "title": (c.get("title") or "").strip()[:300] or None}})
+    return out
+
+
+def after_websearch(cur: Cursor, task: Dict[str, Any], answer: Dict[str, Any]) -> int:
+    """tasks.record's part for a websearch-sphere-v1 answer: its results become candidates of every open run asking
+    it, which may read them now (a run closed meanwhile takes none)."""
+    cur.execute("""SELECT id::text, track_id::text FROM mx_scout_runs
+                    WHERE stats->>'web_task_id' = %s AND status IN ('running', 'waiting')""", (str(task["id"]),))
+    added = 0
+    for run_id, track_id in cur.fetchall():
+        added += add_candidates(cur, run_id, web_candidates(answer, _platforms(cur)), track_id=track_id)
         cur.execute("UPDATE mx_scout_runs SET status = 'running' WHERE id = %s AND status = 'waiting'", (run_id,))
     return added
 
@@ -418,6 +629,8 @@ def add_candidates(cur: Cursor, run_id: str, cands: Sequence[Dict[str, Any]], *,
             key, site, platform = key_of(c["address"], platforms)
         if not key or key in skip or is_followed(key, site, platform, followed):
             continue
+        if c["finder"] in FINDER_ORDER and _platform_word(key, platform) in SERVER_BLOCKED:
+            continue
         cur.execute("""INSERT INTO mx_scout_candidates (run_id, finder, platform, address, key, name, why, evidence, rank)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s) ON CONFLICT (run_id, key) DO NOTHING""",
                     (run_id, c["finder"], c.get("platform") or "site", c["address"], key, c.get("name"), c.get("why"),
@@ -443,9 +656,11 @@ def start(cur: Cursor, folder_id: str, *, trigger: str = "tap", now: Optional[da
     skip = answered_not(cur, track["folder_id"])
     followed = _followed(cur)
     pos = in_posts(cur, track["folder_id"])
-    match = match_candidates(cur, track["folder_id"], skip=skip)
+    makers = maker_candidates(cur, track["folder_id"], skip=skip, posts=pos)
+    match = match_candidates(cur, track["folder_id"], skip=skip, posts=pos)
     shapes = shape_candidates(track_terms(cur, track, pos), item_names(cur, pos), x_bridge=_x_bridge())
-    counts = {"match": add_candidates(cur, run_id, match, track_id=track["folder_id"], followed=followed),
+    counts = {"maker": add_candidates(cur, run_id, makers, track_id=track["folder_id"], followed=followed),
+              "match": add_candidates(cur, run_id, match, track_id=track["folder_id"], followed=followed),
               "shape": add_candidates(cur, run_id, shapes, track_id=track["folder_id"], followed=followed)}
     task_id, new = ask(cur, track, run_id)
     if not new:   # the same question answered before: its sources at once (no second call)
@@ -453,6 +668,12 @@ def start(cur: Cursor, folder_id: str, *, trigger: str = "tap", now: Optional[da
         if got:
             counts["haiku"] = add_candidates(cur, run_id, haiku_candidates(got[1]), track_id=track["folder_id"],
                                              followed=followed)
+    web_id, new = web_ask(cur, track, run_id, now or _now())
+    if not new:   # this week's search answered before (another run of the track): its results at once
+        got = tracks._answered_verdict(cur, web_id)
+        if got:
+            counts["web"] = add_candidates(cur, run_id, web_candidates(got[1], _platforms(cur)),
+                                           track_id=track["folder_id"], followed=followed)
     _stats(cur, run_id, candidates=counts)
     log.info("Scout run %s for track %s (%s): candidates %s", run_id, folder_id, trigger, counts)
     return {"id": run_id, "candidates": counts}
@@ -494,9 +715,20 @@ def claim(cur: Cursor, run_id: str, now: datetime) -> bool:
     return cur.rowcount == 1
 
 
+def asking(cur: Cursor, run_id: str) -> set:
+    """The finders whose question is still open (ASKED): haiku while the `scout` task is, web while the web search is."""
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_tasks t WHERE t.id = r.scout_task_id AND t.status IN ('open', 'leased')),
+                          EXISTS (SELECT 1 FROM mx_tasks t WHERE t.id::text = r.stats->>'web_task_id'
+                                     AND t.status IN ('open', 'leased'))
+                     FROM mx_scout_runs r WHERE r.id = %s""", (run_id,))
+    row = cur.fetchone() or (False, False)
+    return {f for f, open_ in zip(ASKED, row) if open_}
+
+
 def to_read(cur: Cursor, run_id: str) -> List[Dict[str, Any]]:
     """The run's candidates to read next, within what is left of MAX_READS: each finder's share first, in its rank,
-    then the rest refilled in finder order."""
+    then the rest refilled in finder order, but never into the share held for a finder whose question is still open
+    (its candidates are not in yet: `asking`)."""
     cur.execute("SELECT reads, requests FROM mx_scout_runs WHERE id = %s", (run_id,))
     reads, requests = cur.fetchone()
     left = MAX_READS - reads
@@ -512,10 +744,12 @@ def to_read(cur: Cursor, run_id: str) -> List[Dict[str, Any]]:
     for finder in FINDER_ORDER:
         share = max(0, READ_SHARE.get(finder, 0) - done.get(finder, 0))
         picked += [r for r in rows if r["finder"] == finder][:share]
+    picked = picked[:left]
     chosen = {r["id"] for r in picked}
+    held = sum(max(0, READ_SHARE.get(f, 0) - done.get(f, 0)) for f in asking(cur, run_id))
     rest = sorted((r for r in rows if r["id"] not in chosen), key=lambda r: FINDER_ORDER.index(r["finder"])
                   if r["finder"] in FINDER_ORDER else 9)
-    return (picked + rest)[:left]
+    return picked + rest[:max(0, left - len(picked) - held)]
 
 
 def store_read(cur: Cursor, cand: Dict[str, Any], got: scout_reads.ReadResult, now: datetime) -> Dict[str, Any]:
@@ -586,16 +820,21 @@ def after_judge(cur: Cursor, task: Dict[str, Any], answer: Dict[str, Any]) -> in
 
 def settle(cur: Cursor, run_id: str, now: datetime) -> str:
     """The run's status from what is left: running (candidates to read within the budget), waiting (the scout
-    question or judgements unanswered), done."""
+    question, the web search or judgements unanswered), done."""
     if to_read(cur, run_id):
         status = "running"
     else:
-        cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_scout_runs r JOIN mx_tasks t ON t.id = r.scout_task_id
-                                       WHERE r.id = %(r)s AND t.status IN ('open', 'leased'))
-                           OR EXISTS (SELECT 1 FROM mx_scout_items i JOIN mx_scout_candidates c ON c.id = i.candidate_id
+        cur.execute("""SELECT EXISTS (SELECT 1 FROM mx_scout_items i JOIN mx_scout_candidates c ON c.id = i.candidate_id
                                         JOIN mx_tasks t ON t.id = i.task_id
                                        WHERE c.run_id = %(r)s AND t.status IN ('open', 'leased'))""", {"r": run_id})
-        status = "waiting" if cur.fetchone()[0] else "done"
+        status = "waiting" if cur.fetchone()[0] or asking(cur, run_id) else "done"
+    if status != "done":
+        cur.execute("SELECT trigger, started_at FROM mx_scout_runs WHERE id = %s", (run_id,))
+        trigger, started = cur.fetchone()
+        if trigger != "research" and started is not None and started < now - STALL:
+            # its questions or reads never came: closed, so the next weekly run of another track can start
+            _stats(cur, run_id, closed=f"stalled: still {status} {STALL.days} days after it started")
+            status = "done"
     cur.execute("""UPDATE mx_scout_runs SET status = %s, busy_until = NULL,
                           finished_at = CASE WHEN %s = 'done' THEN COALESCE(finished_at, %s) ELSE NULL END
                     WHERE id = %s""", (status, status, now, run_id))
@@ -666,6 +905,13 @@ def open_runs(cur: Cursor, *, trigger: Optional[str] = None) -> List[str]:
     return [r for (r,) in cur.fetchall()]
 
 
+def _track_run(cur: Cursor, run_id: str) -> bool:
+    """A track's run (a research run is advanced and settled by research.tick)."""
+    cur.execute("SELECT trigger <> 'research' FROM mx_scout_runs WHERE id = %s", (run_id,))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
 def needs_advance(cur: Cursor, run_id: str) -> bool:
     """A run with candidates to read, or read items not yet asked about (a judge question to plan)."""
     if to_read(cur, run_id):
@@ -678,24 +924,28 @@ def needs_advance(cur: Cursor, run_id: str) -> bool:
 
 async def tick(db_url: str, *, reader: Optional[Any] = None, now: Optional[Callable[[], datetime]] = None
                ) -> Dict[str, Any]:
-    """insight-ingestion's hook: the weekly scouts started, then every open track run advanced (a research run is
-    advanced by research.tick). Never raises."""
+    """insight-ingestion's hook: every open track run with nothing to read settled (done once its questions are
+    answered, closed once stalled), the weekly scouts started, then every open track run with work advanced (a
+    research run is advanced by research.tick). Never raises."""
     from insight_core.db import database
     from insight_core.markx.api import enabled
     if not enabled():
         return {}
     clock = now or _now
-    out: Dict[str, Any] = {"started": [], "advanced": []}
+    out: Dict[str, Any] = {"settled": {}, "started": [], "advanced": []}
     try:
+        with database.transaction(db_url) as cur:
+            # an open run with nothing to read waits on its questions only: settled here (done once they are
+            # answered, or closed as stalled), as nothing else would settle it (advance is for runs with work)
+            for run_id in open_runs(cur):
+                if not needs_advance(cur, run_id) and _track_run(cur, run_id) and claim(cur, run_id, clock()):
+                    out["settled"][run_id] = settle(cur, run_id, clock())
         with database.transaction(db_url) as cur:
             due = [] if weekly_open(cur, clock()) else due_weekly(cur, clock())   # one weekly run at a time
             for folder_id in due[:1]:
                 out["started"].append(start(cur, folder_id, trigger="weekly", now=clock())["id"])
         with database.transaction(db_url) as cur:
-            runs = [r for r in open_runs(cur) if needs_advance(cur, r)]
-            cur.execute("SELECT id::text FROM mx_scout_runs WHERE id = ANY(%s::uuid[]) AND trigger <> 'research'",
-                        (runs,))
-            runs = [r for (r,) in cur.fetchall()]
+            runs = [r for r in open_runs(cur) if _track_run(cur, r) and needs_advance(cur, r)]
         for run_id in runs:
             out["advanced"].append(await advance(db_url, run_id, reader=reader, now=now))
     except Exception:  # noqa: BLE001 - the scheduler's run stands
@@ -827,6 +1077,148 @@ def page(cur: Cursor, folder_id: str) -> Dict[str, Any]:
             "floor": FLOOR, "budget": {"reads": MAX_READS, "judgements": MAX_JUDGEMENTS, "requests": MAX_REQUESTS}}
 
 
+# ---- what the scout brought ------------------------------------------------------------------------------------
+
+COVER_DAYS = 14                   # another source's post this near (either side) covers a scout source's post
+VALUE_EXAMPLES = 5
+
+
+def _kept(cur: Cursor, track_id: str, post_ids: Sequence[str]) -> set:
+    """The posts the track kept: the owner's ✓, else the judge's in (the owner's ✗ wins), as in_posts reads them."""
+    from insight_core.markx import tracks
+    if not post_ids:
+        return set()
+    labels = tracks.labels(cur, track_id)
+    cur.execute("SELECT DISTINCT post_id::text FROM mx_track_items WHERE track_id = %s AND verdict "
+                "AND post_id = ANY(%s::uuid[])", (track_id, list(post_ids)))
+    judged = {p for (p,) in cur.fetchall()}
+    return {p for p in post_ids if labels.get(p, ("",))[0] == "in" or (p in judged and labels.get(p, ("",))[0] != "out")}
+
+
+def _thing_mates(cur: Cursor, track_id: str) -> Callable[[str], set]:
+    """post -> the posts reporting the same thing of the track (track_things' identity: a thing's current root)."""
+    from insight_core.markx import track_things
+    root = track_things.roots(cur, track_id)
+    if not root:
+        return lambda _p: set()
+    cur.execute("""SELECT r.post_id::text, r.thing_id::text FROM mx_track_thing_reports r
+                     JOIN mx_track_things t ON t.id = r.thing_id WHERE t.track_id = %s""", (track_id,))
+    by_post: Dict[str, set] = defaultdict(set)
+    by_root: Dict[str, set] = defaultdict(set)
+    for pid, thing in cur.fetchall():
+        r = root.get(thing, thing)
+        by_post[pid].add(r)
+        by_root[r].add(pid)
+    return lambda p: {q for r in by_post.get(p, ()) for q in by_root[r]} - {p}
+
+
+def home_or_profile(url: str) -> bool:
+    """A site's root (page_watch.is_home) or a person's account page itself (discover_people.person_key's key with
+    nothing after it): two posts linking it share who, not what."""
+    from insight_core.ingestion.kinds import page_watch
+    from insight_core.markx.discover_people import person_key
+    try:
+        if page_watch.is_home(url):
+            return True
+    except ValueError:
+        return True
+    got = person_key(url)
+    return bool(got) and url.split("://", 1)[-1].lower().removeprefix("www.").strip("/") == got[0]
+
+
+def covering(cur: Cursor, post: Dict[str, Any], things: Callable[[str], set]) -> set:
+    """The posts that cover the same thing as `post` (any source), each by an existing module's test: the same story
+    (StoriesRepository.story_mates), the post's own address (at_addresses) or a link to it (linking_posts), a kept
+    link to the same page that is no home nor profile (`home_or_profile`: it says who, not what), the same thing of
+    the track (track_things' roots)."""
+    from insight_core.db.repo_stories import StoriesRepository as R
+    pid = post["id"]
+    out = R.story_mates(cur, [pid])
+    urls = [u for u in {post.get("url"), post.get("normalized_url")} if u]
+    if urls:
+        out |= R.at_addresses(cur, urls) | set(R.linking_posts(cur, urls))
+    cur.execute("SELECT DISTINCT target_url FROM post_links WHERE post_id = %s AND NOT boilerplate AND kind = 'link'",
+                (pid,))
+    targets = [u for (u,) in cur.fetchall() if u and not home_or_profile(u)]
+    if targets:
+        out |= set(R.linking_posts(cur, targets))
+    out |= things(pid)
+    return out - {pid}
+
+
+def _median(xs: Sequence[float]) -> Optional[float]:
+    import statistics
+    return round(statistics.median(xs), 1) if xs else None
+
+
+def value(cur: Cursor, track_id: Optional[str] = None, days: Optional[int] = 30,
+          now: Optional[datetime] = None) -> Dict[str, Any]:
+    """What the sources followed from a scout's (or research's) suggestion brought each track since they were
+    followed (within the last `days`): `posts`, `in` (the track kept), `unique` (in, and no post of a source the
+    scouts did not bring covers it within COVER_DAYS: `covering`), `covered`, `first` (covered, the scout's source
+    first), `lead_hours` (the median hours it came before the first other source's covering post, over `first`),
+    `examples` (unique ones). The follow date is mx_source_provenance.created_at (the source's created_at when
+    absent). Totals per track and overall. Read only."""
+    from insight_core.markx import tracks
+    now = now or _now()
+    cur.execute(f"""SELECT DISTINCT ON (v.source_id, v.track_id) v.source_id::text, v.track_id::text, v.kind,
+                           COALESCE(v.created_at, s.created_at),
+                           COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url)
+                      FROM mx_source_provenance v JOIN sources s ON s.id = v.source_id
+                     WHERE v.track_id IS NOT NULL AND (%s::uuid IS NULL OR v.track_id = %s::uuid)
+                     ORDER BY v.source_id, v.track_id, v.created_at""", (track_id, track_id))
+    follows = cur.fetchall()
+    cur.execute("SELECT DISTINCT source_id::text FROM mx_source_provenance")
+    brought = [r for (r,) in cur.fetchall()]
+    window = timedelta(days=COVER_DAYS)
+    date = pairing.ordinary_date("p")
+    sources, by_track = [], defaultdict(list)
+    thing_mates: Dict[str, Callable[[str], set]] = {}
+    for sid, tid, kind, followed_at, name in follows:
+        since = max(followed_at, now - timedelta(days=days)) if days else followed_at
+        cur.execute(f"""SELECT p.id::text, p.title, p.url, p.normalized_url, {date} FROM posts p
+                         WHERE p.source_id = %s AND {date} >= %s ORDER BY {date}""", (sid, since))
+        posts = [dict(zip(("id", "title", "url", "normalized_url", "at"), r)) for r in cur.fetchall()]
+        kept = _kept(cur, tid, [p["id"] for p in posts])
+        if tid not in thing_mates:
+            thing_mates[tid] = _thing_mates(cur, tid)
+        unique, leads, covered, first = [], [], 0, 0
+        for p in posts:
+            if p["id"] not in kept:
+                continue
+            mates = covering(cur, p, thing_mates[tid])
+            earliest = None
+            if mates and p["at"] is not None:
+                cur.execute(f"""SELECT min({date}) FROM posts p WHERE p.id = ANY(%s::uuid[])
+                                   AND p.source_id <> ALL(%s::uuid[]) AND {date} BETWEEN %s AND %s""",
+                            (list(mates), brought, p["at"] - window, p["at"] + window))
+                earliest = cur.fetchone()[0]
+            if earliest is None:
+                unique.append(p)
+                continue
+            covered += 1
+            if earliest > p["at"]:
+                first += 1
+                leads.append((earliest - p["at"]).total_seconds() / 3600)
+        row = {"source_id": sid, "name": name, "track": tid, "via": kind, "followed_at": _iso(followed_at),
+               "since": _iso(since), "posts": len(posts), "in": len(kept), "unique": len(unique), "covered": covered,
+               "first": first, "lead_hours": _median(leads),
+               "examples": [{"title": p["title"], "url": p["url"]} for p in unique[-VALUE_EXAMPLES:][::-1]]}
+        sources.append(row)
+        by_track[tid].append((row, leads))
+
+    def total(rows: Sequence[Tuple[Dict[str, Any], List[float]]]) -> Dict[str, Any]:
+        out = {k: sum(r[k] for r, _ in rows) for k in ("posts", "in", "unique", "covered", "first")}
+        out["sources"] = len(rows)
+        out["lead_hours"] = _median([h for _, ls in rows for h in ls])
+        return out
+    names = {t["folder_id"]: t["name"] for t in tracks.described(cur)}
+    return {"days": days, "cover_days": COVER_DAYS, "followed_at": "mx_source_provenance.created_at",
+            "sources": sources,
+            "tracks": [dict(total(rows), track=tid, name=names.get(tid, "")) for tid, rows in by_track.items()],
+            "total": total([x for rows in by_track.values() for x in rows])}
+
+
 # ---- the owner's answers ---------------------------------------------------------------------------------------
 
 AddSource = Callable[[str, str, Dict[str, Any]], str]
@@ -895,7 +1287,8 @@ def not_this(cur: Cursor, candidate_id: str) -> Dict[str, Any]:
 
 
 __all__ = ["add_candidates", "advance", "after_answer", "after_judge", "due_weekly", "weekly_open", "follow", "haiku_candidates",
-           "judge_items", "match_candidates", "not_this", "page", "shape_candidates", "start", "suggestions", "tick"]
+           "judge_items", "maker_candidates", "match_candidates", "not_this", "own_address", "page", "shape_candidates",
+           "source_link", "start", "suggestions", "tick", "after_websearch", "value", "web_candidates"]
 
 
 def with_scouts(hook: Optional[Callable[[], Awaitable[Any]]], db_url: str) -> Callable[[], Awaitable[Any]]:

@@ -1035,6 +1035,9 @@ def record(cur: Cursor, task: Dict[str, Any], call_id: Any, answer: dict) -> Non
     elif task["kind"] == "identity":
         from insight_core.markx import research
         research.after_identity(cur, task, answer)
+    elif task["kind"] == "websearch" and task.get("guide") == "websearch-sphere-v1":
+        from insight_core.markx import scout          # a track scout's web search (scout.WEB_GUIDE)
+        scout.after_websearch(cur, task, answer)
     elif task["kind"] == "websearch":
         from insight_core.markx import research
         research.after_websearch(cur, task, answer)

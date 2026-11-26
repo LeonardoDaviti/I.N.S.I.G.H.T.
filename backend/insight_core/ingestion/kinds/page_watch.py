@@ -115,16 +115,21 @@ def _clean(url: str, base: Optional[str] = None) -> Optional[str]:
 
 
 def infer_prefix(listing_url: str, links: Sequence[str]) -> str:
-    """The listing page's path; for a home page, the most common first segment of its same-host links two or
-    more segments deep ("/" when none). Never a date: a path stops above its first year segment."""
+    """The listing page's path; for a home page, the most common first segment of its same-host pages two or
+    more segments deep, when PREFIX_MIN pages or more share it ("/" otherwise: one deep link, a CDN's
+    /cdn-cgi/l/email-protection, is no section). Never a date: a path stops above its first year segment."""
     path = urllib.parse.urlparse(listing_url).path.strip("/")
     if path:
         return stable_prefix(f"/{path}/")
     site = publication_of(host_of(listing_url))
-    firsts = Counter("" if YEAR_RE.match(segments[0]) else segments[0] for link in links
+    firsts = Counter("" if YEAR_RE.match(segments[0]) else segments[0]
+                     for link in {page_key(link): link for link in links}.values()
                      if publication_of(host_of(link)) == site and len(segments := parsing.path_segments(link)) >= 2)
-    first = firsts.most_common(1)[0][0] if firsts else ""
-    return f"/{first}/" if first else "/"
+    first, count = firsts.most_common(1)[0] if firsts else ("", 0)
+    return f"/{first}/" if first and count >= PREFIX_MIN else "/"
+
+
+PREFIX_MIN = 2   # pages that make a home page's section
 
 
 # A prefix ending in a year segment stops matching when the year turns: a prefix is the stable section above it.

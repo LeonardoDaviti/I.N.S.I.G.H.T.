@@ -903,6 +903,7 @@ def guide_of(cur, kind: str) -> Optional[str]:
 # per-call setting): {guide: (kind, schema)}. A task names its guide; its answers are checked by that guide's schema.
 GUIDE_VARIANTS: Dict[str, Tuple[str, Dict[str, Any]]] = {
     "websearch-official-v1": ("websearch", OFFICIAL_SCHEMA),
+    "websearch-sphere-v1": ("websearch", WEBSEARCH_SCHEMA),   # a track scout's new finds in its sphere (scout.web_ask)
     "track-v1": ("track", TRACK_SCHEMA),   # the judge before track-v2; its open questions are still answered
     "track-v2": ("track", TRACK_SCHEMA),   # the judge before track-v3; its open questions are still answered
     "track-check-v1": ("track", TRACK_SCHEMA),   # the blind check of a passive `in` (tracks.plan_checks)

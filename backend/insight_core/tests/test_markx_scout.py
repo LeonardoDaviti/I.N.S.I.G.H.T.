@@ -112,15 +112,19 @@ class Pure(unittest.TestCase):
         got = scout.shape_candidates(["printed parts", "parts", "filament"], ["Widget Maker"],
                                      x_bridge="https://nitter.example")
         addresses = [c["address"] for c in got]
-        self.assertIn("https://www.reddit.com/search.rss?q=%22printed%20parts%22&sort=new", addresses)
         self.assertIn("https://hnrss.org/newest?q=printed%20parts", addresses)
-        self.assertIn("https://nitter.example/search/rss?f=tweets&q=%22printed%20parts%22", addresses)
-        self.assertIn("https://www.reddit.com/r/filament", addresses)
         self.assertIn("https://www.youtube.com/@widgetmaker", addresses)
         self.assertIn("https://x.com/widgetmaker", addresses)
         self.assertTrue(all(c["finder"] == "shape" for c in got))
         no_bridge = [c["address"] for c in scout.shape_candidates(["parts"], ["Widget Maker"], x_bridge=None)]
         self.assertFalse(any("x.com" in a or "nitter" in a for a in no_bridge))   # X only through a bridge
+
+    def test_shapes_build_no_reddit_and_no_x_search(self):
+        # every server read of Reddit is refused (0262); the bridge's kind reads accounts' feeds, never a search
+        got = [c["address"] for c in scout.shape_candidates(["printed parts", "filament"], ["Widget Maker"],
+                                                            x_bridge="https://nitter.example")]
+        self.assertFalse([a for a in got if "reddit" in a])
+        self.assertFalse([a for a in got if "/search/rss" in a])
 
     def test_description_terms(self):
         terms = scout.description_terms({"name": "Cool 3D projects", "description": "Printable parts and filament tests",
@@ -128,6 +132,64 @@ class Pure(unittest.TestCase):
         self.assertEqual(terms[0], "3d projects")                              # "cool" says nothing
         self.assertIn("printable", terms)
         self.assertNotIn("filament", terms)                                    # what the excludes name stays out
+
+    def test_description_phrases_are_words_written_side_by_side(self):
+        # production's Cool Projects asked Hacker News for "interesting build" and "projects interesting": two words
+        # a stop word (or the name's end) stood between
+        terms = scout.description_terms({"name": "Cool Projects", "description": (
+            "Interesting things people build and share: open-source tools and libraries, weekend hacks, clever apps "
+            "and sites, hardware builds, creative uses of AI."), "excludes": None})
+        self.assertNotIn("interesting build", terms)
+        self.assertNotIn("projects interesting", terms)
+        self.assertEqual(terms[:2], ["open-source tools", "weekend hacks"])
+
+    def test_a_link_that_can_be_no_source(self):
+        no = ["http://localhost:3000/demo", "http://192.168.1.20/admin", "https://[::1]/x", "https://intranet/wiki",
+              "https://www.reddit.com/submit?url=https%3A%2F%2Fmakers.example%2Fa",
+              "https://linkedin.com/sharing/share-offsite?url=https%3A%2F%2Fmakers.example%2Fa",
+              "https://chat.example.com/share/0f8b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d",
+              "https://tool.example/?ref=demo&id=4", "https://arxiv.org/abs/2406.13843"]
+        for url in no:
+            self.assertFalse(scout.source_link(url), url)
+        for url in ("https://makers.example/blog/a-printed-hinge", "https://x.com/jakubantalik",
+                    "https://github.com/makerco/widget", "https://makers.example/"):
+            self.assertTrue(scout.source_link(url), url)
+
+    def test_a_persons_own_address(self):
+        own = scout.own_address
+        self.assertEqual(own("Jakub Antalik", "https://x.com/Jakubantalik")[0], "x.com/jakubantalik")
+        self.assertEqual(own("Jakub Antalik", "https://x.com/jakubantalik/status/1990000000000000001")[0],
+                         "x.com/jakubantalik")
+        self.assertEqual(own("Jakub Antalik", "https://github.com/jakubantalik/cursor-mood")[0], "github.com/jakubantalik")
+        self.assertEqual(own("Jakub Antalik", "https://jakubantalik.com/posts/a-tiny-model")[0], "jakubantalik.com")
+        self.assertIsNone(own("Jakub Antalik", "https://x.com/DataChaz"))                    # someone else's
+        self.assertIsNone(own("Jakub Antalik", "https://libraries.dev/cursor-emotion"))     # the find, not its maker
+        self.assertIsNone(own("Pierre Deligne", "https://en.wikipedia.org/wiki/Pierre_Deligne"))   # a page about them
+        self.assertIsNone(own("Wu", "https://x.com/wu"))                                    # too short to be sure
+        self.assertIsNone(own("Иван Петров", "https://x.com/ivanpetrov"))                   # no letters to compare
+
+    def test_web_candidates_from_an_answer(self):
+        got = scout.web_candidates(web_answer(
+            "https://jakubantalik.com/",                                  # a maker's own site: its front page is asked for
+            "https://x.com/jakubantalik",
+            "https://github.com/jakubantalik/cursor-mood",                 # a project: its owner
+            "https://github.com/jakubantalik/another-thing",               # the same owner again: once
+            "https://docs.libraries.example/",                             # a reference's host
+            "http://localhost:8080/",
+            "https://www.reddit.com/submit?url=https%3A%2F%2Fx.example%2Fa",
+            "https://arxiv.org/abs/2406.13843"))
+        self.assertEqual([(c["finder"], c["key"], c["address"]) for c in got],
+                         [("web", "jakubantalik.com", "https://jakubantalik.com"),
+                          ("web", "x.com/jakubantalik", "https://x.com/jakubantalik"),
+                          ("web", "github.com/jakubantalik", "https://github.com/jakubantalik")])
+        self.assertEqual(got[0]["why"], "a maker's own site; launched a part this week")
+        self.assertEqual(got[0]["evidence"]["url"], "https://jakubantalik.com/")
+
+    def test_the_sphere_guide_is_a_websearch_variant_with_its_schema(self):
+        self.assertEqual(schemas.GUIDE_VARIANTS["websearch-sphere-v1"], ("websearch", schemas.WEBSEARCH_SCHEMA))
+        self.assertIn("OWN address", schemas.guide_body("websearch-sphere-v1"))
+        a = web_answer("https://jakubantalik.com/")
+        self.assertEqual(validate.check("websearch", a, "q", "websearch-sphere-v1"), (a, None))
 
     def test_health_reasons(self):
         h = scout_reads.health([item(k) for k in range(10)], NOW)
@@ -192,6 +254,20 @@ class Reads(unittest.TestCase):
         self.assertEqual(got.resolved, {"platform": "reddit", "handle_or_url": "r/printedparts", "settings": {},
                                         "via": "kind", "title": ""})
         self.assertEqual((len(got.items), kind.asked[1]), (20, 20))
+
+    def test_an_x_account_is_read_through_the_bridge_feed_the_add_path_follows(self):
+        # the add path's own mapping (feed_finder.bridge_feed via discover_reads.kind_source): x.com/<h> is
+        # <nitter>/<h>/rss, read by the nitter_rss kind, and that address is what Follow adds
+        feed = rss("Jakub Antalik / @jakubantalik", n=6, base="https://nitter.local/jakubantalik/status/19900000000000000")
+        http = FakeHttp({"https://nitter.local/jakubantalik/rss": feed})
+        with mock.patch.dict("os.environ", {"NITTER_HOSTS": "nitter.local"}):
+            got = asyncio.run(scout_reads.Reader(http, KindRegistry.default(http, None), page_gap=0)
+                              .read("https://x.com/jakubantalik"))
+        self.assertEqual(got.reason, "")
+        self.assertEqual((got.resolved["platform"], got.resolved["handle_or_url"], got.resolved["via"]),
+                         ("rss", "https://nitter.local/jakubantalik/rss", "kind"))
+        self.assertEqual(len(got.items), 6)
+        self.assertEqual(http.requests[:1], ["https://nitter.local/jakubantalik/rss"])
 
     def test_none_found_says_why(self):
         http = FakeHttp({"https://quiet.example/": "<html><body>nothing here</body></html>"})
@@ -265,6 +341,10 @@ class _Scout(_Api):
         self.cur.execute("SELECT finder, key, state, address FROM mx_scout_candidates WHERE run_id = %s ORDER BY rank",
                          (run_id,))
         return self.cur.fetchall()
+
+    def web_task(self, run_id):
+        self.cur.execute("SELECT stats->>'web_task_id' FROM mx_scout_runs WHERE id = %s", (run_id,))
+        return self.cur.fetchone()[0]
 
     def scout_task(self, run_id):
         self.cur.execute("SELECT scout_task_id FROM mx_scout_runs WHERE id = %s", (run_id,))
@@ -354,14 +434,17 @@ class Finders(_Scout):
         self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = %s", (followed,))
         self.in_post(links=["https://makers.example/blog/a-printed-hinge", "https://github.com/makerco/hinge",
                             "https://followed.example/a-post-we-read", "https://docs.makers.example/docs/setup"])
-        self.in_post(links=["https://makers.example/blog/a-printed-clip", "https://www.reddit.com/r/printedparts/comments/1/x"])
+        self.in_post(links=["https://makers.example/blog/a-printed-clip", "https://www.reddit.com/r/printedparts/comments/1/x",
+                            "http://localhost:3000/demo", "https://www.reddit.com/submit?url=https%3A%2F%2Fmakers.example%2Fa"])
         with self.conn.transaction():
             got = scout.match_candidates(self.cur, self.folder)
         keys = [c["key"] for c in got]
         self.assertEqual(keys[0], "makers.example")                           # linked by two posts: first
         self.assertEqual(got[0]["evidence"]["posts"], 2)
         self.assertIn("github.com/makerco", keys)                              # a code host's thing: its owner
-        self.assertIn("reddit.com/r/printedparts", keys)
+        self.assertIn("reddit.com/r/printedparts", keys)                       # a place; the run adds no Reddit
+        self.assertNotIn("localhost", keys)                                    # no public host
+        self.assertFalse([k for k in keys if "submit" in k])                   # an action link
         self.assertNotIn("followed.example", keys)                             # followed
         self.assertNotIn("docs.makers.example", keys)                          # a reference place
         self.assertEqual(got[0]["finder"], "match")
@@ -382,6 +465,7 @@ class Finders(_Scout):
         run = self.start()
         finders = {f for f, *_ in self.cands(run["id"])}
         self.assertEqual(finders, {"match", "shape"})
+        self.assertFalse([a for _, _, _, a in self.cands(run["id"]) if "reddit" in a])
         task = repo.get_task(self.cur, self.scout_task(run["id"]))
         self.assertEqual((task["kind"], task["guide"], str(task["a"])), ("scout", "scout-v1", self.folder))
         self.assertIn("Belongs: Printable parts", task["input"])
@@ -394,7 +478,8 @@ class Finders(_Scout):
         status, body = self.answer((task["id"], answer))
         self.assertEqual((status, body["valid"]), (200, 1), body)
         got = {k: f for f, k, *_ in self.cands(run["id"])}
-        self.assertEqual(got["reddit.com/r/printedparts"], "haiku")
+        self.assertNotIn("reddit.com/r/printedparts", got)                    # no server read reaches Reddit (0262)
+        self.assertEqual(got["x.com/partsguy"], "haiku")
         self.assertEqual(got["makers.example"], "match")
         self.assertEqual(got["youtube.com/@hingechannel"], "haiku")
         self.assertEqual(got["parts.example"], "haiku")
@@ -560,7 +645,7 @@ class CostGuard(_Scout):
     def test_finder_shares_then_refill(self):
         self.in_post(links=[f"https://site{k}.example/blog/a-printed-part" for k in range(3)])
         run = self.start()
-        with mock.patch.dict(scout.READ_SHARE, {"match": 2, "haiku": 0, "shape": 1}), \
+        with mock.patch.dict(scout.READ_SHARE, {"maker": 0, "match": 2, "haiku": 0, "web": 0, "shape": 1}), \
                 mock.patch.object(scout, "MAX_READS", 4):
             with self.conn.transaction():
                 picked = scout.to_read(self.cur, run["id"])
@@ -575,6 +660,270 @@ class CostGuard(_Scout):
         self.assertFalse(self.advance(run["id"], StubReader(), now=lambda: NOW + timedelta(minutes=1))["claimed"])
         self.assertTrue(self.advance(run["id"], StubReader(), now=lambda: NOW + scout.CLAIM + timedelta(minutes=1))["claimed"],
                         "a claim ends after scout.CLAIM")
+
+
+def web_answer(*urls):
+    return {"candidates": [{"url": u, "title": f"Result {k}", "why": "a maker's own site; launched a part this week"}
+                           for k, u in enumerate(urls)], "queries": ["new printable parts this week"]}
+
+
+def sites_answer(prefix="parts", n=5):
+    return {"sources": [{"platform": "site", "address": f"{prefix}{k}.example/blog", "why": "parts"} for k in range(n)]}
+
+
+class Settling(_Scout):
+    """Production's Cool Projects run (a17bba84) stayed `running` from 2026-11-20: its 40 reads were spent before the
+    scout question's answer came, the answer set it running again, and nothing settles a run with nothing to read;
+    the one open weekly run held every other track's."""
+
+    def test_a_run_whose_reads_are_spent_is_done_when_its_late_answer_comes(self):
+        self.in_post(links=["https://makers.example/blog/a-printed-hinge"])
+        run = self.start(trigger="weekly")
+        with mock.patch.object(scout, "MAX_READS", 1), mock.patch.object(scout, "reads_allowed", return_value=True):
+            self.advance(run["id"], StubReader())
+            self.cur.execute("SELECT status, reads FROM mx_scout_runs WHERE id = %s", (run["id"],))
+            self.assertEqual(self.cur.fetchone(), ("waiting", 1))                 # the scout question is open
+            status, body = self.answer((self.scout_task(run["id"]), sites_answer()),
+                                       (self.web_task(run["id"]), web_answer()))
+            self.assertEqual((status, body["valid"]), (200, 2), body)
+            self.cur.execute("SELECT status FROM mx_scout_runs WHERE id = %s", (run["id"],))
+            self.assertEqual(self.cur.fetchone()[0], "running")                   # as production's: nothing to read
+            out = asyncio.run(scout.tick(db_url(), reader=StubReader()))
+        self.assertEqual(out["settled"], {run["id"]: "done"})
+        self.cur.execute("SELECT status, finished_at IS NOT NULL FROM mx_scout_runs WHERE id = %s", (run["id"],))
+        self.assertEqual(self.cur.fetchone(), ("done", True))
+
+    def test_a_stalled_weekly_run_is_closed_and_the_next_track_starts(self):
+        self.cur.execute("INSERT INTO folders (name, kind) VALUES (%s, 'track') RETURNING id",
+                         (f"Quiet parts {uuid.uuid4().hex[:6]}",))
+        quiet = str(self.cur.fetchone()[0])
+        self.addCleanup(self.cur.execute, "DELETE FROM folders WHERE id = %s", (quiet,))
+        with self.conn.transaction():
+            tracks.set_topic(self.cur, quiet, description="Quiet parts: rarely posted printed parts", excludes=None)
+        with mock.patch.object(scout, "reads_allowed", return_value=True):
+            first = asyncio.run(scout.tick(db_url(), reader=StubReader()))
+            self.assertEqual(len(first["started"]), 1)
+            self.cur.execute("SELECT status FROM mx_scout_runs WHERE id = %s", (first["started"][0],))
+            self.assertEqual(self.cur.fetchone()[0], "waiting")                   # its scout question never answered
+            same_day = asyncio.run(scout.tick(db_url(), reader=StubReader(), now=lambda: NOW + DAY))
+            self.assertEqual(same_day["started"], [])                             # one weekly run at a time
+            later = asyncio.run(scout.tick(db_url(), reader=StubReader(), now=lambda: NOW + scout.STALL + DAY))
+        self.assertEqual(later["settled"], {first["started"][0]: "done"})
+        self.cur.execute("SELECT stats->>'closed' FROM mx_scout_runs WHERE id = %s", (first["started"][0],))
+        self.assertTrue(self.cur.fetchone()[0].startswith("stalled: still waiting"))
+        self.assertEqual(len(later["started"]), 1)
+        self.cur.execute("SELECT track_id::text FROM mx_scout_runs WHERE trigger = 'weekly'")
+        self.assertEqual({r[0] for r in self.cur.fetchall()}, {self.folder, quiet})   # every described track
+
+
+class Shares(_Scout):
+    def test_haikus_share_is_held_until_its_question_is_answered(self):
+        # production: haiku 19 candidates, 0 read: match and shape took all 40 reads before the answer came
+        self.in_post(links=[f"https://site{k}.example/blog/a-printed-part" for k in range(5)])
+        run = self.start()
+        reader = StubReader()
+        with mock.patch.dict(scout.READ_SHARE, {"maker": 0, "match": 1, "haiku": 2, "shape": 0}, clear=True), \
+                mock.patch.object(scout, "MAX_READS", 4), mock.patch.object(scout, "reads_allowed", return_value=True):
+            self.advance(run["id"], reader)
+            self.assertEqual(len(reader.asked), 2)                               # 4 - haiku's 2 held
+            status, body = self.answer((self.scout_task(run["id"]), sites_answer()))
+            self.assertEqual((status, body["valid"]), (200, 1), body)
+            self.advance(run["id"], reader)
+        self.cur.execute("SELECT finder, count(*) FROM mx_scout_candidates WHERE run_id = %s AND state <> 'new' GROUP BY 1",
+                         (run["id"],))
+        self.assertEqual(dict(self.cur.fetchall()), {"match": 2, "haiku": 2})
+
+
+class Makers(_Scout):
+    def mention(self, post, name, type_, role):
+        """Mark X's entity row of `post` (mx_mentions_now)."""
+        schemas.ensure_guides(self.cur)
+        task, _ = repo.add_task(self.cur, kind="track", guide="track-v1", subject_kind="post_track",
+                                input=f"m {uuid.uuid4().hex}", a=post, b=self.folder)
+        self.cur.execute("INSERT INTO mx_calls (task_id, executor, model, valid) VALUES (%s, 'api', 'test', true) "
+                         "RETURNING id", (task,))
+        call = self.cur.fetchone()[0]
+        self.cur.execute("INSERT INTO mx_mention_sets (post_id, guide, call_id) VALUES (%s, 'track-v1', %s) "
+                         "ON CONFLICT (post_id) DO NOTHING", (post, call))
+        self.cur.execute("SELECT call_id FROM mx_mention_sets WHERE post_id = %s", (post,))
+        call = self.cur.fetchone()[0]
+        self.cur.execute("SELECT count(*) FROM mx_mentions WHERE post_id = %s", (post,))
+        n = self.cur.fetchone()[0]
+        self.cur.execute("""INSERT INTO mx_mentions (post_id, guide, n, call_id, span, name, name_key, type, role)
+                            VALUES (%s, 'track-v1', %s, %s, %s, %s, %s, %s, %s)""",
+                         (post, n, call, name, name, name.casefold(), type_, role))
+
+    def link(self, post, url, kind="mention"):
+        self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, kind, boilerplate) "
+                         "VALUES (%s, %s, %s, 9, %s, %s)", (post, url, url.split("/")[2], kind, kind == "mention"))
+
+    def the_case(self):
+        # @DataChaz's repost: "a tiny cursor-emotion model at libraries.dev, created by the great @Jakubantalik"
+        p = self.in_post("A tiny model that reads your cursor's mood", links=["https://libraries.dev/cursor-emotion"])
+        self.link(p, "https://x.com/Jakubantalik")
+        self.mention(p, "Jakub Antalik", "person", "actor")
+        self.mention(p, "libraries.dev", "org", "venue")
+        return p
+
+    def test_the_maker_of_a_find_is_a_candidate_from_one_post(self):
+        self.the_case()
+        other = self.in_post("Another find", links=["https://quiet.example/blog/a-thing"])
+        self.link(other, "https://x.com/somebody_else")
+        self.mention(other, "Ada Lovelace", "person", "actor")               # her handle is not linked here
+        run = self.start()
+        got = {k: (f, a) for f, k, _, a in self.cands(run["id"])}
+        self.assertEqual(got["x.com/jakubantalik"], ("maker", "https://x.com/jakubantalik"))
+        self.cur.execute("SELECT why, name, evidence->>'person' FROM mx_scout_candidates WHERE run_id = %s AND key = %s",
+                         (run["id"], "x.com/jakubantalik"))
+        self.assertEqual(self.cur.fetchone(),
+                         ("made something 1 of the track's posts is about", "Jakub Antalik", "Jakub Antalik"))
+        self.assertEqual(got["x.com/somebody_else"][0], "match")                # a link, no one's own
+        self.assertNotIn("maker", {f for k, (f, _) in got.items() if k != "x.com/jakubantalik"})
+
+    def test_following_the_maker_adds_the_x_bridge_feed_the_add_path_follows(self):
+        self.the_case()
+        run = self.start()
+        feed = rss("Jakub Antalik / @jakubantalik", n=8, base="https://nitter.local/jakubantalik/status/19900000000000000")
+        http = FakeHttp(lambda url: feed if url == "https://nitter.local/jakubantalik/rss" else ValueError(f"HTTP 404 {url}"))
+        reader = scout_reads.Reader(http, KindRegistry.default(http, None), page_gap=0)
+        with mock.patch.dict("os.environ", {"NITTER_HOSTS": "nitter.local"}), \
+                mock.patch.object(scout, "reads_allowed", return_value=True):
+            self.advance(run["id"], reader)
+        self.cur.execute("SELECT id::text, state, resolved->>'handle_or_url' FROM mx_scout_candidates "
+                         "WHERE run_id = %s AND key = 'x.com/jakubantalik'", (run["id"],))
+        cid, state, address = self.cur.fetchone()
+        self.assertEqual((state, address), ("read", "https://nitter.local/jakubantalik/rss"))
+        with self.conn.transaction():
+            scout.follow(self.cur, cid, "passive", add_source=self.add_source)
+        self.assertEqual(self.calls[0][:2], ("rss", "https://nitter.local/jakubantalik/rss"))
+
+
+class Web(_Scout):
+    def test_the_run_asks_one_web_search_of_its_sphere(self):
+        with self.conn.transaction():
+            tracks.set_topic(self.cur, self.folder, description="Printable parts: useful 3D printed parts and why",
+                             excludes="filament sales")
+        run = self.start()
+        task = repo.get_task(self.cur, self.web_task(run["id"]))
+        self.assertEqual((task["kind"], task["guide"], task["subject_kind"], str(task["a"])),
+                         ("websearch", "websearch-sphere-v1", "track", self.folder))
+        for line in ("Track: Cool parts", "Belongs: Printable parts", "Not: filament sales", "Week of: ",
+                     "Searches allowed: at most 5"):
+            self.assertIn(line, task["input"])
+        again = self.start()                                                  # this week's question is one task
+        self.assertEqual(self.web_task(again["id"]), self.web_task(run["id"]))
+
+    def test_a_sphere_answer_reaches_the_scout_never_research(self):
+        run = self.start()
+        with mock.patch("insight_core.markx.research.after_websearch") as research_after:
+            status, body = self.answer((self.web_task(run["id"]), web_answer("https://parts-maker.example/",
+                                                                             "https://x.com/partsmaker")))
+            self.assertEqual((status, body["valid"]), (200, 1), body)
+            research_after.assert_not_called()
+            # a maker's research (websearch-v1) still goes to research
+            task, _ = repo.add_task(self.cur, kind="websearch", guide="websearch-v1", subject_kind="research_run",
+                                    input=f"Maker: Acme {uuid.uuid4().hex}", a=str(uuid.uuid4()))
+            self.assertEqual(self.answer((task, web_answer("https://acme.example/")))[0], 200)
+            self.assertEqual(research_after.call_count, 1)
+        got = {k: (f, w) for f, k, _, w in self._cands_why(run["id"])}
+        self.assertEqual(got["parts-maker.example"][0], "web")
+        self.assertEqual(got["x.com/partsmaker"], ("web", "a maker's own site; launched a part this week"))
+
+    def _cands_why(self, run_id):
+        self.cur.execute("SELECT finder, key, state, why FROM mx_scout_candidates WHERE run_id = %s ORDER BY rank",
+                         (run_id,))
+        return self.cur.fetchall()
+
+    def test_webs_share_is_held_until_its_search_is_answered(self):
+        self.in_post(links=[f"https://site{k}.example/blog/a-printed-part" for k in range(5)])
+        run = self.start()
+        status, body = self.answer((self.scout_task(run["id"]), sites_answer()))   # haiku answered first
+        self.assertEqual(body["valid"], 1, body)
+        reader = StubReader()
+        with mock.patch.dict(scout.READ_SHARE, {"maker": 0, "match": 1, "haiku": 1, "web": 2, "shape": 0}, clear=True), \
+                mock.patch.object(scout, "MAX_READS", 5), mock.patch.object(scout, "reads_allowed", return_value=True):
+            self.advance(run["id"], reader)
+            self.assertEqual(len(reader.asked), 3)                               # 5 - web's 2 held
+            self.cur.execute("SELECT status FROM mx_scout_runs WHERE id = %s", (run["id"],))
+            self.assertEqual(self.cur.fetchone()[0], "waiting")                   # the web search is open
+            status, body = self.answer((self.web_task(run["id"]), web_answer(
+                "https://maker-a.example/", "https://maker-b.example/", "https://maker-c.example/")))
+            self.assertEqual(body["valid"], 1, body)
+            self.advance(run["id"], reader)
+        self.cur.execute("SELECT finder, count(*) FROM mx_scout_candidates WHERE run_id = %s AND state <> 'new' GROUP BY 1",
+                         (run["id"],))
+        self.assertEqual(dict(self.cur.fetchall()), {"match": 2, "haiku": 1, "web": 2})
+
+    def test_a_late_answer_to_a_closed_run_adds_nothing(self):
+        run = self.start()
+        self.cur.execute("UPDATE mx_scout_runs SET status = 'done', finished_at = now() WHERE id = %s", (run["id"],))
+        self.answer((self.web_task(run["id"]), web_answer("https://maker-a.example/")),
+                    (self.scout_task(run["id"]), sites_answer()))
+        self.cur.execute("SELECT count(*) FROM mx_scout_candidates WHERE run_id = %s AND finder IN ('web', 'haiku')",
+                         (run["id"],))
+        self.assertEqual(self.cur.fetchone()[0], 0)
+        self.cur.execute("SELECT status FROM mx_scout_runs WHERE id = %s", (run["id"],))
+        self.assertEqual(self.cur.fetchone()[0], "done")
+
+
+class Value(_Scout):
+    """GET /api/markx/scout/value: what a followed scout source brought the track that no other source had."""
+
+    def setUp(self):
+        super().setUp()
+        self.brought = self.add_source("rss", "https://maker.example/feed.xml", {})
+        self.cur.execute("INSERT INTO mx_source_provenance (source_id, kind, track_id, as_active, created_at) "
+                         "VALUES (%s, 'scout', %s, true, %s)", (self.brought, self.folder, NOW - 10 * DAY))
+
+    def scout_post(self, title, at, links=()):
+        p = self.post(title=title, source=self.brought, at=at, links=[(u, None) for u in links])
+        self.judged(p, "active")
+        return p
+
+    def story(self, *members):
+        self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, %s)", (members[0], NOW, len(members)))
+        for m in members:
+            self.cur.execute("INSERT INTO story_posts (post_id, story_id, role, voice) VALUES (%s, %s, 'report', %s)",
+                             (m, members[0], m))
+
+    def test_unique_covered_by_a_story_and_by_a_link(self):
+        unique = self.scout_post("A tiny cursor-emotion model", NOW - 3 * DAY)
+        by_story = self.scout_post("A printed hinge, version 2", NOW - 4 * DAY)
+        self.story(by_story, self.post(title="Hinge v2 is out", source=self.other, at=NOW - 4 * DAY + timedelta(hours=5)))
+        by_link = self.scout_post("The launch", NOW - 5 * DAY, links=["https://libraries.example/cursor-emotion"])
+        self.post(title="Someone shared it", source=self.other, at=NOW - 5 * DAY + timedelta(hours=9),
+                  links=[("https://libraries.example/cursor-emotion", None)])
+        far = self.scout_post("Old news again", NOW - 6 * DAY, links=["https://far.example/a-page"])
+        self.post(title="Weeks later", source=self.other, at=NOW - 6 * DAY + 20 * DAY,   # outside 14 days: not covered
+                  links=[("https://far.example/a-page", None)])
+        self.post(title="Not kept by the track", source=self.brought, at=NOW - 2 * DAY)
+        self.scout_post("Links only a home page", NOW - 2 * DAY, links=["https://bigsite.example/", "https://x.com/bigsite"])
+        self.post(title="Also links the home page", source=self.other, at=NOW - 2 * DAY,
+                  links=[("https://bigsite.example/", None), ("https://x.com/bigsite", None)])   # who, not what
+        status, body = call("GET", "/api/markx/scout/value", query={"track": self.folder})
+        self.assertEqual(status, 200, body)
+        row = body["sources"][0]
+        self.assertEqual((row["source_id"], row["track"], row["via"]), (self.brought, self.folder, "scout"))
+        self.assertEqual((row["posts"], row["in"], row["unique"], row["covered"], row["first"]), (6, 5, 3, 2, 2))
+        self.assertEqual(row["lead_hours"], 7.0)                                 # median of 5 and 9 hours
+        self.assertEqual({e["title"] for e in row["examples"]},
+                         {"A tiny cursor-emotion model", "Old news again", "Links only a home page"})
+        self.assertEqual(body["total"]["unique"], 3)
+        self.assertEqual(body["tracks"][0]["track"], self.folder)
+        self.assertEqual(body["followed_at"], "mx_source_provenance.created_at")
+        self.assertNotIn(unique, [])
+
+    def test_a_post_covered_only_by_another_scout_source_is_still_unique(self):
+        other_brought = self.add_source("rss", "https://maker-two.example/feed.xml", {})
+        self.cur.execute("INSERT INTO mx_source_provenance (source_id, kind, track_id, as_active) "
+                         "VALUES (%s, 'scout', %s, false)", (other_brought, self.folder))
+        p = self.scout_post("A tool", NOW - DAY, links=["https://tool.example/launch"])
+        self.post(title="Same tool", source=other_brought, at=NOW - DAY, links=[("https://tool.example/launch", None)])
+        with self.conn.transaction():
+            got = scout.value(self.cur, self.folder)
+        mine = next(r for r in got["sources"] if r["source_id"] == self.brought)
+        self.assertEqual((mine["in"], mine["unique"]), (1, 1))
+        self.assertTrue(p)
 
 
 if __name__ == "__main__":
