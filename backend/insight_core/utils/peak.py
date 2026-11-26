@@ -68,11 +68,12 @@ def of(pid: int, proc: str = "/proc") -> Dict[str, Optional[float]]:
 _TICKS = float(os.sysconf("SC_CLK_TCK")) if hasattr(os, "sysconf") else 100.0
 
 
-def reset(path: str = CLEAR_REFS) -> bool:
-    """Start the peak again from the current resident size (Linux: "5" to clear_refs), and the CPU count from now;
-    False where the peak can't be."""
+def reset(path: str = CLEAR_REFS, *, cpu: bool = True) -> bool:
+    """Start the peak again from the current resident size (Linux: "5" to clear_refs), and the CPU count from now
+    (`cpu` false: the CPU count goes on); False where the peak can't be."""
     global _cpu_at_reset
-    _cpu_at_reset = _cpu_total()
+    if cpu:
+        _cpu_at_reset = _cpu_total()
     try:
         with open(path, "w") as f:
             f.write("5")

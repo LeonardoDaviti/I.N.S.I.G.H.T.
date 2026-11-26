@@ -311,7 +311,7 @@ class OriginalsService:
         followed = _followed(cur)
         own = _own_pages(cur, followed)[0] if followed else None
         reads = site_reads(cur)
-        kept = DiscoverRepository.kept(cur) or {}
+        kept = DiscoverRepository.kept(cur, found=False) or {}   # platforms only (0283)
         platforms = {host: tuple(prefix) for host, prefix in (kept.get("platforms") or {}).items()}
 
         def kind_of(url: str, linked_as: Any = (), quoted: Optional[str] = None) -> str:
@@ -453,7 +453,7 @@ class OriginalsService:
                           AND EXISTS (SELECT 1 FROM mx_entity_addresses b WHERE b.entity_id = a.entity_id AND b.kind = 'paper')""",
                     (since,))
         rows += cur.fetchall()
-        kept = DiscoverRepository.kept(cur) or {}
+        kept = DiscoverRepository.kept(cur, found=False) or {}   # platforms only (0283)
         platforms = {host: tuple(prefix) for host, prefix in (kept.get("platforms") or {}).items()}
         facts = SourceFacts(cur)
         followed = facts.followed() | facts.followed_accounts()
@@ -717,7 +717,7 @@ class OriginalsService:
     def keep_cited(self, cur: Any) -> int:
         """The sites the long-reads you opened cite twice or more, kept for Discover. Returns how many."""
         found = self.longreads(cur, suggesting=True)
-        kept = DiscoverRepository.kept(cur) or {}
+        kept = DiscoverRepository.kept(cur, found=False) or {}   # platforms only (0283)
         platforms = {host: tuple(prefix) for host, prefix in (kept.get("platforms") or {}).items()}
         by: Dict[str, Dict[str, Any]] = {}
         for pid, urls in found.items():

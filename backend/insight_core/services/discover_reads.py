@@ -360,8 +360,8 @@ def work(page: List[Dict[str, Any]], reads: Dict[str, Any], now: datetime, *,
 
 
 def _todo(stories: Any, now: datetime) -> Dict[str, List[str]]:
-    """What the served answer's first page asks to read (`work`) and the videos due. The answer (megabytes) lives
-    only here: the rebuild after the reads never holds it beside its own (v10.48)."""
+    """What the served answer's first page asks to read (`work`) and the videos due. Only what `work` reads of the
+    answer is read (StoriesService.discover_kept, 0283), and let go before the rebuild after the reads (v10.48)."""
     answer = stories.discover_kept()
     classics = stories.untitled_classics()
     with db.connection(stories.db_url) as conn, conn.cursor() as cur:

@@ -320,12 +320,12 @@ class Readers(_Db):
         got = entity_views.entity_list(self.cur, now=now)
         # the list reads only the entities its rows name, their makers' and families'; with the whole book it answers
         # the same
-        with mock.patch.object(entity_views, "_list_book", lambda cur, rows: full):
+        with mock.patch.object(entity_views, "_list_book", lambda cur: full):
             self.assertEqual(json.dumps(got, default=str, sort_keys=True),
                              json.dumps(entity_views.entity_list(self.cur, now=now), default=str, sort_keys=True))
         self.assertTrue(got["items"])
         self.assertTrue(any(i["maker_id"] for i in got["items"]), got["items"])   # a maker read through its alias
-        book = entity_views._list_book(self.cur, entity_views._rows(self.cur, entity_views._guide(), now - 30 * D))
+        book = entity_views._list_book(self.cur)   # the merges only: entities are read for the top items (0283)
         self.assertLess(len(book.ents), len(full.ents))
 
     def test_the_book_counts_as_before(self):

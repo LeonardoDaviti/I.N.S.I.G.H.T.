@@ -738,7 +738,7 @@ class Jobs:
         """Mark IX's story job (stories_service.recompute_safely: bounded steps, then it yields or steps aside for a
         waiting decision run): a rebuild's next slice, or a wanted run followed by `after_stories` (at most every
         ORIGINALS_GAP). A wanted run that yielded or stepped aside is wanted again. Its summary, the rebuild's progress
-        and peak memory are recorded."""
+        and peak memory are recorded: `peak_mb` the story run's, `after_peak_mb` after_stories' own (0283)."""
         from insight_core.services.stories_service import StoriesService
         t0 = time.monotonic()
         with self._tx() as cur:
@@ -761,14 +761,19 @@ class Jobs:
                 "rebuild": {k: ix.get(k) for k in ("rebuild", "phase", "done", "total")}}
         if failed:
             last["error"] = "the story job failed (its log says why)"
+        last["peak_mb"] = peak.mb()   # the story run's own: before the originals and web reads that follow it
         if wanted and not out.get("skipped") and (
                 after_at is None or (self.clock() - datetime.fromisoformat(after_at)).total_seconds() >= ORIGINALS_GAP):
             self._stage("stories", "originals")
+            if self.measure:   # after_stories' own peak, from what the story run still holds; CPU counts the whole job
+                _settle()
+                peak.reset(cpu=False)
             last["after"] = self.after_stories()
             last["after_at"] = self.clock().isoformat()
+            if self.measure:
+                last["after_peak_mb"] = peak.mb()
         elif after_at:
             last["after_at"] = after_at
-        last["peak_mb"] = peak.mb()
         log.info("Mark IX's story job: a run in %.1f s: %s", time.monotonic() - t0, last)
         self._finish("stories", {**last, "seconds": round(time.monotonic() - t0, 1)},
                      again=wanted and bool(out.get("yielded") or out.get("skipped")))
@@ -1013,6 +1018,15 @@ def unended(s: Dict[str, Any]) -> bool:
     return s.get("stage") is None and started is not None and (finished is None or finished < started)
 
 
+def _settle() -> None:
+    """What the process let go goes back to the OS (reference cycles collected, glibc's free pages trimmed): jobs and
+    stages sharing a process start from what they hold, not the last one's high-water."""
+    gc.collect()
+    trim = libc_trim()
+    if trim is not None:
+        trim()
+
+
 def _job_main(db_url: str, *names: str) -> None:
     """A child process: its jobs, one after the other, then exit (what they read goes back to the OS). Each job's
     peak memory is counted from its own start."""
@@ -1020,6 +1034,7 @@ def _job_main(db_url: str, *names: str) -> None:
     setup_logging(debug_mode=False)
     from insight_core.markx import tasks
     for job in names:
+        _settle()   # the previous job's freed memory goes back first: each job's peak is its own
         peak.reset()
         tasks.load_tally(reset=True)   # each job's run reports its own post loader's callers
         getattr(Jobs(db_url, measure=True), job)()

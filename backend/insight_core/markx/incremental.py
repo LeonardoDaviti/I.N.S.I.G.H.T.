@@ -6,8 +6,12 @@ what changed since the last run.
   - A question's input is kept by what it shows: `mx_inc_inputs` maps a render key (its kind, the stamps of the posts
     it shows, their readings' row versions, any answer it shows) to the input's sha256; a key that misses is rendered
     from the texts (`Lazy*`). Near-copies are kept the same way (`mx_inc_copies`).
-  - The answers are read for the tasks a run asks, never every call of every task. The dirty set is every judge task
-    whose (status, valid calls) changed since the last run (`mx_inc_tasks`), reported with its closure.
+  - The answers are read for the tasks a run asks, never every call of every task, and held as their text (decoded on
+    use). The dirty set is every judge task whose (status, valid calls) changed since the last run (`mx_inc_tasks`),
+    reported with its closure.
+  - What `save` writes of the reading (the inputs and near-copies used, what was seen of each task) is settled once
+    the reading is done (`settle`, by `release`), and the reading's tasks, inputs and near-copies are let go before the
+    entity stages (memory, 0283); only LIVE's tasks, asked after, stay held.
   - News keeps the last run's inputs and rows (`mx_inc_state.news`) and is made again only for the rows the changed
     stories, posts or surges reach.
 
@@ -49,7 +53,8 @@ TEXT_PAGE = 2000                                                   # the posts w
 # a reading holds at most TEXT_KEEP texts (and as many readings) at once, the least recently used let go (read again
 # from the run's one snapshot when used again). The posts read again (State.stale) are read ahead in the order the
 # questions show them (`prefetch`), TEXT_PAGE at a time (memory, 0227).
-TEXT_KEEP = 3 * TEXT_PAGE
+TEXT_KEEP = TEXT_PAGE      # 3 * TEXT_PAGE held ~130 MB of texts on a full run (0283)
+LIVE = ("briefing",)       # the kinds asked after the reading (decide.run's briefing stage): their tasks stay held
 # The modules whose code makes what the state keeps, by the part of it they make:
 #   - the reading's (the rules' posts, the renders, near-copies): a change makes the next run full (`reading_stamp`,
 #     in the state's key). decide.run and decide.snapshot are left out: they run the stages, they make nothing kept;
@@ -206,6 +211,7 @@ class State:
     inputs: Dict[str, Tuple[str, str]] = field(default_factory=dict)   # render key -> (kind, input hash) (this run's)
     copies_kept: Dict[str, frozenset] = field(default_factory=dict)
     copies: Dict[str, frozenset] = field(default_factory=dict)
+    settled: Optional[Dict[str, Any]] = None                       # what save writes of the reading (`settle`)
 
     @property
     def kept(self) -> bool:
@@ -338,10 +344,12 @@ def refresh(cur: Any, state: State) -> Dict[str, Any]:
 
 
 def _read_calls(cur: Any, state: State, ids: Sequence[str]) -> None:
+    """The valid calls of tasks `ids`, oldest first a task, each answer held as its jsonb text (`calls_of` decodes it:
+    the parsed answers of a full reading's ~127k tasks held ~106 MB, their text ~30, 0283)."""
     ids = [t for t in ids if t not in state.calls]
     if not ids:
         return
-    cur.execute("""SELECT task_id::text, id::text, answer FROM mx_calls WHERE valid AND task_id = ANY(%s::uuid[])
+    cur.execute("""SELECT task_id::text, id::text, answer::text FROM mx_calls WHERE valid AND task_id = ANY(%s::uuid[])
                     ORDER BY task_id, created_at, ctid""", (ids,))
     got: Dict[str, List] = defaultdict(list)
     for tid, cid, answer in cur.fetchall():
@@ -353,10 +361,11 @@ def _read_calls(cur: Any, state: State, ids: Sequence[str]) -> None:
 
 
 def calls_of(cur: Any, state: State, tid: str) -> List[Tuple[Dict[str, Any], str]]:
-    """A task's valid calls, oldest first (read on first use when the kept inputs didn't name it)."""
+    """A task's valid calls (answer, call id), oldest first (read on first use when the kept inputs didn't name it);
+    each answer decoded anew, as psycopg decodes jsonb."""
     if tid not in state.calls:
         _read_calls(cur, state, [tid])
-    return state.calls[tid]
+    return [(None if a is None else json.loads(a), cid) for a, cid in state.calls[tid]]
 
 
 # ---- the posts -------------------------------------------------------------------------------------------
@@ -519,7 +528,9 @@ def release(state: State) -> None:
     """The texts, readings and answers this run read, let go once the reading is done (the stages after News read
     neither); a text, reading or answer used after is read again from the run's one snapshot (`calls_of`; Ask.later
     reads them by query). Also what only the renders read of each post (its stamps, its reading's kind and events); of
-    the world's posts, `save` reads only which they are."""
+    the world's posts, `save` reads only which they are. What `save` writes of the reading is settled first (`settle`),
+    the reading's tasks, inputs and near-copies let go with it."""
+    settle(state)
     state.texts.clear()
     state.readings.clear()
     state.calls.clear()
@@ -675,6 +686,49 @@ def surges(cur: Any, memo: Optional[State]) -> List[Any]:
 
 # ---- what a run leaves -------------------------------------------------------------------------------------
 
+def settle(state: State) -> None:
+    """What `save` writes of the reading, taken once it is done (`release`): the inputs and near-copies it used that
+    the kept state lacks (all of them on a full reading) and the kept keys it no longer used, and what it saw of each
+    task that differs from the last run's (`mx_inc_tasks`). Then the reading's tasks (but LIVE's), the last run's view
+    of them, and its inputs and near-copies are let go (~145 MB on the 2026-11-19 copy, 0283). Once only."""
+    if state.settled is not None:
+        return
+    full = state.full
+    state.settled = {
+        "full": full,
+        "inputs_new": [(k, kind, h) for k, (kind, h) in state.inputs.items() if full or state.inputs_kept.get(k) != h],
+        "inputs_gone": [] if full else sorted(set(state.inputs_kept) - set(state.inputs)),
+        "copies_new": [(k, sorted(v)) for k, v in state.copies.items() if full or state.copies_kept.get(k) != v],
+        "copies_gone": [] if full else sorted(set(state.copies_kept) - set(state.copies)),
+        "tasks_seen": [(tid, status, n) for key, (tid, status, n, _e) in state.tasks.items()
+                       if key[0] not in LIVE and state.was.get(tid) != (status, n)]}
+    keys = {tid: key for tid, key in state.keys.items() if key[0] in LIVE}
+    state.was = {tid: w for tid, w in state.was.items() if tid in keys}
+    state.tasks = {key: t for key, t in state.tasks.items() if key[0] in LIVE}
+    state.keys = keys
+    state.inputs, state.inputs_kept, state.copies, state.copies_kept = {}, {}, {}, {}
+
+
+def pending(state: State) -> Dict[str, Any]:
+    """The rows `save` writes of the reading (`settle`'s), with what came after it: LIVE's tasks seen, and any input or
+    near-copy used since (written as new)."""
+    settle(state)
+    s = state.settled
+    inputs, copies = s["inputs_new"], s["copies_new"]
+    if state.inputs:   # one row a key (the later one)
+        later = {k: (kind, h) for k, kind, h in inputs}
+        later.update(state.inputs)
+        inputs = [(k, kind, h) for k, (kind, h) in later.items()]
+    if state.copies:
+        later_copies = dict(copies)
+        later_copies.update((k, sorted(v)) for k, v in state.copies.items())
+        copies = list(later_copies.items())
+    return {"full": s["full"], "inputs_new": inputs, "inputs_gone": s["inputs_gone"], "copies_new": copies,
+            "copies_gone": s["copies_gone"],
+            "tasks_seen": s["tasks_seen"] + [(tid, status, n) for (_k, (tid, status, n, _e)) in state.tasks.items()
+                                             if state.was.get(tid) != (status, n)]}
+
+
 def save(cur: Any, state: State, run_id: Any, want: Dict[str, Dict[str, Tuple]]) -> Dict[str, int]:
     """The state this run leaves (nothing for a dry reading): its posts' rules (the world's only), the inputs and
     near-copies it used (only those), what it saw of every judge task, its stamps, News and memberships."""
@@ -695,29 +749,23 @@ def save(cur: Any, state: State, run_id: Any, want: Dict[str, Dict[str, Tuple]])
                               kind = EXCLUDED.kind, at = EXCLUDED.at, words = EXCLUDED.words""",
                     tuple(list(col) for col in zip(*rows)))
     out["posts_written"] = len(rows)
-    for table, kept, now_ in (("mx_inc_inputs", state.inputs_kept, state.inputs),
-                              ("mx_inc_copies", state.copies_kept, state.copies)):
-        if state.full:
+    kept = pending(state)
+    for table, part in (("mx_inc_inputs", "inputs"), ("mx_inc_copies", "copies")):
+        gone, new = kept[part + "_gone"], kept[part + "_new"]
+        if kept["full"]:
             cur.execute(f"DELETE FROM {table}")
-            gone = []
-        else:
-            gone = sorted(set(kept) - set(now_))
-            if gone:
-                cur.execute(f"DELETE FROM {table} WHERE key = ANY(%s)", (gone,))
-        if table == "mx_inc_inputs":
-            new = [(k, kind, h) for k, (kind, h) in now_.items() if state.full or kept.get(k) != h]
-            if new:
-                cur.execute("""INSERT INTO mx_inc_inputs (key, kind, input_hash)
-                               SELECT * FROM unnest(%s::text[], %s::text[], %s::text[])
-                               ON CONFLICT (key) DO UPDATE SET kind = EXCLUDED.kind, input_hash = EXCLUDED.input_hash""",
-                            tuple(list(col) for col in zip(*new)))
-        else:
-            new = [(k, sorted(v)) for k, v in now_.items() if state.full or kept.get(k) != v]
-            if new:
-                cur.executemany("""INSERT INTO mx_inc_copies (key, copies) VALUES (%s, %s)
-                                   ON CONFLICT (key) DO UPDATE SET copies = EXCLUDED.copies""", new)
+        elif gone:
+            cur.execute(f"DELETE FROM {table} WHERE key = ANY(%s)", (gone,))
+        if table == "mx_inc_inputs" and new:
+            cur.execute("""INSERT INTO mx_inc_inputs (key, kind, input_hash)
+                           SELECT * FROM unnest(%s::text[], %s::text[], %s::text[])
+                           ON CONFLICT (key) DO UPDATE SET kind = EXCLUDED.kind, input_hash = EXCLUDED.input_hash""",
+                        tuple(list(col) for col in zip(*new)))
+        elif new:
+            cur.executemany("""INSERT INTO mx_inc_copies (key, copies) VALUES (%s, %s)
+                               ON CONFLICT (key) DO UPDATE SET copies = EXCLUDED.copies""", new)
         out[table[7:] + "_written"], out[table[7:] + "_dropped"] = len(new), len(gone)
-    seen = [(tid, status, n) for (_k, (tid, status, n, _e)) in state.tasks.items() if state.was.get(tid) != (status, n)]
+    seen = kept["tasks_seen"]
     if seen:
         cur.execute("""INSERT INTO mx_inc_tasks (task_id, status, n)
                        SELECT * FROM unnest(%s::uuid[], %s::text[], %s::int[])

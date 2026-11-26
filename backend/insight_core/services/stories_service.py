@@ -680,7 +680,7 @@ class StoriesService:
         try:
             with db.transaction(self.db_url) as cur:
                 sources = SourceFacts(cur)
-                kept = DiscoverRepository.kept(cur)
+                kept = DiscoverRepository.kept(cur, found=False)
                 filled = DiscoverRepository.fill_addresses(cur, sources.platform_accounts(), platforms=_platforms(kept))
                 self._counted(cur, sources, kept=kept)
                 return filled
@@ -705,7 +705,7 @@ class StoriesService:
             return
         try:
             with cur.connection.transaction():
-                kept = DiscoverRepository.kept(cur)
+                kept = DiscoverRepository.kept(cur, found=False)
                 DiscoverRepository.fill_addresses(cur, sources.platform_accounts(), urls=None if urls == "all" else urls,
                                                   platforms=_platforms(kept))
                 self._counted(cur, sources, urls=None if urls == "all" else urls, kept=kept)
@@ -717,7 +717,8 @@ class StoriesService:
                  kept: Optional[Dict[str, Any]] = None, moved: Sequence[str] = ()) -> Dict[str, Any]:
         """Discover's counts by links, counted in the database: the kept ones when their inputs are unchanged, else
         counted now (with `urls`, only those addresses' keys, while the rules, mirrors and platforms hold) and kept.
-        Without `keep` nothing is written. `kept`: the caller's read of them; `moved`: addresses whose key moved.
+        Without `keep` nothing is written. `kept`: the caller's read of them, with or without their found rows (read
+        only where used: the kept counts returned, and an incremental count; 0283); `moved`: addresses whose key moved.
         Returns {stamp, base, found, mirrors, platforms, scanned_to}."""
         accounts = sources.platform_accounts()
         own_sites = {i: sources.publication(i) for i in sources.kind}
@@ -727,9 +728,9 @@ class StoriesService:
                        for i in sources.site)
         stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base(cur)
         tags = DiscoverRepository.tags(cur)
-        kept = DiscoverRepository.kept(cur) if kept is None else kept
+        kept = DiscoverRepository.kept(cur, found=False) if kept is None else kept
         if kept and kept["stamp"] == stamp and kept.get("tags") == tags and not moved:
-            return kept
+            return kept if "found" in kept else {**kept, "found": DiscoverRepository.kept_found(cur)}
         retagged = DiscoverRepository.retagged(cur, kept, tags)
         if urls is None and kept and kept["stamp"] == stamp and retagged is not None:
             urls = []
@@ -740,6 +741,8 @@ class StoriesService:
         if (urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"] and "platforms" in kept
                 and kept.get("off", []) == off and retagged is not None):
             platforms = _platforms(kept)
+            if "found" not in kept:
+                kept = {**kept, "found": DiscoverRepository.kept_found(cur)}
             keys = (DiscoverRepository.keys_of(cur, urls, platforms)
                     | DiscoverRepository.keys_linked_by(cur, retagged, platforms))
             found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, keys=keys, platforms=platforms, **ask)
@@ -782,13 +785,28 @@ class StoriesService:
         return self._page(self._fresh(persist=self._writable()), offset=offset, limit=limit, q=q)
 
     def discover_kept(self) -> Dict[str, Any]:
-        """The served answer (`refresh`'s), paged as `discover` pages it, so it is not built twice; before the first
-        build, `discover`."""
+        """What Discover's reads choose from (discover_reads._todo), from the served answer (`refresh`'s) so it is not
+        built twice: its suggestions in `_page`'s order (`_by_fit`), whole where the reads' first page takes them
+        (discover_reads.to_read), else only their key and order fields (DiscoverRepository.served_outline); the apart
+        rows' keys; the archives as `_page` shows them. The whole answer is never read (0283: ~75 MB of objects on
+        the server's copy, on every run). Before the first build, `discover`."""
+        from insight_core.services.discover_reads import to_read
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            kept = DiscoverRepository.served(cur)
-        if kept is None or "built_at" not in kept["answer"]:
+            outline = DiscoverRepository.served_outline(cur)
+            if outline is None:
+                whole = None
+            else:
+                ranked = self._by_fit(outline["suggestions"])
+                whole = DiscoverRepository.served_rows(cur, outline["built_at"],
+                                                       [s["at"] for s in to_read({"suggestions": ranked})])
+        if outline is None:
             return self.discover()
-        return self._page(kept["answer"])
+        if whole is None:   # rebuilt between the two reads: read the new one
+            return self.discover_kept()
+        ranked = [dict(whole[s["at"]], **{k: s[k] for k in ("fit", "section") if k in s}) if s["at"] in whole else s
+                  for s in ranked]
+        return self._page({"suggestions": ranked, "apart": outline["apart"], "archives": outline["archives"]},
+                          ordered=True)
 
     def _writable(self) -> bool:
         """Whether this service's connections may write (the checks open every one read-only)."""

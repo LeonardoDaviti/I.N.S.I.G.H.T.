@@ -118,15 +118,36 @@ def _when(at: Optional[datetime], now: datetime) -> Optional[str]:
     return "today" if days <= 0 else "yesterday" if days == 1 else f"{days} days ago"
 
 
-def _list_book(cur: Any, rows: Iterable[Tuple]) -> I.Book:
-    """The book the list reads: every merge and pin, and only the entities of the clusters its rows name."""
+def _list_book(cur: Any) -> I.Book:
+    """The book the list reads: every merge (its entities are read for the ranked top only, `entity_list`)."""
     b = I.Book()
     cur.execute("SELECT from_id::text, to_id::text, automatic FROM mx_entity_redirects WHERE undone_at IS NULL")
     b.redirect = I.Redirects({f: (t, auto) for f, t, auto in cur.fetchall()})
-    cur.execute("SELECT post_id::text, guide, n, entity_id::text FROM mx_entity_pins WHERE undone_at IS NULL")
-    b.pins = {(p, g, n): e for p, g, n, e in cur.fetchall()}
-    I.read_ents(cur, b, {b.root(b.pins.get((pid, g, n), eid)) for pid, n, _r, eid, _a, _s, _rd, g in rows})
     return b
+
+
+def _list_mentions(book: I.Book, guide: List[str], since: datetime) -> Tuple[str, Dict[str, Any]]:
+    """The list's mentions as SQL (CTE `k`: post, role, at, source, read, eid), each read through the owner's pin and
+    the merges to its cluster's root, a root marked not_entity left out. The merges are resolved here (`book.root`)
+    and passed as arrays, so the counting stays in the database (0283: 287k mentions were read into Python)."""
+    froms = sorted(book.redirect)
+    sql = f"""WITH rd(f, root) AS (SELECT * FROM unnest(%(froms)s::uuid[], %(roots)s::uuid[])),
+      m AS (SELECT m.post_id, m.role, {pairing.post_date('p')} AS at, p.source_id, rs.read_at IS NOT NULL AS read,
+                   COALESCE(rd.root, pin.entity_id, m.entity_id) AS eid
+              FROM mx_mentions_now m JOIN posts p ON p.id = m.post_id
+              LEFT JOIN post_reader_state rs ON rs.post_id = m.post_id
+              LEFT JOIN mx_entity_pins pin
+                     ON pin.undone_at IS NULL AND (pin.post_id, pin.guide, pin.n) = (m.post_id, m.guide, m.n)
+              LEFT JOIN rd ON rd.f = COALESCE(pin.entity_id, m.entity_id)
+             WHERE m.guide = ANY(%(guide)s) AND m.entity_id IS NOT NULL
+               AND {pairing.post_date_within('p', '%(since)s::timestamptz')}),
+      k AS (SELECT m.* FROM m JOIN mx_entities e ON e.id = m.eid AND e.status IS DISTINCT FROM 'not_entity')"""
+    return sql, {"froms": froms, "roots": [book.root(f) for f in froms], "guide": guide, "since": since}
+
+
+def top_stories(counts: Dict[str, int], n: int = 3) -> List[str]:
+    """The `n` stories most of an entity's posts are in: count, highest first, then story id (never row order)."""
+    return [s for s, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]]
 
 
 def _list_more(cur: Any, book: I.Book, eids: Iterable[str]) -> None:
@@ -148,21 +169,28 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
     now = now or datetime.now(timezone.utc)
     guide = _guide()
     since = now - timedelta(days=WINDOW_DAYS)
-    rows = _rows(cur, guide, since)
-    book = _list_book(cur, rows)
+    book = _list_book(cur)
+    mentions, params = _list_mentions(book, guide, since)
+    # ranked as News ranks: voices, reports, newest, then id ("C": Python's order of the id strings); one statement,
+    # so the mentions are read once, and only the top's rows come back
+    cur.execute(f"""{mentions},
+      top AS (SELECT eid, count(*) OVER () AS total,
+                     row_number() OVER (ORDER BY {voice.count_sql("source_id")} DESC,
+                                                 count(DISTINCT post_id) FILTER (WHERE role = ANY(%(report)s)) DESC,
+                                                 max(at) DESC, eid::text COLLATE "C") AS rank
+                FROM k GROUP BY eid ORDER BY rank LIMIT %(limit)s)
+      SELECT top.total, k.eid::text, k.post_id::text, k.role, k.at, k.source_id::text, k.read
+        FROM top JOIN k ON k.eid = top.eid ORDER BY top.rank""", {**params, "report": list(ROLE_REPORT), "limit": limit})
+    total: int = 0
     agg: Dict[str, Dict[str, Any]] = {}
-    for pid, n, role, eid, at, src, read, g in rows:
-        eid = book.root(book.pins.get((pid, g, n), eid))
-        if eid not in book.ents or book.ents[eid].status == "not_entity":
-            continue
+    for total, eid, pid, role, at, src, read in cur.fetchall():
         a = agg.setdefault(eid, {"voices": set(), "posts": {}, "reports": set()})
         a["voices"].add(src)
         a["posts"][pid] = (at, read)
         if role in ROLE_REPORT:
             a["reports"].add(pid)
-    ranked = sorted(agg.items(), key=lambda kv: (-len(kv[1]["voices"]), -len(kv[1]["reports"]),
-                                                 -max(at.timestamp() for at, _ in kv[1]["posts"].values()), kv[0]))
-    top = ranked[:limit]
+    I.read_ents(cur, book, list(agg))
+    top = list(agg.items())
     _list_more(cur, book, [eid for eid, _ in top])
     newest = {eid: sorted(a["posts"].items(), key=lambda kv: (-kv[1][0].timestamp(), kv[0]))[:3] for eid, a in top}
     story_of = _stories(cur, {p for _, a in top for p in a["posts"]})
@@ -178,11 +206,11 @@ def entity_list(cur: Any, *, now: Optional[datetime] = None, limit: int = LIST_L
         items.append({**_ent_view(book, eid, facts), "voices": len(a["voices"]), "posts": len(a["posts"]),
                       "reports": len(a["reports"]), "mentions": len(a["posts"]) - len(a["reports"]),
                       "last_at": last, "last_seen": _when(last, now),
-                      "stories": [{"id": s, "headline": heads.get(s)} for s, _ in sids.most_common(3)],
+                      "stories": [{"id": s, "headline": heads.get(s)} for s in top_stories(sids)],
                       "newest": [{**{k: (posts.get(p) or {}).get(k) for k in ("id", "title", "source", "kind", "at", "byline")},
                                   "read": read} for p, (_at, read) in newest[eid]],
                       "surges": surge.get(eid, [])[:3]})
-    return {"window_days": WINDOW_DAYS, "total": len(agg), "items": items, "accuracy": ACCURACY,
+    return {"window_days": WINDOW_DAYS, "total": total, "items": items, "accuracy": ACCURACY,
             "queue": open_count(cur), "flagged": flagged_count(cur)}   # the owner is asked only the flagged
 
 

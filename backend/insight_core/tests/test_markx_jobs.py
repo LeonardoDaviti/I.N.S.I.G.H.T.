@@ -171,6 +171,20 @@ class TheRebuildHold(unittest.TestCase):
         self.assertEqual(jobs.due(_states(decide=ran, candidates=c), T0, kept_missing=missing), "candidates")
 
 
+class OneProcessManyJobs(unittest.TestCase):
+    def test_each_job_starts_from_a_trimmed_process(self):
+        """_job_main collects and trims before each job's peak starts (0283): a job's peak is not the last one's
+        leftovers."""
+        seen = []
+        with mock.patch.object(jobs, "_settle", lambda: seen.append("settle")), \
+                mock.patch.object(jobs.peak, "reset", lambda *a, **k: seen.append("reset")), \
+                mock.patch.object(jobs.Jobs, "news", lambda self: seen.append("news"), create=True), \
+                mock.patch.object(jobs.Jobs, "tracks", lambda self: seen.append("tracks"), create=True), \
+                mock.patch("insight_core.logs.core.logger_config.setup_logging"):
+            jobs._job_main("postgresql://unused", "news", "tracks")
+        self.assertEqual(seen, ["settle", "reset", "news", "settle", "reset", "tracks"])
+
+
 class TheOrderOfRuns(unittest.TestCase):
     """No decision run during Mark IX's first-start rebuild or before the candidate finder ends (0121)."""
 

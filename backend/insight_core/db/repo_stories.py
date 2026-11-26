@@ -108,31 +108,51 @@ class SourceFacts:
                 for i, kind in sorted(self.kind.items()) if kind not in (*NOT_PUBLISHERS, "reddit")]
 
     def _linked(self, cur: Cursor) -> List[Tuple[str, str]]:
-        """(a, b): of the pairs that may be one owner (owner_pairs), a's posts link b's posts or b's own place,
-        from one read of those sources' links."""
+        """(a, b): of the pairs that may be one owner (owner_pairs), a's posts link b's posts or b's own place (its
+        address, any case, or a page under it), decided in SQL over those pairs (0283: not every link in Python)."""
         self._pairs = owner_pairs(self._channels(), shared_sites=self.shared_sites)
         asks = [(a, b) for (x, y), why in self._pairs.items() if why == "name" for a, b in ((x, y), (y, x))]
         if not asks:
             return []
         places = {i: "https://" + (self.publication(i) if kind == "site" else (self.account.get(i) or "")).lower()
                   for i, kind, *_ in self._channels()}
-        linking = sorted({a for a, _ in asks})
-        cur.execute("SELECT p.source_id::text, pl.target_url FROM posts p JOIN post_links pl ON pl.post_id = p.id "
-                    "AND NOT pl.boilerplate WHERE p.source_id = ANY(%s::uuid[])", (linking,))
-        targets: Dict[str, Set[str]] = defaultdict(set)
-        for source_id, target in cur.fetchall():
-            targets[source_id].add(target)
-        cur.execute("SELECT source_id::text, normalized_url FROM posts WHERE source_id = ANY(%s::uuid[]) "
-                    "AND normalized_url IS NOT NULL", (sorted({b for _, b in asks}),))
-        pages: Dict[str, Set[str]] = defaultdict(set)
-        for source_id, url in cur.fetchall():
-            pages[source_id].add(url)
+        found = self._linking(cur, asks, places)
+        return [(a, b) for a, b in asks if (a, b) in found]
 
-        def links(a: str, b: str) -> bool:
+    @staticmethod
+    def _linking(cur: Cursor, asks: Sequence[Tuple[str, str]], places: Dict[str, str]) -> Set[Tuple[str, str]]:
+        """The asked (a, b) where one of a's links (not boilerplate) is a page of b's posts, or is b's place or under
+        it in Python's lower(). An ASCII link is lowered once in SQL, under the C collation (A-Z only, as Python's
+        lower() does to ASCII, in any database locale); the few links with other characters come back and are
+        lowered here (Postgres' lower() would make a dotted capital I an "i", Python's an "i" and a dot)."""
+        cur.execute("""
+            WITH q AS (SELECT * FROM unnest(%s::uuid[], %s::uuid[], %s::text[]) AS q(a, b, place)),
+                 la AS MATERIALIZED (
+                     SELECT p.source_id AS a, pl.target_url AS t,
+                            CASE WHEN octet_length(pl.target_url) = char_length(pl.target_url)
+                                 THEN lower(pl.target_url COLLATE "C") END AS low
+                       FROM posts p JOIN post_links pl ON pl.post_id = p.id AND NOT pl.boilerplate
+                      WHERE p.source_id IN (SELECT a FROM q))
+            (SELECT q.a::text, q.b::text, NULL::text FROM q JOIN la ON la.a = q.a
+              WHERE la.low = q.place OR starts_with(la.low, q.place || '/')
+             UNION
+             SELECT q.a::text, q.b::text, NULL FROM q JOIN la ON la.a = q.a
+               JOIN posts o ON o.source_id = q.b AND o.normalized_url = la.t)
+            UNION ALL
+            SELECT la.a::text, NULL, la.t FROM la WHERE la.low IS NULL""",
+                    ([a for a, _ in asks], [b for _, b in asks], [places[b] for _, b in asks]))
+        found: Set[Tuple[str, str]] = set()
+        wide: Dict[str, List[str]] = defaultdict(list)   # linking source -> its links with other characters, lowered
+        for a, b, t in cur.fetchall():
+            if t is None:
+                found.add((a, b))
+            else:
+                wide[a].append(t.lower())
+        for a, b in asks:
             place = places[b]
-            return bool(targets[a] & pages[b]) or any(
-                (low := t.lower()) == place or low.startswith(place + "/") for t in targets[a])
-        return [(a, b) for a, b in asks if links(a, b)]
+            if (a, b) not in found and any(low == place or low.startswith(place + "/") for low in wide.get(a, ())):
+                found.add((a, b))
+        return found
 
     def _own(self, linked: Iterable[Tuple[str, str]]) -> None:
         """Who owns each channel (News counts a voice by owner): `owner` (source -> its owner's first source, for

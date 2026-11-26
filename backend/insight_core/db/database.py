@@ -163,7 +163,18 @@ class Database:
             options.append(f"-c statement_timeout={self.statement_timeout_ms}")
         if self.idle_in_transaction_ms > 0:
             options.append(f"-c idle_in_transaction_session_timeout={self.idle_in_transaction_ms}")
-        return {"connect_timeout": CONNECT_TIMEOUT_SECONDS, "options": " ".join(options)}
+        # The URL's own options first (e.g. "-c default_transaction_read_only=on" on a real-data copy): a keyword
+        # `options` replaces the URL's, so without this a read-only URL connected read-write.
+        own = self.url_options(self.url)
+        return {"connect_timeout": CONNECT_TIMEOUT_SECONDS, "options": " ".join([*([own] if own else []), *options])}
+
+    @staticmethod
+    def url_options(url: str) -> str:
+        """The `options` the connection URL itself carries ("" for none or a URL psycopg can't parse)."""
+        try:
+            return str(psycopg.conninfo.conninfo_to_dict(url).get("options") or "").strip()
+        except psycopg.ProgrammingError:
+            return ""
 
     def _ensure_open(self) -> None:
         if not self._opened:

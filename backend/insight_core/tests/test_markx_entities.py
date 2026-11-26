@@ -83,6 +83,15 @@ class Names(unittest.TestCase):
         self.assertFalse(N.word_contains("unity", "community"))
 
 
+class ListStories(unittest.TestCase):
+    def test_an_entitys_stories_tie_by_story_id_never_by_row_order(self):
+        """0283: Counter.most_common broke ties by the rows' order (79-82 of 200 items differed run to run)."""
+        counts = {"c": 1, "b": 2, "d": 1, "a": 1, "e": 2}
+        for order in (counts, dict(reversed(list(counts.items())))):
+            self.assertEqual(entity_views.top_stories(order), ["b", "e", "a"])
+        self.assertEqual(entity_views.top_stories({}), [])
+
+
 class Rules(unittest.TestCase):
     """decide_pair and the guards on hand-made entities (no database)."""
 
@@ -1378,6 +1387,40 @@ class Pages(_Db):
         capped = entity_views.entity_page(self.cur, self.entity_of(ps[0]), now=T0 + D, loose_limit=2, stories_limit=1)
         self.assertEqual((capped["loose"], capped["loose_total"]), (page["loose"][:2], 3))
         self.assertEqual({k: v for k, v in capped.items() if k != "loose"}, {k: v for k, v in page.items() if k != "loose"})
+
+    def test_the_list_counts_in_sql_through_pins_and_merges_and_leaves_out_not_entity(self):
+        """0283: the list is counted in the database; a hand-built case of a merge, a pin onto a merged entity, a
+        not_entity and several sources (one voice with two posts)."""
+        p = [self.post(0, T0), self.post(1, T0 + H), self.post(1, T0 + 2 * H), self.post(2, T0 + 3 * H),
+             self.post(3, T0 + 4 * H)]
+        self.mentions(p[0], ("Kestrel Coder", "software", "subject"), ("Pebble Lamp", "product", "mention"))
+        self.mentions(p[1], ("Falcon Shell", "software", "mention"), ("Acme", "org", "actor"))
+        self.mentions(p[2], ("Falcon Shell", "software", "subject"))
+        self.mentions(p[3], ("Acme", "org", "mention"), ("Quartz Board", "software", "mention"))
+        self.mentions(p[4], ("Pebble Lamp", "product", "subject"), ("Quartz Board", "software", "subject"))
+        self.stage()
+        kc, falcon, acme, quartz, lamp = (self.entity_of(p[0]), self.entity_of(p[1]), self.entity_of(p[1], 1),
+                                          self.entity_of(p[4], 1), self.entity_of(p[0], 1))
+        self.cur.execute("""INSERT INTO mx_entity_redirects (from_id, to_id, by, automatic, evidence)
+                            VALUES (%s, %s, 'owner', false, '{}')""", (falcon, kc))           # Falcon Shell is Kestrel Coder
+        self.cur.execute("INSERT INTO mx_entity_pins (post_id, guide, n, entity_id) VALUES (%s, 'ent-v3', 1, %s)",
+                         (p[3], falcon))                                                       # p3's Quartz Board is it too
+        self.cur.execute("UPDATE mx_entities SET status = 'not_entity' WHERE id = %s", (lamp,))
+        stories = []
+        for members in ([p[0]], [p[2]], [p[1], p[3]], [p[3]]):
+            self.cur.execute("INSERT INTO mx_stories (first_at, headline) VALUES (now(), 'A story') RETURNING id::text")
+            stories.append(self.cur.fetchone()[0])
+            for m in members:
+                self.cur.execute("INSERT INTO mx_story_posts (story_id, post_id, role, reason, valid_from) "
+                                 "VALUES (%s, %s, 'member', 'test', %s)", (stories[-1], m, T0))
+        got = entity_views.entity_list(self.cur, now=T0 + D)
+        self.assertEqual(got["total"], 3)                                  # no Falcon Shell, no Pebble Lamp
+        self.assertEqual([(i["id"], i["voices"], i["posts"], i["reports"], i["mentions"]) for i in got["items"]],
+                         [(kc, 3, 4, 2, 2), (acme, 2, 2, 1, 1), (quartz, 1, 1, 1, 0)])
+        self.assertEqual(got["items"][0]["last_at"], T0 + 3 * H)
+        # Kestrel Coder's stories: the one with two of its posts, then the tied ones by id
+        self.assertEqual([s["id"] for s in got["items"][0]["stories"]], [stories[2]] + sorted(stories[:2] + stories[3:])[:2])
+        self.assertEqual(entity_views.entity_list(self.cur, now=T0 + D, limit=1)["items"][0]["id"], kc)
 
     def test_a_family_page_lists_its_versions_and_a_merged_id_opens_its_cluster(self):
         v = {"family": "Orbit", "version": "6.1", "variant": "Terra", "size": None, "build": None}

@@ -50,6 +50,20 @@ class DatabaseTests(unittest.TestCase):
             cur.execute("SHOW jit")
             self.assertEqual(cur.fetchone()[0], "off")
 
+    def test_the_url_s_own_options_are_kept(self):
+        """A read-only URL stays read-only: the pool's own options are added to the URL's, never replace them."""
+        url = db_url()
+        sep = "&" if "?" in url else "?"
+        database = Database(f"{url}{sep}options=-c%20default_transaction_read_only%3Don")
+        self.addCleanup(database.close)
+        with database.connection() as conn, conn.cursor() as cur:
+            cur.execute("SHOW default_transaction_read_only")
+            self.assertEqual(cur.fetchone()[0], "on")
+            cur.execute("SHOW jit")
+            self.assertEqual(cur.fetchone()[0], "off")
+            with self.assertRaises(psycopg.errors.ReadOnlySqlTransaction):
+                cur.execute("CREATE TEMP TABLE should_fail (x int)")
+
     def test_the_pool_hands_back_a_usable_connection_after_an_error(self):
         database = self.make(min_size=1, max_size=1)
         with self.assertRaises(psycopg.errors.UndefinedTable):

@@ -755,7 +755,9 @@ class Ask:
     def later(self, first_call: str) -> List[Verdict]:
         """The question's valid answers after its first (`first_call`), oldest first. Read only."""
         if self.memo is not None and first_call in self.memo.call_task:
-            return [Verdict.of(ans, cid) for ans, cid in self.memo.calls[self.memo.call_task[first_call]][1:]]
+            from insight_core.markx import incremental
+            calls = incremental.calls_of(self.cur, self.memo, self.memo.call_task[first_call])
+            return [Verdict.of(ans, cid) for ans, cid in calls[1:]]
         self.cur.execute("""SELECT id::text, answer FROM mx_calls
                              WHERE task_id = (SELECT task_id FROM mx_calls WHERE id = %s) AND valid
                              ORDER BY created_at, ctid""", (first_call,))

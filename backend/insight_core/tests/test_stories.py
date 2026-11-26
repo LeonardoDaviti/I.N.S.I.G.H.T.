@@ -69,6 +69,35 @@ class TextCharsInSql(unittest.TestCase):
         self.assertEqual(got, [None if t is None else min(len(t), N) for t in texts])
 
 
+class SameOwnerLinksInSql(unittest.TestCase):
+    def test_each_rule_decides_as_python_lower_does(self):
+        """SourceFacts._linking (what _linked asks, 0283): a's link (not boilerplate) is a page of b's posts, or b's
+        place or a page under it, in Python's lower(). ASCII is lowered in SQL, other links in Python: the Kelvin
+        sign lowers to k; a dotted capital I to i and a dot, so it is no "i" (Postgres' lower() says it is)."""
+        mark = uuid.uuid4().hex[:8]
+        names = ("page", "place", "exact", "near", "boiler", "cafe", "kelvin", "dotted", "owner", "kiln", "mi")
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            s = {n: insert_source(cur, f"{n} {mark}") for n in names}
+            place = f"https://owner-{mark}.test"
+            owned = place + "/2026/a-post"
+            insert_post(cur, s["owner"], owned)
+            links = {"page": [owned], "place": [f"https://OWNER-{mark}.test/About"], "exact": [place.upper()],
+                     "near": [f"https://owner-{mark}.testing/x", f"https://owner-{mark}.test.evil/x"],
+                     "boiler": [place + "/footer"], "cafe": [place + "/Café"],
+                     "kelvin": [f"https://\u212ailn-{mark}.test/x"], "dotted": [f"https://m\u0130-{mark}.test/x"]}
+            for name, targets in links.items():
+                insert_post(cur, s[name], f"https://{name}-{mark}.test/{uuid.uuid4().hex}", links=targets)
+            cur.execute("UPDATE post_links SET boilerplate = true WHERE target_url = %s", (place + "/footer",))
+            places = {s["owner"]: place, s["page"]: f"https://page-{mark}.test", s["kiln"]: f"https://kiln-{mark}.test",
+                      s["mi"]: f"https://mi-{mark}.test"}
+            asks = [(s[n], s["owner"]) for n in ("page", "place", "exact", "near", "boiler", "cafe")]
+            asks += [(s["kelvin"], s["kiln"]), (s["dotted"], s["mi"]), (s["owner"], s["page"])]
+            found = SourceFacts._linking(cur, asks, places)
+            conn.rollback()
+        self.assertEqual(found, {(s["page"], s["owner"]), (s["place"], s["owner"]), (s["exact"], s["owner"]),
+                                 (s["cafe"], s["owner"]), (s["kelvin"], s["kiln"])})
+
+
 class PostLinksTests(unittest.TestCase):
     def test_outside_links_in_order_normalized_with_their_text(self):
         html = ('<p><a href="https://Other.example/a/?utm_source=x">The <b>first</b></a> '

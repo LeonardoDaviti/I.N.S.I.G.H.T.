@@ -111,51 +111,61 @@ def platform_rows(links: Iterable[Tuple[str, str]]) -> List[Tuple[str, Tuple[str
 
 def find_platforms(rows: Iterable[Tuple[str, Tuple[str, ...], int, Iterable[str]]], *,
                    min_voices: int = DISCOVER_MIN_VOICES) -> Dict[str, Tuple[str, ...]]:
-    """The hosts that are platforms by the data, each with the path its owners sit under."""
-    by_host: Dict[str, List[Tuple[Tuple[str, ...], int, Set[str]]]] = defaultdict(list)
+    """The hosts that are platforms by the data, each with the path its owners sit under (`host_platform` a host;
+    the rows in any order)."""
+    by_host: Dict[str, List[Tuple[Tuple[str, ...], int, Iterable[str]]]] = defaultdict(list)
     for host, segs, urls, voices in rows:
-        by_host[host].append((tuple(segs), int(urls), set(voices)))
+        by_host[host].append((segs, urls, voices))
     out: Dict[str, Tuple[str, ...]] = {}
     for host, paths in sorted(by_host.items()):
-        if len(set().union(*(v for _, _, v in paths))) < min_voices:
-            continue
-        prefix: Tuple[str, ...] = ()
-        stepped = False   # one step past a segment most pages share; a language one is skipped (section_of's)
-        while len(prefix) < OWNER_DEPTH - 1:
-            level = len(prefix)
-            first: Counter = Counter()
-            for segs, urls, _ in paths:
-                if len(segs) > level:
-                    first[segs[level]] += urls
-            if not first:
-                break
-            top, n = first.most_common(1)[0]
-            if n < PREFIX_SHARE * sum(urls for _, urls, _ in paths) or NUMBERISH.match(top) or top == "*":
-                break
-            if not LANGUAGE.match(top):
-                if stepped:   # a second shared segment: a site's documents (/government/publications/<doc>), not owners
-                    break
-                stepped = True
-            prefix += (top,)
-            paths = [p for p in paths if p[0][:len(prefix)] == prefix]
-        marked = _marked_owners(paths)
-        if marked is not None:
-            out[host] = MARKED_OWNERS
-            continue
-        level = len(prefix)
-        owners: Dict[str, Tuple[int, Set[str]]] = {}
-        for segs, urls, voices in paths:
-            if len(segs) > level + 1 and owner_segment(segs[level], first=level == 0):
-                n, vs = owners.get(segs[level], (0, set()))
-                owners[segs[level]] = (n + urls, vs | voices)
-        if not owners:
-            continue
-        top_share = max(n for n, _ in owners.values()) / sum(n for n, _ in owners.values())
-        multi = sum(1 for _, vs in owners.values() if len(vs) >= 2)
-        if (len(owners) >= OWNERS_MANY or (len(owners) >= OWNERS_MIN and top_share <= OWNER_TOP_SHARE)) \
-                and multi >= OWNER_VOICES:
+        prefix = host_platform(paths, min_voices=min_voices)
+        if prefix is not None:
             out[host] = prefix
     return out
+
+
+def host_platform(rows: Iterable[Tuple[Tuple[str, ...], int, Iterable[str]]], *,
+                  min_voices: int = DISCOVER_MIN_VOICES) -> Optional[Tuple[str, ...]]:
+    """One host's (segs, urls, voices) rows: the path its owners sit under when the data finds it a platform, else
+    None. Hosts are independent, so DiscoverRepository.platforms streams them one at a time (0283)."""
+    paths = [(tuple(segs), int(urls), set(voices)) for segs, urls, voices in rows]
+    if len(set().union(*(v for _, _, v in paths))) < min_voices:
+        return None
+    prefix: Tuple[str, ...] = ()
+    stepped = False   # one step past a segment most pages share; a language one is skipped (section_of's)
+    while len(prefix) < OWNER_DEPTH - 1:
+        level = len(prefix)
+        first: Counter = Counter()
+        for segs, urls, _ in paths:
+            if len(segs) > level:
+                first[segs[level]] += urls
+        if not first:
+            break
+        top, n = first.most_common(1)[0]
+        if n < PREFIX_SHARE * sum(urls for _, urls, _ in paths) or NUMBERISH.match(top) or top == "*":
+            break
+        if not LANGUAGE.match(top):
+            if stepped:   # a second shared segment: a site's documents (/government/publications/<doc>), not owners
+                break
+            stepped = True
+        prefix += (top,)
+        paths = [p for p in paths if p[0][:len(prefix)] == prefix]
+    if _marked_owners(paths) is not None:
+        return MARKED_OWNERS
+    level = len(prefix)
+    owners: Dict[str, Tuple[int, Set[str]]] = {}
+    for segs, urls, voices in paths:
+        if len(segs) > level + 1 and owner_segment(segs[level], first=level == 0):
+            n, vs = owners.get(segs[level], (0, set()))
+            owners[segs[level]] = (n + urls, vs | voices)
+    if not owners:
+        return None
+    top_share = max(n for n, _ in owners.values()) / sum(n for n, _ in owners.values())
+    multi = sum(1 for _, vs in owners.values() if len(vs) >= 2)
+    if (len(owners) >= OWNERS_MANY or (len(owners) >= OWNERS_MIN and top_share <= OWNER_TOP_SHARE)) \
+            and multi >= OWNER_VOICES:
+        return prefix
+    return None
 
 
 def _marked_owner(segs: Tuple[str, ...]) -> Optional[str]:
@@ -941,6 +951,6 @@ def address_stamp(platforms: Platforms) -> str:
     return ADDRESS_RULES if not platforms else fingerprint([ADDRESS_RULES, sorted((h, list(p)) for h, p in platforms.items())])
 
 __all__ = ["Suggestion", "suggestions", "discover_address", "discover_article", "discover_open", "discover_place",
-           "find_platforms", "platform_rows", "platform_key", "is_self_link", "place_kind", "reference_address",
+           "find_platforms", "host_platform", "platform_rows", "platform_key", "is_self_link", "place_kind", "reference_address",
            "paper_address", "archive_address", "app_address", "document_address", "REFERENCE_KINDS", "score", "growth", "judged_follow", "order", "announcing_place", "site_unit", "reader_fit", "reader_fit_on", "fit_score", "READER_FIT_WEIGHT", "section", "language_segment", "platform_sample", "MARKED_OWNERS", "federation", "owner_domain", "one_card_per_domain", "own_names", "owner_words", "same_owner", "channel_names", "other_channel", "query_address", "listing_address", "not_channel", "follow_url", "KIND_PLATFORMS", "FOLLOWABLE", "UNFOLLOWABLE", "address_stamp",
            "Origin", "Origins", "origins", "address_rules", "ADDRESS_RULES"]

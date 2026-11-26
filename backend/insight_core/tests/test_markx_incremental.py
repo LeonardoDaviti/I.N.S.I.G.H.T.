@@ -26,6 +26,42 @@ LONG = 30
 STATE = ("mx_inc_state", "mx_inc_posts", "mx_inc_inputs", "mx_inc_copies", "mx_inc_tasks")
 
 
+class Settle(unittest.TestCase):
+    def test_what_save_writes_is_settled_at_release_and_the_reading_let_go_but_live_kinds(self):
+        """release settles the rows save writes (inputs and near-copies used, not kept or changed; kept ones unused;
+        tasks seen otherwise than last run) and lets the reading's tasks, inputs and near-copies go; LIVE's tasks stay
+        held, and one asked after release is written too (0283)."""
+        st = I.State(db="x", key="k", full=False)
+        st.tasks = {("pair", "h1"): ("t1", "answered", 1, False), ("pair", "h2"): ("t2", "answered", 1, False),
+                    ("briefing", "h3"): ("t3", "open", 0, False)}
+        st.keys = {"t1": ("pair", "h1"), "t2": ("pair", "h2"), "t0": ("pair", "h1"), "t3": ("briefing", "h3")}
+        st.was = {"t1": ("answered", 1), "t2": ("open", 0), "t0": ("open", 0), "t3": ("open", 0)}
+        st.inputs_kept = {"k1": "h1", "k2": "h2", "gone": "hx"}
+        st.inputs = {"k1": ("pair", "h1"), "k2": ("pair", "h2b"), "k4": ("join", "h4")}
+        st.copies_kept = {"c1": frozenset({"p"}), "cgone": frozenset()}
+        st.copies = {"c1": frozenset({"p"}), "c2": frozenset({"q", "p"})}
+        st.calls = {"t1": [('{"a": 1}', "c")]}
+        I.release(st)
+        self.assertEqual(st.tasks, {("briefing", "h3"): ("t3", "open", 0, False)})
+        self.assertEqual((st.keys, st.was), ({"t3": ("briefing", "h3")}, {"t3": ("open", 0)}))
+        self.assertEqual((st.inputs, st.inputs_kept, st.copies, st.copies_kept, st.calls), ({}, {}, {}, {}, {}))
+        st.tasks[("briefing", "h5")] = ("t5", "open", 0, False)   # asked after release (Ask.answer adds it)
+        rows = I.pending(st)
+        self.assertEqual(rows["inputs_new"], [("k2", "pair", "h2b"), ("k4", "join", "h4")])
+        self.assertEqual(rows["inputs_gone"], ["gone"])
+        self.assertEqual(rows["copies_new"], [("c2", ["p", "q"])])
+        self.assertEqual(rows["copies_gone"], ["cgone"])
+        self.assertEqual(rows["tasks_seen"], [("t2", "answered", 1), ("t5", "open", 0)])
+        self.assertFalse(rows["full"])
+        st.inputs["k4"] = ("join", "h4c")   # an input used after release: one row a key, the later
+        self.assertEqual(I.pending(st)["inputs_new"], [("k2", "pair", "h2b"), ("k4", "join", "h4c")])
+
+    def test_a_held_answer_is_decoded_on_use_as_psycopg_decodes_jsonb(self):
+        st = I.State(db="x", key="k")
+        st.calls = {"t": [('{"b": [1, 2.5, null], "a": "x"}', "c1"), (None, "c2")]}
+        self.assertEqual(I.calls_of(None, st, "t"), [({"b": [1, 2.5, None], "a": "x"}, "c1"), (None, "c2")])
+
+
 class Codec(unittest.TestCase):
     def test_what_a_run_keeps_comes_back_as_it_was(self):
         at = datetime(2100, 3, 1, 12, 30, 15, 123456, tzinfo=timezone.utc)

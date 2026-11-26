@@ -15,6 +15,7 @@ import hashlib
 import json
 from collections import defaultdict
 from datetime import datetime, timezone
+from itertools import groupby
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from psycopg import Cursor
@@ -28,7 +29,7 @@ from insight_core.utils.addresses import host_of
 from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
                                                DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, ORIGIN_MIN_VOICES, OWNER_DEPTH,
                                                Origin, Platforms, address_stamp, discover_address, discover_article,
-                                               find_platforms)
+                                               host_platform)
 from insight_core.utils.url_normalization import TWEET_SHAPE
 
 LOCK_KEY = "insight.discover_addresses"
@@ -44,6 +45,7 @@ DISCOVER_AT = "COALESCE(value->>'discover_at', value->>'computed_at')"
 READS_KEY = "discover_reads"   # the follow tests and page titles Discover read
 VIDEO_LIKE = "https://youtube.com/watch?v=%"   # a video's one address (url_normalization writes every form so)
 WORK_MEM = "48MB"
+PLATFORM_ROWS = 2000   # the platform rule's grouped rows fetched at a time (`platforms`)
 
 
 
@@ -382,16 +384,24 @@ class DiscoverRepository:
     def platforms(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str],
                   selves: Dict[str, Iterable[str]]) -> Dict[str, Tuple[str, ...]]:
         """The hosts the data finds platforms (discover_rules.find_platforms), each with the path its owners sit
-        under, from every kept link grouped in SQL."""
+        under, from every kept link grouped in SQL. The groups are streamed a host at a time (discover_rules.
+        host_platform; 0283: holding all ~280k at once was ~270 MB of the Discover job's peak on the server's copy).
+        Streamed rather than through a named cursor: Postgres plans a cursor without parallel workers (+2.5 s there)."""
         from insight_core.utils.url_normalization import TWEET_SHAPE as shape
         ids = sorted(kinds)
         cur.execute("SET LOCAL work_mem = '%s'" % WORK_MEM)
-        cur.execute(_PLATFORMS, {"ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
-                                 "selves": [" ".join(sorted(selves.get(i, ()))) for i in ids], "tweet": shape,
-                                 "depth": OWNER_DEPTH, "listed": sorted(DISCOVER_PLATFORMS),
-                                 "under": ["%." + host for host in sorted(DISCOVER_PLATFORMS)],
-                                 "min_voices": DISCOVER_MIN_VOICES})
-        return find_platforms((host, tuple(segs), n, voices) for host, segs, n, voices in cur.fetchall())
+        rows = cur.stream(_PLATFORMS + " ORDER BY host",
+                          {"ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
+                           "selves": [" ".join(sorted(selves.get(i, ()))) for i in ids], "tweet": shape,
+                           "depth": OWNER_DEPTH, "listed": sorted(DISCOVER_PLATFORMS),
+                           "under": ["%." + host for host in sorted(DISCOVER_PLATFORMS)],
+                           "min_voices": DISCOVER_MIN_VOICES}, size=PLATFORM_ROWS)
+        out: Dict[str, Tuple[str, ...]] = {}
+        for host, group in groupby(rows, key=lambda row: row[0]):
+            prefix = host_platform((tuple(segs), n, voices) for _, segs, n, voices in group)
+            if prefix is not None:
+                out[host] = prefix
+        return out
 
     @staticmethod
     def activity(cur: Cursor, keys: Iterable[str], platforms: Platforms = {}, *, since: Optional[datetime] = None
@@ -445,10 +455,23 @@ class DiscoverRepository:
         return {url for url, shared in cur.fetchall() if tokened(shared)}
 
     @staticmethod
-    def kept(cur: Cursor) -> Optional[Dict[str, Any]]:
-        """Discover's last counts: {stamp, found, mirrors, scanned_to}, or None."""
-        row = SystemSettingsRepository.get(cur, KEPT_KEY)
+    def kept(cur: Cursor, *, found: bool = True) -> Optional[Dict[str, Any]]:
+        """Discover's last counts: {stamp, found, mirrors, scanned_to, ...}, or None. Without `found`, all but the
+        found rows (a few KB of ~11 MB; 0283: they cost the recount, which never reads them, ~50 MB); `kept_found`
+        reads them when wanted."""
+        if found:
+            row = SystemSettingsRepository.get(cur, KEPT_KEY)
+            return row[0] if row else None
+        cur.execute("SELECT value - 'found' FROM system_settings WHERE key = %s", (KEPT_KEY,))
+        row = cur.fetchone()
         return row[0] if row else None
+
+    @staticmethod
+    def kept_found(cur: Cursor) -> List[Dict[str, Any]]:
+        """The found rows of Discover's last counts (`kept`'s), [] when none are kept."""
+        cur.execute("SELECT value->'found' FROM system_settings WHERE key = %s", (KEPT_KEY,))
+        row = cur.fetchone()
+        return (row[0] if row else None) or []
 
     @staticmethod
     def keep(cur: Cursor, kept: Dict[str, Any]) -> None:
@@ -503,6 +526,50 @@ class DiscoverRepository:
                          FROM v""", {"w": window, "k": SERVED_KEY})
         row = cur.fetchone()
         return (row[0], int(row[1])) if row and isinstance(row[0], dict) else None
+
+    @staticmethod
+    def served_outline(cur: Cursor) -> Optional[Dict[str, Any]]:
+        """The built served answer as Discover's reads choose from it, projected in Postgres (0283: the whole answer,
+        ~10 MB of JSON and ~75 MB of objects on the server's copy, was read for this on every run): {built_at,
+        suggestions: [{at (its place in the answer), key and what discover_rules.order and to_read rank by: score,
+        fit, follow_test's label, last_days, voices (truthy or not), reader_fit}], apart: {kind: {rows: [{key}]}},
+        archives (whole: a few rows)}. None before the first build. `served_rows` reads chosen rows whole."""
+        cur.execute("""WITH v AS MATERIALIZED (SELECT value->'answer' AS a FROM system_settings
+                                                WHERE key = %s AND value->'answer' ? 'built_at')
+                       SELECT a->>'built_at',
+                              (SELECT COALESCE(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+                                          'at', n - 1, 'key', s->'key', 'score', s->'score', 'fit', s->'fit',
+                                          'follow_test', CASE WHEN jsonb_typeof(s->'follow_test') = 'object'
+                                                              THEN jsonb_build_object('label', s->'follow_test'->'label') END,
+                                          'last_days', s->'last_days', 'reader_fit', s->'reader_fit',
+                                          'voices', CASE WHEN jsonb_typeof(s->'voices') IN ('array', 'object')
+                                                         THEN to_jsonb(s->'voices' NOT IN ('[]'::jsonb, '{}'::jsonb))
+                                                         ELSE s->'voices' END)) ORDER BY n), '[]'::jsonb)
+                                 FROM jsonb_array_elements(COALESCE(a->'suggestions', '[]'::jsonb)) WITH ORDINALITY e(s, n)),
+                              (SELECT COALESCE(jsonb_object_agg(kind, jsonb_build_object('rows', (
+                                          SELECT COALESCE(jsonb_agg(jsonb_build_object('key', r->'key')), '[]'::jsonb)
+                                            FROM jsonb_array_elements(COALESCE(got->'rows', '[]'::jsonb)) r))), '{}'::jsonb)
+                                 FROM jsonb_each(CASE WHEN jsonb_typeof(a->'apart') = 'object' THEN a->'apart'
+                                                      ELSE '{}'::jsonb END) k(kind, got)),
+                              COALESCE(a->'archives', '[]'::jsonb)
+                         FROM v""", (SERVED_KEY,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"built_at": row[0], "suggestions": row[1], "apart": row[2], "archives": row[3]}
+
+    @staticmethod
+    def served_rows(cur: Cursor, built_at: str, at: Sequence[int]) -> Optional[Dict[int, Dict[str, Any]]]:
+        """The served answer's suggestions at these places (`served_outline`'s `at`), whole; None when the answer
+        served is no longer the one built at `built_at`."""
+        if not at:
+            return {}
+        cur.execute("""WITH v AS MATERIALIZED (SELECT value->'answer' AS a FROM system_settings
+                                                WHERE key = %s AND value->'answer'->>'built_at' = %s)
+                       SELECT i, a->'suggestions'->i FROM v, unnest(%s::int[]) i""",
+                    (SERVED_KEY, built_at, sorted(set(at))))
+        got = {int(i): s for i, s in cur.fetchall() if isinstance(s, dict)}
+        return got if len(got) == len(set(at)) else None
 
     @staticmethod
     def keep_served(cur: Cursor, made_from: str, built_at: str, answer: Dict[str, Any]) -> None:

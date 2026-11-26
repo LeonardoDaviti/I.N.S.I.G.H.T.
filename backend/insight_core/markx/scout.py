@@ -191,7 +191,7 @@ def best_items(cur: Cursor, folder_id: str, n: int = BEST_ITEMS) -> List[tasks.P
 
 def _platforms(cur: Cursor) -> Dict[str, Tuple[str, ...]]:
     from insight_core.db.repo_discover import DiscoverRepository
-    kept = DiscoverRepository.kept(cur) or {}
+    kept = DiscoverRepository.kept(cur, found=False) or {}   # platforms only (0283)
     return {host: tuple(prefix) for host, prefix in (kept.get("platforms") or {}).items()}
 
 
