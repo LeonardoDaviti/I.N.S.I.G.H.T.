@@ -511,8 +511,13 @@ def _active_rows(cur: Cursor, track: Dict[str, Any], *, days: Optional[int], lim
 
 def _recent(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, limit: int, now: datetime):
     """The passive posts of the last RECENT_DAYS: (scanned, passed, [scored post] to ask, in finders.order_key's
-    order). It overlaps the history pass on purpose: a post dated before the version but stored after is still read."""
+    order). It overlaps the history pass on purpose: a post dated before the version but stored after is still read.
+    The pages the owner saved and the track never asked are read too, whatever their date (finders.saved_unasked)."""
     rows = finders.score(cur, track, prep, since=now - timedelta(days=RECENT_DAYS), until=now)
+    if "saved" in set(prep.get("on") or finders.FINDERS):
+        seen = {d["post_id"] for d in rows}
+        extra = [p for p in finders.saved_unasked(cur, track) if p not in seen]
+        rows += finders.score(cur, track, prep, ids=extra) if extra else []
     hits = [d for d in rows if d["fired"]]
     have = _has_item(cur, track, [d["post_id"] for d in hits]) | finders.labelled(prep)
     todo = sorted((d for d in hits if d["post_id"] not in have), key=finders.order_key, reverse=True)

@@ -18,7 +18,7 @@ import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from insight_core.ingestion import archive_ladder, full_text
+from insight_core.ingestion import archive_ladder, feed_alternates, full_text
 from insight_core.ingestion.http import AddressMemory, HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.db.repo_posts import BACKLOG_KEY
@@ -141,11 +141,18 @@ class GenericRssKind(BaseKind):
         posts: List[Dict[str, Any]] = []
         failure: Optional[str] = None
         warning: Optional[str] = None
-        if memory is None:
-            feed_text, _ = await self.http.get_text(url)
-        else:
-            answer = await memory.get(self.http, url)
-            feed_text = None if answer.not_modified else answer.text
+        try:
+            if memory is None:
+                feed_text, _ = await self.http.get_text(url)
+            else:
+                answer = await memory.get(self.http, url)
+                feed_text = None if answer.not_modified else answer.text
+        except HttpError as exc:
+            # an address another way also reads (feed_alternates: hnrss.org from Hacker News' search), read so
+            instead = await feed_alternates.read_instead(self.http, url, exc)
+            if instead is None:
+                raise
+            feed_text, warning = instead.text, instead.line
         if feed_text is not None:
             # a feed with items none of which were read is an error, not "empty"; items that would be stored as
             # fewer posts than they are, a failure saying so
@@ -153,7 +160,8 @@ class GenericRssKind(BaseKind):
             # an item the parser could not read is skipped and said, the rest stored
             checked = checked_fetch(parsed, parsing.feed_items(feed_text) if not parsed else len(parsed), {},
                                     broken=parsed.broken)
-            failure, warning = checked.failure, checked.warning   # a few items sharing an address: a warning
+            failure = checked.failure
+            warning = "; ".join(filter(None, (warning, checked.warning))) or None   # a few items sharing an address
             posts = await self._maybe_expand(source, whole_answer(source, feed_text, url, parsed, limit))
         result = FetchedPosts(await self._read_again(source, posts))
         result.failure = failure
@@ -192,7 +200,13 @@ class GenericRssKind(BaseKind):
         """The feed's posts and the ladder's look at the rest of the site: the platform, each strategy's outcome
         and the site's size (`smart`); the sitemap's older posts."""
         url = str(source["handle_or_url"])
-        feed_text, headers = await self.http.get_text(url)
+        try:
+            feed_text, headers = await self.http.get_text(url)
+        except HttpError as exc:
+            instead = await feed_alternates.read_instead(self.http, url, exc)
+            if instead is None:
+                raise
+            feed_text, headers = instead.text, {}
         posts = parsing.parse_feed_posts(feed_text, url)
         oldest = posts[-1]["date"] if posts else None
         result = await self._ladder(source, posts, feed_text, headers)

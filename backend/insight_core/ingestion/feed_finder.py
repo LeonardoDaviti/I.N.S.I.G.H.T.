@@ -24,6 +24,7 @@ feed rather than the page's; "none" says why (`reason`).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html
 import logging
 import json
@@ -36,7 +37,8 @@ from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from typing import Dict, Iterable, List, Literal, Optional, Sequence, Tuple
 
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion import feed_alternates
+from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds import forum, parsing
 from insight_core.ingestion.kinds.base import ReadCheck
@@ -616,6 +618,14 @@ class _Search:
             try:
                 return await asyncio.wait_for(self.http.get_start(url, max_bytes), REQUEST_TIMEOUT_S)
             except Exception as exc:  # noqa: BLE001 - a failed candidate is just not a feed
+                # an address another way also reads (feed_alternates), read so: the source's fetch reads it so too
+                instead = None
+                if isinstance(exc, (HttpError, TimeoutError)) and feed_alternates.alternate(url) is not None:
+                    with contextlib.suppress(TimeoutError):
+                        instead = await asyncio.wait_for(feed_alternates.read_instead(self.http, url, exc),
+                                                         REQUEST_TIMEOUT_S)
+                if instead is not None:
+                    return instead.text.encode("utf-8")[:max_bytes], url
                 status = getattr(exc, "status", None)
                 if status in BLOCKED_STATUSES:
                     self.blocked.add(url)

@@ -74,7 +74,7 @@ class Pure(unittest.TestCase):
 
     def test_the_adopted_finders_and_the_env(self):
         self.assertEqual(finders.active(), finders.ADOPTED)
-        self.assertEqual(finders.ADOPTED, ("probe", "domain", "word", "tool", "source", "linked"))
+        self.assertEqual(finders.ADOPTED, ("probe", "domain", "word", "tool", "source", "linked", "saved"))
         with mock.patch.dict(os.environ, {finders.FINDERS_ENV: "domain, entity,bogus"}):
             self.assertEqual(finders.active(), ("probe", "domain"))    # the example posts always; dropped names ignored
         off = {"bar": 0.5, "on": ("probe",)}

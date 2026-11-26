@@ -1,0 +1,33 @@
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Hacker News: Newest</title><link>https://news.ycombinator.com/newest</link><description>Hacker News RSS</description><docs>https://hnrss.org/</docs><generator>hnrss v2.1.1</generator><lastBuildDate>Thu, 26 Nov 2026 06:12:32 +0000</lastBuildDate><atom:link href="https://hnrss.org/newest?points=100&amp;count=100" rel="self" type="application/rss+xml"></atom:link><item><title><![CDATA[OpenAI cuts GPT-6.2 usage: Astra hits limits 40% faster, Sol 25% faster]]></title><description><![CDATA[
+<p>Article URL: <a href="https://twitter.com/thsottiaux/status/2125784147889393806">https://twitter.com/thsottiaux/status/2125784147889393806</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50651117">https://news.ycombinator.com/item?id=50651117</a></p>
+<p>Points: 105</p>
+<p># Comments: 56</p>
+]]></description><pubDate>Thu, 26 Nov 2026 03:36:58 +0000</pubDate><link>https://twitter.com/thsottiaux/status/2125784147889393806</link><dc:creator>Herrera</dc:creator><comments>https://news.ycombinator.com/item?id=50651117</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50651117</guid></item><item><title><![CDATA[Tell HN: Lots of Ask HNs again]]></title><description><![CDATA[
+<p>There have been questions about why the /ask page (<a href="https://news.ycombinator.com/ask">https://news.ycombinator.com/ask</a>) was running dry of Ask HNs - e.g.:<p><i>Ask HN: Why is Ask HN only showing me 14 posts?</i> - <a href="https://news.ycombinator.com/item?id=49984484">https://news.ycombinator.com/item?id=49984484</a> - Oct 2026 (47 comments)<p><i>Ask HN: Why is pagination gone on "Ask HN", and showing only 19 items?</i> - <a href="https://news.ycombinator.com/item?id=50280719">https://news.ycombinator.com/item?id=50280719</a> - Oct 2026 (3 comments)<p>I believe I found the problem. The pool of stories for <a href="https://news.ycombinator.com/ask">https://news.ycombinator.com/ask</a> has traditionally been drawn from the ranked stories list from which we generate the frontpage. That list is restricted to the top 1500 ranked submissions, and it seems the % of submissions which are text posts (i.e. no linked URL) had declined enough to starve the Ask HN feed. The solution is to compute a separate list of ranked Ask HNs.<p>p.s. "Ask HN" is the conventional name but it means text posts. The title can also start with "Tell HN" or nothing in particular. They're just posts which were submitted without a URL.</p>
+<hr>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50649864">https://news.ycombinator.com/item?id=50649864</a></p>
+<p>Points: 196</p>
+<p># Comments: 78</p>
+]]></description><pubDate>Thu, 26 Nov 2026 00:43:34 +0000</pubDate><link>https://news.ycombinator.com/item?id=50649864</link><dc:creator>dang</dc:creator><comments>https://news.ycombinator.com/item?id=50649864</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50649864</guid></item><item><title><![CDATA[Bare Metal Qwen]]></title><description><![CDATA[
+<p>Article URL: <a href="https://github.com/alesha-pro/llm.asm/tree/main/02-baremetal-os">https://github.com/alesha-pro/llm.asm/tree/main/02-baremetal-os</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50648365">https://news.ycombinator.com/item?id=50648365</a></p>
+<p>Points: 110</p>
+<p># Comments: 22</p>
+]]></description><pubDate>Wed, 25 Nov 2026 22:15:34 +0000</pubDate><link>https://github.com/alesha-pro/llm.asm/tree/main/02-baremetal-os</link><dc:creator>miohtama</dc:creator><comments>https://news.ycombinator.com/item?id=50648365</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50648365</guid></item><item><title><![CDATA[Much shorter version of GRH Lean verification from Anthropic]]></title><description><![CDATA[
+<p>Article URL: <a href="https://github.com/lsernau/grh-lean">https://github.com/lsernau/grh-lean</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50648050">https://news.ycombinator.com/item?id=50648050</a></p>
+<p>Points: 386</p>
+<p># Comments: 195</p>
+]]></description><pubDate>Wed, 25 Nov 2026 21:48:10 +0000</pubDate><link>https://github.com/lsernau/grh-lean</link><dc:creator>nb-t</dc:creator><comments>https://news.ycombinator.com/item?id=50648050</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50648050</guid></item><item><title><![CDATA[Holy shit holy shit holy shit holy shit: The magnitude of what’s now happening]]></title><description><![CDATA[
+<p>See also <i>The matrix multiplication exponent is nine fourths [pdf]</i> - <a href="https://news.ycombinator.com/item?id=50637220">https://news.ycombinator.com/item?id=50637220</a></p>
+<hr>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50646108">https://news.ycombinator.com/item?id=50646108</a></p>
+<p>Points: 1233</p>
+<p># Comments: 1086</p>
+]]></description><pubDate>Wed, 25 Nov 2026 19:11:27 +0000</pubDate><link>https://scottaaronson.blog/?p=10379</link><dc:creator>Kotlopou</dc:creator><comments>https://news.ycombinator.com/item?id=50646108</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50646108</guid></item><item><title><![CDATA[The polynomial Hirsch conjecture is false [pdf]]]></title><description><![CDATA[
+<p>Article URL: <a href="https://github.com/openai/math/blob/main/preprints/Superpolynomial-graph-diameter-of-simple-polytopes-November-24-2026/paper.pdf">https://github.com/openai/math/blob/main/preprints/Superpolynomial-graph-diameter-of-simple-polytopes-November-24-2026/paper.pdf</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50644980">https://news.ycombinator.com/item?id=50644980</a></p>
+<p>Points: 147</p>
+<p># Comments: 38</p>
+]]></description><pubDate>Wed, 25 Nov 2026 17:34:34 +0000</pubDate><link>https://github.com/openai/math/blob/main/preprints/Superpolynomial-graph-diameter-of-simple-polytopes-November-24-2026/paper.pdf</link><dc:creator>acossta</dc:creator><comments>https://news.ycombinator.com/item?id=50644980</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50644980</guid></item></channel></rss>

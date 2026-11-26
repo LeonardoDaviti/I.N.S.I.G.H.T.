@@ -7,7 +7,7 @@
     found_by, `version` (`current`, `waiting_again`) and `guide`;
   - `waiting` (asked, no answer), `invalid` (the task failed with no verdict: `error`);
   - `not_asked` with `reason`: not_a_topic, labelled, outside_window, not_planned (also a passive post an ALWAYS
-    finder puts up: `found_by`), not_embedded, no_profile, history_pending, below_bar (`bar`).
+    finder puts up: `found_by`, e.g. a page the owner saved), not_embedded, no_profile, history_pending, below_bar (`bar`).
 """
 from __future__ import annotations
 
@@ -125,7 +125,8 @@ def why(cur: Any, folder_id: Any, post_id: Any, *, now: Optional[datetime] = Non
     from insight_core.markx import finders
     tie = finders.tie(cur, t, now=now)   # the ALWAYS finders ask it whatever its vector and probe score
     always = (["source"] if post["source_id"] in tie["tied"] else []) + \
-        (["linked"] if finders.linked_by(cur, pid, tie["linkers"]) >= finders.LINK_MIN else [])
+        (["linked"] if finders.linked_by(cur, pid, tie["linkers"]) >= finders.LINK_MIN else []) + \
+        (["saved"] if finders.saved_by_owner(cur, pid) else [])
     if always:
         return {**out, "reason": "not_planned", "found_by": always}
     if not post["embedded"]:

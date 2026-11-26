@@ -12,7 +12,9 @@ combined (each one signal, none decides alone), not by one description vector.
   4. **tool**: a post naming a tool the track's practitioners discuss (track_tools.finder_ids).
   5. **source**: a post from a passive source the track suggests (tracks.suggestions).
   6. **linked**: a post LINK_MIN+ of the track's sources link to.
-  5 and 6 are ALWAYS: asked whatever the probe score, with or without a vector, and first in the union's order.
+  7. **saved**: a page the owner saved by hand (POST /api/saved: a Saved post that is no collected original, or a
+     followed source's post marked saved_by_owner; `saved_sql`), for every topic track.
+  5-7 are ALWAYS: asked whatever the probe score, with or without a vector, and first in the union's order.
 
 **The bar and the budget**: until MIN_EXAMPLES ✓, the probe bar is set so the union passes the same share of the last
 SHARE_DAYS' posts as tracks.DEFAULT_PASS_SHARE (the other finders' hits first, the probes fill the rest); from
@@ -33,20 +35,22 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
+from insight_core.ingestion.kinds import saved as _saved_kind
 from insight_core.markx import pairing, repo, schemas
+from insight_core.utils.post_fields import SAVED_KEY, STORY_ONLY_KEY
 
 log = logging.getLogger(__name__)
 
 KIND = "probes"
 EMBED_SUBJECT = "track_probe"
 MODEL = "bge-m3"
-FINDERS = ("probe", "domain", "word", "tool", "source", "linked")
-ALWAYS = ("source", "linked")   # always asked, whatever the probe score
+FINDERS = ("probe", "domain", "word", "tool", "source", "linked", "saved")
+ALWAYS = ("source", "linked", "saved")   # always asked, whatever the probe score
 LINK_MIN = 2                    # the track's sources linking a post that put it up
 FINDERS_ENV = "INSIGHT_TRACK_FINDERS"
 ADOPTED = FINDERS   # measured on the server copy (plan/issues/0147, 0203, 0207, 0252)
 SHOWN = {"probe": "example post", "domain": "domain", "word": "words", "tool": "tool in use", "source": "tied source",
-         "linked": "linked by its sources"}
+         "linked": "linked by its sources", "saved": "you saved it"}
 TEACH_CONF = 0.8    # the track's own posts in (Haiku's in at this confidence or more, active or joined) teach ...
 TEACH_MAX = 200     # ... the domain finder, the newest this many, with the owner's ✓ (the words, units and bar: the ✓ only)
 NEAR_PULL = 1.0
@@ -69,6 +73,13 @@ DOMAIN_CLASSES = {
 }
 UNIT_RE = re.compile(r"\d[\d.,]*\s*([a-z$€£%/][a-z/$€£%]{0,8})", re.I)
 DATE = pairing.ordinary_date("p")
+
+
+def saved_sql(alias: str = "p") -> str:
+    """A post the owner saved by hand, as SQL on `alias`: marked saved_by_owner (a followed source's page), or a Saved
+    post that is no story-only collected original (one saved again loses story_only: saved_service._already)."""
+    return (f"({alias}.metadata ? '{SAVED_KEY}' OR ({alias}.source_id IN (SELECT id FROM sources WHERE platform = "
+            f"'{_saved_kind.PLATFORM}') AND NOT {alias}.metadata ? '{STORY_ONLY_KEY}'))")
 
 
 # ---- probes: the example posts --------------------------------------------------------------------------
@@ -487,7 +498,7 @@ LINKED_SQL = "(SELECT " + _voice.count_sql("q.source_id") + """ FROM post_links 
 _SCORE = f"""
 WITH pr AS MATERIALIZED (SELECT x.v::halfvec(1024) AS v, x.g FROM unnest(%(vs)s::text[], %(gs)s::text[]) AS x(v, g)),
 ps AS (SELECT p.id, {DATE} AS at, p.source_id, (e.v::vector)::halfvec AS v, p.search_vector,
-              p.source_id = ANY(%(tied)s::uuid[]) AS tied,
+              p.source_id = ANY(%(tied)s::uuid[]) AS tied, %(saved)s AND {saved_sql("p")} AS saved,
               CASE WHEN cardinality(%(linkers)s::uuid[]) = 0 OR p.normalized_url IS NULL THEN 0
                    ELSE {LINKED_SQL.format(url='p.normalized_url', linkers='%(linkers)s', source='p.source_id')} END
                 AS linkers
@@ -511,15 +522,15 @@ SELECT ps.id::text, ps.at, ps.source_id::text, s.pos, s.near, s.descr,
             WHERE r.post_id = ps.id AND n ~* %(units)s),
        cardinality(%(tools)s::uuid[]) > 0 AND EXISTS (
            SELECT 1 FROM mx_mentions_now m WHERE m.post_id = ps.id AND m.entity_id = ANY(%(tools)s::uuid[])),
-       ps.v IS NOT NULL, ps.tied, ps.linkers
+       ps.v IS NOT NULL, ps.tied, ps.linkers, ps.saved
   FROM ps
   CROSS JOIN LATERAL (SELECT max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g IN ('desc', 'probe', 'profile')) AS pos,
                              max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'near') AS near,
                              max(1 - (ps.v <=> pr.v)) FILTER (WHERE pr.g = 'desc') AS descr FROM pr) s
- WHERE ps.v IS NOT NULL OR ps.tied OR ps.linkers >= %(link_min)s
+ WHERE ps.v IS NOT NULL OR ps.tied OR ps.saved OR ps.linkers >= %(link_min)s
 """
 ROW = ("post_id", "at", "source_id", "probe_pos", "near", "desc", "domain", "words", "unit", "tool", "embedded",
-       "tied", "linkers")
+       "tied", "linkers", "saved")
 
 
 def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Optional[datetime] = None,
@@ -543,7 +554,7 @@ def score(cur: Cursor, track: Dict[str, Any], prep: Dict[str, Any], *, since: Op
               # the ALWAYS finders' sources (none when switched off)
               "tied": list(learned.get("tied") or []) if "source" in set(prep.get("on") or FINDERS) else [],
               "linkers": list(learned.get("linkers") or []) if "linked" in set(prep.get("on") or FINDERS) else [],
-              "link_min": LINK_MIN}
+              "saved": "saved" in set(prep.get("on") or FINDERS), "link_min": LINK_MIN}
     from insight_core.db.repo_stories import suggestable_sql
     # a passive post of a source switched off is never asked (it could only become a suggestion)
     cur.execute(_SCORE.format(where=" AND ".join(where) or "true", suggestable=suggestable_sql("p.source_id")), params)
@@ -578,6 +589,8 @@ def fire(d: Dict[str, Any], prep: Dict[str, Any]) -> List[str]:
         fired.append("source")
     if (d.get("linkers") or 0) >= LINK_MIN and "linked" in on:
         fired.append("linked")
+    if d.get("saved") and "saved" in on:
+        fired.append("saved")
     d["fired"] = fired
     return fired
 
@@ -668,6 +681,30 @@ def tie(cur: Cursor, track: Dict[str, Any], *, now: Optional[datetime] = None) -
     tied = sorted({s["source_id"] for s in tracks.suggestions(cur, track["folder_id"], now=now)})
     active = [s["id"] for s in tracks.active_sources(cur, track["folder_id"])]
     return {"tied": tied, "linkers": sorted(set(active) | set(tied))}
+
+
+def saved_by_owner(cur: Cursor, post_id: str) -> bool:
+    """Whether the owner saved the post by hand (`saved_sql`)."""
+    cur.execute(f"SELECT {saved_sql('p')} FROM posts p WHERE p.id = %s", (post_id,))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def saved_unasked(cur: Cursor, track: Dict[str, Any]) -> List[str]:
+    """The pages the owner saved (`saved_sql`) with no row for the track's version, whatever their date: the recent pass
+    asks them as soon as it runs, never only the history pass (a save is dated at the save, a page saved before the
+    finder existed may be older than the recent window). `saved_sql`'s two halves read apart, each on its index
+    (posts_metadata_gin, posts_source_idx): as one OR every post is read (131 ms against 5.7 ms on the 162k-post
+    2026-11-19 copy), on every plan pass of every track."""
+    cur.execute(f"""SELECT s.id::text FROM (
+                        SELECT p.id FROM posts p WHERE p.metadata ? '{SAVED_KEY}'
+                        UNION
+                        SELECT p.id FROM posts p JOIN sources so ON so.id = p.source_id
+                         WHERE so.platform = '{_saved_kind.PLATFORM}' AND NOT p.metadata ? '{STORY_ONLY_KEY}') s
+                     WHERE NOT EXISTS (SELECT 1 FROM mx_track_items i
+                                        WHERE i.track_id = %s AND i.post_id = s.id AND i.version = %s)""",
+                (str(track["folder_id"]), track["version"]))
+    return [r[0] for r in cur.fetchall()]
 
 
 def linked_by(cur: Cursor, post_id: str, linkers: Sequence[str]) -> int:

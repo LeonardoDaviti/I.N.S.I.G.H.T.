@@ -87,6 +87,8 @@ describe('why a post is or is not in the track (0185)', () => {
     expect(whyLine({ ...base, state: 'not_asked', reason: 'not_embedded' })).toBe('Not asked: not embedded yet, so no finder could read it');
     expect(whyLine({ ...base, state: 'not_asked', reason: 'not_planned', found_by: ['linked'] }))   // 0252
       .toBe('Not asked yet: found by: linked by its sources — Haiku asks it at the next run');
+    expect(whyLine({ ...base, state: 'not_asked', reason: 'not_planned', found_by: ['saved'] }))   // a page you saved
+      .toBe('Not asked yet: found by: you saved it — Haiku asks it at the next run');
     expect(whyLine({ ...base, state: 'invalid', error: 'why: it names nothing of this post' }))
       .toBe('Asked, but Haiku’s answers named nothing of the post (asked twice): not judged');
     expect(whyLine({ ...base, state: 'not_asked', origin: 'active', reason: 'outside_window', days: 30 }))

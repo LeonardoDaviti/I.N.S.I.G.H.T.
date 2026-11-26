@@ -65,9 +65,11 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(repo.max_attempts("read"), repo.MAX_ATTEMPTS)
 
     def test_the_new_finders_and_the_discover_order(self):
-        self.assertEqual(finders.ALWAYS, ("source", "linked"))
+        self.assertEqual(finders.ALWAYS, ("source", "linked", "saved"))
         self.assertTrue(set(finders.ALWAYS) <= set(finders.ADOPTED))
         self.assertEqual(finders.fire({"probe": 0.1, "tied": True, "linkers": 2}, {"bar": 0.5}), ["source", "linked"])
+        self.assertEqual(finders.fire({"probe": 0.1, "saved": True}, {"bar": 0.5}), ["saved"])
+        self.assertEqual(finders.SHOWN["saved"], "you saved it")
         self.assertEqual(finders.fire({"probe": 0.1, "linkers": 1}, {"bar": 0.5}), [])
         a = {"fired": ["source"], "probe": None}
         b = {"fired": ["probe", "domain", "word"], "probe": 0.9}
@@ -161,6 +163,60 @@ class AlwaysAsked(_Judging):
         with mock.patch.dict("os.environ", {finders.FINDERS_ENV: "probe"}):
             self.plan()
         self.assertIsNone(self.row(far))
+
+
+class SavedAlwaysAsked(_Judging):
+    """A page the owner saved by hand is asked by every topic track whatever its probe score, at once (the recent pass,
+    whatever its date); a collected original INSIGHT stored for a story is no save."""
+
+    def test_a_saved_page_is_put_up_for_every_topic_track(self):
+        self.cur.execute("INSERT INTO folders (name, kind) VALUES (%s, 'track') RETURNING id", (f"Setups {uuid.uuid4().hex[:6]}",))
+        second = str(self.cur.fetchone()[0])
+        self.addCleanup(self.cur.execute, "DELETE FROM folders WHERE id = %s", (second,))
+        with self.conn.transaction():
+            tracks.set_topic(self.cur, second, description="Cheap local AI setups: hardware and models run at home")
+        t2 = tracks.get(self.cur, second)
+        self.cur.execute("UPDATE mx_tracks SET v = %s::halfvec, v_hash = %s WHERE folder_id = %s",
+                         (repo.vector_text(unit((0, 1))), tracks._sha(tracks.embed_text(t2)), second))
+        saved = insert_scratch_source(self.cur, platform="saved", enabled=True)
+        self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = %s", (saved,))
+        page = self.post(title="A tiny model in a bootable assembly OS", source=saved)
+        old = self.post(title="An old page saved before the finder", source=saved, at=NOW - 60 * DAY)
+        collected = self.post(title="A story's original INSIGHT collected", source=saved)
+        followed = self.post(title="A followed blog's page saved by hand", source=self.other)
+        control = self.post(title="A far post nobody saved", source=self.other)
+        self.cur.execute("UPDATE posts SET metadata = metadata || '{\"story_only\": true}' WHERE id = %s", (collected,))
+        self.cur.execute("UPDATE posts SET metadata = metadata || jsonb_build_object('saved_by_owner', now()::text) "
+                         "WHERE id = %s", (followed,))
+        for p in (page, old, collected, followed, control):
+            self.vector(p, FAR)
+        bare = self.post(title="A saved page with no vector yet", source=saved)
+        self.assertTrue(finders.saved_by_owner(self.cur, page))
+        self.assertFalse(finders.saved_by_owner(self.cur, collected))
+        self.assertFalse(finders.saved_by_owner(self.cur, control))
+        why = self.why(page)
+        self.assertEqual((why["state"], why["reason"], why["found_by"]), ("not_asked", "not_planned", ["saved"]))
+        # no history pass: the recent one asks the saved pages, the old one too
+        self.cur.execute("UPDATE mx_tracks SET history_done_at = now() WHERE folder_id IN (%s, %s)", (self.folder, second))
+        self.plan()
+        for folder in (self.folder, second):
+            for p in (page, old, followed, bare):
+                r = self.row(p, folder)
+                self.assertIsNotNone(r, (folder, p))
+                self.assertIn("saved", r["found_by"])
+            self.assertIsNone(self.row(collected, folder), "a collected original is no save")
+            self.assertIsNone(self.row(control, folder), "a far post nobody saved stays below the bar")
+            self.assertEqual(self.why(control, folder)["reason"], "below_bar")
+            self.assertEqual(self.why(page, folder)["state"], "waiting")
+
+    def test_switched_off_the_saved_finder_asks_nothing(self):
+        saved = insert_scratch_source(self.cur, platform="saved", enabled=True)
+        self.addCleanup(self.cur.execute, "DELETE FROM sources WHERE id = %s", (saved,))
+        page = self.post(title="A tiny model in a bootable assembly OS", source=saved)
+        self.vector(page, FAR)
+        with mock.patch.dict("os.environ", {finders.FINDERS_ENV: "probe,source,linked"}):
+            self.plan()
+        self.assertIsNone(self.row(page))
 
 
 class NoVerdictNoOut(_Judging):

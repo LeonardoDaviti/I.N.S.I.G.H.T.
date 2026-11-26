@@ -14,6 +14,7 @@ import time
 import weakref
 from typing import AsyncIterator, Awaitable, Callable, Mapping, Optional
 
+from insight_core.ingestion.discussions import HN as HN_DISCUSSIONS
 from insight_core.ingestion.host_budgets import HostBudgets
 from insight_core.ingestion.kinds.base import PolitenessProfile, source_host_key
 from insight_core.ingestion.kinds.bluesky import BLUESKY_HOST_KEY
@@ -36,6 +37,9 @@ HOST_FLOORS: Mapping[str, float] = {
     TELEGRAM_HOST_KEY: 2.0,            # every telegram_mtproto source (one shared client)
     SUBSTACK_HOST_KEY: 2.0,            # every substack source (one Substack backend)
     BLUESKY_HOST_KEY: 2.0,             # every bluesky source (one public AppView)
+    # hnrss.org's sources read hn.algolia.com when hnrss fails (feed_alternates), inside this host's slot: Algolia's
+    # floor, as the discussions reader keeps it
+    "hnrss.org": HN_DISCUSSIONS.floors["hn.algolia.com"],
 }
 
 # The learned pace: a host that limits us (429) or times out is waited out (Retry-After, else DEFAULT_WAIT_S, at

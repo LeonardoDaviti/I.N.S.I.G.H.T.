@@ -27,7 +27,7 @@ export function rankWords(item: TrackItem): string {
 
 const FINDER_WORDS: Record<string, string> = {
   probe: 'example post', entity: 'entity', domain: 'domain', word: 'words', source: 'source', story: 'story',
-  classifier: 'classifier', tool: 'tool in use', linked: 'linked by its sources',
+  classifier: 'classifier', tool: 'tool in use', linked: 'linked by its sources', saved: 'you saved it',
 };
 
 /** "found by: example post, entity, domain" (null for an active source's item, which every post is). */

@@ -1,0 +1,117 @@
+{
+ "hits": [
+  {
+   "_tags": [
+    "story",
+    "author_Herrera",
+    "story_50651117",
+    "front_page"
+   ],
+   "author": "Herrera",
+   "created_at": "2026-11-26T03:36:58Z",
+   "created_at_i": 1795664218,
+   "num_comments": 56,
+   "objectID": "50651117",
+   "points": 105,
+   "story_id": 50651117,
+   "title": "OpenAI cuts GPT-6.2 usage: Astra hits limits 40% faster, Sol 25% faster",
+   "updated_at": "2026-11-26T06:11:27Z",
+   "url": "https://twitter.com/thsottiaux/status/2125784147889393806"
+  },
+  {
+   "_tags": [
+    "story",
+    "author_dang",
+    "story_50649864",
+    "ask_hn",
+    "front_page"
+   ],
+   "author": "dang",
+   "created_at": "2026-11-26T00:43:34Z",
+   "created_at_i": 1795653814,
+   "num_comments": 78,
+   "objectID": "50649864",
+   "points": 197,
+   "story_id": 50649864,
+   "story_text": "There have been questions about why the &#x2F;ask page (<a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;ask\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;ask</a>) was running dry of Ask HNs - e.g.:<p><i>Ask HN: Why is Ask HN only showing me 14 posts?</i> - <a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=49984484\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=49984484</a> - Oct 2026 (47 comments)<p><i>Ask HN: Why is pagination gone on &quot;Ask HN&quot;, and showing only 19 items?</i> - <a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=50280719\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=50280719</a> - Oct 2026 (3 comments)<p>I believe I found the problem. The pool of stories for <a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;ask\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;ask</a> has traditionally been drawn from the ranked stories list from which we generate the frontpage. That list is restricted to the top 1500 ranked submissions, and it seems the % of submissions which are text posts (i.e. no linked URL) had declined enough to starve the Ask HN feed. The solution is to compute a separate list of ranked Ask HNs.<p>p.s. &quot;Ask HN&quot; is the conventional name but it means text posts. The title can also start with &quot;Tell HN&quot; or nothing in particular. They&#x27;re just posts which were submitted without a URL.",
+   "title": "Tell HN: Lots of Ask HNs again",
+   "updated_at": "2026-11-26T06:12:26Z"
+  },
+  {
+   "_tags": [
+    "story",
+    "author_miohtama",
+    "story_50648365",
+    "front_page"
+   ],
+   "author": "miohtama",
+   "created_at": "2026-11-25T22:15:34Z",
+   "created_at_i": 1795644934,
+   "num_comments": 22,
+   "objectID": "50648365",
+   "points": 110,
+   "story_id": 50648365,
+   "title": "Bare Metal Qwen",
+   "updated_at": "2026-11-26T06:10:57Z",
+   "url": "https://github.com/alesha-pro/llm.asm/tree/main/02-baremetal-os"
+  },
+  {
+   "_tags": [
+    "story",
+    "author_nb-t",
+    "story_50648050",
+    "front_page"
+   ],
+   "author": "nb-t",
+   "created_at": "2026-11-25T21:48:10Z",
+   "created_at_i": 1795643290,
+   "num_comments": 195,
+   "objectID": "50648050",
+   "points": 387,
+   "story_id": 50648050,
+   "title": "Much shorter version of GRH Lean verification from Anthropic",
+   "updated_at": "2026-11-26T06:12:26Z",
+   "url": "https://github.com/lsernau/grh-lean"
+  },
+  {
+   "_tags": [
+    "story",
+    "author_Kotlopou",
+    "story_50646108",
+    "front_page"
+   ],
+   "author": "Kotlopou",
+   "created_at": "2026-11-25T19:11:27Z",
+   "created_at_i": 1795633887,
+   "num_comments": 1086,
+   "objectID": "50646108",
+   "points": 1235,
+   "story_id": 50646108,
+   "story_text": "See also <i>The matrix multiplication exponent is nine fourths [pdf]</i> - <a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=50637220\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=50637220</a>",
+   "title": "Holy shit holy shit holy shit holy shit: The magnitude of what’s now happening",
+   "updated_at": "2026-11-26T06:12:26Z",
+   "url": "https://scottaaronson.blog/?p=10379"
+  },
+  {
+   "_tags": [
+    "story",
+    "author_acossta",
+    "story_50644980",
+    "front_page"
+   ],
+   "author": "acossta",
+   "created_at": "2026-11-25T17:34:34Z",
+   "created_at_i": 1795628074,
+   "num_comments": 38,
+   "objectID": "50644980",
+   "points": 147,
+   "story_id": 50644980,
+   "title": "The polynomial Hirsch conjecture is false [pdf]",
+   "updated_at": "2026-11-26T06:09:28Z",
+   "url": "https://github.com/openai/math/blob/main/preprints/Superpolynomial-graph-diameter-of-simple-polytopes-November-24-2026/paper.pdf"
+  }
+ ],
+ "hitsPerPage": 100,
+ "nbHits": 6,
+ "page": 0
+}
