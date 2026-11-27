@@ -65,6 +65,7 @@ STORY_BATCH = 1000    # queued posts a batch starts from (a fetch run's are fewe
 REBUILD_BATCH = 2000
 KEYS_BATCH = 2000     # posts a rule change reads the keys of a transaction
 CLOSURE_KEYS = ("h:", "t:", "u:", "g:")   # the keys a post joins another by (story_rules.keys)
+CONTEXT_CHUNK = 20000   # addresses a context query asks at once (memory: each is a parameter)
 KEYED_EDGES = ("text", "title", "address", "link", "quote")   # the connections a key makes (story_rules.Edge.via)
 DISCOVER_ARTICLES_SHOWN = 20
 CITED_MIN, CITED_POSTS = 3, 2   # a site cited this often, by this many long-reads you read, is suggested
@@ -520,6 +521,12 @@ class StoriesService:
         urls |= {t for p in posts.values() if any(target in own for target, _ in p.links) for t, _ in p.links}
         mentioned |= self.repo.story_mates(cur, [n for n in held if not n.startswith(_PAGE)])
         mentioned |= self.repo.story_mates(cur, self.repo.linking(cur, sorted(n[len(_PAGE):] for n in held if n.startswith(_PAGE))))
+        # News loads the posts of its window it lacks (`load`): the context read around the scope goes first, so News
+        # never peaks on top of it (0283)
+        keep = scope | seeds
+        for pid in [pid for pid in posts if pid not in keep]:
+            del posts[pid]
+        del found, stories, held, mentions, nodes, outside, roots, before, touched, moved
         counts.update(self.news.update(cur, sources=sources, posts=posts, load=load, touched=scope | mentioned, titles=titles,
                                        urls=sorted(urls), since=since,
                                        before=datetime.fromisoformat(previous["news_since"])
@@ -578,6 +585,7 @@ class StoriesService:
             replies.update(self.repo.replies(cur, sorted(context - threaded)))
             threaded |= context
             if len(context) != grouped:
+                found = None   # the last round's grouping goes before this one is made (0283)
                 found, grouped = grouping([posts[pid] for pid in context], replies=replies), len(context)
             grows = self._grows(cur, posts, found, scope, near - scope, held)
             self.rounds.append((len(scope), len(near), len(context)))
@@ -586,10 +594,15 @@ class StoriesService:
             scope |= grows
 
     def _context(self, cur: Any, posts: Dict[str, StoryPost], ids: Set[str]) -> Set[str]:
-        """The posts at the addresses these posts link, and at another path of their pages (page_aliases)."""
-        urls = {t for pid in ids for t, _ in posts[pid].links}
-        pages = {"a:" + k[2:] for url in urls | {posts[pid].url for pid in ids} if url and (k := page_key(url))}
-        return self.repo.at_addresses(cur, sorted(urls)) | self.repo.holders(cur, pages)
+        """The posts at the addresses these posts link, and at another path of their pages (page_aliases). Asked
+        CONTEXT_CHUNK addresses at a time: a batch's near posts link ~250k (0283)."""
+        urls = sorted({t for pid in ids for t, _ in posts[pid].links})
+        found = self.repo.holders(cur, {"a:" + k[2:] for pid in ids if posts[pid].url and (k := page_key(posts[pid].url))})
+        for i in range(0, len(urls), CONTEXT_CHUNK):
+            part = urls[i:i + CONTEXT_CHUNK]
+            found |= self.repo.at_addresses(cur, part)
+            found |= self.repo.holders(cur, {"a:" + k[2:] for url in part if url and (k := page_key(url))})
+        return found
 
     def _grows(self, cur: Any, posts: Dict[str, StoryPost], found: Grouping, scope: Set[str], near: Set[str],
                held: Set[str]) -> Set[str]:

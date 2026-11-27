@@ -53,21 +53,30 @@ class Member:
     links: List[str] = field(default_factory=list)   # raw link targets, in order
 
 
+TEXT_CHARS = 8000        # a member's text the code steps read (words, shingles, own words)
+LOAD_CHUNK = 500         # posts read at a time: a chunk's full texts are let go once cut to TEXT_CHARS (0283)
+
+
 def load_members(cur: Any, ids: Iterable[Any]) -> Dict[str, Member]:
-    """{id: Member}: markx text v1 (tasks.load_posts) with each post's address and published date."""
+    """{id: Member}: markx text v1 (tasks.load_posts) with each post's address and published date, its text cut to
+    TEXT_CHARS. Read LOAD_CHUNK posts at a time, so only one chunk's full texts are held at once (each post's text is
+    its own: the same Members as one read)."""
     from insight_core.markx import tasks
-    ids = [str(i) for i in ids]
-    got = tasks.load_posts(cur, ids)
-    if not got:
-        return {}
-    cur.execute("SELECT id::text, url, normalized_url, published_at FROM posts WHERE id = ANY(%s::uuid[])", (list(got),))
-    extra = {r[0]: r[1:] for r in cur.fetchall()}
-    out = {}
-    for pid, p in got.items():
-        url, nu, published = extra.get(pid, (None, None, None))
-        out[pid] = Member(id=pid, src=p.source_id, src_name=p.source, kind=p.kind, at=p.at, published=published,
-                          title=p.title, text=(p.text or "")[:8000], url=url, nurl=nu,
-                          links=[u for u, _ in p.links if u])
+    ids = list(dict.fromkeys(str(i) for i in ids))
+    out: Dict[str, Member] = {}
+    for n in range(0, len(ids), LOAD_CHUNK):
+        got = tasks.load_posts(cur, ids[n:n + LOAD_CHUNK])
+        if not got:
+            continue
+        cur.execute("SELECT id::text, url, normalized_url, published_at FROM posts WHERE id = ANY(%s::uuid[])",
+                    (list(got),))
+        extra = {r[0]: r[1:] for r in cur.fetchall()}
+        for pid, p in got.items():
+            url, nu, published = extra.get(pid, (None, None, None))
+            out[pid] = Member(id=pid, src=p.source_id, src_name=p.source, kind=p.kind, at=p.at, published=published,
+                              title=p.title, text=(p.text or "")[:TEXT_CHARS], url=url, nurl=nu,
+                              links=[u for u, _ in p.links if u])
+        del got
     return out
 
 

@@ -336,6 +336,20 @@ def row_headline_input(row: Dict[str, Any], posts: Dict[str, Any]) -> Optional[s
     return tasks.headline_input(ps) if ps else None
 
 
+ROW_CHUNK = 200   # rows whose posts are read at a time for their headline inputs (0283: the full texts let go)
+
+
+def row_headline_inputs(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+    """{row id: row_headline_input}, the posts read ROW_CHUNK rows at a time and let go once their inputs are made."""
+    out: Dict[str, Optional[str]] = {}
+    for n in range(0, len(rows), ROW_CHUNK):
+        chunk = rows[n:n + ROW_CHUNK]
+        posts = _row_posts(cur, chunk)
+        out.update((str(r["id"]), row_headline_input(r, posts)) for r in chunk)
+        del posts
+    return out
+
+
 def _row_posts(cur: Any, rows: Sequence[Dict[str, Any]], known: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     from insight_core.markx import tasks
     ids = {p["post_id"] for r in rows for p in r.get("posts") or []}
@@ -552,26 +566,38 @@ def _row_stories(row: Dict[str, Any]) -> List[str]:
     return sorted({str(p["story"]) for p in row.get("posts") or [] if p.get("story")})
 
 
-def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def release_groups(cur: Any, rows: Sequence[Dict[str, Any]]) -> List[List[str]]:
+    """The one-release groups among these rows' stories (graph.release_groups): what `headlines` names a row by."""
+    from insight_core.markx import graph
+    return graph.release_groups(cur, {s for r in rows for s in _row_stories(r)})
+
+
+def released(rows: Sequence[Dict[str, Any]], groups: Sequence[Sequence[str]]) -> Dict[str, List[str]]:
+    """{row: its stories in a one-release group} for each row holding 2+ stories of one group (pure)."""
+    in_group = {s: n for n, g in enumerate(groups) for s in g}
+    return {str(r["id"]): ss for r in rows
+            if len(ss := [s for s in _row_stories(r) if s in in_group]) >= 2
+            and len({in_group[s] for s in ss}) < len(ss)}
+
+
+def headlines(cur: Any, rows: Sequence[Dict[str, Any]], *,
+              groups: Optional[Sequence[Sequence[str]]] = None) -> Dict[str, Dict[str, Any]]:
     """Each row's headline: its main story's Haiku headline, else the row's own headline answer, else its lead's
     title. A one-release row is named by its launch (`launch_order`); a leak lead's title, in a row holding the
-    maker's own post, gives way to that post's title."""
-    from insight_core.markx import event_types, graph, repo, schemas
+    maker's own post, gives way to that post's title. `groups`: the one-release groups to name rows by (default the
+    rows' own, `release_groups`); a row's headline depends on nothing else of the other rows."""
+    from insight_core.markx import event_types, repo, schemas
     mains = {str(r["id"]): main_story(r) for r in rows}
-    groups = graph.release_groups(cur, {s for r in rows for s in _row_stories(r)})
-    in_group = {s: n for n, g in enumerate(groups) for s in g}
-    released = {str(r["id"]): ss for r in rows
-                if len(ss := [s for s in _row_stories(r) if s in in_group]) >= 2
-                and len({in_group[s] for s in ss}) < len(ss)}
+    joined = released(rows, release_groups(cur, rows) if groups is None else groups)
     leads = _posts(cur, [str(r["id"]) for r in rows])
-    facts = _story_facts(cur, {s for ss in released.values() for s in ss}) if released else {}
+    facts = _story_facts(cur, {s for ss in joined.values() for s in ss}) if joined else {}
     sids = sorted({s for s in mains.values() if s} | set(facts))
     heads: Dict[str, str] = {}
     if sids:
         cur.execute("SELECT id::text, headline FROM mx_stories WHERE id = ANY(%s::uuid[]) AND headline IS NOT NULL", (sids,))
         heads = dict(cur.fetchall())
     by_id = {str(r["id"]): r for r in rows}
-    for rid, ss in released.items():
+    for rid, ss in joined.items():
         named = [s for s in launch_order({s: facts[s] for s in ss if s in facts}, story_voices(by_id[rid]))
                  if heads.get(s)]
         if named:
@@ -579,9 +605,8 @@ def headlines(cur: Any, rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, A
     rest = [r for r in rows if not heads.get(mains[str(r["id"])] or "")]
     own: Dict[str, str] = {}
     if rest:
-        posts = _row_posts(cur, rest)
         guide = schemas.KINDS["headline"].guide
-        texts = {str(r["id"]): row_headline_input(r, posts) for r in rest}
+        texts = row_headline_inputs(cur, rest)
         tasks_ = repo.tasks_for(cur, kind="headline", guide=guide, inputs={t for t in texts.values() if t})
         calls = repo.valid_calls(cur, [t["id"] for t in tasks_.values() if t["status"] == "answered"])
         for r in rest:
@@ -698,12 +723,23 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     """The Mark X News beside Mark IX's: the newest written run's rows (only the differences, by default), each with its
     tag, headline, members (why each is there and what Mark IX did with it) and the Mark IX posts it left out; and the
     Mark IX rows no Mark X row holds."""
+    view = "differences" if only_differences else "all"
+    return pages(cur, views=(view,), now=now)[view]
+
+
+def pages(cur: Any, *, views: Optional[Iterable[str]] = None, now: Optional[datetime] = None
+          ) -> Dict[str, Dict[str, Any]]:
+    """{view: `page`} for these VIEWS keys (default all of them) in one read: with "all", its rows are built once and
+    "differences" is cut from them (`_differences`), the same answer as built apart (0283)."""
     from insight_core.markx import repo
     from insight_core.utils.news_rules import NEWS_DAYS
+    views = [v for v in VIEWS if views is None or v in set(views)]
     now = now or datetime.now(timezone.utc)
     run = last_written(cur)
     if run is None:
-        return {"run": None, "items": [], "gone": [], "counts": {}, "ix_rows": 0, "sections": None}
+        return {v: {"run": None, "items": [], "gone": [], "counts": {}, "ix_rows": 0, "sections": None} for v in views}
+    whole = "all" in views
+    cut = whole and "differences" in views   # the differences cut from the whole
     since = now - timedelta(days=NEWS_DAYS)
     rows = [r for r in repo.news_rows(cur, run) if r["first_at"] >= since]
     ix_of, ix_rows = _ix_news(cur, since)
@@ -711,7 +747,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     ix_meta = {nid: {"voices": v, "first_at": f} for nid, v, f in cur.fetchall()}
     counts = dict(Counter(r["tag"] for r in rows))
     x_of = {p["post_id"]: str(r["id"]) for r in rows for p in r["posts"]}
-    shown = [r for r in rows if not only_differences or r["tag"] != "SAME"]
+    shown = [r for r in rows if whole or r["tag"] != "SAME"]
     every = {p["post_id"] for r in shown for p in r["posts"]} | {p for r in shown for nid in {ix_of.get(q["post_id"]) for q in r["posts"]}
                                                                 if nid for p in ix_rows.get(nid, ())}
     gone_rows = [nid for nid, ps in ix_rows.items() if not any(p in x_of for p in ps)]
@@ -726,7 +762,8 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     for (_s, q), w in why.items():
         if w["role"] != "member":
             mention_of.setdefault(q, w)
-    heads = headlines(cur, shown)
+    groups = release_groups(cur, shown)
+    heads = headlines(cur, shown, groups=groups)
     ix_titles = {nid: (posts.get(nid) or {}).get("title") for nid in ix_rows}
     from insight_core.markx import labels
     flagged = labels.flags(cur, {(p["post_id"], p.get("story")) for r in shown for p in r["posts"] if p.get("story")})
@@ -770,7 +807,7 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     from insight_core.markx import folds   # each line's fold, the header's count
     fold_count = folds.annotate(cur, items)
     from insight_core.markx import built   # how each row's story is built, its original first
-    built.annotate(cur, items)
+    worlds = built.annotate(cur, items, {"differences": [i["id"] for i in items if i["tag"] != "SAME"]} if cut else None)
     from insight_core.markx import graph   # each row's Earlier and Later
     thread = graph.row_chains(cur, {i["id"]: _row_stories(i) for i in items})
     for i in items:
@@ -785,11 +822,42 @@ def page(cur: Any, *, only_differences: bool = True, now: Optional[datetime] = N
     cur.execute("SELECT started_at, finished_at, code_version, counts FROM mx_runs WHERE id = %s", (run,))
     started, finished, code, run_counts = cur.fetchone()
     from insight_core.markx import news_sections
-    untitled = sum(1 for i in items if i["headline"]["from"] != "haiku")
-    return {"run": {"id": run, "started_at": started, "finished_at": finished, "code_version": code},
-            "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone), "untitled": untitled},
-            "items": items, "gone": gone, "folds": fold_count, "sections": news_sections.view(cur, items),
-            "order": order, "notable": [i["id"] for i in items if (i["rank"] or {}).get("notable")]}
+
+    def view(shown_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        untitled = sum(1 for i in shown_items if i["headline"]["from"] != "haiku")
+        return {"run": {"id": run, "started_at": started, "finished_at": finished, "code_version": code},
+                "counts": {**counts, "rows": len(rows), "ix_rows": len(ix_rows), "gone": len(gone), "untitled": untitled},
+                "items": shown_items, "gone": gone, "folds": fold_count, "sections": news_sections.view(cur, shown_items),
+                "order": order, "notable": [i["id"] for i in shown_items if (i["rank"] or {}).get("notable")]}
+    out = {}
+    for v in views:
+        out[v] = view(_differences(cur, items, shown, groups, worlds["differences"]) if cut and v == "differences"
+                      else items)
+    return out
+
+
+def _differences(cur: Any, items: List[Dict[str, Any]], rows: Sequence[Dict[str, Any]],
+                 groups: Sequence[Sequence[str]], world: Set[str]) -> List[Dict[str, Any]]:
+    """The "differences" page's items cut from the whole page's (`items`, built over `rows` with the one-release
+    `groups`), as that page built apart answers them. Every part of an item is the row's own but two, made again
+    where they differ: the headline of a row whose one-release group differs among the differences' own rows
+    (`headlines`' groups), and the "came true" links, narrowed to the stories the differences' own build reads
+    (built.build_within). The order is the whole page's (a total order), the rest is counted over the cut items."""
+    from insight_core.markx import built
+    mine = [r for r in rows if r["tag"] != "SAME"]
+    own = release_groups(cur, mine)
+    whole, apart = released(mine, groups), released(mine, own)
+    again = [r for r in mine if whole.get(str(r["id"])) != apart.get(str(r["id"]))]
+    heads = headlines(cur, again, groups=own) if again else {}
+    out = []
+    for i in items:
+        if i["tag"] == "SAME":
+            continue
+        b = built.narrowed(i.get("built"), world)
+        if b is not i.get("built") or i["id"] in heads:
+            i = {**i, "built": b, **({"headline": heads[i["id"]]} if i["id"] in heads else {})}
+        out.append(i)
+    return out
 
 
 # ---- the kept page (issue 0198) ------------------------------------------------------------------------------
@@ -932,22 +1000,22 @@ def keep_pages(cur: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     if run is None:
         return {"run": None, "built": []}
     out: Dict[str, Any] = {"run": run, "built": [], "bytes": {}, "build_seconds": {}}
-    ranked = False
-    for view, only in VIEWS.items():
-        key = _key(view)
-        if kept_pages.has(cur, "news", key, run, st):
-            continue
-        if not ranked:   # ranks are page inputs: kept before the first view is built
-            from insight_core.markx import news_rank
-            t0 = time.monotonic()
-            out["rank"] = {**news_rank.keep(cur, now=now), "seconds": round(time.monotonic() - t0, 2)}
-            ranked = True
+    todo = [view for view in VIEWS if not kept_pages.has(cur, "news", _key(view), run, st)]
+    if todo:
+        from insight_core.markx import news_rank   # ranks are page inputs: kept before the views are built
         t0 = time.monotonic()
-        body = kept_pages.encode(reader_view(page(cur, only_differences=only, now=now)))
-        seconds = round(time.monotonic() - t0, 2)
-        kept_pages.put(cur, "news", key, run, st, body, seconds=seconds)
-        out["built"].append(view)
-        out["bytes"][view], out["build_seconds"][view] = len(body), seconds
+        out["rank"] = {**news_rank.keep(cur, now=now), "seconds": round(time.monotonic() - t0, 2)}
+        t0 = time.monotonic()
+        views = pages(cur, views=todo, now=now)   # read once: the differences cut from the whole page
+        shared = time.monotonic() - t0
+        for view in todo:
+            t0 = time.monotonic()
+            body = kept_pages.encode(reader_view(views.pop(view)))
+            seconds = round(shared + time.monotonic() - t0, 2)   # the shared read counts to each view
+            kept_pages.put(cur, "news", _key(view), run, st, body, seconds=seconds)
+            out["built"].append(view)
+            out["bytes"][view], out["build_seconds"][view] = len(body), seconds
+            del body
     out["pruned"] = kept_pages.prune_runs(cur, "news", KEEP_RUNS)
     return out
 

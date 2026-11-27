@@ -168,10 +168,12 @@ class NewsRepository:
         return len(gone) + len(rows)
 
     @staticmethod
-    def titles_saying(cur: Cursor, words: Sequence[str]) -> List[Dict[str, Any]]:
+    def titles_saying(cur: Cursor, words: Sequence[str]) -> Iterator[Tuple[str, str, datetime, str]]:
         """The titled posts whose title may say one of these: a name's words, lowercase, joined by "%" (in order,
         anything between), matched on its NFKC lowercase letters, or holding an HTML entity (decoded only in
-        Python). More than say them, never fewer."""
+        Python). More than say them, never fewer: (id, source_id, t, title), one row at a time off the cursor
+        (a name's loose match is ~100k rows; the caller keeps the few that say it, 0283): read it before the
+        cursor runs another query."""
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.opening, pp.title, p.title) AS title) t
@@ -180,7 +182,7 @@ class NewsRepository:
             """,
             {"like": ["%" + "%".join(LIKE_SPECIAL.sub(r"\\\g<0>", part) for part in w.split("%")) + "%" for w in words]},
         )
-        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur.fetchall()]
+        return ((str(r[0]), str(r[1]), r[2], r[3]) for r in cur)
 
     @staticmethod
     def titles_of(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:

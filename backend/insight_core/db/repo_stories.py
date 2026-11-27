@@ -462,20 +462,30 @@ class StoriesRepository:
              "shown_title": r[12], "reply_to": r[13], "quoted": r[14], "quoted_words": (r[15] or {}) if r[7] else {},
              "poster": r[16] if r[7] else None, "words": (r[17] or 0) if r[7] else 0, "opening": r[18],
              "precision": r[19], "moved_to": r[20], "roundup": r[21]}
-            for r in cur.fetchall()
+            for r in cur
         ]
         by_id = {p["id"]: p for p in posts}
-        cur.execute("""SELECT post_id, target_url, link_text FROM post_links
-                        WHERE NOT boilerplate AND post_id = ANY(%s::uuid[]) ORDER BY post_id, position""", (list(by_id),))
-        links = cur.fetchall()
-        # the stored post each link is: the first stored at its address, looked up once an address
-        cur.execute("""SELECT DISTINCT ON (normalized_url) normalized_url, id FROM posts WHERE normalized_url = ANY(%s)
-                        ORDER BY normalized_url, fetched_at, created_at, id""", (sorted({t for _, t, _ in links}),))
-        stored_at = {url: str(pid) for url, pid in cur.fetchall()}
-        for post_id, target, text in links:
-            by_id[str(post_id)]["links"].append((target, stored_at.get(target)))
+        # each kept link in order, with the stored post it is (the first stored at its address), one row at a time
+        # off the cursor; a link's (target, stored) pair and its words are one object however many posts hold them
+        # (0283: footer and round-up links repeat in hundreds of posts)
+        cur.execute("""WITH l AS (SELECT post_id, position, target_url, link_text FROM post_links
+                                   WHERE NOT boilerplate AND post_id = ANY(%s::uuid[])),
+                            s AS (SELECT DISTINCT ON (normalized_url) normalized_url, id FROM posts
+                                   WHERE normalized_url IN (SELECT target_url FROM l)
+                                   ORDER BY normalized_url, fetched_at, created_at, id)
+                       SELECT l.post_id::text, l.target_url, l.link_text, s.id::text
+                       FROM l LEFT JOIN s ON s.normalized_url = l.target_url ORDER BY l.post_id, l.position""",
+                    (list(by_id),))
+        pairs: Dict[str, Tuple[str, Optional[str]]] = {}
+        texts: Dict[str, str] = {}
+        for post_id, target, text, stored in cur:
+            link = pairs.get(target)
+            if link is None:
+                link = pairs[target] = (target, stored)
+            post = by_id[post_id]
+            post["links"].append(link)
             if text:
-                by_id[str(post_id)]["link_texts"][target] = text
+                post["link_texts"][link[0]] = texts.setdefault(text, text)
         return posts
 
     @staticmethod

@@ -384,8 +384,17 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
         return anchor if anchor != ("post", post.id) else None
     uf = _UnionFind()
     why: Dict[str, Set[str]] = defaultdict(set)
-    mentioned: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
+    # a roundup's anchors are distinct (`resolved`) and each post is read once: a list, not a set, an anchor (memory)
+    mentioned: Dict[Tuple[str, str], List[str]] = defaultdict(list)
     edges: List[Edge] = []
+    page_nodes: Dict[str, str] = {}
+
+    def page_node(target: str) -> str:
+        """_PAGE + an address, one string however often it is a node (memory: round-ups list thousands)."""
+        node = page_nodes.get(target)
+        if node is None:
+            node = page_nodes[target] = _PAGE + target
+        return node
     for p in posts:
         uf.find(p.id)
 
@@ -429,7 +438,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             # a told round-up (a newsletter issue) is about none of its links, not even its first
             lead = 0 if p.roundup else 1
             for anchor in points[lead:]:
-                mentioned[anchor].add(p.id)
+                mentioned[anchor].append(p.id)
             listed[p.id] = points[lead:]
             points = points[:lead]
         focused[p.id] = points + ([quote] if quote else [])
@@ -461,7 +470,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             near = [p for p in ps if apart(p, ps[0]) <= LINK_WITHIN]   # ps is in time order
             if len({p.place for p in near}) >= 2:
                 for p in near:
-                    join(p.id, _PAGE + target, "link", link_via(target))
+                    join(p.id, page_node(target), "link", link_via(target))
                     why[p.id].add("link")
     replies = threads(posts) if replies is None else {c: p for c, p in replies.items() if c in by_id and p in by_id}
     joins = [(child, parent, "thread", None) for child, parent in replies.items()]
@@ -516,7 +525,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
     roots = {root for root, group_posts in members.items() if is_story(group_posts)}
     mentions_of: Dict[str, Set[str]] = defaultdict(set)
     for (what, target), ps in mentioned.items():
-        node = target if what == "post" else _PAGE + target
+        node = target if what == "post" else page_node(target)
         if what == "post" and target not in by_id or what == "url" and node not in uf.parent:
             continue
         root = uf.find(node)
@@ -546,7 +555,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
             origin_linked_by=shape.origin_linked_by,
         ))
     return Grouping(sorted(stories, key=lambda s: (s.first_at, s.id)), edges, {node: uf.find(node) for node in uf.parent},
-                    {pid: [target if what == "post" else _PAGE + target for what, target in points]
+                    {pid: [target if what == "post" else page_node(target) for what, target in points]
                      for pid, points in listed.items()})
 
 

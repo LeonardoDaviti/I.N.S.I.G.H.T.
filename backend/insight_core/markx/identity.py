@@ -4511,28 +4511,50 @@ def match_pick(cur: Any, guide: str, eid: str, text: str, members: Optional[Iter
                ) -> Dict[int, List[Tuple[str, int]]]:
     """A collision question's numbered mentions found again among the entity's mentions: {number: [(post, n)]} (the
     input names no ids; each line's span, type, maker and its post's title and date say which post it is). `members`:
-    among the mentions of these entities (an entity and the ones merged into it), else `eid`'s."""
-    from insight_core.markx import tasks
+    among the mentions of these entities (an entity and the ones merged into it), else `eid`'s.
+
+    v10.54 (memory): only the posts of the mentions a line's span, type and maker fit are read, and of them only the
+    date and title (`_post_heads`). It read every post of the entity in full before (tasks.load_posts): one call for
+    a name in 9,659 posts held 486 MB, an incremental run's 29 calls 18,414 posts (plan/issues/0283)."""
     cur.execute("""SELECT post_id::text, n, span, type, maker FROM mx_mentions_now
                     WHERE guide = ANY(%s) AND entity_id = ANY(%s::uuid[])""",
                 (guide, sorted(set(members or []) | {eid})))
     rows = cur.fetchall()
-    posts = tasks.load_posts(cur, {r[0] for r in rows})
-    blocks = re.split(r"\n(?=\d+\. written )", text)
-    out: Dict[int, List[Tuple[str, int]]] = {}
-    for block in blocks[1:]:
+    lines = []
+    for block in re.split(r"\n(?=\d+\. written )", text)[1:]:
         m = re.match(r'(\d+)\. written "(.*)" \| type (\S+) \| maker guess (.*)\n\s+\[[^\]]*, (\d{4}-\d\d-\d\d)\] "(.*?)" …',
                      block)
         if not m:
             continue
         num, span, type_, maker, day, title = m.groups()
-        maker = None if maker == "none" else maker
-        hits = [(pid, n) for pid, n, s, t, mk in rows
-                if (s or "") == span and str(t) == type_ and (mk or None) == maker and pid in posts
-                and posts[pid].iso[:10] == day and posts[pid].title[:110] == title]
+        lines.append((int(num), (span, type_, None if maker == "none" else maker), day, title))
+    wanted = {key for _n, key, _d, _t in lines}
+    fit: Dict[Tuple[str, str, Optional[str]], List[Tuple[str, int]]] = defaultdict(list)
+    for pid, n, s, t, mk in rows:
+        key = (s or "", str(t), mk or None)
+        if key in wanted:
+            fit[key].append((pid, n))
+    heads = _post_heads(cur, {pid for hits in fit.values() for pid, _n in hits})
+    out: Dict[int, List[Tuple[str, int]]] = {}
+    for num, key, day, title in lines:
+        hits = [(pid, n) for pid, n in fit.get(key, ()) if pid in heads and heads[pid] == (day, title)]
         if hits:
-            out[int(num)] = hits
+            out[num] = hits
     return out
+
+
+def _post_heads(cur: Any, ids: Iterable[str]) -> Dict[str, Tuple[str, str]]:
+    """{post: (its UTC day, its title's first 110 characters)} as a collision question's sample line shows them: the
+    day and title tasks.load_posts gives (Post.iso, Post.title), read alone (no text, links or linked pages)."""
+    from insight_core.markx import tasks
+    ids = sorted(ids)
+    if not ids:
+        return {}
+    cur.execute(f"""SELECT p.id::text, {pairing.ordinary_date('p')}, COALESCE(pp.title, p.title)
+                      FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+                     WHERE p.id = ANY(%s::uuid[])""", (ids,))
+    return {pid: (at.astimezone(timezone.utc).isoformat()[:10], tasks._squash(title)[:110])
+            for pid, at, title in cur.fetchall()}
 
 
 _SAMPLE_LINE = re.compile(r'^(\d+)\. written "(.*)" \| type (\S+) \| maker guess (.*)$', re.M)

@@ -11,7 +11,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from insight_core.db import database as db
 from insight_core.db.repo_discover import DiscoverRepository
@@ -25,8 +25,21 @@ from insight_core.utils.paging import page_of
 from insight_core.utils.classic_rules import Citation, Classic, cited_again, classic_order, classics
 from insight_core.utils.story_rules import page_key, paper_aliases
 from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_EDGE, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
-                                          Surge, lead, longest, main_story, name_surges, names, news, phrases)
+                                          Surge, heads_of, lead, longest, main_story, name_surges, names, news, phrases,
+                                          phrases_among)
 from insight_core.utils.story_rules import Story, StoryPost
+
+
+class Titled(NamedTuple):
+    """What the name rule (news_rules.name_surges) reads of a titled post: StoryPost's id, source_id, kind, t, title
+    and place (an author is never read: a title row's place is its source's), in a tuple (0283: ~100 B, not ~1 kB)."""
+    id: str
+    source_id: str
+    kind: str
+    t: datetime
+    title: str
+    place: str
+
 
 PARTS = ("recent", "earlier")    # "Last 48 hours", the rest (the reader splits it by week)
 WORDS = re.compile(r"\w+")
@@ -128,10 +141,18 @@ class NewsService:
         judged = self.repo.named(cur, sorted(said), NAME_MIN_POSTS) | self.repo.surging(cur, sorted(said))
         if not judged:
             return 0
-        rows = {r["id"]: r for r in self.repo.titles_saying(cur, sorted({"%".join(WORDS.findall(n)) for n in judged}))}
         named_by = self.repo.naming(cur, sorted(judged))
-        rows.update((r["id"], r) for r in self.repo.titles_of(cur, sorted(set().union(*named_by.values()) - rows.keys())))
-        raw = name_surges(self._titled(sources, rows.values()), followed, only=judged, named_by=named_by)
+        naming = set().union(*named_by.values())
+        # name_surges reads, of the loose matches, only the posts that name one (`named_by`) or say one: the rest
+        # are left on the cursor (0283: ~100k rows a batch, a few thousand kept)
+        heads = heads_of(judged)
+        titled = self._titler(sources)
+        rows = {pid: titled(pid, source_id, t, title)
+                for pid, source_id, t, title in self.repo.titles_saying(cur, sorted({"%".join(WORDS.findall(n)) for n in judged}))
+                if pid in naming or phrases_among(title, judged, heads)}
+        rows.update((r["id"], titled(r["id"], r["source_id"], r["t"], r["title"]))
+                    for r in self.repo.titles_of(cur, sorted(naming - rows.keys())))
+        raw = name_surges(list(rows.values()), followed, only=judged, named_by=named_by)
         return self.repo.write_surges(cur, raw, judged)
 
     @staticmethod
@@ -141,10 +162,24 @@ class NewsService:
         return names(said) if said and post.kind not in NAME_SKIP_KINDS else set()
 
     @staticmethod
-    def _titled(sources: SourceFacts, rows: Iterable[Dict[str, Any]]) -> List[StoryPost]:
-        return [StoryPost(id=row["id"], source_id=row["source_id"], kind=sources.kind.get(row["source_id"], "site"),
-                          own_site=sources.publication(row["source_id"]), t=row["t"], title=row["title"])
-                for row in rows]
+    def _titled(sources: SourceFacts, rows: Iterable[Dict[str, Any]]) -> List[Titled]:
+        titled = NewsService._titler(sources)
+        return [titled(row["id"], row["source_id"], row["t"], row["title"]) for row in rows]
+
+    @staticmethod
+    def _titler(sources: SourceFacts) -> Callable[[str, str, datetime, str], Titled]:
+        """A title row as name_surges reads it (`Titled`), each source's facts told once."""
+        of: Dict[str, Tuple[str, str, str]] = {}
+
+        def titled(pid: str, source_id: str, t: datetime, title: str) -> Titled:
+            got = of.get(source_id)
+            if got is None:
+                kind = sources.kind.get(source_id, "site")
+                place = (voice.source_key(source_id) if kind == "reddit"
+                         else voice.key(kind, source_id, sources.publication(source_id)))
+                got = of[source_id] = (source_id, kind, place)
+            return Titled(pid, got[0], got[1], t, title, got[2])
+        return titled
 
     def _classics(self, cur: Any, sources: SourceFacts, targets: Optional[Sequence[str]] = None) -> List[Classic]:
         """The classics among the kept links (to `targets`, when given), titled as page_titles.evidence titles them."""

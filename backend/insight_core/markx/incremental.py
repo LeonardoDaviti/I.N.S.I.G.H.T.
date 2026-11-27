@@ -6,12 +6,13 @@ what changed since the last run.
   - A question's input is kept by what it shows: `mx_inc_inputs` maps a render key (its kind, the stamps of the posts
     it shows, their readings' row versions, any answer it shows) to the input's sha256; a key that misses is rendered
     from the texts (`Lazy*`). Near-copies are kept the same way (`mx_inc_copies`).
-  - The answers are read for the tasks a run asks, never every call of every task, and held as their text (decoded on
-    use). The dirty set is every judge task whose (status, valid calls) changed since the last run (`mx_inc_tasks`),
-    reported with its closure.
-  - What `save` writes of the reading (the inputs and near-copies used, what was seen of each task) is settled once
-    the reading is done (`settle`, by `release`), and the reading's tasks, inputs and near-copies are let go before the
-    entity stages (memory, 0283); only LIVE's tasks, asked after, stay held.
+  - A question's task is found by its (kind, input hash) in `slots`: the task chosen in SQL and its valid calls'
+    answers, held as bytes (~57 a task and the answers' text), never as Python objects. The dirty set is every judge
+    task whose (status, valid calls) changed since the last run (`mx_inc_tasks`), found in SQL and reported with its
+    closure; what `save` writes of the tasks is found the same way (`seen`) (memory, 0283).
+  - What `save` writes of the reading's inputs and near-copies is settled once the reading is done (`settle`, by
+    `release`), and they and the questions' tasks are let go before the entity stages (memory, 0283); only LIVE's
+    tasks, asked after, stay held.
   - News keeps the last run's inputs and rows (`mx_inc_state.news`) and is made again only for the rows the changed
     stories, posts or surges reach.
 
@@ -191,12 +192,10 @@ class State:
     surges: Optional[Tuple[Tuple, List[Any]]] = None               # (news_surges' stamp, the surges as news reads them)
     report: Dict[str, Any] = field(default_factory=dict)
     why_full: Optional[Dict[str, Any]] = None
-    tasks: Dict[Tuple[str, str], Tuple[str, str, int, bool]] = field(default_factory=dict)   # (kind, hash) -> (id,
-    # status, n, whether it is under an earlier guide)
-    keys: Dict[str, Tuple[str, str]] = field(default_factory=dict)
-    was: Dict[str, Tuple[str, int]] = field(default_factory=dict)  # task id -> (status, n) as the last run saw it
-    calls: Dict[str, List[Tuple[Dict[str, Any], str]]] = field(default_factory=dict)
-    call_task: Dict[str, str] = field(default_factory=dict)
+    slots: Dict[str, Tuple[bytes, bytes]] = field(default_factory=dict)   # the questions' tasks and first answers,
+    # a kind's at a time (`slots`)
+    tasks: Dict[Tuple[str, str], Tuple[str, str, bool]] = field(default_factory=dict)   # (kind, hash) -> (id, status,
+    # whether under an earlier guide) of the tasks this run added or reopened (`task_of` reads them first)
     rules: Dict[str, Any] = field(default_factory=dict)
     stamp: Dict[str, str] = field(default_factory=dict)            # post -> its text stamp (plan_marks.STAMP)
     fresh_posts: Dict[str, Tuple] = field(default_factory=dict)    # post -> its mx_inc_posts row, to write
@@ -296,76 +295,147 @@ def nightly_due(cur: Any, now: datetime) -> bool:
     return last is None or last < mark
 
 
-# ---- the dirty set -----------------------------------------------------------------------------------------
+# ---- the dirty set and the questions' tasks ---------------------------------------------------------------
+
+# What the last run saw of a task (`mx_inc_tasks`) against what this transaction sees of it now (the snapshot and the
+# run's own writes): the tasks of KINDS whose (status, valid calls) differ. Each task's calls counted by its own index
+# (mx_calls_task_idx). The dirty set at `refresh`; what `save` writes, all of them (`seen`).
+_SEEN = """SELECT {cols} FROM mx_tasks t
+             CROSS JOIN LATERAL (SELECT count(*) n FROM mx_calls c WHERE c.task_id = t.id AND c.valid) c
+             LEFT JOIN mx_inc_tasks s ON s.task_id = t.id
+            WHERE t.kind = ANY(%(kinds)s) AND (s.status, s.n) IS DISTINCT FROM (t.status, c.n::int)"""
+_SEEN_ROW = "t.id, t.status, c.n::int"
+
+# A question's task, by (kind, input hash): its task under the kind's current guide, else under an earlier one
+# (decide.Ask.answer; a guide the kind no longer names last), an answered task first (one asked again under the current
+# guide keeps the earlier answer meanwhile); between two guides the kind no longer names, the newer task, then the
+# smaller id (none on the 2026-11-19 copy). Held a kind at a time as two bytes values: SLOT-byte records sorted by hash
+# (the hash: 32 bytes, the task id: 16, a flags byte, and where its valid calls are in the second: offset and size, 4
+# bytes each) and the calls of the answered tasks, oldest first a task (each: the call id, 16 bytes; 1 if its answer is
+# null, else 0; the answer's jsonb text as UTF-8, its size first in 4 bytes). ~57 bytes a task and its answers' text,
+# where the tasks and calls as Python objects held ~1 KB a task (memory, 0283). `task_of` reads them.
+STATUSES = ("open", "leased", "answered", "failed")   # mx_tasks_status_check's
+EARLIER, HELD = 16, 32   # flags: under an earlier guide; its valid calls held
+SLOT = 57
+_SLOTS = """WITH g (kind, guide, pos) AS (
+                  SELECT * FROM unnest(%(g_kind)s::text[], %(g_guide)s::text[], %(g_pos)s::int[])),
+             w AS (SELECT DISTINCT ON (t.kind, t.input_hash) t.kind, decode(t.input_hash, 'hex') AS h, t.id, t.status,
+                          g.pos
+                     FROM mx_tasks t LEFT JOIN g ON g.kind = t.kind AND g.guide = t.guide
+                    WHERE t.kind = ANY(%(kinds)s) AND t.input_hash ~ '^[0-9a-f]{64}$'
+                    ORDER BY t.kind, t.input_hash, t.status <> 'answered', g.pos NULLS LAST, t.created_at DESC, t.id),
+             a AS (SELECT w.*, r.calls, coalesce(octet_length(r.calls), 0) AS size
+                     FROM w LEFT JOIN LATERAL (
+                          SELECT string_agg(uuid_send(c.id)
+                                            || CASE WHEN c.answer IS NULL THEN '\\x01'::bytea ELSE '\\x00'::bytea END
+                                            || int4send(coalesce(octet_length(convert_to(c.answer::text, 'UTF8')), 0))
+                                            || coalesce(convert_to(c.answer::text, 'UTF8'), ''::bytea),
+                                            ''::bytea ORDER BY c.created_at, c.ctid) AS calls
+                            FROM mx_calls c WHERE c.task_id = w.id AND c.valid) r ON w.status = 'answered'),
+             o AS (SELECT a.*, sum(size) OVER (PARTITION BY kind ORDER BY h ROWS UNBOUNDED PRECEDING) - size AS off
+                     FROM a)
+        SELECT kind,
+               string_agg(h || uuid_send(id)
+                          || set_byte('\\x00'::bytea, 0, array_position(%(statuses)s::text[], status) - 1
+                                     + CASE WHEN pos IS DISTINCT FROM 0 THEN %(earlier)s ELSE 0 END
+                                     + CASE WHEN calls IS NOT NULL THEN %(held)s ELSE 0 END)
+                          || int4send(off::int) || int4send(size), ''::bytea ORDER BY h),
+               coalesce(string_agg(calls, ''::bytea ORDER BY h), ''::bytea)
+          FROM o GROUP BY kind"""
+
 
 def refresh(cur: Any, state: State) -> Dict[str, Any]:
-    """Every judge task's (status, valid calls) in one query, against what the last run saw (mx_inc_tasks): those that
-    changed are the dirty tasks (reported only when the state is trusted). The table stamps say which of Mark IX's
-    tables changed. Then the kept inputs and near-copies (a trusted state only) and the answers of the tasks they name,
-    in one query (a full reading: every answer). Each task's calls are counted by its own index (mx_calls_task_idx)."""
-    cur.execute("""SELECT t.id::text, t.kind, t.input_hash, t.status, c.n, t.a::text, t.b::text, s.status, s.n, t.guide
-                     FROM mx_tasks t
-                     CROSS JOIN LATERAL (SELECT count(*) n FROM mx_calls c WHERE c.task_id = t.id AND c.valid) c
-                     LEFT JOIN mx_inc_tasks s ON s.task_id = t.id
-                    WHERE t.kind = ANY(%s)""", (list(KINDS),))
-    index, keys, was, dirty, posts = {}, {}, {}, [], set()
-    order = {k: schemas.answer_guides(k) for k in KINDS}
-    rank: Dict[Tuple[str, str], Tuple[bool, int]] = {}
-    for tid, kind, h, status, n, a, b, s_status, s_n, guide in cur.fetchall():
-        # a question is its task under the kind's current guide, else under an earlier one (decide.Ask.answer); an
-        # answered task first (one asked again under the current guide keeps the earlier answer meanwhile)
-        r = (status != "answered", order[kind].index(guide) if guide in order[kind] else len(order[kind]))
-        if r <= rank.get((kind, h), r):
-            index[(kind, h)] = (tid, status, int(n), r[1] > 0)
-            rank[(kind, h)] = r
-        keys[tid] = (kind, h)
-        if s_status is not None:
-            was[tid] = (s_status, int(s_n))
-        if was.get(tid) != (status, int(n)) and state.kept:
-            dirty.append(tid)
+    """The dirty tasks: every judge task whose (status, valid calls) changed since the last run (mx_inc_tasks), found in
+    SQL (reported only when the state is trusted). The questions' tasks (`slots`, read by `task_of`). The table stamps
+    say which of Mark IX's tables changed. Then the kept inputs and near-copies (a trusted state only)."""
+    dirty, posts = 0, set()
+    if state.kept:
+        cur.execute(_SEEN.format(cols="t.a::text, t.b::text"), {"kinds": list(KINDS)})
+        for a, b in cur.fetchall():
+            dirty += 1
             posts.update(p for p in (a, b) if p)
-    state.tasks, state.keys, state.was = index, keys, was
+    state.slots, state.tasks = slots(cur), {}
     stamps = table_stamps(cur, NEWS_TABLES)
     changed = sorted(t for t in NEWS_TABLES if state.stamps.get(t) != stamps[t]) if state.kept else list(NEWS_TABLES)
     state.stamps = stamps
-    state.report = {"dirty_tasks": len(dirty), "dirty_posts": sorted(posts), "ix_changed": changed,
+    state.report = {"dirty_tasks": dirty, "dirty_posts": sorted(posts), "ix_changed": changed,
                     "texts_read": 0, "texts_loaded": 0, "inputs_rendered": 0, "inputs_kept": 0}
     if state.kept:
         cur.execute("SELECT key, input_hash FROM mx_inc_inputs")
         state.inputs_kept = dict(cur.fetchall())
         cur.execute("SELECT key, copies FROM mx_inc_copies")
         state.copies_kept = {k: frozenset(v) for k, v in cur.fetchall()}
-        named = {h for h in state.inputs_kept.values()}
-        need = sorted({tid for (kind, h), (tid, status, n, _e) in index.items() if n and h in named} | set(dirty))
-    else:
-        need = sorted(tid for (tid, status, n, _e) in index.values() if n)
-    _read_calls(cur, state, need)
     return state.report
 
 
-def _read_calls(cur: Any, state: State, ids: Sequence[str]) -> None:
-    """The valid calls of tasks `ids`, oldest first a task, each answer held as its jsonb text (`calls_of` decodes it:
-    the parsed answers of a full reading's ~127k tasks held ~106 MB, their text ~30, 0283)."""
-    ids = [t for t in ids if t not in state.calls]
-    if not ids:
-        return
-    cur.execute("""SELECT task_id::text, id::text, answer::text FROM mx_calls WHERE valid AND task_id = ANY(%s::uuid[])
-                    ORDER BY task_id, created_at, ctid""", (ids,))
-    got: Dict[str, List] = defaultdict(list)
-    for tid, cid, answer in cur.fetchall():
-        got[tid].append((answer, cid))
-    for tid in ids:
-        state.calls[tid] = got.get(tid, [])
-        for _a, cid in state.calls[tid]:
-            state.call_task[cid] = tid
+def slots(cur: Any) -> Dict[str, Tuple[bytes, bytes]]:
+    """{kind: (its questions' tasks, SLOT-byte records sorted by hash; their valid calls)} (`_SLOTS`), a query a kind
+    (one result held at once: the largest, pair's, ~10 MB on the 2026-11-19 copy), read as binary (no hex text)."""
+    out: Dict[str, Tuple[bytes, bytes]] = {}
+    for kind in KINDS:
+        order = list(enumerate(schemas.answer_guides(kind)))
+        cur.execute(_SLOTS, {"g_kind": [kind] * len(order), "g_guide": [g for _i, g in order],
+                             "g_pos": [i for i, _g in order], "kinds": [kind], "statuses": list(STATUSES),
+                             "earlier": EARLIER, "held": HELD}, binary=True)
+        for k, blob, calls in cur.fetchall():
+            out[k] = (bytes(blob), bytes(calls))
+    return out
 
 
-def calls_of(cur: Any, state: State, tid: str) -> List[Tuple[Dict[str, Any], str]]:
-    """A task's valid calls (answer, call id), oldest first (read on first use when the kept inputs didn't name it);
-    each answer decoded anew, as psycopg decodes jsonb."""
-    if tid not in state.calls:
-        _read_calls(cur, state, [tid])
-    return [(None if a is None else json.loads(a), cid) for a, cid in state.calls[tid]]
+def task_of(state: State, kind: str, h: str) -> Optional[Tuple[str, str, bool, List[Tuple[Optional[str], str]]]]:
+    """The question's task (id, status, whether under an earlier guide, its valid calls oldest first as (the answer's
+    jsonb text, call id): an answered task's), or None: one the run added or reopened (`State.tasks`, no call read)
+    first, else the snapshot's (`slots`, by binary search)."""
+    got = state.tasks.get((kind, h))
+    if got is not None:
+        return (*got, [])
+    blob, calls = state.slots.get(kind) or (b"", b"")
+    if not blob or len(h) != 64:
+        return None
+    try:
+        key = bytes.fromhex(h)
+    except ValueError:
+        return None
+    lo, hi = 0, len(blob) // SLOT
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if blob[mid * SLOT:mid * SLOT + 32] < key:
+            lo = mid + 1
+        else:
+            hi = mid
+    at = lo * SLOT
+    if at >= len(blob) or blob[at:at + 32] != key:
+        return None
+    flags = blob[at + 48]
+    found: List[Tuple[Optional[str], str]] = []
+    if flags & HELD:
+        i = int.from_bytes(blob[at + 49:at + 53], "big")
+        end = i + int.from_bytes(blob[at + 53:at + 57], "big")
+        while i < end:
+            size = int.from_bytes(calls[i + 17:i + 21], "big")
+            found.append((None if calls[i + 16] else calls[i + 21:i + 21 + size].decode("utf-8"),
+                          str(UUID(bytes=calls[i:i + 16]))))
+            i += 21 + size
+    return str(UUID(bytes=blob[at + 32:at + 48])), STATUSES[flags & (EARLIER - 1)], bool(flags & EARLIER), found
+
+
+def added(state: State, kind: str, h: str, tid: str) -> None:
+    """A task the run added for a question: its slot's from now on."""
+    state.tasks[(kind, h)] = (tid, "open", False)
+
+
+def reopened(state: State, kind: str, h: str, tid: str) -> None:
+    """A task the run opened again (decide.Ask.reopen): its question's slot holds it as open, its other parts kept."""
+    got = task_of(state, kind, h)
+    if got is not None:
+        state.tasks[(kind, h)] = (tid, "open", got[2])
+
+
+def seen(cur: Any) -> List[Tuple[str, str, int]]:
+    """The rows `save` writes to mx_inc_tasks (`_SEEN`): (task id, status, valid calls) of every judge task this
+    transaction sees otherwise than the last run did, the run's own added and reopened tasks with them."""
+    cur.execute(_SEEN.format(cols=_SEEN_ROW.replace("t.id", "t.id::text")), {"kinds": list(KINDS)})
+    return [tuple(r) for r in cur.fetchall()]
 
 
 # ---- the posts -------------------------------------------------------------------------------------------
@@ -504,20 +574,25 @@ def _hold(cache: Dict[str, Any], ids: Sequence[str]) -> None:
             del cache[k]
 
 
-def prefetch(texts: "LazyTexts", readings: Optional["LazyReadings"], groups: Iterable[Sequence[str]]) -> None:
+def prefetch(texts: "LazyTexts", readings: Optional["LazyReadings"], groups: Iterable[Sequence[str]],
+             kind: Optional[str] = None) -> None:
     """Of `groups` (the posts each of the next questions shows, in the order they are asked), the texts (and with
     `readings`, the readings) a render will need, read in one query each when not held, the held ones kept. A render
     needs them when it misses its kept input, which it does when it shows a post read again (State.stale): then all the
-    posts it shows, not only the stale ones (else each render reads its unchanged posts in a query of its own). When the
-    posts read again fit in a page (an incremental run), all of them at once."""
+    posts it shows, not only the stale ones (else each render reads its unchanged posts in a query of its own). With
+    `kind`, each group is a render's `ids` exactly ("|" between its parts, no readings or answers shown) and one whose
+    key is not kept misses too (a story whose members changed). When the posts read again fit in a page (an
+    incremental run), all of them at once."""
     s = texts.state
     shown: List[str] = []
     missing: Set[str] = set()   # the posts of the renders that will miss
     for g in groups:
         g = list(g)
-        shown += g
-        if any(i in s.stale for i in g):
-            missing.update(g)
+        posts = [i for i in g if i != "|"] if kind is not None else g
+        shown += posts
+        kept = kind is None or (s.kept and _key(s, kind, g) in s.inputs_kept)
+        if not kept or any(i in s.stale for i in posts):
+            missing.update(posts)
     ids = list(dict.fromkeys(itertools.chain(shown, sorted(s.stale) if len(s.stale) <= TEXT_PAGE else [])))
     texts.load([i for i in ids if i in missing or i in s.stale or i in s.texts])
     if readings is not None:
@@ -526,15 +601,15 @@ def prefetch(texts: "LazyTexts", readings: Optional["LazyReadings"], groups: Ite
 
 def release(state: State) -> None:
     """The texts, readings and answers this run read, let go once the reading is done (the stages after News read
-    neither); a text, reading or answer used after is read again from the run's one snapshot (`calls_of`; Ask.later
-    reads them by query). Also what only the renders read of each post (its stamps, its reading's kind and events); of
-    the world's posts, `save` reads only which they are. What `save` writes of the reading is settled first (`settle`),
-    the reading's tasks, inputs and near-copies let go with it."""
+    neither); a text or reading used after is read again from the run's one snapshot. Also what only the renders read
+    of each post (its stamps, its reading's kind and events); of the world's posts, `save` reads only which they are.
+    What `save` writes of the reading is settled first (`settle`), its inputs and near-copies let go with it, and the
+    questions' tasks but LIVE's (asked after)."""
     settle(state)
+    state.slots = {k: v for k, v in state.slots.items() if k in LIVE}
+    state.tasks = {key: t for key, t in state.tasks.items() if key[0] in LIVE}
     state.texts.clear()
     state.readings.clear()
-    state.calls.clear()
-    state.call_task.clear()
     state.stamp.clear()
     state.read_stamp.clear()
     state.kinds.clear()
@@ -620,6 +695,11 @@ def _fingerprint(state: State, ids: Sequence[str], reads: bool) -> str:
     return "\n".join(parts)
 
 
+def _key(state: State, kind: str, ids: Sequence[str], reads: bool = False, extra: Sequence[str] = ()) -> str:
+    """A render's key: its kind, the stamps of the posts it shows (and their readings'), any answer it shows."""
+    return _sha("\0".join((kind, _fingerprint(state, ids, reads), *extra)))
+
+
 def ahead(state: State, ids: Iterable[str]) -> None:
     """Of the posts read again (State.stale), only those a question can show (`ids`: decide.load's) are read ahead with
     a render's miss; a post no question shows is read only if something asks for it."""
@@ -638,7 +718,7 @@ def rendered(state: Optional[State], kind: str, ids: Sequence[str], render: Call
     stamps_of_needed = [i for i in ids if i != "|" and i not in state.stamp]
     if stamps_of_needed and texts is not None:
         stamps_of(texts.cur, state, stamps_of_needed)
-    key = _sha("\0".join((kind, _fingerprint(state, ids, reads), *extra)))
+    key = _key(state, kind, ids, reads, extra)
 
     def made() -> str:
         if texts is not None:
@@ -687,10 +767,9 @@ def surges(cur: Any, memo: Optional[State]) -> List[Any]:
 # ---- what a run leaves -------------------------------------------------------------------------------------
 
 def settle(state: State) -> None:
-    """What `save` writes of the reading, taken once it is done (`release`): the inputs and near-copies it used that
-    the kept state lacks (all of them on a full reading) and the kept keys it no longer used, and what it saw of each
-    task that differs from the last run's (`mx_inc_tasks`). Then the reading's tasks (but LIVE's), the last run's view
-    of them, and its inputs and near-copies are let go (~145 MB on the 2026-11-19 copy, 0283). Once only."""
+    """What `save` writes of the reading's inputs and near-copies, taken once it is done (`release`): those it used
+    that the kept state lacks (all of them on a full reading) and the kept keys it no longer used. Then its inputs,
+    near-copies are let go (memory, 0283). Once only. What it saw of the tasks is written by `save` in SQL (`seen`)."""
     if state.settled is not None:
         return
     full = state.full
@@ -699,19 +778,13 @@ def settle(state: State) -> None:
         "inputs_new": [(k, kind, h) for k, (kind, h) in state.inputs.items() if full or state.inputs_kept.get(k) != h],
         "inputs_gone": [] if full else sorted(set(state.inputs_kept) - set(state.inputs)),
         "copies_new": [(k, sorted(v)) for k, v in state.copies.items() if full or state.copies_kept.get(k) != v],
-        "copies_gone": [] if full else sorted(set(state.copies_kept) - set(state.copies)),
-        "tasks_seen": [(tid, status, n) for key, (tid, status, n, _e) in state.tasks.items()
-                       if key[0] not in LIVE and state.was.get(tid) != (status, n)]}
-    keys = {tid: key for tid, key in state.keys.items() if key[0] in LIVE}
-    state.was = {tid: w for tid, w in state.was.items() if tid in keys}
-    state.tasks = {key: t for key, t in state.tasks.items() if key[0] in LIVE}
-    state.keys = keys
+        "copies_gone": [] if full else sorted(set(state.copies_kept) - set(state.copies))}
     state.inputs, state.inputs_kept, state.copies, state.copies_kept = {}, {}, {}, {}
 
 
-def pending(state: State) -> Dict[str, Any]:
-    """The rows `save` writes of the reading (`settle`'s), with what came after it: LIVE's tasks seen, and any input or
-    near-copy used since (written as new)."""
+def pending(state: State, cur: Any = None) -> Dict[str, Any]:
+    """The rows `save` writes of the reading (`settle`'s), with what came after it (any input or near-copy used since,
+    written as new); with `cur`, the tasks seen (`seen`: save writes them in SQL)."""
     settle(state)
     s = state.settled
     inputs, copies = s["inputs_new"], s["copies_new"]
@@ -723,10 +796,11 @@ def pending(state: State) -> Dict[str, Any]:
         later_copies = dict(copies)
         later_copies.update((k, sorted(v)) for k, v in state.copies.items())
         copies = list(later_copies.items())
-    return {"full": s["full"], "inputs_new": inputs, "inputs_gone": s["inputs_gone"], "copies_new": copies,
-            "copies_gone": s["copies_gone"],
-            "tasks_seen": s["tasks_seen"] + [(tid, status, n) for (_k, (tid, status, n, _e)) in state.tasks.items()
-                                             if state.was.get(tid) != (status, n)]}
+    out = {"full": s["full"], "inputs_new": inputs, "inputs_gone": s["inputs_gone"], "copies_new": copies,
+           "copies_gone": s["copies_gone"]}
+    if cur is not None:
+        out["tasks_seen"] = seen(cur)
+    return out
 
 
 def save(cur: Any, state: State, run_id: Any, want: Dict[str, Dict[str, Tuple]]) -> Dict[str, int]:
@@ -765,13 +839,13 @@ def save(cur: Any, state: State, run_id: Any, want: Dict[str, Dict[str, Tuple]])
             cur.executemany("""INSERT INTO mx_inc_copies (key, copies) VALUES (%s, %s)
                                ON CONFLICT (key) DO UPDATE SET copies = EXCLUDED.copies""", new)
         out[table[7:] + "_written"], out[table[7:] + "_dropped"] = len(new), len(gone)
-    seen = kept["tasks_seen"]
-    if seen:
-        cur.execute("""INSERT INTO mx_inc_tasks (task_id, status, n)
-                       SELECT * FROM unnest(%s::uuid[], %s::text[], %s::int[])
-                       ON CONFLICT (task_id) DO UPDATE SET status = EXCLUDED.status, n = EXCLUDED.n""",
-                    tuple(list(col) for col in zip(*seen)))
-    out["tasks_written"] = len(seen)
+    # what it saw of every judge task, every task whose (status, valid calls) differs from the last run's: those of a
+    # question another task answers too (one asked again under the current guide while the earlier answer counts)
+    # with them, else they were found dirty every run
+    cur.execute(f"""INSERT INTO mx_inc_tasks (task_id, status, n) {_SEEN.format(cols=_SEEN_ROW)}
+                    ON CONFLICT (task_id) DO UPDATE SET status = EXCLUDED.status, n = EXCLUDED.n""",
+                {"kinds": list(KINDS)})
+    out["tasks_written"] = cur.rowcount
     cur.execute("""INSERT INTO mx_inc_state (name, run_id, key, stamps, news, want, saved_at)
                    VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, now())
                    ON CONFLICT (name) DO UPDATE SET run_id = EXCLUDED.run_id, key = EXCLUDED.key, stamps = EXCLUDED.stamps,

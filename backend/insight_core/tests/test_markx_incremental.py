@@ -28,38 +28,135 @@ STATE = ("mx_inc_state", "mx_inc_posts", "mx_inc_inputs", "mx_inc_copies", "mx_i
 
 class Settle(unittest.TestCase):
     def test_what_save_writes_is_settled_at_release_and_the_reading_let_go_but_live_kinds(self):
-        """release settles the rows save writes (inputs and near-copies used, not kept or changed; kept ones unused;
-        tasks seen otherwise than last run) and lets the reading's tasks, inputs and near-copies go; LIVE's tasks stay
-        held, and one asked after release is written too (0283)."""
+        """release settles the rows save writes of the inputs and near-copies (used, not kept or changed; kept ones
+        unused) and lets them go, and the questions' tasks but LIVE's (0283)."""
         st = I.State(db="x", key="k", full=False)
-        st.tasks = {("pair", "h1"): ("t1", "answered", 1, False), ("pair", "h2"): ("t2", "answered", 1, False),
-                    ("briefing", "h3"): ("t3", "open", 0, False)}
-        st.keys = {"t1": ("pair", "h1"), "t2": ("pair", "h2"), "t0": ("pair", "h1"), "t3": ("briefing", "h3")}
-        st.was = {"t1": ("answered", 1), "t2": ("open", 0), "t0": ("open", 0), "t3": ("open", 0)}
+        st.slots = {"pair": (b"p", b""), "briefing": (b"b", b"")}
+        st.tasks = {("pair", "h1"): ("t1", "open", False), ("briefing", "h3"): ("t3", "open", False)}
         st.inputs_kept = {"k1": "h1", "k2": "h2", "gone": "hx"}
         st.inputs = {"k1": ("pair", "h1"), "k2": ("pair", "h2b"), "k4": ("join", "h4")}
         st.copies_kept = {"c1": frozenset({"p"}), "cgone": frozenset()}
         st.copies = {"c1": frozenset({"p"}), "c2": frozenset({"q", "p"})}
-        st.calls = {"t1": [('{"a": 1}', "c")]}
         I.release(st)
-        self.assertEqual(st.tasks, {("briefing", "h3"): ("t3", "open", 0, False)})
-        self.assertEqual((st.keys, st.was), ({"t3": ("briefing", "h3")}, {"t3": ("open", 0)}))
-        self.assertEqual((st.inputs, st.inputs_kept, st.copies, st.copies_kept, st.calls), ({}, {}, {}, {}, {}))
-        st.tasks[("briefing", "h5")] = ("t5", "open", 0, False)   # asked after release (Ask.answer adds it)
+        self.assertEqual((st.slots, st.tasks), ({"briefing": (b"b", b"")}, {("briefing", "h3"): ("t3", "open", False)}))
+        self.assertEqual((st.inputs, st.inputs_kept, st.copies, st.copies_kept), ({}, {}, {}, {}))
         rows = I.pending(st)
         self.assertEqual(rows["inputs_new"], [("k2", "pair", "h2b"), ("k4", "join", "h4")])
         self.assertEqual(rows["inputs_gone"], ["gone"])
         self.assertEqual(rows["copies_new"], [("c2", ["p", "q"])])
         self.assertEqual(rows["copies_gone"], ["cgone"])
-        self.assertEqual(rows["tasks_seen"], [("t2", "answered", 1), ("t5", "open", 0)])
+        self.assertNotIn("tasks_seen", rows)        # written in SQL (I.seen)
         self.assertFalse(rows["full"])
         st.inputs["k4"] = ("join", "h4c")   # an input used after release: one row a key, the later
         self.assertEqual(I.pending(st)["inputs_new"], [("k2", "pair", "h2b"), ("k4", "join", "h4c")])
 
-    def test_a_held_answer_is_decoded_on_use_as_psycopg_decodes_jsonb(self):
-        st = I.State(db="x", key="k")
-        st.calls = {"t": [('{"b": [1, 2.5, null], "a": "x"}', "c1"), (None, "c2")]}
-        self.assertEqual(I.calls_of(None, st, "t"), [({"b": [1, 2.5, None], "a": "x"}, "c1"), (None, "c2")])
+    def test_a_slot_is_found_by_its_hash_with_its_calls_oldest_first(self):
+        """task_of: a binary search of the kind's records; the calls held as their jsonb text (null kept), none for a
+        task the run added (State.tasks first)."""
+        def rec(h, tid, flags, off, size):
+            return (bytes.fromhex(h) + uuid.UUID(tid).bytes + bytes([flags]) + off.to_bytes(4, "big")
+                    + size.to_bytes(4, "big"))
+
+        def call(cid, text):
+            body = b"" if text is None else text.encode()
+            return uuid.UUID(cid).bytes + (b"\x01" if text is None else b"\x00") + len(body).to_bytes(4, "big") + body
+        hs = sorted(f"{n:02x}" * 32 for n in (0x10, 0x20, 0x30))
+        t = [str(uuid.UUID(int=n)) for n in (1, 2, 3)]
+        c = [str(uuid.UUID(int=n)) for n in (11, 12)]
+        calls = call(c[0], '{"a": "é"}') + call(c[1], None)
+        blob = (rec(hs[0], t[0], 2 | I.HELD, 0, len(calls)) + rec(hs[1], t[1], 0 | I.EARLIER, 0, 0)
+                + rec(hs[2], t[2], 3, 0, 0))
+        st = I.State(db="x", key="k", slots={"pair": (blob, calls)})
+        self.assertEqual(I.task_of(st, "pair", hs[0]), (t[0], "answered", False, [('{"a": "é"}', c[0]), (None, c[1])]))
+        self.assertEqual(I.task_of(st, "pair", hs[1]), (t[1], "open", True, []))
+        self.assertEqual(I.task_of(st, "pair", hs[2]), (t[2], "failed", False, []))
+        self.assertIsNone(I.task_of(st, "pair", "ff" * 32))
+        self.assertIsNone(I.task_of(st, "join", hs[0]))
+        I.reopened(st, "pair", hs[1], t[1])
+        self.assertEqual(I.task_of(st, "pair", hs[1]), (t[1], "open", True, []))
+        I.added(st, "join", hs[0], t[2])
+        self.assertEqual(I.task_of(st, "join", hs[0]), (t[2], "open", False, []))
+
+
+@requires_test_db
+class TaskSlots(unittest.TestCase):
+    """The questions' tasks and the dirty set, in SQL (0283): on a test database, rolled back after each test."""
+
+    def setUp(self):
+        self.conn = psycopg.connect(db_url())
+        self.addCleanup(self.conn.close)
+        self.addCleanup(self.conn.rollback)
+        self.cur = self.conn.cursor()
+        clear_tables(self.cur, MX_TABLES + STATE)
+        schemas.load_guides(self.cur)
+
+    def task(self, kind, guide, text, *, answers=(), status=None, at=None):
+        tid, _ = repo.add_task(self.cur, kind=kind, guide=guide, subject_kind="post_post", input=text)
+        calls = [str(repo.add_call(self.cur, task_id=tid, executor="claude-code", model="haiku", valid=True,
+                                   answer=a)) for a in answers]
+        if answers:
+            repo.answer_task(self.cur, tid)
+        if status:
+            self.cur.execute("UPDATE mx_tasks SET status = %s WHERE id = %s", (status, tid))
+        if at is not None:
+            self.cur.execute("UPDATE mx_tasks SET created_at = %s WHERE id = %s", (at, tid))
+        return str(tid), calls
+
+    def state(self):
+        st = I.State(db="t", key="k", full=False)
+        I.refresh(self.cur, st)
+        return st
+
+    def test_a_question_is_its_answered_task_first_then_the_current_guide_then_an_earlier_one(self):
+        text = "STORY\nHeadline: one question"
+        h = I._sha(text)
+        v1, (c1,) = self.task("pair", "judge-read-v1", text, answers=[{"relation": "same_event", "confidence": 90}])
+        v2, _ = self.task("pair", "judge-read-v2", text)                     # asked again, open
+        self.assertEqual(I.task_of(self.state(), "pair", h)[:3], (v1, "answered", True))
+        self.cur.execute("UPDATE mx_tasks SET status = 'open' WHERE id = %s", (v1,))   # neither answered: the current
+        self.assertEqual(I.task_of(self.state(), "pair", h)[:3], (v2, "open", False))
+        self.cur.execute("UPDATE mx_tasks SET status = 'answered' WHERE id = %s", (v2,))   # both: the current
+        self.assertEqual(I.task_of(self.state(), "pair", h), (v2, "answered", False, []))   # (no valid call)
+        j, calls = self.task("join", "judge-read-v2", text, answers=[{"relation": "different"}, None])
+        got = I.task_of(self.state(), "join", h)
+        self.assertEqual(got[:3], (j, "answered", False))
+        self.assertEqual([(None if a is None else json.loads(a), cid) for a, cid in got[3]],
+                         [({"relation": "different"}, calls[0]), (None, calls[1])])
+
+    def test_between_two_guides_the_kind_no_longer_names_the_newer_task_then_the_smaller_id(self):
+        """Today's Python index kept the last row read of a tie (no order): SQL breaks it by created_at, then id;
+        none on the 2026-11-19 copy (0283)."""
+        text = "STORY\nHeadline: a tie"
+        h = I._sha(text)
+        a, _ = self.task("pair", "judge-read-v1", text, at=T)
+        b, _ = self.task("pair", "judge-raw-v1", text, at=T + H)
+        guides = schemas.answer_guides
+        with unittest.mock.patch.object(I.schemas, "answer_guides",
+                                        lambda kind: ("judge-read-v2",) if kind == "pair" else guides(kind)):
+            self.assertEqual(I.task_of(self.state(), "pair", h)[:3], (b, "open", True))
+            self.cur.execute("UPDATE mx_tasks SET created_at = %s WHERE id = ANY(%s::uuid[])", (T, [a, b]))
+            self.assertEqual(I.task_of(self.state(), "pair", h)[0], min(a, b))
+
+    def test_the_dirty_set_is_every_task_seen_otherwise_and_save_writes_them_all(self):
+        """A task whose (status, valid calls) differs from mx_inc_tasks is dirty, one another task's answer covers
+        too (asked again under the current guide) included; save writes every one, so the next run finds none (the
+        4,701 open judge-read-v2 tasks the 2026-11-19 copy reported every run, 0283)."""
+        text = "STORY\nHeadline: asked again"
+        v1, _ = self.task("pair", "judge-read-v1", text, answers=[{"relation": "same_event", "confidence": 90}])
+        v2, _ = self.task("pair", "judge-read-v2", text)
+        other, _ = self.task("check", "judge-raw-v1", "CHECK one", answers=[{"relation": "different"}])
+        self.cur.execute("INSERT INTO mx_inc_tasks (task_id, status, n) VALUES (%s, 'answered', 1)", (other,))
+        st = self.state()
+        self.assertEqual(st.report["dirty_tasks"], 2)                       # v1 and v2, not `other`
+        self.assertEqual(sorted(I.seen(self.cur)), sorted([(v1, "answered", 1), (v2, "open", 0)]))
+        out = I.save(self.cur, st, uuid.uuid4(), {})
+        self.assertEqual(out["tasks_written"], 2)
+        self.assertEqual((self.state().report["dirty_tasks"], I.seen(self.cur)), (0, []))
+        repo.add_call(self.cur, task_id=v2, executor="claude-code", model="haiku", valid=True,
+                      answer={"relation": "different", "confidence": 95})
+        repo.answer_task(self.cur, v2)
+        self.assertEqual(I.seen(self.cur), [(v2, "answered", 1)])           # answered since: dirty
+        self.assertEqual(self.state().report["dirty_tasks"], 1)
 
 
 class Codec(unittest.TestCase):

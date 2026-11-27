@@ -1237,6 +1237,33 @@ class Collisions(_Db):
         self.assertEqual((self.entity_of(ps[2]), self.entity_of(ps[0])), (new, e))   # the run applies the pin
         self.assertIn("store agent", book.ents[new].name)
 
+    def test_match_pick_finds_each_line_by_its_post_date_and_title_without_reading_whole_posts(self):
+        # v10.54 (memory): the question's lines are found again from the posts' date and title alone; a post with the
+        # same title another day, one past 110 characters, and one of another type are each told apart
+        long = "Luma model news " + "and more words " * 10
+        ps = [self.post(0, T0, title=long + "first"), self.post(1, T0 + H, title="Luma model news two"),
+              self.post(2, T0 + 2 * H, title="Luma agent news"), self.post(3, T0 + 2 * D, title=long + "first")]
+        for p in (ps[0], ps[1], ps[3]):
+            self.mentions(p, ("Luma", "model", "subject", "Acme"))
+        self.mentions(ps[2], ("Luma", "product", "subject", "Orbit"))
+        self.assertEqual(self.stage()["collide"]["asked"], 1)
+        eid, text = self.cur.execute("SELECT a::text, input FROM mx_tasks WHERE kind = 'collide'").fetchone()
+        self.assertEqual(validate.collide_mentions(text), 4)
+        members = {self.entity_of(p) for p in ps}
+        with mock.patch.object(tasks, "load_posts", side_effect=AssertionError("a whole post read")):
+            found = I.match_pick(self.cur, schemas.mention_guides(), eid, text, members=members)
+        self.assertEqual(sorted(found), [1, 2, 3, 4])
+        self.assertTrue(all(len(hits) == 1 for hits in found.values()))
+        self.assertEqual(sorted(h for hits in found.values() for h in hits), sorted((p, 0) for p in ps))
+        lines = {int(x.split(".")[0]): x for x in re.split(r"\n(?=\d+\. written )", text)[1:]}
+        days = {ps[0]: T0, ps[1]: T0 + H, ps[2]: T0 + 2 * H, ps[3]: T0 + 2 * D}
+        for k, ((pid, _n),) in found.items():
+            self.assertIn(days[pid].date().isoformat(), lines[k])
+        # a line whose post's title changed since it was asked finds nothing; another entity's mentions are not looked at
+        self.cur.execute("UPDATE posts SET title = 'Renamed' WHERE id = %s", (ps[1],))
+        self.assertEqual(len(I.match_pick(self.cur, schemas.mention_guides(), eid, text, members=members)), 3)
+        self.assertEqual(I.match_pick(self.cur, schemas.mention_guides(), str(uuid.uuid4()), text), {})
+
     def test_the_odd_keys_are_those_whose_first_mention_a_post_differs(self):
         """The database counts the odd keys (each post's first mention; a type left out counts as a type, an empty maker
         as none) (0216)."""

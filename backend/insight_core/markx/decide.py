@@ -12,6 +12,7 @@ run at a time (a Postgres advisory lock).
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -658,6 +659,7 @@ LOCK_KEY = 860_086_005                 # the advisory lock one run holds (pg_try
 CAP = 500                              # new tasks of one kind a run may add (the rest wait for the next run)
 BRIEFING_HOUR = 20                     # each day, after 20:00 server time
 BRIEFING_STORIES = 10
+LATER_KEEP = 64      # Ask.later reads the calls of the last answers asked from the run's state, held this many
 
 
 def _now() -> datetime:
@@ -677,6 +679,7 @@ class Ask:
         self.old_added: Counter = Counter()
         self.waiting_old: Counter = Counter()
         self.memo = memo                      # the snapshot's tasks and calls (incremental.refresh)
+        self._calls: Dict[str, List[Tuple[Optional[str], str]]] = {}   # first call -> its task's calls (`later`)
         self.dry = dry
         self.added: Counter = Counter()
         self.raced: Counter = Counter()
@@ -697,8 +700,8 @@ class Ask:
         memo = self.memo if kind in incremental.KINDS else None
         if memo is not None:
             h = incremental.hash_of(text)
-            got = memo.tasks.get((kind, h))
-            task = None if got is None else {"id": got[0], "status": got[1], "earlier": got[3]}
+            got = incremental.task_of(memo, kind, h)
+            task = None if got is None else {"id": got[0], "status": got[1], "earlier": got[2], "calls": got[3]}
         else:   # an answered task under any of the kind's guides first (a question re-asked keeps its earlier answer)
             task = None
             for guide in schemas.answer_guides(kind):
@@ -731,14 +734,18 @@ class Ask:
                 return None
             (self.old_added if old else self.added)[kind] += 1
             if memo is not None:
-                memo.tasks[(kind, h)] = (str(tid), "open", 0, False)
-                memo.keys[str(tid)] = (kind, h)
+                incremental.added(memo, kind, h, str(tid))
             return None
         if task["status"] != "answered":
             return None
-        if memo is not None:
-            calls = incremental.calls_of(self.cur, memo, task["id"])
-            call = {"id": calls[0][1], "answer": calls[0][0]} if calls else None
+        if memo is not None:   # its valid calls, held with the question's task (incremental.slots)
+            calls = task["calls"]
+            call = None
+            if calls:
+                call = {"id": calls[0][1], "answer": None if calls[0][0] is None else json.loads(calls[0][0])}
+                self._calls[calls[0][1]] = calls   # for `later`, the last LATER_KEEP answers'
+                if len(self._calls) > LATER_KEEP:
+                    del self._calls[next(iter(self._calls))]
         else:
             call = repo.valid_call(self.cur, task["id"])
         if call is None:
@@ -754,10 +761,8 @@ class Ask:
 
     def later(self, first_call: str) -> List[Verdict]:
         """The question's valid answers after its first (`first_call`), oldest first. Read only."""
-        if self.memo is not None and first_call in self.memo.call_task:
-            from insight_core.markx import incremental
-            calls = incremental.calls_of(self.cur, self.memo, self.memo.call_task[first_call])
-            return [Verdict.of(ans, cid) for ans, cid in calls[1:]]
+        if first_call in self._calls:   # held with its task (incremental.slots), as psycopg decodes jsonb
+            return [Verdict.of(None if a is None else json.loads(a), cid) for a, cid in self._calls[first_call][1:]]
         self.cur.execute("""SELECT id::text, answer FROM mx_calls
                              WHERE task_id = (SELECT task_id FROM mx_calls WHERE id = %s) AND valid
                              ORDER BY created_at, ctid""", (first_call,))
@@ -793,13 +798,14 @@ class Ask:
                 with self.cur.connection.transaction():
                     self.cur.execute("""UPDATE mx_tasks SET status = 'open', lease_until = NULL, leased_by = NULL
                                          WHERE status = 'answered'
-                                           AND id = (SELECT task_id FROM mx_calls WHERE id = %s)""", (call,))
-                    if self.cur.rowcount:
+                                           AND id = (SELECT task_id FROM mx_calls WHERE id = %s)
+                                     RETURNING id::text, kind, input_hash""", (call,))
+                    row = self.cur.fetchone()
+                    if row is not None:
                         out[kind] += 1
-                        tid = self.memo.call_task.get(call) if self.memo is not None else None
-                        if tid and tid in self.memo.keys:
-                            key = self.memo.keys[tid]
-                            self.memo.tasks[key] = (tid, "open", *self.memo.tasks[key][2:])
+                        from insight_core.markx import incremental
+                        if self.memo is not None and row[1] in incremental.KINDS:   # its question's slot: open
+                            incremental.reopened(self.memo, row[1], row[2], row[0])
             except psycopg_errors.SerializationFailure:
                 self.raced[kind] += 1
         return dict(out)
@@ -1392,7 +1398,9 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
             far = {k for k, c in cos.items() if c < config.connect_settle_below}
         if config.connect_shadow_below is not None:
             shadow = {k for k, c in cos.items() if c < config.connect_shadow_below}
+    ahead = _ahead(world, [(*groups[x0], "|", *groups[y0]) for x0, y0, _cos in pairs], "connect")
     for x0, y0, _cos in pairs:
+        ahead()
         text = incremental.rendered(world.memo, "connect", (*groups[x0], "|", *groups[y0]), lambda: tasks.connect_input(
             tasks._earliest([world.text[p] for p in groups[x0]]), tasks._earliest([world.text[p] for p in groups[y0]])),
             texts=world.text if world.memo is not None else None)
@@ -1414,6 +1422,29 @@ def connections(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: 
                      "tid": f"connect:{x0}:{y0}",
                      "shown": {"a": groups[x0][:tasks.CONNECT_MEMBERS], "b": groups[y0][:tasks.CONNECT_MEMBERS]}})
     return rows
+
+
+def _ahead(world: World, groups: Sequence[Sequence[str]], kind: str) -> Callable[[], None]:
+    """With the run's state, a step to call before each of the `kind` questions whose renders show `groups` (their ids
+    exactly, in the order asked): the texts a render will need are read ahead a page (incremental.TEXT_PAGE posts) at a
+    time, one query a page (incremental.prefetch), not one a render that misses (a full run's connections read 3052
+    times, its headlines 2289, 0283)."""
+    from insight_core.markx import incremental
+    at = {"i": 0, "ahead": 0}
+
+    def step() -> None:
+        i = at["i"]
+        at["i"] += 1
+        if world.memo is None or i < at["ahead"]:
+            return
+        page: List[Sequence[str]] = []
+        size = 0
+        while at["ahead"] < len(groups) and (not page or size < incremental.TEXT_PAGE):
+            page.append(groups[at["ahead"]])
+            size += len(groups[at["ahead"]])
+            at["ahead"] += 1
+        incremental.prefetch(world.text, None, page, kind)
+    return step
 
 
 def refusals(out: Outcome, ids: Dict[str, str], apart: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1497,8 +1528,11 @@ def headlines(cur: Any, out: Outcome, ids: Dict[str, str], world: World, ask: As
                 ([ids[k] for k in news_keys],))
     stored = {sid: {"headline": h, "headline_call": c} for sid, h, c in cur.fetchall()}
     from insight_core.markx import incremental
+    shown = {key: world.earliest(p for p in out.about[key] if p in world.text) for key in news_keys}
+    ahead = _ahead(world, [shown[key] for key in news_keys], "headline")
     for key in news_keys:
-        ps = world.earliest(p for p in out.about[key] if p in world.text)
+        ahead()
+        ps = shown[key]
         if not ps:
             continue
         # kept by every member's stamp: a run where no member changed reads no text

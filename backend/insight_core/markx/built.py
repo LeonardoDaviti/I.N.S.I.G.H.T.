@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from insight_core.markx import event_types, folds, pairing
 from insight_core.utils import voice
@@ -228,22 +228,41 @@ def stories_of(cur: Any, story_ids: Iterable[str], *, book: Any = None, links: b
             for sid, ms in rows.items() if any(m["id"] in posts for m in ms)}
 
 
+def _near(cur: Any, ids: Sequence[str], rows: Mapping[str, Any]) -> List[str]:
+    """The stories the viewed `ids` (`rows`: their members, `_load`) may be linked "came true" to: a story is linked
+    only through a judged connection, so only the stories connected to a viewed one, with a member in the viewed
+    members' time span widened by CAME_TRUE_DAYS (`_neighbours`)."""
+    times = [m["at"] for ms in rows.values() for m in ms if m["at"]]
+    if not times:
+        return []
+    among = {s for c in _connected(cur, ids) for s in c}
+    return _neighbours(cur, min(times) - timedelta(days=CAME_TRUE_DAYS), max(times) + timedelta(days=CAME_TRUE_DAYS),
+                       set(rows), among)
+
+
 def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     """{story: how it is built}: event type (and how many members are read), the original first or the source page,
     the published order, the leaks inside and the "came true" links both ways."""
+    return build_within(cur, story_ids)[0]
+
+
+def build_within(cur: Any, story_ids: Iterable[str], within: Optional[Mapping[str, Iterable[str]]] = None
+                 ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Set[str]]]:
+    """(`build` of `story_ids`, {name: the stories `build` of only that subset of them would read}). A story's
+    "came true" links reach only the stories its build reads (its world: the viewed ones and their `_near`), so
+    `narrowed` to a subset's world, a story's build is the subset's own build of it, without reading it again."""
     from insight_core.markx import identity
     ids = sorted({str(s) for s in story_ids if s})
     rows = _load(cur, ids)
+    worlds: Dict[str, Set[str]] = {}
+    for name, sub in (within or {}).items():
+        sub_ids = sorted({str(s) for s in sub if s} & set(ids))
+        sub_rows = {s: rows[s] for s in sub_ids if s in rows}
+        worlds[name] = set(sub_rows) | set(_near(cur, sub_ids, sub_rows))
     if not rows:
-        return {}
+        return {}, worlds
     book = identity.lazy_book(cur)   # what the stories ask of the book, not the whole book
-    times = [m["at"] for ms in rows.values() for m in ms if m["at"]]
-    # a story is linked "came true" only through a judged connection, so only the stories connected to a viewed one
-    # are read
-    among = {s for c in _connected(cur, ids) for s in c}
-    near = _neighbours(cur, min(times) - timedelta(days=CAME_TRUE_DAYS), max(times) + timedelta(days=CAME_TRUE_DAYS),
-                       set(rows), among) if times else []
-    rows.update(_load(cur, near))
+    rows.update(_load(cur, _near(cur, ids, rows)))
     world = {sid: [Post(id=m["id"], source=m["source"], at=m["at"], event_type=m["event_type"], origin=m["origin"],
                         kind=m["kind"]) for m in ms]
              for sid, ms in rows.items()}
@@ -277,7 +296,18 @@ def build(cur: Any, story_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
                               for x in links if x["release"] == sid],
             "disputes": differ.get(sid, []),
         }
-    return out
+    return out, worlds
+
+
+def narrowed(b: Optional[Dict[str, Any]], world: Set[str]) -> Optional[Dict[str, Any]]:
+    """A story's build (`build`, or annotate's `built`) with only the "came true" links into `world`
+    (`build_within`): the same dict when none goes outside it."""
+    if b is None:
+        return None
+    keep = {k: [x for x in b.get(k) or [] if x["story"] in world] for k in ("came_true", "leaked_before") if k in b}
+    if all(len(keep[k]) == len(b[k]) for k in keep):
+        return b
+    return {**b, **keep}
 
 
 def disputes(cur: Any, story_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
@@ -303,13 +333,17 @@ def line_roles(b: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
-def annotate(cur: Any, items: Sequence[Dict[str, Any]]) -> None:
+def annotate(cur: Any, items: Sequence[Dict[str, Any]],
+             within: Optional[Mapping[str, Iterable[str]]] = None) -> Dict[str, Set[str]]:
     """The News page's rows (news.page): each row's `built` (its main story's), its lines in published order with the
-    original first, and each line's `built` role. A line of another story keeps its place by time."""
+    original first, and each line's `built` role. A line of another story keeps its place by time. `within`: {name:
+    row ids}, a subset of the rows a page shows apart -> {name: its world} (`build_within`; `narrowed` gives such a
+    row's `built` as the subset's own page builds it)."""
     from insight_core.markx import news as mx_news
     mains = {r["id"]: r.get("main") or mx_news.main_story({"posts": [{"story": l.get("story"), "post_id": l["id"]}
                                                                       for l in r["posts"]]}) for r in items}
-    got = build(cur, {s for s in mains.values() if s})
+    got, worlds = build_within(cur, {s for s in mains.values() if s},
+                               {name: {mains[i] for i in rids if mains.get(i)} for name, rids in (within or {}).items()})
     for r in items:
         b = got.get(mains[r["id"]] or "")
         r["built"] = None if b is None else {k: v for k, v in b.items() if k != "order"}
@@ -320,3 +354,4 @@ def annotate(cur: Any, items: Sequence[Dict[str, Any]]) -> None:
                                        l["id"]))
         for line in r["posts"]:
             line["built"] = roles.get(line["id"]) if line.get("story") == mains[r["id"]] else None
+    return worlds
